@@ -92,7 +92,10 @@ def _caps(name: str):  # noqa: ANN202 - test helper
         # asked for ``.mp4`` gets the typed "this Plot is not animated" message
         # instead of a raw matplotlib ValueError.
         ("matplotlib", ".mp4", False),
-        ("matplotlib", ".gif", True),
+        # ``.gif`` is a movie container, so it is animated-only — like ``.mp4``.
+        # ``savefig`` accepts it and writes ONE frame; a still in a movie
+        # container reads as a working animation and is not one.
+        ("matplotlib", ".gif", False),
         ("matplotlib", ".html", False),
         ("plotly", ".html", True),
         ("plotly", "html", True),  # extension normalisation

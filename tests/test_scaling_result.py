@@ -3,7 +3,7 @@
 ``ScalingResult`` is the *one* schema the whole scaling-curve family (every
 fractal dimension, Lyapunov-from-data, expansion entropy, Cao / FNN) reparents
 onto later — ``estimate``/``stderr``/``abscissa``/``ordinate``/``fit_region``/
-``intercept`` — so a single generic ``.plot.scaling()`` renders any of them.
+``intercept`` — so a single generic ``.plot()`` renders any of them.
 These tests pin that schema, ``float() == estimate``, the ``local_slopes`` /
 ``scaling_window`` diagnostics, the round-trip, and the deferred plot seam.
 """
@@ -262,7 +262,7 @@ def test_different_estimate_compares_unequal():
 
 
 # ---------------------------------------------------------------------------
-# The .plot.scaling() seam — raises when no backend is registered
+# The .plot() seam — raises when no backend is registered
 # ---------------------------------------------------------------------------
 
 
@@ -290,8 +290,9 @@ def _no_backend(monkeypatch):
 
 
 def test_plot_scaling_raises_without_backend(_no_backend):
+    """The wheel-free refusal, reached through the transform the door now offers."""
     with pytest.raises(VisualizationNotInstalled):
-        _scaling().plot.scaling()
+        _scaling().plot()
 
 
 def test_plot_call_raises_without_backend(_no_backend):
@@ -300,10 +301,11 @@ def test_plot_call_raises_without_backend(_no_backend):
 
 
 def test_plot_scaling_renders_when_a_backend_registers(monkeypatch):
-    """Forward-compat: once a renderer registers, ``.plot.scaling()`` renders.
+    """Forward-compat: once a renderer registers, the scaling view renders.
 
-    The typed ``.scaling()`` method routes ``kind="scaling_fit"`` into
-    ``__plot_spec__`` and the spec's ``render`` does the drawing.
+    A ``ScalingResult``'s own view already IS the scaling fit, so ``.plot()``
+    carries ``kind="scaling_fit"`` without anything forcing it — which is why the
+    typed ``.scaling()`` method was only ever a no-op here.
     """
     import tsdynamics.registry as reg
 
@@ -321,7 +323,7 @@ def test_plot_scaling_renders_when_a_backend_registers(monkeypatch):
 
     monkeypatch.setattr(PlotSpec, "render", fake_render, raising=True)
 
-    out = _scaling().plot.scaling(backend="mpl")
+    out = _scaling().plot(backend="mpl")
     # ``plot`` builds — it hands back the spec, having rendered it (v6).
     assert isinstance(out, PlotSpec)
     assert rendered["backend"] == "mpl"

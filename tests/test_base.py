@@ -284,7 +284,11 @@ class TestTrajectoryNamedAccess:
 
     def test_named_multi_component(self) -> None:
         traj = self._traj()
-        np.testing.assert_array_equal(traj[["x", "z"]], traj.y[:, [0, 2]])
+        picked = traj["x", "z"]
+        np.testing.assert_array_equal(picked.y, traj.y[:, [0, 2]])
+        # the sub-trajectory names its OWN columns, so a second selection is right
+        assert picked.variables == ("x", "z")
+        np.testing.assert_array_equal(picked["z"], traj.y[:, 2])
 
     def test_component_accepts_names_and_ints(self) -> None:
         traj = self._traj()

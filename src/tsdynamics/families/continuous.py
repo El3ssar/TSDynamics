@@ -551,7 +551,7 @@ class ContinuousSystem(SystemBase, ABC):
         params : dict, optional
             Parameter overrides applied (in place) before restarting.
         solver, rtol, atol, max_step, backend
-            Stepper configuration, as in :meth:`integrate`.  ``max_step`` is
+            Stepper configuration, as in :meth:`run`.  ``max_step`` is
             stored and applied to every subsequent :meth:`step`.
 
         Notes
@@ -662,7 +662,12 @@ class ContinuousSystem(SystemBase, ABC):
 
     def step(self, n_or_dt: float | None = None) -> np.ndarray:
         """
-        Advance the system by ``dt`` (default 0.01) and return the new state.
+        Advance the system by ``n_or_dt`` and return the new state.
+
+        ``n_or_dt`` is a **time increment**, in the same unit as ``final_time``;
+        omitting it advances by ``_default_step_dt`` (``0.01``, the number every
+        continuous family uses).  A map counts **iterations** instead — that is
+        the only thing the word means differently anywhere.
 
         The first call performs an implicit :meth:`reinit`.  Parameter changes
         made after ``reinit`` take effect on the next ``reinit``, not on a
@@ -684,7 +689,7 @@ class ContinuousSystem(SystemBase, ABC):
         constant-``dt`` stepping loop (Poincaré refinement, basins over flows) skips
         not only the solver-registry resolve, the implicit-Jacobian decision, the
         output-grid build, provenance assembly and the :class:`Trajectory` wrap that
-        the full :meth:`integrate` entry point pays, but also the per-step tape
+        the full :meth:`run` entry point pays, but also the per-step tape
         re-marshalling and tape *rebuild* the pre-handle stepping core paid.  The
         control-parameter vector is still read live each step, so the live-stepper
         semantics are unchanged.
@@ -1139,9 +1144,13 @@ class ContinuousSystem(SystemBase, ABC):
         Parameters
         ----------
         final_time : float
-            End of integration window. Default 100.0.
-        dt : float
-            Output sampling interval — the spacing of the returned grid.  **It
+            End of the integration window, **in time units** — the horizon word
+            for a flow.  (A map counts iterations instead and takes ``steps``.)
+            Default 100.0.
+        dt : float, optional
+            Output sampling interval, **in time units** — the spacing of the
+            returned grid.  ``None`` (the default) means this family's
+            ``_default_dt``, which ``system.info`` prints under ``defaults``.  **It
             does not set the integration accuracy:** the internal stepper is
             adaptive and controlled by ``rtol``/``atol``; interior samples are
             produced by the kernel's own continuous extension.  Use ``rtol`` /
@@ -1155,11 +1164,14 @@ class ContinuousSystem(SystemBase, ABC):
                 continuous extension (everything but ``rk45`` / ``tsit5`` /
                 ``dop853``) still land on every sample.
         t0 : float
-            Start time. Default 0.0. Allows warm restarts from a non-zero
-            time (the IC is interpreted as the state at ``t0``).
+            Where the integration **starts**, in time units. Default 0.0.
+            Allows warm restarts from a non-zero time (the IC is interpreted as
+            the state at ``t0``).  Not to be confused with ``traj.after(t0)``,
+            which cuts an already-recorded axis.
         ic : array-like, optional
-            Initial state at ``t0``. Falls back to ``self.ic``, then
-            ``U[0, 1)^dim``.
+            Initial state at ``t0`` — ``dim`` numbers, one per state component.
+            Falls back to ``self.ic``, then a ``U[0, 1)^dim`` draw.  **Passing
+            it here does not change ``self.ic``**: one call, one run.
         solver : str, optional
             Solver name, resolved by the solver registry (default ``"RK45"``):
             explicit (``RK45`` / ``DOP853`` / ``tsit5`` / ``dop853``) or implicit
@@ -1214,9 +1226,10 @@ class ContinuousSystem(SystemBase, ABC):
                compiled-evaluator cache removed that per-call compile.
         seed : int, optional
             Seed for the **random initial-condition draw** — the same meaning it
-            has on :meth:`DiscreteMap.iterate` and on the constructor
-            (:meth:`SystemBase.ic_generator`), so ``seed=`` reads identically on
-            every family.  It only bites when a draw actually happens: an
+            has on :meth:`DiscreteMap.run`, on :meth:`DelaySystem.run` and on the
+            constructor, so ``seed=`` reads identically on every family.  (An SDE
+            has a second source of randomness, so there ``seed=`` seeds the noise
+            path as well as the draw.)  It only bites when a draw happens: an
             explicit ``ic``, an ``ic`` already resolved onto the system, and a
             class-level ``default_ic`` all take priority.  The resolved seed is
             recorded on ``traj.meta["ic_seed"]``.
@@ -1236,13 +1249,12 @@ class ContinuousSystem(SystemBase, ABC):
             unit as ``final_time``).  The window is extended to
             ``transient + final_time`` and everything before ``t0 + transient``
             is dropped, so the returned trajectory still spans ``final_time``.
-            Spelled identically on every family and every trajectory-producing
-            verb — ``run`` / ``integrate`` / ``trajectory`` (and ``iterate`` on a
-            map, where the unit is iterations).
+            One word on every family, in that family's **own horizon unit**:
+            time here, **iterations** on a map (see :meth:`DiscreteMap.run`).
 
             .. versionadded:: 6.0
-                Previously only :meth:`trajectory` accepted it, so a user who
-                found the canonical ``run`` verb could not discard a transient.
+                Only the retired ``trajectory`` verb used to accept it, so a
+                user who found ``run`` could not discard a transient at all.
 
         Returns
         -------
@@ -1359,7 +1371,7 @@ class ContinuousSystem(SystemBase, ABC):
 
             .. versionchanged:: 6.0
                Default moved from ``"interp"`` to ``"jit"`` (see
-               :meth:`integrate`).
+               :meth:`run`).
 
         Returns
         -------

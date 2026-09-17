@@ -667,8 +667,17 @@ def test_the_type_a_user_receives_is_called_plot() -> None:
     assert repr(_panel()).startswith("Plot(")
 
 
-def test_the_repr_names_what_you_hold_and_the_verb_that_shows_it() -> None:
-    """The repr must answer both "what is this?" and "now what?" — in one line."""
+def test_the_repr_names_what_you_hold_and_the_verb_that_shows_it(monkeypatch) -> None:
+    """The repr must answer both "what is this?" and "now what?" — in one line.
+
+    The "now what?" half is **backend-aware** since v6 (see
+    ``test_the_repr_does_not_offer_show_on_a_backend_that_cannot_display``), so
+    the interactive case is pinned explicitly rather than inherited from whatever
+    backend the session happens to be on.
+    """
+    import tsdynamics.viz.spec as spec_mod
+
+    monkeypatch.setattr(spec_mod, "_mpl_backend_is_interactive", lambda: True)
     text = repr(_panel())
     assert "time_series" in text and "1 layer" in text
     assert ".show()" in text and ".save('f.png')" in text
@@ -822,8 +831,28 @@ def test_selecting_a_panel_returns_a_plot_so_it_chains() -> None:
     assert panel[0] is panel
     with pytest.raises(InvalidParameterError, match="no panel named"):
         _ = spec["nope"]
-    with pytest.raises(InvalidParameterError, match="does not exist"):
+    # An out-of-range INT is a LookupError, which is what makes the sequence
+    # protocol below work; a missing NAME stays a value error.
+    with pytest.raises(IndexError, match="does not exist"):
         _ = spec[9]
+
+
+def test_a_plot_is_a_complete_sequence_over_its_panels() -> None:
+    """``len`` / ``iter`` / ``[]`` must agree — they did not, and iteration crashed.
+
+    Measured before v6: ``len(p)`` was a ``TypeError``, ``hasattr(Plot,
+    "__iter__")`` was ``False``, and ``list(p)`` yielded both panels and then
+    raised ``InvalidParameterError`` — because Python's ``__getitem__``
+    iteration fallback stops only on ``IndexError`` and this one raised a
+    ``ValueError`` subclass.  So a ``Plot`` looked like a sequence, was indexable
+    like a sequence, and could not be iterated.
+    """
+    spec = _composite(3)
+    assert len(spec) == 3
+    assert list(spec) == list(spec.panels)
+    assert [p for p in spec] == [spec[i] for i in range(len(spec))]
+    panel = _panel()
+    assert len(panel) == 1 and list(panel) == [panel]
 
 
 def test_style_by_name_addresses_one_source_inside_an_overlay() -> None:
@@ -962,12 +991,53 @@ def test_save_picks_a_movie_writer_only_for_an_animated_plot() -> None:
         _panel()._check_save_supported(".mp4", None)
 
 
-def test_show_renders_and_returns_the_backend_figure() -> None:
-    """``.show()`` is the reflex verb; headless it renders and hands back the figure."""
+def test_show_displays_and_returns_none_and_never_stays_silent() -> None:
+    """A verb whose whole job is a side effect returns ``None``, like every ``show``.
+
+    Measured before v6: ``.show()`` returned a ``Figure`` and, on a
+    non-interactive backend, displayed nothing and said nothing — while the repr
+    of **every** Plot pointed the reader at it.  In a notebook the returned
+    figure was echoed, so the call looked like it worked; in a script it was a
+    silent no-op.  Now: ``None``, plus one warning naming the backend and
+    ``.save``.
+    """
     plt = pytest.importorskip("matplotlib.pyplot")
-    figure = _panel().show()
-    assert figure.__class__.__name__ in ("Figure", "RenderResult")
-    plt.close("all")
+    import matplotlib
+
+    from tsdynamics.viz.render.caps import VisualizationDegraded
+
+    previous = matplotlib.get_backend()
+    matplotlib.use("Agg")
+    try:
+        with pytest.warns(VisualizationDegraded, match=r"has no window"):
+            assert _panel().show() is None
+    finally:
+        matplotlib.use(previous)
+        plt.close("all")
+
+
+def test_the_repr_does_not_offer_show_on_a_backend_that_cannot_display(monkeypatch) -> None:
+    """The first thing every user reads must not point at a verb that no-ops here.
+
+    Backend-aware both ways: on a windowless backend the repr names ``.save`` and
+    says why, and on one that can open a window it keeps the ``.show()`` hint.
+    """
+    pytest.importorskip("matplotlib.pyplot")
+    import matplotlib
+
+    import tsdynamics.viz.spec as spec_mod
+
+    previous = matplotlib.get_backend()
+    matplotlib.use("Agg")
+    try:
+        text = repr(_panel())
+        assert ".save('f.png')" in text
+        assert ".show()" not in text, text
+        assert "has no window" in text, text
+        monkeypatch.setattr(spec_mod, "_mpl_backend_is_interactive", lambda: True)
+        assert ".show() to display" in repr(_panel())
+    finally:
+        matplotlib.use(previous)
 
 
 def test_a_plot_without_a_backend_still_says_what_it_is_in_a_notebook() -> None:

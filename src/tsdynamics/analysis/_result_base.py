@@ -47,7 +47,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 import numpy as np
 
-from tsdynamics.analysis._result_json import _fmt, _is_frame_scalar, _jsonify
+from tsdynamics.analysis._result_json import _fmt, _jsonify, _row_for
 from tsdynamics.analysis._result_viz import VisualizationNotInstalled, _PlotAccessor
 from tsdynamics.utils.plot_namespace import plot_seam_error
 
@@ -68,6 +68,33 @@ _MAX_DETAILS = 4
 #: Items shown before a collection's list is truncated with ``... [N total]``.
 _MAX_ITEMS = 10
 
+#: Format presentation types that mean "render me as a NUMBER".  ``f"{r:.3f}"``
+#: on a result that is not one used to fall through to ``format(str(self), spec)``
+#: and raise ``ValueError: Unknown format code 'f' for object of type 'str'`` —
+#: naming ``str``, a type the caller never typed.
+_NUMERIC_FORMAT_CODES = frozenset("bcdeEfFgGnoxX%")
+
+#: The closed vocabulary of **verdict** properties — one adjective-named boolean
+#: per classifying result (contract §4.2 rule 10).  Before v6 the same concept
+#: had six spellings (``chaotic`` / ``is_chaotic(threshold=)`` / ``is_wada`` /
+#: ``fractal_boundary`` / ``trusted`` / ``stable``), so a caller had to learn one
+#: per analysis.  Each returns ``None`` — never ``False`` — when the test did not
+#: apply.  Used by :meth:`AnalysisResult.__bool__` to name the right thing to
+#: test, and by the gate that walks every subclass.
+_VERDICT_NAMES = frozenset(
+    {
+        "applicable",
+        "chaotic",
+        "deterministic",
+        "final_state_sensitive",
+        "fractal_boundary",
+        "saturated",
+        "stable",
+        "trusted",
+        "wada",
+    }
+)
+
 
 def _unknown_result_attribute(result: Any, name: str) -> AttributeError:
     """Build the ``AttributeError`` for a wrong guess on an analysis result.
@@ -83,6 +110,9 @@ def _unknown_result_attribute(result: Any, name: str) -> AttributeError:
     carried = sorted(
         {n for n in dir(cls) if not n.startswith("_") and not callable(getattr(cls, n, None))}
         | {n for n in getattr(result, "_repr_fields", ()) if not n.startswith("_")}
+        # Names a result serves through its OWN ``__getattr__`` (a windowed RQA's
+        # nine measures) are invisible to ``dir``, so they are declared.
+        | {n for n in getattr(result, "_extra_attribute_names", ()) if not n.startswith("_")}
     )
     close = difflib.get_close_matches(name, carried, n=2, cutoff=0.55)
     lines = [f"result.{c}" for c in close]
@@ -368,6 +398,130 @@ class AnalysisResult:
                 return None
         return None
 
+    def _numeric_field_names(self) -> tuple[str, ...]:
+        """Return the fields that hold numbers or numeric arrays, in declared order.
+
+        What :meth:`__array__` names when it refuses, so the message says *what
+        to ask for* instead of leaving the caller to guess.
+        """
+        names: list[str] = []
+        for f in fields(self):
+            if f.name == "meta":
+                continue
+            try:
+                value = getattr(self, f.name)
+            except AttributeError:  # pragma: no cover - defensive
+                continue
+            numeric = isinstance(value, (bool, np.bool_, int, float, np.integer, np.floating)) or (
+                isinstance(value, np.ndarray) and np.issubdtype(value.dtype, np.number)
+            )
+            if numeric:
+                names.append(f.name)
+        return tuple(names)
+
+    def __array__(self, dtype: Any = None, copy: bool | None = None) -> np.ndarray:
+        """Return this result as a real numeric array — or refuse, by name.
+
+        ``np.asarray(result)`` used to hand back a **0-d object array** for 17 of
+        the 32 result classes: it did not raise, it produced
+        ``array(RQAResult  DET = 0.794 …, dtype=object)``, which plots as nothing
+        and arithmetics into a ``TypeError`` far from the call site.
+
+        One rule decides (contract §4.2 rule 5):
+
+        - a result that **is** a number (it declares ``__float__`` / ``__int__``)
+          arrays as that number, 0-d, exactly like the scalar it replaced;
+        - a result that **is** a collection or a field overrides this with its
+          natural array (a spectrum's exponents, a set's representatives, a basin
+          image's labels);
+        - anything else **raises** ``TypeError`` naming the numeric fields it
+          does carry, so the message is the next thing to type.
+
+        Raises
+        ------
+        TypeError
+            If the result is neither a number nor an array of them.
+        """
+        number = self._as_number()
+        if number is None:
+            carried = self._numeric_field_names()
+            suggestion = (
+                f"e.g. np.asarray(result.{carried[0]})"
+                if carried
+                else "use result.to_dict() for everything it knows"
+            )
+            raise TypeError(
+                f"{type(self).__name__} is not an array of numbers."
+                + (f"  Its numeric parts are: {', '.join(carried)}." if carried else "")
+                + f"\n    {suggestion}"
+                + "\n    result.to_dict()   # everything it knows"
+            )
+        arr = np.asarray(number)
+        if dtype is not None:
+            arr = arr.astype(dtype, copy=bool(copy))
+        elif copy:
+            arr = arr.copy()
+        return arr
+
+    def __bool__(self) -> bool:
+        """Refuse the coin flip — a measurement is not a flag (contract §4.2 rule 7).
+
+        ``bool(result)`` was ``True`` for 31 of the 32 classes, so
+        ``if ts.analysis.wada_property(...):`` fired whether or not the boundary
+        was Wada.  A **sized** result keeps Python's own convention (non-empty is
+        true), a result that *is* a number keeps the number's, and everything
+        else raises, naming the verdict to test instead.
+
+        Raises
+        ------
+        TypeError
+            If the result is neither sized nor a number.
+        """
+        sized = getattr(type(self), "__len__", None)
+        if sized is not None:
+            return bool(sized(self) > 0)
+        verdicts = self._verdict_property_names()
+        if verdicts:
+            named = f"`if result.{verdicts[0]}:` (the verdict)"
+            if "applicable" in verdicts:
+                named += ", or `if result.applicable:` (did the test apply)"
+        else:
+            carried = self._numeric_field_names()[:3]
+            named = (
+                "the comparison you mean, e.g. `if result." + carried[0] + " > 0:`"
+                if carried
+                else "`if result.to_dict():`"
+            )
+        raise TypeError(
+            f"the truth value of a {type(self).__name__} is ambiguous — it is a "
+            f"measurement, not a flag.\n    Write {named}."
+        )
+
+    def _verdict_property_names(self) -> tuple[str, ...]:
+        """Return this class's verdict properties, from the closed vocabulary."""
+        return tuple(
+            sorted(
+                n
+                for n in _VERDICT_NAMES
+                if isinstance(getattr(type(self), n, None), property)
+                or n in {f.name for f in fields(self)}
+            )
+        )
+
+    @property
+    def verdict(self) -> str | None:
+        """The clause the repr prints as its verdict, or ``None`` when it has none.
+
+        The one spelling for "what did this measurement conclude?", in the exact
+        words the headline uses, so a caller never has to parse the repr to get
+        it.  :meth:`to_dict` emits it under ``"verdict"`` at ``full=True``.
+
+        Returns
+        -------
+        str or None
+        """
+        return self._interpretation()
+
     def __format__(self, spec: str) -> str:
         """Format the underlying number when a format spec is given.
 
@@ -377,11 +531,24 @@ class AnalysisResult:
         ``f"{result}"`` prints the headline); a non-empty one formats the number
         when the result is one, and otherwise formats the headline text (so
         ``f"{result:>40}"`` still aligns a non-numeric result).
+
+        A **numeric** presentation code on a non-numeric result raises
+        ``TypeError`` naming this class: it used to fall through to
+        ``format(str(self), spec)`` and surface ``ValueError: Unknown format code
+        'f' for object of type 'str'``, which names ``str`` — a type the caller
+        never typed.
         """
         if not spec:
             return str(self)
         number = self._as_number()
         if number is None:
+            if spec[-1] in _NUMERIC_FORMAT_CODES:
+                carried = self._numeric_field_names()
+                pick = f"result.{carried[0]}" if carried else "one of its fields"
+                raise TypeError(
+                    f'f"{{result:{spec}}}" needs a number; {type(self).__name__} is not one.'
+                    f'\n    Format {pick}, or use f"{{result}}" for the headline.'
+                )
             return format(str(self), spec)
         return format(number, spec)
 
@@ -409,6 +576,22 @@ class AnalysisResult:
         """
         return {}
 
+    def _full_extras(self) -> dict[str, Any]:
+        """Return everything ``to_dict(full=True)`` adds — derived + verdict + unit.
+
+        The contract *"``full`` emits what the repr reports"* used to be a
+        per-subclass promise, and 14 of the 32 added **nothing** — including
+        every result whose repr shows a verdict.  Building it here makes it true
+        by construction for every subclass, including the four that override
+        :meth:`to_dict` (they call this).
+        """
+        extras: dict[str, Any] = dict(self._derived())
+        extras.setdefault("verdict", self.verdict)
+        unit = getattr(self, "_unit", None)
+        if callable(unit):
+            extras.setdefault("unit", unit())
+        return extras
+
     def to_dict(self, full: bool = False) -> dict[str, Any]:
         """Return a JSON-friendly mapping of the result (arrays become lists).
 
@@ -431,7 +614,7 @@ class AnalysisResult:
         """
         data = {f.name: _jsonify(getattr(self, f.name)) for f in fields(self)}
         if full:
-            data.update({k: _jsonify(v) for k, v in self._derived().items()})
+            data.update({k: _jsonify(v) for k, v in self._full_extras().items()})
         return data
 
     @staticmethod
@@ -453,10 +636,19 @@ class AnalysisResult:
         ``pandas`` is a soft dependency, imported lazily; a missing install
         raises an :class:`ImportError` pointing at ``pip install pandas``.
 
-        The base produces a single-row frame of the scalar display fields, with
-        ``meta`` carried on ``frame.attrs["meta"]``.  Subclasses that carry a
-        natural table (e.g. a scaling curve, a wrapped array) override this with a
-        tidy, column-per-array frame.
+        The base produces a single-row frame of **the content** — the dataclass
+        fields, with short numeric vectors spread into ``name0 name1 …`` columns
+        — with ``meta`` carried on ``frame.attrs["meta"]``.  Subclasses that
+        carry a natural table (a scaling curve, a wrapped array, a collection)
+        override this with one row per member.
+
+        .. versionchanged:: 6.0
+           It used to tabulate ``_display_fields`` and keep only the *scalars*,
+           so ``to_frame()`` dropped **the answer** on 10 of the 32 classes: a
+           fixed point tabulated ``['stable', 'continuous']`` and lost its
+           coordinates, while the set it belongs to spread them properly — the
+           same information, two answers.  A field that is itself a result, a
+           mapping or a grid is dropped rather than parked in a cell.
 
         Returns
         -------
@@ -469,14 +661,7 @@ class AnalysisResult:
             ``pip install pandas``).
         """
         pd = self._require_pandas()
-        row: dict[str, Any] = {}
-        for name in self._display_fields():
-            try:
-                value = getattr(self, name)
-            except AttributeError:
-                continue
-            if _is_frame_scalar(value):
-                row[name] = _jsonify(value)
+        row = _row_for(self)
         frame = pd.DataFrame([row]) if row else pd.DataFrame()
         frame.attrs["meta"] = dict(self.meta) if self.meta else {}
         return frame
@@ -697,17 +882,28 @@ class AnalysisResult:
 
     @property
     def plot(self) -> _PlotAccessor:
-        """The visualization seam (callable + typed kind methods).
+        """The visualization seam — callable, and a namespace of transform names.
 
-        ``result.plot()`` renders the default view; ``result.plot.scaling()``
-        and the sibling methods force a particular plot kind.  The in-tree
-        backends seed themselves on first use, so it works out of the box when a
-        plotting library is installed; with none it raises
+        ``result.plot()`` builds this result's own view, styled at the door with
+        the same vocabulary every other plotting door takes.
+        ``result.plot.<TAB>`` lists the registered transforms that admit **this**
+        result, and ``result.plot.scaling_fit()`` is exactly
+        ``ts.plot(result, "scaling_fit")`` — the gesture ``traj.plot`` and
+        ``system.plot`` already carry, meaning the same thing.
+
+        The in-tree backends seed themselves on first use, so it works out of the
+        box when a plotting library is installed; with none it raises
         :class:`VisualizationNotInstalled`.
+
+        .. versionchanged:: 6.0
+            The eight kind-forcing methods (``.scaling()`` / ``.phase()`` /
+            ``.image()`` / …) are gone: they relabelled this result's spec with
+            another kind's name and changed nothing else.  See
+            :class:`~tsdynamics.analysis._result_viz._PlotAccessor`.
 
         Returns
         -------
         _PlotAccessor
-            A callable that is also a namespace of typed kind methods.
+            A callable that is also a namespace of transform names.
         """
         return _PlotAccessor(self)

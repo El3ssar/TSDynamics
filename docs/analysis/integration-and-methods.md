@@ -52,14 +52,14 @@ traj.dim, traj.n_steps       # 3, 10001
 t, y = traj.unpack()         # the two arrays in one go
 
 traj["x"]                    # named component → (T,)   (needs class `variables`)
-traj[["x", "z"]]             # multiple components → (T, 2)
+traj["x", "z"]               # several names → a Trajectory that names its own columns
 traj[100:200]                # row slicing → new Trajectory (t and y together)
 traj.component(2)            # by index
 
 traj.after(20.0)             # drop the transient: keep t >= 20
 traj.minmax()                # per-component (minima, maxima)
 traj.standardize()           # zero mean, unit std per component (records the transform)
-traj.neighbors(traj.y[0], k=3)   # (distances, indices) of the k nearest points (cached KD-tree)
+traj.neighbors(traj.y[0], k=3)   # the k nearest .state / .distance / .index (cached KD-tree)
 ```
 
 Slicing keeps `t` and `y` together and preserves the metadata, so a

@@ -23,15 +23,15 @@ The pieces
   (visibility / location / title).
 - :class:`Layer` — one drawable layer: a :class:`PlotKind` *mark* + a
   channel-name → :class:`numpy.ndarray` data mapping + neutral style keys.
-- :class:`PlotSpec` — the top-level spec: a semantic :class:`PlotKind`, a list of
+- :class:`Plot` — the top-level spec: a semantic :class:`PlotKind`, a list of
   :class:`Layer`, typed ``x`` / ``y`` / optional ``z`` axes, an optional
   ``clim`` color range, an optional :class:`Colorbar` and :class:`Legend`,
   title, ndim, aspect, annotations, and provenance ``meta``.  Tweak methods
-  (:meth:`~PlotSpec.relabel`, :meth:`~PlotSpec.rescale`, :meth:`~PlotSpec.limits`,
-  :meth:`~PlotSpec.ticks`, :meth:`~PlotSpec.style`) **mutate the spec and return
+  (:meth:`~Plot.relabel`, :meth:`~Plot.rescale`, :meth:`~Plot.limits`,
+  :meth:`~Plot.ticks`, :meth:`~Plot.style`) **mutate the spec and return
   it** so they chain, and because they touch the spec — not a renderer — a tweak
   like ``rescale(x="log")`` is identical across every backend.
-  :meth:`~PlotSpec.to_dict` / :meth:`~PlotSpec.from_dict` round-trip the whole
+  :meth:`~Plot.to_dict` / :meth:`~Plot.from_dict` round-trip the whole
   spec (NumPy arrays ↔ nested lists) so a computed spec can be cached, shipped to
   a web frontend, or replotted without recomputation.
 - :class:`Plottable` — a tiny mixin that gives any object defining
@@ -42,7 +42,7 @@ Design notes
 The grammar is synthesized from the data + encoding + mark model of declarative
 visualization grammars [1]_, made numeric-array-native (TSDynamics ships NumPy
 arrays, not tidy frames).  An *animation* is **not** a separate type: it is a
-:class:`PlotSpec` whose layer data carries a leading ``frame`` axis plus
+:class:`Plot` whose layer data carries a leading ``frame`` axis plus
 ``meta["animate"]``; a backend that cannot animate renders the final frame.
 
 References
@@ -154,11 +154,11 @@ class PlotKind(StrEnum):
 
     ``PlotKind`` is a :class:`~enum.StrEnum`, so a member compares equal to its value
     (``PlotKind.LINE == "line"``) and serializes to a plain string in
-    :meth:`PlotSpec.to_dict`.  Two roles share the one enum:
+    :meth:`Plot.to_dict`.  Two roles share the one enum:
 
-    - **Semantic kinds** name what a whole :class:`PlotSpec` *means*
+    - **Semantic kinds** name what a whole :class:`Plot` *means*
       (``TIME_SERIES``, ``PHASE_PORTRAIT_2D``, ``BIFURCATION``, …).  A renderer
-      dispatches on the spec's :attr:`PlotSpec.kind`.
+      dispatches on the spec's :attr:`Plot.kind`.
     - **Marks** name how a single :class:`Layer` is drawn (``LINE``,
       ``SCATTER``, ``IMAGE``, …).  A renderer dispatches on each
       :attr:`Layer.kind`.
@@ -225,10 +225,10 @@ class PlotKind(StrEnum):
     #    change gated by tests/test_viz_vocab.py). ──────────────────────────
     @classmethod
     def semantic_kinds(cls) -> frozenset[PlotKind]:
-        """Return the closed set of *semantic* kinds a :class:`PlotSpec` can be.
+        """Return the closed set of *semantic* kinds a :class:`Plot` can be.
 
         These name what a plot *means* (a renderer dispatches on
-        :attr:`PlotSpec.kind`).  Disjoint from :meth:`layer_marks`; together they
+        :attr:`Plot.kind`).  Disjoint from :meth:`layer_marks`; together they
         exhaust the enum (frozen by ``tests/test_viz_vocab.py``).
         """
         return _SEMANTIC_KINDS
@@ -696,7 +696,7 @@ class Colorbar:
     counterpart of an :class:`Axis` for a layer's ``"c"`` channel or an
     ``IMAGE`` mark.  It is backend-neutral: it carries *what* to show, never
     *how* a particular renderer draws it.  The numeric color range it maps lives
-    on the owning :class:`PlotSpec` as :attr:`PlotSpec.clim` (a single source of
+    on the owning :class:`Plot` as :attr:`Plot.clim` (a single source of
     truth shared by every layer), so this dataclass holds only label / location /
     ticks / format / visibility.
 
@@ -844,7 +844,7 @@ class Legend:
 class Layout:
     """How a :data:`PlotKind.COMPOSITE` spec arranges its ``panels`` into a figure.
 
-    A composite :class:`PlotSpec` carries a list of sub-spec :attr:`PlotSpec.panels`
+    A composite :class:`Plot` carries a list of sub-spec :attr:`Plot.panels`
     and one :class:`Layout` saying how to tile them.  Like every other piece of the
     IR it is backend-neutral data: a renderer maps ``mode`` to its own subplot grid.
 
@@ -943,13 +943,13 @@ class Layout:
 
 @dataclass
 class Animation:
-    """How an animated :class:`PlotSpec` plays — a backend-neutral directive.
+    """How an animated :class:`Plot` plays — a backend-neutral directive.
 
     Animation is an **orthogonal modifier**: any spec of any :class:`PlotKind`
-    becomes a movie by carrying an :class:`Animation` (``PlotSpec.animation``);
+    becomes a movie by carrying an :class:`Animation` (``Plot.animation``);
     the semantic kind is unchanged, and a backend that cannot animate draws the
     final frame.  The directive is plain data — it round-trips through
-    :meth:`PlotSpec.to_dict` and ships to a web frontend untouched.
+    :meth:`Plot.to_dict` and ships to a web frontend untouched.
 
     Frame model (``mode``)
     ----------------------
@@ -1314,7 +1314,7 @@ class Plot:
     **no** plotting library.
 
     .. versionchanged:: 6.0
-        Renamed from ``PlotSpec``.  The class is unchanged — ``PlotSpec`` remains
+        Renamed from ``Plot``.  The class is unchanged — ``Plot`` remains
         bound in this module as an alias so existing annotations and
         ``isinstance`` checks keep working — but the name a user sees, types and
         reads in a repr is ``Plot``.
@@ -1686,7 +1686,7 @@ class Plot:
     # means).  ``Self`` is also simply the truer annotation: it returns *this*
     # object, not some ``PlotSpec``.
     @_mutates
-    def add(self, *things: Any, on: str | None = None, **build_kw: Any) -> Self:
+    def add(self, *things: Any, force: bool = False, **build_kw: Any) -> Self:
         """Overlay more things onto this spec **in place**, and return it.
 
         The incremental half of the composition API (Makie's ``plot!`` in a
@@ -1715,45 +1715,49 @@ class Plot:
         *things
             Anything :func:`tsdynamics.viz.plot` accepts — a
             :class:`~tsdynamics.data.Trajectory`, a system, an analysis result,
-            or an already-built :class:`PlotSpec`.
-        on : {"force"}, optional
-            ``"force"`` overlays a deliberate frame mismatch with a one-time
+            or an already-built :class:`Plot`.
+        force : bool, default False
+            Overlay a deliberate frame mismatch with a one-time
             :class:`~tsdynamics.viz.render.caps.VisualizationDegraded` warning
             instead of raising.
+
+            .. versionchanged:: 6.0
+                Was ``on="force"`` — a name that reads as *"on which panel"* and
+                a type whose entire domain was one string.  ``on=`` raises now,
+                naming this.
         **build_kw
             Forwarded to each non-spec thing's ``__plot_spec__`` (``components``
-            / ``kind`` / per-kind options), exactly as in
-            :func:`tsdynamics.viz.plot`.
+            / per-kind options), exactly as in :func:`tsdynamics.viz.plot`.
 
         Returns
         -------
-        PlotSpec
+        Plot
             ``self``, with the new layers merged in.
 
         Raises
         ------
         tsdynamics.errors.InvalidParameterError
-            If ``self`` is a composite (add to one of its ``panels`` instead), if
-            a thing's frame is incompatible and ``on`` is not ``"force"``, or if
-            ``on`` is neither ``None`` nor ``"force"``.
+            If ``self`` is a composite (add to one of its panels instead), or if
+            a thing's frame is incompatible and ``force`` is not set.
         """
         from tsdynamics.errors import InvalidParameterError
 
         from .compose import _merge_into, _overlay, _to_spec
 
+        reject_on_keyword(build_kw, "Plot.add()", "p.add(other, force=True)")
         if self.is_composite:
             raise InvalidParameterError(
                 "cannot add() to a COMPOSITE figure: it owns no axes of its own. "
-                "Add to one of its panels (spec.panels[i].add(...)), or compose the "
-                "panel first and arrange with tsdynamics.viz.plot(..., layout=...)."
+                "Add to one of its panels (p[i].add(...)), or compose the "
+                "panel first and arrange with ts.plot(..., layout='grid')."
             )
         if not things:
             raise InvalidParameterError("add() needs at least one thing to add.")
         specs = [_to_spec(thing, build_kw) for thing in things]
-        _merge_into(self, _overlay([self, *specs], on=on))
+        _merge_into(self, _overlay([self, *specs], force=force))
         return self
 
-    def resolved_panels(self) -> list[PlotSpec]:
+    def resolved_panels(self) -> list[Plot]:
         """Return this composite's panels with the figure-level context pushed down.
 
         The composite's :attr:`_theme` and :attr:`animation` are *inherited* by a
@@ -1768,7 +1772,7 @@ class Plot:
 
         Returns
         -------
-        list of PlotSpec
+        list of Plot
             One resolved panel per :attr:`panels` entry, in order.
         """
         from dataclasses import replace as _dc_replace
@@ -1803,7 +1807,7 @@ class Plot:
 
         Returns
         -------
-        PlotSpec
+        Plot
             ``self``, for chaining.
         """
         if x is not None:
@@ -1834,7 +1838,7 @@ class Plot:
 
         Returns
         -------
-        PlotSpec
+        Plot
             ``self``, for chaining.
         """
         if x is not None:
@@ -1863,7 +1867,7 @@ class Plot:
 
         Returns
         -------
-        PlotSpec
+        Plot
             ``self``, for chaining.
         """
         if x is not None:
@@ -1892,7 +1896,7 @@ class Plot:
 
         Returns
         -------
-        PlotSpec
+        Plot
             ``self``, for chaining.
         """
         if x is not None:
@@ -2011,7 +2015,7 @@ class Plot:
 
         Returns
         -------
-        PlotSpec
+        Plot
             ``self``, for chaining.
         """
         if not colors:
@@ -2097,7 +2101,7 @@ class Plot:
 
         Returns
         -------
-        PlotSpec
+        Plot
             ``self``, for chaining.
         """
         base = theme if isinstance(theme, Theme) else get_theme(theme)
@@ -2125,7 +2129,7 @@ class Plot:
 
         Returns
         -------
-        PlotSpec
+        Plot
             ``self``, for chaining.
         """
         from tsdynamics.errors import InvalidParameterError
@@ -2173,14 +2177,10 @@ class Plot:
         """Build ``plot(self, other, layout=...)`` without mutating either side."""
         if not isinstance(other, Plot):
             return cast("Plot", NotImplemented)
-        import copy as _copy
-
+        from .compose import _fresh_copy
         from .compose import plot as _plot
 
-        left, right = _copy.deepcopy(self), _copy.deepcopy(other)
-        left._figure_cache = right._figure_cache = None
-        left._figure_handed_out = right._figure_handed_out = False
-        composed: Plot = _plot(left, right, layout=layout)
+        composed: Plot = _plot(_fresh_copy(self), _fresh_copy(other), layout=layout)
         return composed
 
     @_mutates
@@ -2216,7 +2216,7 @@ class Plot:
 
         Returns
         -------
-        PlotSpec
+        Plot
             ``self``, for chaining.
         """
         targets: list[Axis] = []
@@ -2250,7 +2250,7 @@ class Plot:
 
         Returns
         -------
-        PlotSpec
+        Plot
             ``self``, for chaining.
         """
         base = self._theme if self._theme is not None else get_theme()
@@ -2275,7 +2275,7 @@ class Plot:
 
         Returns
         -------
-        PlotSpec
+        Plot
             ``self``, for chaining.
         """
         base = self._theme if self._theme is not None else get_theme()
@@ -2305,7 +2305,7 @@ class Plot:
 
         Returns
         -------
-        PlotSpec
+        Plot
             ``self``, for chaining.
         """
         if width is not None or height is not None:
@@ -2440,7 +2440,7 @@ class Plot:
 
         Returns
         -------
-        PlotSpec
+        Plot
             ``self``, for chaining.
         """
         if clim is not None:
@@ -2503,7 +2503,7 @@ class Plot:
 
         Returns
         -------
-        PlotSpec
+        Plot
             ``self``, for chaining.
         """
         a = self._ensure_animation()
@@ -2542,7 +2542,7 @@ class Plot:
 
         Returns
         -------
-        PlotSpec
+        Plot
             ``self``, for chaining.
         """
         a = self._ensure_animation()
@@ -2581,7 +2581,7 @@ class Plot:
 
         Returns
         -------
-        PlotSpec
+        Plot
             ``self``, for chaining.
         """
         a = self._ensure_animation()
@@ -2622,7 +2622,7 @@ class Plot:
 
         Returns
         -------
-        PlotSpec
+        Plot
             ``self``, for chaining.
         """
         if elev is not None or azim is not None:
@@ -2717,7 +2717,7 @@ class Plot:
         """Attach a :class:`Colorbar` and infer :attr:`clim` for a colored spec.
 
         This is the "image / colored kinds express a colorbar + range" contract:
-        a :class:`PlotSpec` that :meth:`has_color_channel` gains a default
+        a :class:`Plot` that :meth:`has_color_channel` gains a default
         :class:`Colorbar` (if it has none) and, when its color range is not
         already set, a :attr:`clim` computed from the finite extent of the color
         data — the ``"c"`` channel of each layer, or the layer ``"z"`` /
@@ -2729,7 +2729,7 @@ class Plot:
 
         Returns
         -------
-        PlotSpec
+        Plot
             ``self``, for chaining.
         """
         if not self.has_color_channel():
@@ -2804,24 +2804,25 @@ class Plot:
             backend_kw["ax"] = ax
         return render_spec(self, backend, **backend_kw)
 
-    def show(self, backend: str | None = None, **backend_kw: Any) -> Any:
-        """Render this spec and display it — the verb every plotting user types.
+    def show(self, backend: str | None = None, **backend_kw: Any) -> None:
+        """Render this plot and **display it** — and return nothing, like every ``show``.
 
-        The library's three verbs are :meth:`plot` (build), :meth:`render` (draw)
-        and :meth:`save` (write), which is a coherent vocabulary — but ``.show()``
-        is what a decade of ``plt.show()`` and ``fig.show()`` has wired into the
-        fingers of every matplotlib and plotly user, and an ``AttributeError`` is
-        a poor answer to a reasonable guess.  So it exists, and it means exactly
-        what it says: :meth:`render`, then hand the figure to its own backend's
-        display.
+        ``plt.show()`` returns ``None``, ``fig.show()`` returns ``None``, and a
+        verb named *show* whose whole job is a side effect has nothing to hand
+        back.  This one used to return the figure, which made the headless case
+        invisible: in a notebook the returned figure was echoed and the call
+        looked like it had worked, while in a script it displayed nothing, said
+        nothing, and returned a ``Figure`` nobody asked for.
 
         On a **non-interactive** matplotlib backend (``Agg`` — a headless script,
         a CI job, this library's own test suite) there is no window to open, so
-        the figure is rendered and returned and nothing else happens; use
-        :meth:`save` to get a file.  This is deliberately quieter than
-        :func:`matplotlib.pyplot.show`, which warns in that situation: the caller
-        of *this* method is told the same thing by the docstring and by getting a
-        figure back, and a warning that fires on every headless call is noise.
+        one :class:`~tsdynamics.viz.render.caps.VisualizationDegraded` is raised
+        naming the backend and the way out.  Silence there was the defect: the
+        library's own :meth:`__repr__` points every user at this verb, so the
+        one situation where it cannot work is the one that must speak.
+
+        Use :meth:`render` when you want the backend's figure handle, or
+        :attr:`fig` / :attr:`ax` for the matplotlib escape hatch.
 
         Parameters
         ----------
@@ -2832,19 +2833,30 @@ class Plot:
 
         Returns
         -------
-        Any
-            The backend's figure — the same object :meth:`render` returns, so
-            ``fig = spec.show()`` still gives you the handle to poke at.
+        None
+
+        Warns
+        -----
+        VisualizationDegraded
+            When the active backend has no window to draw into.
 
         See Also
         --------
-        tweak : apply inline tweaks, return the spec.
         render : draw and return the backend's figure, displaying nothing.
         save : write the figure (or animation) to a file.
+        fig : the matplotlib figure, rendered once and cached.
         """
         figure = self.render(backend, **backend_kw)
-        _display_figure(figure)
-        return figure
+        if not _display_figure(figure):
+            import warnings
+
+            warnings.warn(
+                f"{_display_target(figure)} has no window, so .show() displayed nothing. "
+                "Write the file instead — .save('f.png') — or switch matplotlib to an "
+                "interactive backend with matplotlib.use('QtAgg').",
+                _degraded_warning(),
+                stacklevel=2,
+            )
 
     # Figure-scoped: ``plot`` forwards to the individual tweak methods, each of
     # which already declares (and performs) its own panel recursion — so ``plot``
@@ -2852,48 +2864,51 @@ class Plot:
     @_mutates
     @figure_scoped
     def tweak(self, **tweaks: Any) -> Plot:
-        """Apply inline tweaks and return **this spec**, so calls chain.
+        """Apply the **whole plotting vocabulary** in one call and return this plot.
 
-        The library's four plotting verbs, one return type each:
-
-        =============== =====================================================
-        ``.tweak(...)`` adjusts this spec and hands it back — chainable
-        ``.render()``   gives you the backend's figure
-        ``.show()``     draws it and displays it (the matplotlib/plotly reflex)
-        ``.save(path)`` writes the file
-        =============== =====================================================
-
-        This method used to be called ``plot``, which was the joke told twice: a
-        method named ``plot`` that does not plot, sitting next to a ``ts.plot``
-        front door that does not draw either.  ``.style()`` / ``.relabel()`` /
-        ``.theme()`` are the *named* ways to do the same thing and read better at
-        a call site; ``tweak`` remains for the mixed bag (``xlabel`` / ``yscale``
-        / ``title`` / ``xlim`` / …) in one call.
+        The shared applier behind every ``plot(**kwargs)`` door — it speaks
+        exactly the words those doors peel: the 17
+        :data:`FIGURE_KEYS` (``title`` / ``xlabel`` / ``xscale`` / ``xlim`` /
+        ``xticks`` / ``clim`` / ``colorbar`` / ``legend`` / ``theme`` / …) **and**
+        every canonical style key and alias
+        (:func:`~tsdynamics.viz.style.style_names` — ``color`` / ``lw`` /
+        ``alpha`` / ``cmap`` / …).
 
         .. versionchanged:: 6.0
-            Renamed from ``plot``.  ``traj.plot()``, ``system.plot()``,
-            ``result.plot()`` and ``ts.plot(...)`` all still return a
-            :class:`PlotSpec` — the *building* verb is unchanged; it is only this
-            no-op-on-a-spec spelling that is gone.
+            It used to accept only the 13 axis tweaks plus ``clim``/``colorbar``/
+            ``legend``, and **reject** ``color=`` / ``theme=`` / ``cmap=`` — a
+            *half* of the figure vocabulary, so a caller had to learn which half
+            went through which door.  A partial vocabulary is the defect, not the
+            method; the boundary is gone.
+
+        The *named* verbs — :meth:`style`, :meth:`relabel`, :meth:`rescale`,
+        :meth:`limits`, :meth:`ticks`, :meth:`colorize`, :meth:`theme` — remain
+        the readable spelling at a call site and are what the documentation
+        teaches.  ``tweak`` is the one that takes the mixed bag, which is why it
+        is off the tab surface (``dir(plot)``): it exists so the four ``plot()``
+        doors can share one implementation, not as a second thing to learn.
 
         Raises
         ------
         tsdynamics.errors.InvalidParameterError
-            For a keyword that is neither an inline tweak nor a spec option — in
-            particular a *renderer* option such as ``ax=`` / ``figsize=``, which
-            belongs to :meth:`render`.
+            For a word in neither vocabulary.  The message names the vocabularies
+            and, when the leftover is a *renderer* option, points at
+            :meth:`render` — but only when :meth:`render` would actually take it,
+            because a remedy line that itself raises is worse than none.
         """
+        from .style import style_names
+
+        style = {k: tweaks.pop(k) for k in list(tweaks) if k in style_names()}
         leftover = _apply_inline_tweaks(self, tweaks)
+        theme = leftover.pop("theme", None)
+        if theme is not None:
+            self.theme(theme)
+        if style:
+            self.style(**style)
         if leftover:
             from tsdynamics.errors import InvalidParameterError
 
-            names = ", ".join(repr(k) for k in sorted(leftover))
-            raise InvalidParameterError(
-                f"tweak() applies spec tweaks and returns the spec; {names} is not one. "
-                "A renderer option (ax=, figsize=, dpi=, html=, …) or a backend name goes "
-                "to render(), which returns the figure:\n"
-                f"    spec.render('matplotlib', {next(iter(sorted(leftover)))}=...)"
-            )
+            raise InvalidParameterError(_unknown_plot_keyword_message(sorted(leftover)))
         return self
 
     def save(
@@ -2936,10 +2951,10 @@ class Plot:
 
         .. note::
            ``.json`` is **two** formats behind one extension.  The default
-           (``backend="json"``) writes the :class:`PlotSpec` **IR envelope** — the
+           (``backend="json"``) writes the :class:`Plot` **IR envelope** — the
            thing :meth:`from_dict` reads back.  ``backend="threejs"`` writes the
            three.js **geometry payload** (buffers + metadata), which is not a
-           PlotSpec.  Pass ``backend=`` to disambiguate.
+           Plot.  Pass ``backend=`` to disambiguate.
 
         Parameters
         ----------
@@ -2974,6 +2989,13 @@ class Plot:
             data-export write.
         """
         ext = _extension_of(path)
+        # One alias table, three doors: ``render(backend="mpl")`` accepted the
+        # friendly spelling and ``save(backend="mpl")`` answered "no backend named
+        # 'mpl' is registered".  Normalising here makes the two agree.
+        if backend is not None:
+            from .render.caps import _normalize_backend_name
+
+            backend = _normalize_backend_name(backend)
         # Check against the backend the *caller* named (possibly none), so an
         # extension nobody writes is reported as "no installed backend writes
         # '.tikz'" rather than blamed on whichever backend the fallback picked.
@@ -3249,6 +3271,13 @@ class Plot:
 
             Plot(phase_portrait_3d, 1 layer, animated 30 fps) — .show() to display, .save('f.gif') to write
 
+        The next-step hint is **backend-aware**: on a matplotlib backend that has
+        no window (``Agg`` — a script, a CI job) ``.show()`` cannot display, so
+        the repr does not offer it.  A library must never point its reader at a
+        verb that will do nothing on their machine::
+
+            Plot(phase_portrait_3d, 1 layer) — .save('f.png') to write (Agg has no window)
+
         In a notebook the plot draws itself and this is never seen; in a console
         it is the whole answer.
         """
@@ -3272,6 +3301,12 @@ class Plot:
             fps = getattr(self.animation, "fps", None)
             anim = f", animated {fps:g} fps" if fps else ", animated"
         target = "f.gif" if animated else "f.png"
+        windowless = _known_windowless_backend()
+        if windowless is not None:
+            return (
+                f"Plot({kind}, {body}{anim}) — .save({target!r}) to write "
+                f"({windowless} has no window)"
+            )
         return f"Plot({kind}, {body}{anim}) — .show() to display, .save({target!r}) to write"
 
     def _repr_mimebundle_(self, include: Any = None, exclude: Any = None) -> Any:
@@ -3322,9 +3357,18 @@ class Plot:
         its layers, or its ``kind`` — in that order.  On a **single-panel** plot
         ``p[0] is p``, so code written for a grid also works on one panel.
 
-        :attr:`panels` stays the *list* (iterate it, take its ``len``); ``p[...]``
-        is *selection* — the ``df.columns`` / ``df["x"]`` relation, not a second
-        spelling of the same thing.
+        A ``Plot`` is a **complete sequence over its panels** — ``len(p)``,
+        ``for panel in p``, ``list(p)`` — so the three protocol members agree.
+        Before v6 it was sized-by-nothing, iterable-by-accident and indexable:
+        ``for panel in p`` yielded both panels and then **crashed**, because an
+        out-of-range integer raised ``InvalidParameterError`` (a ``ValueError``)
+        and Python's ``__getitem__`` iteration fallback only stops on
+        ``IndexError``.  An out-of-range integer is a ``LookupError`` now — same
+        message, and ``except ValueError`` around it never caught anything a
+        caller wrote on purpose.
+
+        :attr:`panels` stays the *list* of a composite's children; ``p[...]``
+        is *selection* — the ``df.columns`` / ``df["x"]`` relation.
         """
         from tsdynamics.errors import InvalidInputError, InvalidParameterError
 
@@ -3334,7 +3378,7 @@ class Plot:
             try:
                 return panels[index]
             except IndexError:
-                raise InvalidParameterError(
+                raise IndexError(
                     f"panel {index} does not exist; this Plot has {len(panels)} "
                     f"panel{'s' if len(panels) != 1 else ''} (0..{len(panels) - 1})."
                 ) from None
@@ -3361,6 +3405,20 @@ class Plot:
             f"a Plot is indexed by panel position (int) or panel name (str), not "
             f"{type(key).__name__}."
         )
+
+    def __len__(self) -> int:
+        """Return the number of panels — ``1`` for a single-panel plot.
+
+        The companion of :meth:`__getitem__`: ``p[i]`` for every ``i`` in
+        ``range(len(p))`` is exactly the panel list, and on a single-panel plot
+        ``len(p) == 1`` and ``p[0] is p``, so code written for a grid runs on one
+        panel unchanged.
+        """
+        return len(self.panels) if self.panels else 1
+
+    def __iter__(self) -> Any:
+        """Iterate the panels, in layout order (a single-panel plot yields itself)."""
+        return iter(self.panels if self.panels else [self])
 
     def __getattr__(self, name: str) -> Any:
         """Answer a plausible-but-wrong attribute with the spelling that works.
@@ -3390,16 +3448,6 @@ class Plot:
         return sorted(set(_PLOT_PUBLIC) | {n for n in type(self).__dict__ if n.startswith("__")})
 
     # -- serialization -----------------------------------------------------
-
-    @property
-    def spec(self) -> Plot:
-        """Return this plot — a :class:`Plot` **is** the IR, so there is nothing to unwrap.
-
-        Bound deliberately, so ``p.spec`` reads naturally when you mean "the
-        description, not the picture", and so a reader who expects a wrapper
-        discovers by identity (``p.spec is p``) that there is none.
-        """
-        return self
 
     def to_json(self, **kwargs: Any) -> str:
         """Serialize this plot to the versioned JSON envelope.
@@ -3454,7 +3502,7 @@ class Plot:
 
     @classmethod
     def from_dict(cls, d: Mapping[str, Any]) -> Plot:
-        """Rebuild a :class:`PlotSpec` from :meth:`to_dict` output.
+        """Rebuild a :class:`Plot` from :meth:`to_dict` output.
 
         Layer / annotation data lists are coerced back to
         :class:`numpy.ndarray`.  ``meta`` is restored verbatim (it is left as
@@ -3467,7 +3515,7 @@ class Plot:
 
         Returns
         -------
-        PlotSpec
+        Plot
         """
         z = d.get("z")
         clim = d.get("clim")
@@ -3564,6 +3612,10 @@ _PLOT_MOVED: dict[str, str] = {
         "One attribute cannot mean both."
     ),
     "plot": "A Plot is already a plot; .show() displays it and .save(path) writes it.",
+    "spec": (
+        "A Plot IS the description — `p.spec` was `p`, one dot for nothing. "
+        "Use the plot itself; .to_dict() gives the serializable mapping."
+    ),
     "to_plot_spec": "A Plot is already a Plot; .to_dict() gives the serializable mapping.",
 }
 
@@ -3576,8 +3628,8 @@ _PLOT_MOVED: dict[str, str] = {
 class Plottable:
     """Mixin giving any ``__plot_spec__()`` provider a ``.plot()`` and notebook hook.
 
-    A class that produces a :class:`PlotSpec` only has to implement
-    ``__plot_spec__(self) -> PlotSpec``; this mixin layers the rendering sugar on
+    A class that produces a :class:`Plot` only has to implement
+    ``__plot_spec__(self) -> Plot``; this mixin layers the rendering sugar on
     top:
 
     - :meth:`plot` — ``self.__plot_spec__()`` plus optional inline tweaks, sent
@@ -3593,7 +3645,7 @@ class Plottable:
     """
 
     def __plot_spec__(self, *args: Any, **kwargs: Any) -> Plot:
-        """Return the :class:`PlotSpec` describing this object.
+        """Return the :class:`Plot` describing this object.
 
         Subclasses must override this.  The base raises
         :class:`NotImplementedError`.
@@ -3603,11 +3655,11 @@ class Plottable:
         )
 
     def plot(self, *transforms: Any, **tweaks: Any) -> Plot:
-        """Build this object's :class:`PlotSpec`, applying inline tweaks first.
+        """Build this object's :class:`Plot`, applying inline tweaks first.
 
         ``plot`` **builds**, ``render`` **draws**, ``save`` **writes** — the same
-        three verbs everywhere in the library (see :meth:`PlotSpec.plot`).  Tweak
-        keywords matching a :class:`PlotSpec` tweak method (``xscale`` /
+        three verbs everywhere in the library (see :meth:`Plot.plot`).  Tweak
+        keywords matching a :class:`Plot` tweak method (``xscale`` /
         ``yscale`` / ``zscale``, ``xlabel`` / ``ylabel`` / ``zlabel`` / ``title``,
         ``xlim`` / ``ylim`` / ``zlim``, ``clim`` / ``colorbar`` / ``legend``) are
         applied to the spec.
@@ -3619,7 +3671,7 @@ class Plottable:
 
         Returns
         -------
-        PlotSpec
+        Plot
             Chainable, saveable (``.save("fig.png")``), renderable
             (``.render("plotly")``), and self-drawing in a notebook.
         """
@@ -3710,6 +3762,101 @@ def apply_figure_keywords(plot: Plot, figure: Mapping[str, Any]) -> Plot:
     return plot
 
 
+#: Keywords that shape the *figure* rather than one panel — they belong to the
+#: composition door (``ts.plot`` / ``viz.plot``), not to a finished plot.  Named
+#: here so a message can say *where* the word works instead of calling it unknown.
+_COMPOSITION_KEYWORDS: frozenset[str] = frozenset(
+    {
+        "layout",
+        "rows",
+        "cols",
+        "share_x",
+        "share_y",
+        "share_color",
+        "primitive",
+        "force",
+        "animate",
+        "fps",
+        "ax",
+    }
+)
+
+
+def _unknown_plot_keyword_message(unknown: Sequence[str]) -> str:
+    """Build the one message every plotting door gives for a word it cannot use.
+
+    Three rules, each the inverse of a way the old text misled:
+
+    1. **Name the vocabularies the caller may draw from** — style, figure,
+       composition — rather than the private method that happened to be running.
+    2. **Suggest the nearest real keyword** (``colour`` → ``color``).
+    3. **Never hand back a line that raises.**  The old text always offered
+       ``spec.render('matplotlib', <kw>=...)``; for ``layout=`` — one of the
+       twelve composition keywords — that call raises too, so the reader was
+       given a second failure instead of an answer.  A ``render`` line appears
+       only when the backend genuinely accepts that word.
+    """
+    import difflib
+
+    from .style import style_names
+
+    styles = sorted(style_names())
+    figure = sorted(FIGURE_KEYS)
+    pool = sorted(set(styles) | set(figure) | _COMPOSITION_KEYWORDS)
+    close = {bad: difflib.get_close_matches(bad, pool, n=1, cutoff=0.6) for bad in unknown}
+    hints = "".join(
+        f"\n    {bad}= — did you mean {near[0]}=?" for bad, near in close.items() if near
+    )
+    composition = sorted(set(unknown) & _COMPOSITION_KEYWORDS)
+    if composition:
+        hints += (
+            f"\n    {', '.join(f'{k}=' for k in composition)} shape the FIGURE, so they belong "
+            "at the composition door: ts.plot(a, b, layout='grid', cols=2)."
+        )
+    render_kw = sorted(set(unknown) & _accepted_render_keywords())
+    if render_kw:
+        hints += (
+            f"\n    {', '.join(f'{k}=' for k in render_kw)} is a renderer option; it goes to "
+            f"render(), which hands back the backend's figure:  p.render({render_kw[0]}=...)"
+        )
+    listed = ", ".join(repr(k) for k in unknown)
+    return (
+        f"plot() got unexpected keyword(s) {listed}.{hints}\n"
+        f"    Style keywords: {', '.join(styles)}\n"
+        f"    Figure keywords: {', '.join(figure)}\n"
+        f"    Composition keywords (at ts.plot / viz.plot): "
+        f"{', '.join(sorted(_COMPOSITION_KEYWORDS))}"
+    )
+
+
+def _accepted_render_keywords() -> frozenset[str]:
+    """Every render keyword some registered backend accepts (empty if none do).
+
+    Asks :func:`~tsdynamics.viz.render.caps.accepted_render_kwargs` — the one
+    resolver — rather than reading ``caps.render_kwargs`` directly.  Reading the
+    attribute covers only the *first* of that function's three sources, and no
+    in-tree backend uses it (the four are declared in ``_BUILTIN_RENDER_KWARGS``
+    and an out-of-tree one may be introspected), so this set came back empty for
+    every shipped renderer and the "that word belongs at ``render()``" branch of
+    :func:`_unknown_plot_keyword_message` could never fire.  Measured:
+    ``traj.plot(figsize=(4, 3))`` listed three vocabularies none of which
+    contains ``figsize`` and never said where it does go.
+
+    A backend answering ``None`` means "accepts anything" and contributes
+    nothing: it is not evidence that any particular word is a render keyword.
+    The dispatcher's own injected words are removed — they are not a vocabulary
+    a caller may draw from.
+    """
+    from .render.caps import _DISPATCHER_INJECTED_KWARGS, accepted_render_kwargs
+
+    out: set[str] = set()
+    for name, renderer in _renderer_capabilities().items():
+        declared = accepted_render_kwargs(name, renderer)
+        if declared:
+            out |= {str(k) for k in declared}
+    return frozenset(out) - _DISPATCHER_INJECTED_KWARGS
+
+
 def _apply_inline_tweaks(spec: PlotSpec, tweaks: dict[str, Any]) -> dict[str, Any]:
     """Apply recognized inline tweaks to ``spec``; return the leftover kwargs.
 
@@ -3776,6 +3923,26 @@ def _resolve_renderers() -> Any | None:
         return None
 
 
+def reject_on_keyword(kw: dict[str, Any], door: str, example: str) -> None:
+    """Refuse the retired ``on="force"`` spelling, naming ``force=``.
+
+    ``on=`` read as *"on which panel"* and its entire domain was the single
+    string ``"force"``; a bool is the honest type and the honest name.  Every
+    composition door calls this on its leftover keywords, so the rename is taught
+    at the door the caller typed rather than surfacing as an unknown-keyword
+    error about ``__plot_spec__``.
+    """
+    if "on" not in kw:
+        return
+    from tsdynamics.errors import InvalidParameterError, remedy
+
+    value = kw.pop("on")
+    raise InvalidParameterError(
+        f"{door} has no on= keyword (you passed on={value!r}); the frame-check "
+        "escape is force=, a bool." + remedy(example)
+    )
+
+
 def reject_positional_transform(positional: tuple[Any, ...], subject: str) -> None:
     """Refuse ``obj.plot("delay_embedding")`` with the line that does work.
 
@@ -3805,13 +3972,17 @@ def reject_positional_transform(positional: tuple[Any, ...], subject: str) -> No
 
     first = positional[0]
     if isinstance(first, str):
-        lead = f"{subject}.plot() takes no positional arguments; a transform is named on the "
-        lines = [
-            f"ts.plot({subject}, {first!r})",
-            f"{subject}.plot(kind={first!r})   # if {first!r} is a plot KIND, not a transform",
-        ]
+        # One spelling only: the transform name at the front door.  This message
+        # used to offer ``subject.plot(kind=...)`` beside it, which taught the
+        # second vocabulary the v6 collapse exists to remove — and would have sent
+        # a reader to a keyword that does not accept most transform names.
         raise InvalidParameterError(
-            lead + "front door (and a plot kind is a keyword):" + remedy(*lines)
+            f"{subject}.plot() takes no positional arguments; a transform is named at the "
+            "front door:"
+            + remedy(
+                f"ts.plot({subject}, {first!r})",
+                f"{subject}.plot.{first}()   # ...or as a method, if it admits this subject",
+            )
         )
     raise InvalidParameterError(
         f"{subject}.plot() takes no positional arguments, got {type(first).__name__}. "
@@ -3841,26 +4012,61 @@ def _mpl_backend_is_interactive() -> bool:
         return name not in _NON_INTERACTIVE_MPL
 
 
-def _display_figure(figure: Any) -> None:
-    """Hand a rendered figure to its own backend's display, if it has one.
+def _known_windowless_backend() -> str | None:
+    """Name the active matplotlib backend when it is known to have no window.
+
+    ``None`` means *"do not know"* — either matplotlib is not imported yet (so
+    asking would import a plotting library from a ``repr``, which this layer
+    refuses to do) or the backend can open a window.  Only a **positive** answer
+    changes what :meth:`Plot.__repr__` offers, so the uncertain case keeps the
+    old, friendlier hint.
+    """
+    import sys
+
+    if "matplotlib" not in sys.modules:
+        return None
+    try:
+        import matplotlib
+
+        name = matplotlib.get_backend()
+        return None if _mpl_backend_is_interactive() else str(name)
+    except Exception:  # pragma: no cover - defensive: a repr must never raise
+        return None
+
+
+def _display_figure(figure: Any) -> bool:
+    """Hand a rendered figure to its own backend's display; report whether it drew.
 
     Dispatches on where the figure came from rather than on which backend was
     asked for, so it stays right when the dispatcher falls back to matplotlib.
     A payload that is not a figure at all (the json / three.js exporters return
     data) has nothing to display, and that is not an error — ``show()`` on an
-    export is simply the export.
+    export is simply the export — but it is **not a display either**, so it
+    answers ``False`` and :meth:`Plot.show` says so.
     """
     module = type(figure).__module__.split(".")[0]
     if module == "matplotlib":
         if not _mpl_backend_is_interactive():
-            return  # headless: the figure is the result; save() writes the file
+            return False  # headless: no window; save() writes the file
         import matplotlib.pyplot as plt
 
         plt.show()
-        return
+        return True
     show = getattr(figure, "show", None)
     if callable(show):  # plotly: opens the figure in a browser / notebook cell
         show()
+        return True
+    return False
+
+
+def _display_target(figure: Any) -> str:
+    """Name the thing that could not be displayed, for :meth:`Plot.show`'s warning."""
+    module = type(figure).__module__.split(".")[0]
+    if module == "matplotlib":
+        import matplotlib
+
+        return f"matplotlib's {matplotlib.get_backend()!r} backend"
+    return f"a {type(figure).__name__} export"
 
 
 def _notebook_mimebundle(draw: Any, include: Any, exclude: Any) -> Any:

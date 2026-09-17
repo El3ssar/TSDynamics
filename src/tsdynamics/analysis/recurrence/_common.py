@@ -51,8 +51,9 @@ def _as_points(data: Any, *, analysis: str | None = None) -> np.ndarray:
     InvalidInputError
         If ``data`` is a ``System`` rather than a measured series.
     ValueError
-        If the data is not 1-D or 2-D, has fewer than two points, or contains
-        non-finite values.
+        If the data is not 1-D or 2-D, has fewer than two points, contains
+        non-finite values, or is **constant** — a flat series recurs everywhere,
+        so its recurrence plot is all-ones and DET / LAM / ENTR are vacuous.
     """
     reject_system(data, analysis=analysis)
     y = getattr(data, "y", None)
@@ -67,6 +68,15 @@ def _as_points(data: Any, *, analysis: str | None = None) -> np.ndarray:
         raise ValueError(f"need at least two points, got {arr.shape[0]}.")
     if not np.all(np.isfinite(arr)):
         raise ValueError("point set contains non-finite values (nan/inf).")
+    # Every sibling estimator refuses a constant series by name; these three were
+    # the only data-first doors that did not, so a flat line came back
+    # "DET = 1.000 · LAM = 1.000 · L_max = 1999   deterministic" — every pair of
+    # points recurs, so the plot is all-ones and its line statistics are vacuous.
+    if float(np.ptp(arr)) == 0.0:
+        raise ValueError(
+            "series is constant; every pair of points recurs, so the recurrence plot is "
+            "all-ones and its DET / LAM / ENTR are undefined."
+        )
     return np.ascontiguousarray(arr)
 
 

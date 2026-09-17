@@ -84,7 +84,7 @@ transient, or unpack it into `(t, y)` arrays:
 
 ```python
 x    = traj["x"]              # (10001,)   — one named component
-xz   = traj[["x", "z"]]       # several, in order
+xz   = traj["x", "z"]         # several, in order → a Trajectory naming x and z
 tail = traj.after(20.0)       # drop the transient before t = 20
 t, y = traj.t, traj.y         # the two arrays: (10001,) and (10001, 3)
 ```

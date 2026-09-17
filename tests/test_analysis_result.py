@@ -251,31 +251,35 @@ def test_plot_call_raises_without_backend(_no_backend):
         "bifurcation",
         "return_map",
         "section",
+        "histogram",
+        "spectrum",
     ],
 )
-def test_plot_typed_methods_raise_without_backend(method, _no_backend):
-    accessor = _spectrum().plot
-    assert hasattr(accessor, method)
-    with pytest.raises(VisualizationNotInstalled):
-        getattr(accessor, method)()
-
-
-@pytest.mark.parametrize("method", ["histogram", "spectrum"])
 def test_removed_typed_plot_methods_are_gone(method):
-    """``.plot.histogram()`` / ``.plot.spectrum()`` were removed in v6.
+    """All ten kind-forcing methods were removed; none may come back.
 
-    Their data producers left with the generic time-series layer in the v6 scope
-    surgery, so neither kind has anything to build.  The methods did not fail —
-    ``_render(kind=...)`` only relabels the spec — so they drew the result's
-    ordinary layers under a histogram / spectrum name: a plot of the wrong thing
-    presented as the right thing.  An absent method is strictly better, and this
-    pins the removal so they cannot come back without a producer.
+    ``.histogram()`` / ``.spectrum()`` went first, when their data producers left
+    with the generic time-series layer.  The other eight went for the same
+    reason, measured: ``_render(kind=...)`` only **relabelled** the result's own
+    spec, so across the 30 result fixtures not one of them changed a byte of
+    layer data — they drew the result's ordinary layers under another kind's
+    name.  A picture named wrongly is worse than a method that is absent.
+    ``tests/test_plot_accessor_kinds.py`` holds the full contract.
     """
     assert not hasattr(_spectrum().plot, method)
 
 
+def test_plot_call_without_a_backend_still_raises(_no_backend):
+    """The verb itself keeps the wheel-free refusal the typed methods used to carry."""
+    with pytest.raises(VisualizationNotInstalled):
+        _spectrum().plot()
+
+
 def test_plot_accessor_repr():
-    assert "plot accessor" in repr(_spectrum().plot)
+    """The repr says what this draws and what to type next."""
+    text = repr(_spectrum().plot)
+    assert "plot namespace" in text
+    assert "result.plot()" in text
 
 
 def test_plot_works_as_first_viz_action_in_fresh_process():
@@ -342,17 +346,16 @@ def test_plot_renders_when_a_renderer_is_registered(monkeypatch):
     assert isinstance(out, _FakeSpec)
     assert out.kind is None
     assert out.rendered == {"backend": "plotly", "kind": None, "backend_kw": {}}
-    # A typed method routes its kind into __plot_spec__; backend kwargs reach render.
-    # ``figsize`` is a real backend keyword; ``ax`` used to ride through here too,
-    # but no shipped backend accepts it — ``.plot()`` now rejects a keyword neither
-    # ``__plot_spec__`` nor the backend contract declares, instead of silently
-    # dropping it into a ``**_kw`` catch-all (sanctioned v6 break).
-    out2 = r.plot.scaling(backend="mpl", figsize=(4.0, 3.0))
-    assert out2.kind == "scaling_fit"
+    # Backend kwargs reach render.  ``figsize`` is a real backend keyword; ``ax``
+    # used to ride through here too, but no shipped backend accepts it —
+    # ``.plot()`` now rejects a keyword none of the four vocabularies declares,
+    # instead of silently dropping it into a ``**_kw`` catch-all.
+    out2 = r.plot(backend="mpl", figsize=(4.0, 3.0))
+    assert out2.kind is None  # the result's own kind; nothing is forced
     assert out2.rendered["backend"] == "mpl"
     assert out2.rendered["backend_kw"] == {"figsize": (4.0, 3.0)}
     with pytest.raises(InvalidParameterError):
-        r.plot.scaling(backend="mpl", not_a_real_keyword="x")
+        r.plot(backend="mpl", not_a_real_keyword="x")
 
 
 def test_empty_renderer_registry_still_raises(monkeypatch):
@@ -575,12 +578,19 @@ def _pandas_stub() -> types.ModuleType:
     return mod
 
 
-def test_to_frame_builds_scalar_row_with_stub(monkeypatch):
+def test_to_frame_builds_a_content_row_with_stub(monkeypatch):
     # Always-on coverage of the frame-building body (no real pandas needed).
+    #
+    # v6 (contract §4.2 rule 8): the row is the result's CONTENT, so a short
+    # numeric vector is spread into ``name0 name1 …`` columns instead of being
+    # dropped.  It used to keep only the ``_display_fields`` scalars, which is
+    # how ``to_frame()`` came to drop THE ANSWER on 10 of the 32 result classes
+    # — measured, ``FixedPoint.to_frame()`` returned ``['stable', 'continuous']``
+    # and lost the coordinates, while its own set spread them properly.
     monkeypatch.setitem(sys.modules, "pandas", _pandas_stub())
     frame = _spectrum().to_frame()
-    assert list(frame.columns) == ["kaplan_yorke"]
-    assert "exponents" not in frame.columns  # arrays excluded
+    assert list(frame.columns) == ["exponents0", "exponents1", "exponents2", "kaplan_yorke"]
+    assert "exponents" not in frame.columns  # the vector is spread, not parked
     assert len(frame) == 1
     assert frame.attrs["meta"]["system"] == "Lorenz"
 

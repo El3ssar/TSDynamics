@@ -22,7 +22,7 @@ import pytest
 
 from tsdynamics.analysis.chaos.expansion import ExpansionEntropyResult
 from tsdynamics.analysis.dimensions._common import DimensionResult
-from tsdynamics.analysis.lyapunov import _max_lyapunov_map, lyapunov_from_data, max_lyapunov
+from tsdynamics.analysis.lyapunov import lyapunov_from_data, max_lyapunov
 from tsdynamics.analysis.lyapunov.from_data import LyapunovFromData
 
 # --------------------------------------------------------------------------
@@ -158,7 +158,7 @@ def test_map_retry_ic_is_seeded_and_reproducible(monkeypatch: pytest.MonkeyPatch
     _fail_first_kernel_call(monkeypatch)
     captured = _capture_reinit_ics(monkeypatch)
 
-    _max_lyapunov_map(sys, n=200, steps_per=5, transient=100, ic=None, seed=seed)
+    max_lyapunov(sys, n=1000, transient=100, ic=None, seed=seed)
 
     # First reinit is attempt 0 (ic=None); the second is the seeded retry.
     assert captured[0] is None
@@ -175,7 +175,7 @@ def test_map_retry_reproducible_across_calls(monkeypatch: pytest.MonkeyPatch) ->
     def run_once() -> Any:
         _fail_first_kernel_call(monkeypatch)
         captured = _capture_reinit_ics(monkeypatch)
-        _max_lyapunov_map(Henon(), n=200, steps_per=5, transient=100, ic=None, seed=11)
+        max_lyapunov(Henon(), n=1000, transient=100, ic=None, seed=11)
         return captured[1]
 
     ic_a = run_once()
@@ -189,7 +189,7 @@ def test_max_lyapunov_map_seed_smoke() -> None:
     pytest.importorskip("tsdynamics._rust")
     from tsdynamics.systems import Henon
 
-    res = max_lyapunov(Henon(), n=200, steps_per=5, transient=200, ic=[0.1, 0.1], seed=3)
+    res = max_lyapunov(Henon(), n=5000, transient=200, ic=[0.1, 0.1], seed=3)
     assert np.isfinite(float(res))
     assert 0.3 < float(res) < 0.6  # Hénon MLE ≈ 0.42
 

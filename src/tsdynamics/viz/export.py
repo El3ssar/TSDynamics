@@ -1,8 +1,8 @@
-"""Versioned JSON (de)serialization of a :class:`~tsdynamics.viz.spec.PlotSpec`.
+"""Versioned JSON (de)serialization of a :class:`~tsdynamics.viz.spec.Plot`.
 
-A :class:`~tsdynamics.viz.spec.PlotSpec` already round-trips losslessly through
-its :meth:`~tsdynamics.viz.spec.PlotSpec.to_dict` /
-:meth:`~tsdynamics.viz.spec.PlotSpec.from_dict` pair (NumPy arrays become nested
+A :class:`~tsdynamics.viz.spec.Plot` already round-trips losslessly through
+its :meth:`~tsdynamics.viz.spec.Plot.to_dict` /
+:meth:`~tsdynamics.viz.spec.Plot.from_dict` pair (NumPy arrays become nested
 lists and back).  This module wraps that dict in a small **versioned envelope**
 and serializes it to / from a JSON ``str`` with the standard-library
 :mod:`json` — no third-party dependency, so a spec computed on one machine can
@@ -18,20 +18,20 @@ The serialized text is a JSON object with two top-level keys::
 
     {
         "schema_version": 2,
-        "spec": { ... PlotSpec.to_dict() ... }
+        "spec": { ... Plot.to_dict() ... }
     }
 
 - ``"schema_version"`` — an integer (currently :data:`SCHEMA_VERSION`) stamping
   the envelope layout, so a future change to the spec serialization can be
   migrated on read.  :func:`from_json` tolerates a *missing* or *older*
-  ``"schema_version"`` (back-compat): a bare ``PlotSpec.to_dict()`` object — one
+  ``"schema_version"`` (back-compat): a bare ``Plot.to_dict()`` object — one
   that has no ``"schema_version"`` key but does carry the spec's own ``"kind"`` /
   ``"layers"`` keys — is read as an *unversioned* (legacy) payload.  A v1 payload
   (produced before the styling overhaul) loads cleanly: the new fields
   (``theme``, enriched ``Axis``/``Legend``/``Colorbar``) are absent → default
   values (``theme=None``, ``grid=None``, etc.).
-- ``"spec"`` — the exact output of :meth:`PlotSpec.to_dict`; rebuilt with
-  :meth:`PlotSpec.from_dict`.
+- ``"spec"`` — the exact output of :meth:`Plot.to_dict`; rebuilt with
+  :meth:`Plot.from_dict`.
 
 :func:`from_json` (:func:`to_json` (spec)) reproduces the spec — every layer,
 axis, annotation, color range, and ``meta`` field survives, and array data
@@ -43,7 +43,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from .spec import PlotSpec
+from .spec import Plot, PlotSpec
 
 __all__ = [
     "SCHEMA_VERSION",
@@ -104,7 +104,7 @@ def to_dict_envelope(spec: PlotSpec) -> dict[str, Any]:
 
     Parameters
     ----------
-    spec : PlotSpec
+    spec : Plot
         The spec to serialize.
 
     Returns
@@ -117,11 +117,11 @@ def to_dict_envelope(spec: PlotSpec) -> dict[str, Any]:
     return {_VERSION_KEY: SCHEMA_VERSION, _SPEC_KEY: spec.to_dict()}
 
 
-def from_dict_envelope(envelope: dict[str, Any]) -> PlotSpec:
-    """Rebuild a :class:`PlotSpec` from a (possibly unversioned) envelope mapping.
+def from_dict_envelope(envelope: dict[str, Any]) -> Plot:
+    """Rebuild a :class:`Plot` from a (possibly unversioned) envelope mapping.
 
     Tolerates a missing / older ``"schema_version"`` for back-compat: an envelope
-    with a ``"spec"`` key uses it; a bare :meth:`PlotSpec.to_dict` mapping (no
+    with a ``"spec"`` key uses it; a bare :meth:`Plot.to_dict` mapping (no
     envelope wrapper — it carries the spec's own ``"kind"`` key directly) is read
     as a legacy unversioned payload.
 
@@ -129,11 +129,11 @@ def from_dict_envelope(envelope: dict[str, Any]) -> PlotSpec:
     ----------
     envelope : dict
         The mapping produced by :func:`to_dict_envelope`, or a bare
-        :meth:`PlotSpec.to_dict` mapping (legacy / unversioned).
+        :meth:`Plot.to_dict` mapping (legacy / unversioned).
 
     Returns
     -------
-    PlotSpec
+    Plot
 
     Raises
     ------
@@ -158,7 +158,7 @@ def to_json(spec: PlotSpec, *, indent: int | None = None) -> str:
 
     Parameters
     ----------
-    spec : PlotSpec
+    spec : Plot
         The spec to serialize.
     indent : int, optional
         Passed to :func:`json.dumps`; ``None`` (default) emits compact JSON,
@@ -173,22 +173,22 @@ def to_json(spec: PlotSpec, *, indent: int | None = None) -> str:
     return json.dumps(to_dict_envelope(spec), indent=indent)
 
 
-def from_json(text: str) -> PlotSpec:
-    """Rebuild a :class:`PlotSpec` from JSON produced by :func:`to_json`.
+def from_json(text: str) -> Plot:
+    """Rebuild a :class:`Plot` from JSON produced by :func:`to_json`.
 
     Tolerates a missing / older ``"schema_version"`` (back-compat) by delegating
     to :func:`from_dict_envelope`: both a current envelope and a legacy bare
-    :meth:`PlotSpec.to_dict` document load.
+    :meth:`Plot.to_dict` document load.
 
     Parameters
     ----------
     text : str
         A JSON document — an envelope from :func:`to_json`, or a bare
-        :meth:`PlotSpec.to_dict` document.
+        :meth:`Plot.to_dict` document.
 
     Returns
     -------
-    PlotSpec
+    Plot
 
     Raises
     ------

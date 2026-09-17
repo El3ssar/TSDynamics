@@ -465,11 +465,22 @@ class TestBifurcationDiagramRefusals:
         assert "ts.analysis.orbit_diagram(ts.systems.Lorenz(), 'rho'" in message
 
     def test_a_non_system_is_refused_with_a_runnable_line(self) -> None:
+        """Measured data is refused by the SHARED guard, which names the subject.
+
+        It used to reach ``_discrete_view`` and, for a ``Trajectory`` (which
+        carries ``_is_discrete``), walk straight past it and fail 300 lines later
+        on ``view.with_params`` -- an internal name, in an ``AttributeError``,
+        about an object the caller never reached for.
+        """
         from tsdynamics.errors import InvalidInputError
 
-        with pytest.raises(InvalidInputError) as excinfo:
-            ts.analysis.orbit_diagram([1.0, 2.0], "r", [1.0])
-        assert "ts.analysis.orbit_diagram(ts.systems.Lorenz(), 'rho'" in str(excinfo.value)
+        for subject in ([1.0, 2.0], ts.systems.Lorenz().run(final_time=1.0, dt=0.1)):
+            with pytest.raises(InvalidInputError) as excinfo:
+                ts.analysis.orbit_diagram(subject, "r", [1.0])
+            message = str(excinfo.value)
+            assert "orbit_diagram() needs a system" in message
+            # (the sentence is wrapped to 88 columns, so match on a short phrase)
+            assert "re-runs the equations" in message
 
     def test_section_on_an_already_discrete_view_names_the_swept_parameter(self) -> None:
         from tsdynamics.errors import InvalidParameterError

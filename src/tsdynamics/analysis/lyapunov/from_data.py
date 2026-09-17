@@ -157,6 +157,18 @@ class LyapunovFromData(ScalingResult):
     method: str = "kantz"
     trusted: bool = True
 
+    def __post_init__(self) -> None:
+        """AND the plateau search's verdict with the shared fit-quality floor.
+
+        ``trusted`` can only ever get *stricter*: the plateau search above is this
+        estimator's extra condition, and
+        :meth:`~tsdynamics.analysis._result.ScalingResult._fit_is_believable` is
+        the floor every scaling result must clear (enough points, straight
+        enough).
+        """
+        if self.trusted and not self._fit_is_believable():
+            object.__setattr__(self, "trusted", False)
+
     @property
     def lyapunov(self) -> float:
         """The estimated maximal Lyapunov exponent (alias of :attr:`estimate`)."""
@@ -179,7 +191,7 @@ class LyapunovFromData(ScalingResult):
         log-divergence) against time as a scatter, the fitted scaling region
         highlighted, and the line of slope :attr:`lyapunov` drawn over it — the
         same schema the fractal-dimension estimators emit, so a single
-        ``result.plot.scaling()`` renders it.  The :mod:`tsdynamics.viz.spec`
+        ``result.plot()`` renders it.  The :mod:`tsdynamics.viz.spec`
         import is lazy, so building a spec never pulls a plotting library.
 
         Parameters
@@ -238,7 +250,7 @@ class LyapunovFromData(ScalingResult):
 
     def _interpretation(self) -> str | None:
         """Flag an estimate that is not a reading of a scaling region."""
-        return None if self.trusted else "⚠ UNTRUSTED"
+        return None if self.trusted else self._fit_quality_clause()
 
     def _context(self) -> str | None:
         """Return the settings that make the number meaningful."""
@@ -247,7 +259,7 @@ class LyapunovFromData(ScalingResult):
     def _details(self) -> tuple[str, ...]:
         """Return the fit line, replaced by the remedy when untrusted."""
         if not self.trusted:
-            return ("⚠ no clear scaling region — inspect .plot.scaling() and pass fit=(lo, hi)",)
+            return ("⚠ no clear scaling region — inspect .plot() and pass fit=(lo, hi)",)
         return super()._details()
 
     def _derived(self) -> dict[str, Any]:

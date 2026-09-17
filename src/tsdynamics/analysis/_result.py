@@ -20,7 +20,7 @@ The surface every result inherits
   dependency, imported lazily, with an install hint if it is missing).
 - ``plot`` — the visualization seam: an accessor that is both callable
   (``result.plot()``) and a namespace of typed kind methods
-  (``result.plot.scaling()``).  The in-tree backends seed themselves on first
+  (``result.plot()``).  The in-tree backends seed themselves on first
   use, so it renders out of the box with a plotting library installed; with none
   the seam raises :class:`VisualizationNotInstalled`.
 
@@ -58,7 +58,7 @@ a measured time series, expansion entropy, and the Cao / false-nearest-neighbour
 embedding-dimension diagnostics.  :class:`ScalingResult` gives that whole family
 **one** canonical schema — ``estimate`` / ``stderr`` / ``abscissa`` /
 ``ordinate`` / ``fit_region`` / ``intercept`` (plus the ``local_slopes`` and
-``scaling_window`` diagnostics) — so a single ``result.plot.scaling()`` renders
+``scaling_window`` diagnostics) — so a single ``result.plot()`` renders
 any of them.  It is additive: existing results are *reparented* onto it by a
 later stream, not changed here.
 
@@ -87,6 +87,7 @@ import <X>`` keeps resolving exactly as before the split.
 from __future__ import annotations
 
 from tsdynamics.analysis._result_array import ArrayResult
+from tsdynamics.analysis._result_array import _ArrayBacked as _ArrayBacked
 from tsdynamics.analysis._result_base import AnalysisResult
 from tsdynamics.analysis._result_collection import CollectionResult
 

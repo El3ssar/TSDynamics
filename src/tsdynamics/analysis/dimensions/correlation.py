@@ -25,7 +25,7 @@ search that replaces the naive :math:`O(N^2)` double loop — with an exact
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, NamedTuple
 
 import numpy as np
 
@@ -41,7 +41,28 @@ from ._common import (
 )
 from ._scaling import fit_scaling_region
 
-__all__ = ["correlation_dimension", "correlation_sum"]
+__all__ = ["CorrelationSum", "correlation_dimension", "correlation_sum"]
+
+
+class CorrelationSum(NamedTuple):
+    r"""The correlation-sum curve: radii and :math:`C(r)`, each under its own name.
+
+    A :class:`~typing.NamedTuple`, so it still unpacks exactly like the bare
+    2-tuple it replaced — ``r, C = correlation_sum(x)`` — while ``help()``, the
+    repr and tab-completion all say which array is which.  A returned pair of
+    unlabelled arrays is a small puzzle every caller has to solve from the
+    docstring; a named one is not.
+
+    Attributes
+    ----------
+    radii : numpy.ndarray
+        The radii :math:`r` the sum was evaluated at, ascending.
+    sums : numpy.ndarray
+        :math:`C(r)` at each radius, normalised to ``[0, 1]``.
+    """
+
+    radii: np.ndarray
+    sums: np.ndarray
 
 
 def _near_diagonal_distances(points: np.ndarray, w: int, p: float) -> np.ndarray:
@@ -60,8 +81,16 @@ def correlation_sum(
     n_radii: int = 24,
     c_lo: float | None = None,
     c_hi: float = _DEFAULT_C_HI,
-) -> tuple[np.ndarray, np.ndarray]:
-    r"""Correlation sum :math:`C(r)` over a grid of radii.
+) -> CorrelationSum:
+    r"""Correlation sum :math:`C(r)` over a grid of radii — the raw curve.
+
+    This is the *curve* :func:`correlation_dimension` fits a slope to, exposed
+    on its own for anyone who wants to choose the scaling region by eye rather
+    than let the fitter choose it.  ``correlation_dimension(data)`` carries the
+    same data in log form (``.abscissa`` / ``.ordinate``), so reach for this one
+    when you want :math:`r` and :math:`C(r)` themselves — a plot, a custom fit, a
+    comparison against an analytic :math:`C(r)` — and for the *dimension* reach
+    for :func:`correlation_dimension`.
 
     Parameters
     ----------
@@ -94,9 +123,12 @@ def correlation_sum(
 
     Returns
     -------
-    (radii, C) : tuple[ndarray, ndarray]
-        The radii and the corresponding correlation-sum values, normalised so
-        ``C`` lies in ``[0, 1]``.
+    CorrelationSum
+        A named 2-tuple ``(radii, sums)`` — the radii and the corresponding
+        correlation-sum values, normalised so ``sums`` lies in ``[0, 1]``.  It
+        unpacks like the plain tuple it replaced (``r, C = correlation_sum(x)``)
+        and also names its halves, so a reader never has to count positions to
+        find out which array is which.
 
     Raises
     ------
@@ -113,7 +145,7 @@ def correlation_sum(
         c_lo=c_lo,
         c_hi=c_hi,
     )
-    return out_radii, c
+    return CorrelationSum(out_radii, c)
 
 
 def _correlation_sum_from_points(
@@ -193,6 +225,15 @@ def correlation_dimension(
     Computes the correlation sum, then reads :math:`D_2` off the slope of
     :math:`\log C(r)` vs :math:`\log r` in the automatically selected scaling
     region (:func:`~tsdynamics.analysis.dimensions._scaling.fit_scaling_region`).
+
+    **Not the same estimator as** ``generalized_dimension(data, 2.0)``, despite
+    both being called :math:`D_2`: this one counts *pairwise distances* and the
+    Rényi one counts *box occupancies*, and they disagree by more than round-off
+    (measured on a Lorenz orbit: 2.09 vs 1.86).  Prefer this one — it is the
+    standard :math:`D_2` estimator, it is far less sensitive to the box
+    alignment, and it works down to smaller scales on a modest point set.  Reach
+    for :func:`generalized_dimension` when you want the whole :math:`D_q`
+    *spectrum* on one consistent box partition.
 
     Parameters
     ----------

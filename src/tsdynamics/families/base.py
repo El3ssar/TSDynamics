@@ -327,8 +327,8 @@ _MOVED_IN_V6: dict[str, tuple[str, tuple[str, ...]]] = {
     "project": (
         "projection left the object (no user callers)",
         (
-            'traj[["x", "z"]]                          # the numbers',
-            "ts.derived.ProjectedSystem(system, 0, 2)  # a live 2-D stepper",
+            'traj["x", "z"]                              # the columns',
+            "ts.derived.ProjectedSystem(system, [0, 2])  # a live 2-D stepper",
         ),
     ),
     "tangent": (
@@ -840,7 +840,7 @@ class SystemBase(DeriveMixin, SystemPlottable):
             :attr:`_field_shape`).  Falls back to the class-level value.
         seed : int, optional
             Seed for the **initial-condition draw** used when neither ``ic`` nor
-            :attr:`default_ic` supplies one.  The draw runs on a private
+            ``system.info.default_ic`` supplies one.  The draw runs on a private
             :class:`numpy.random.Generator`, so it is reproducible *and* never
             touches the global ``numpy.random`` stream.  When omitted a fresh
             OS-entropy seed is drawn on first use and recorded on
@@ -958,7 +958,7 @@ class SystemBase(DeriveMixin, SystemPlottable):
         # Initial conditions.  ``_ic_explicit`` records whether the CURRENT
         # ``self.ic`` was chosen by the user (constructor / an explicit ``ic=``)
         # or merely auto-resolved (a random draw).  A user-chosen IC must never
-        # be silently swapped for a random one — see ``DiscreteMap.iterate``.
+        # be silently swapped for a random one — see ``DiscreteMap.run``.
         # ``np.array(..., copy=True)``, not ``asarray``: a float64 array passed in
         # would otherwise be *shared* with the caller, so mutating either side
         # silently moved the other's initial condition.  It is also what made
@@ -1071,12 +1071,31 @@ class SystemBase(DeriveMixin, SystemPlottable):
         __copy__ : ``copy.copy(system)`` — the same independence, but it *keeps*
             the recorded ``meta`` (and does not re-run ``__init__``).
         """
-        return type(self)(
-            params=cast(ParamSet, self.params).as_dict(),
-            ic=self.ic.copy() if self.ic is not None else None,
-            dim=cast(int, self.dim),
-            field_shape=self.__dict__.get("_field_shape"),
+        return self._carry_ic_provenance(
+            type(self)(
+                params=cast(ParamSet, self.params).as_dict(),
+                ic=self.ic.copy() if self.ic is not None else None,
+                dim=cast(int, self.dim),
+                field_shape=self.__dict__.get("_field_shape"),
+            )
         )
+
+    def _carry_ic_provenance(self, clone: SystemBase) -> SystemBase:
+        """Copy *how the IC was chosen* onto a clone built by the constructor.
+
+        ``copy()`` / :meth:`with_params` rebuild through ``type(self)(ic=self.ic)``,
+        and the constructor reads ``ic is not None`` as "the user chose this" —
+        so an **auto-drawn** IC was silently promoted to user-chosen on every
+        clone.  That flag is what disables the random-IC divergence retry, so a
+        ``with_params`` sweep (an orbit diagram, a continuation) turned the retry
+        off for every swept value.  ``copy.copy`` / ``deepcopy`` never had the bug
+        (they clone ``__dict__``); these two now agree with them.
+        """
+        object.__setattr__(clone, "_ic_explicit", bool(self.__dict__.get("_ic_explicit", False)))
+        seed = self.__dict__.get("_ic_seed")
+        if seed is not None:
+            object.__setattr__(clone, "_ic_seed", int(seed))
+        return clone
 
     def _clone_state(self) -> dict[str, Any]:
         """Return the identity-defining instance state, with fresh containers.
@@ -1162,11 +1181,13 @@ class SystemBase(DeriveMixin, SystemPlottable):
         # nothing to re-read them from — measured, ``DimCtor(dim=2).with_params(k=2)``
         # raised "does not declare its state-space dimension", which broke
         # continuation and orbit diagrams for exactly those systems.
-        return type(self)(
-            params=new_p,
-            ic=self.ic,
-            dim=cast(int, self.dim),
-            field_shape=self.__dict__.get("_field_shape"),
+        return self._carry_ic_provenance(
+            type(self)(
+                params=new_p,
+                ic=self.ic,
+                dim=cast(int, self.dim),
+                field_shape=self.__dict__.get("_field_shape"),
+            )
         )
 
     # --- IC resolution ---
@@ -1268,9 +1289,13 @@ class SystemBase(DeriveMixin, SystemPlottable):
         have to repeat, where ``system`` keeps the line honest.
         """
         example = "[" + ", ".join(["1.0"] * dim) + "]" if dim <= 8 else f"np.ones({dim})"
+        # ``family``, never ``hasattr(self, "iterate")``: ``iterate`` is a name v6
+        # REMOVED, so the old probe was permanently False and every one of the 26
+        # maps handed back ``run(final_time=...)`` — a line a map refuses by name.
+        # A removed name must never be read as a string (CONTRACT §9.4).
         run = (
-            f"iterate(steps=1000, ic={example})"
-            if callable(getattr(self, "iterate", None))
+            f"run(steps=1000, ic={example})"
+            if getattr(self, "family", None) == "map"
             else f"run(final_time=100.0, ic={example})"
         )
         structural: frozenset[str] = getattr(type(self), "_structural_params", frozenset())
@@ -1317,7 +1342,7 @@ class SystemBase(DeriveMixin, SystemPlottable):
             # ``map_problem``) hand the array ``resolve_ic`` just returned straight
             # back into ``resolve_ic``, so without this an internally drawn random
             # IC was promoted to "user-chosen" the moment it was used — which
-            # silently disabled ``DiscreteMap.iterate``'s random-IC retry from the
+            # silently disabled ``DiscreteMap.run``'s random-IC retry from the
             # second call onwards, and made its diagnostic claim the IC "was
             # supplied explicitly" about an IC the library itself had drawn.
             prior = self.__dict__.get("ic")

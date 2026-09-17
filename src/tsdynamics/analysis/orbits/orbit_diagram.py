@@ -8,6 +8,7 @@ from typing import Any, cast
 
 import numpy as np
 
+from .._common import reject_data
 from .._result import AnalysisResult
 from .._result_json import _sig
 from .poincare import _seeded_ic
@@ -64,6 +65,28 @@ class OrbitDiagram(AnalysisResult):
 
     def __len__(self) -> int:
         return len(self.values)
+
+    def __getitem__(self, key: Any) -> Any:
+        """Return the ``(value, points)`` pair at position ``key`` — what iteration yields.
+
+        It was sized and iterable but **not** subscriptable, so ``od[0]`` raised
+        ``TypeError`` while ``len(od)`` and ``for v, pts in od`` both worked, and
+        ``np.asarray(od)`` degenerated to a 0-d object array.  Indexing and
+        iteration now agree, item for item.
+        """
+        return list(zip(self.values, self.points, strict=True))[key]
+
+    def __array__(self, dtype: Any = None, copy: bool | None = None) -> np.ndarray:
+        """Return the diagram as the ``(N, 2)`` scatter it draws: parameter, point.
+
+        The long form of :meth:`flat` for the first recorded component — the
+        picture itself, rather than the 0-d *object* array numpy used to build.
+        """
+        if not self.points:
+            return np.empty((0, 2), dtype=float)
+        x, y = self.flat()
+        arr = np.column_stack([np.asarray(x, dtype=float), np.asarray(y, dtype=float)])
+        return arr.astype(dtype, copy=bool(copy)) if dtype is not None else arr
 
     def flat(self, component: int = 0) -> tuple[np.ndarray, np.ndarray]:
         """
@@ -711,7 +734,7 @@ def orbit_diagram(
     components: int | str | tuple[Any, ...] = 0,
     section: Any | None = None,
     ic: Any | None = None,
-    seed: int | None = None,
+    seed: int | None = 0,
     dt: float = _FLOW_DT,
     max_time: float = _FLOW_MAX_TIME,
 ) -> OrbitDiagram:
@@ -811,7 +834,11 @@ def orbit_diagram(
             value, number of crossings, Monte-Carlo sample count); this is one of
             the two that misled, so it says what it counts.
     transient : int
-        Points discarded before recording, at every value.
+        Points discarded before recording, at every value — a **count**, in the
+        unit the sweep advances in: map iterations for a map, crossings for a
+        Poincaré/stroboscopic view, recorded peaks for the flow peak map.  (The
+        subject of an orbit diagram is always a discrete view, so this word never
+        means time here, unlike ``run(transient=)`` on a flow.)
     carry_state : bool
         Start each value from the previous value's final state (follows the
         attractor branch; the classic way to draw clean diagrams).  When
@@ -828,12 +855,17 @@ def orbit_diagram(
     ic : array-like, optional
         Initial state for the first value (and every value when
         ``carry_state=False``).
-    seed : int, optional
-        Seed for the random initial condition when the system has none; makes
-        the diagram reproducible.
+    seed : int, default 0
+        Seed for the random initial condition when the system has none, so the
+        diagram is reproducible.  Pass ``seed=None`` for an unseeded draw.
+
+        .. versionchanged:: 6.0
+            Was ``None``: a system with no declared initial condition drew a
+            fresh random one on every call, so the same line of code drew a
+            different diagram each time it ran.
     dt : float, default 0.01
-        Output sampling step of the flow path's integration (time units).  Ignored
-        for a map / an already-discrete view.
+        Output sampling step of the flow path's integration, in **time units**.
+        Ignored for a map / an already-discrete view, which iterate.
     max_time : float, default 1e4
         Ceiling on the flow path's integration horizon per parameter value.
 
@@ -885,6 +917,11 @@ def orbit_diagram(
     >>> od = orbit_diagram(Logistic(), "r", np.linspace(2.5, 4.0, 600), points_per_value=120)
     >>> x, y = od.flat()
     """
+    # Measured data first, through the shared guard.  A ``Trajectory`` carries a
+    # ``_is_discrete`` flag, so it walked straight past the system check below and
+    # failed ~300 lines later on ``view.with_params`` — an internal name, in an
+    # AttributeError, about an object the caller never reached for.
+    reject_data(system, analysis="orbit_diagram")
     comp = (components,) if isinstance(components, int | str) else tuple(components)
     # Resolve names via the *instance* (not ``type(sys)``): a derived wrapper
     # exposes ``variables`` as a property, so ``type(sys).variables`` returns the

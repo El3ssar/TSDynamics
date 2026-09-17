@@ -37,7 +37,7 @@ from tsdynamics.viz.transforms import build_spec
 
 if TYPE_CHECKING:
     from tsdynamics.data import Trajectory
-    from tsdynamics.viz.spec import PlotSpec
+    from tsdynamics.viz.spec import Plot
 
 __all__ = [
     "autostyle_line",
@@ -184,7 +184,7 @@ def time_series(
     components: Sequence[int | str] | None = None,
     color_by: str | np.ndarray | Callable[..., np.ndarray] | None = None,
     legend: bool = True,
-) -> PlotSpec:
+) -> Plot:
     """Build an overlaid component-vs-time spec (``TIME_SERIES``).
 
     Shim over the ``time_series`` transform; see
@@ -200,7 +200,7 @@ def phase_portrait(
     *,
     components: Sequence[int | str] | None = None,
     color_by: str | np.ndarray | Callable[..., np.ndarray] | None = None,
-) -> PlotSpec:
+) -> Plot:
     """Build a phase portrait over an arbitrary component pair or triple.
 
     Shim over the ``phase_portrait`` transform; see
@@ -216,7 +216,7 @@ def delay_embedding(
     delay_time: float | None = None,
     components: int | str = 0,
     label: str = "x",
-) -> PlotSpec:
+) -> Plot:
     """Build the ``x(t)`` vs ``x(t - delay)`` delay-coordinate reconstruction.
 
     Shim over the ``delay_embedding`` transform — ``delay`` in **samples**,
@@ -241,7 +241,7 @@ def vector_field(
     grid: int = 20,
     normalize: bool = True,
     labels: tuple[str, str] = ("x", "y"),
-) -> PlotSpec:
+) -> Plot:
     """Build a ``QUIVER`` grid of a 2-D right-hand side (``VECTOR_FIELD``).
 
     Shim over the ``vector_field`` transform; see
@@ -270,7 +270,7 @@ def phase_portrait_field(
     grid: int = 20,
     normalize: bool = True,
     components: Sequence[int | str] = (0, 1),
-) -> PlotSpec:
+) -> Plot:
     """Build a ``QUIVER`` field optionally overlaid with a trajectory.
 
     Shim over the ``phase_portrait_field`` transform; see
@@ -293,7 +293,7 @@ def cobweb(
     *,
     components: int | str = 0,
     label: str = "x",
-) -> PlotSpec:
+) -> Plot:
     """Build the 1-D cobweb staircase (``COBWEB``).
 
     Shim over the ``cobweb`` transform; see
@@ -302,7 +302,7 @@ def cobweb(
     return build_spec(series, "cobweb", components=components, label=label)
 
 
-def spacetime(source: Trajectory, *, transpose: bool = False) -> PlotSpec:
+def spacetime(source: Trajectory, *, transpose: bool = False) -> Plot:
     """Build a component-index vs time ``IMAGE`` (``SPACETIME``).
 
     Shim over the ``spacetime`` transform; see
@@ -316,7 +316,7 @@ def spatial_field(
     *,
     field_shape: tuple[int, ...] | None = None,
     components: int | str | None = None,
-) -> PlotSpec:
+) -> Plot:
     """Build a ``SPATIAL_FIELD`` spec from a field trajectory.
 
     Shim over the ``spatial_field`` transform; see

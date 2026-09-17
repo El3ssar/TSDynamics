@@ -26,7 +26,7 @@ Davidchack & Lai (1999), *Phys. Rev. E* 60, 6172.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 import numpy as np
 
@@ -34,7 +34,7 @@ from tsdynamics.errors import ConvergenceError, InvalidInputError, remedy
 from tsdynamics.families import ContinuousSystem, DiscreteMap
 
 from .._common import reject_data, reject_system
-from .._result import AnalysisResult, CollectionResult, ScalarResult
+from .._result import AnalysisResult, CollectionResult, ScalarResult, _ArrayBacked
 from .._result_json import _sig, _state
 from . import _common as _c
 from .fixed import _build_seeds, _eigenvalue_plane_spec, _stabilising_matrices
@@ -71,14 +71,22 @@ _SEED_FROM_NEAR_RETURN = (
 
 
 @dataclass(frozen=True)
-class PeriodicOrbit(AnalysisResult):
+class PeriodicOrbit(_ArrayBacked, AnalysisResult):
     r"""A periodic orbit with its Floquet/multiplier stability data.
+
+    **It IS its orbit** (v6): ``np.asarray(orbit)`` is the ``(n_points, dim)``
+    point array, ``orbit[0]`` is the first point, ``len(orbit)`` is how many
+    points it is stored as, and iteration walks them — so
+    ``periodic_orbits(sys)[0]`` hands back numbers and the class stays invisible,
+    showing itself only in the repr.  The stability data is one dot away:
+    :attr:`period`, :attr:`multipliers`, :attr:`stable`, :attr:`residual`.
 
     Attributes
     ----------
     points : ndarray
         The orbit, shape ``(n_points, dim)``: the ``period`` distinct points of a
         map cycle, or a dense sampling along one period of a flow cycle.
+        ``np.asarray(orbit)`` returns it.
     period : int or float
         The (minimal) period — an integer iteration count for a map, the time
         ``T`` for a flow.
@@ -94,6 +102,9 @@ class PeriodicOrbit(AnalysisResult):
     residual : float
         Closure residual ``‖f^p(x) − x‖`` (map) or ``‖φ_T(x0) − x0‖`` (flow).
     """
+
+    #: The numbers this result *is* — see :class:`_ArrayBacked`.
+    _array_field: ClassVar[str] = "points"
 
     points: np.ndarray = field(default_factory=lambda: np.empty(0), repr=False, compare=False)
     period: int | float = 0
@@ -240,23 +251,83 @@ class PeriodicOrbit(AnalysisResult):
 
 @dataclass(frozen=True, eq=False)
 class OrbitSet(CollectionResult):
-    """The set of periodic orbits found, behaving like a ``list``.
+    """The set of periodic orbits found, indexing to **numbers**.
 
-    A :class:`~tsdynamics.analysis._result.CollectionResult`: iterate it, index it
-    (``orbits[0]`` is a :class:`PeriodicOrbit`), take its ``len``, and read
-    :attr:`stable` / :attr:`unstable` sublists — while it carries ``.meta`` /
-    the readout ``repr`` / ``.to_frame()`` / the ``.plot`` seam.
+    A :class:`~tsdynamics.analysis._result.CollectionResult`: iterate it, index
+    it, take its ``len``, and read :attr:`stable` / :attr:`unstable` — while it
+    carries ``.meta`` / the readout ``repr`` / ``.to_frame()`` / the ``.plot``
+    seam.
+
+    ``orbits[0]`` is orbit 0's ``(p, dim)`` point array as a plain
+    :class:`numpy.ndarray` — an orbit *is* its points — so it has ``.shape``,
+    ``.tolist()`` and a numeric ``dtype``.  The
+    :class:`PeriodicOrbit` records are :attr:`details`, and
+    :attr:`periods`, :attr:`multipliers` and :attr:`is_stable` read the same
+    data column-wise, so nothing here needs a loop.
+
+    ``np.asarray(orbits)`` is the ``(n, dim)`` matrix of one *representative*
+    per orbit: orbits of differing period cannot stack, so the set arrays as its
+    members' centroids while a member arrays as its own points.
     """
 
-    @property
-    def stable(self) -> list[PeriodicOrbit]:
-        """The stable orbits in the set."""
-        return [o for o in self.items if o.stable]
+    def _item_value(self, item: Any) -> Any:
+        """Return orbit ``item``'s ``(p, dim)`` points — an orbit *is* its points.
+
+        The inherited hook would hand back the centroid (one representative per
+        member, which is what ``np.asarray(self)`` needs to stay rectangular);
+        for a periodic orbit the mean of the cycle is not a dynamical object,
+        and the points are.
+        """
+        if isinstance(item, PeriodicOrbit):
+            return np.asarray(item.points, dtype=float)
+        return super()._item_value(item)
 
     @property
-    def unstable(self) -> list[PeriodicOrbit]:
-        """The unstable orbits in the set."""
-        return [o for o in self.items if not o.stable]
+    def points(self) -> tuple[np.ndarray, ...]:
+        """Each orbit's ``(p, dim)`` point array, in order — what ``[]`` hands back.
+
+        A tuple rather than one array because orbits of different period are
+        ragged; ``np.asarray(self)`` is the rectangular centroid matrix.
+        """
+        return tuple(np.asarray(o.points, dtype=float) for o in self.items)
+
+    @property
+    def periods(self) -> np.ndarray:
+        """Every member's period, as one ``(n,)`` array (ints for a map, times for a flow)."""
+        return np.array([o.period for o in self.items])
+
+    @property
+    def multipliers(self) -> np.ndarray:
+        """Every member's stability multipliers, as one ``(n, ·)`` array (object if ragged)."""
+        rows = [np.asarray(o.multipliers).ravel() for o in self.items]
+        if rows and len({r.size for r in rows}) == 1:
+            return np.asarray(rows)
+        return np.asarray(rows, dtype=object)
+
+    @property
+    def is_stable(self) -> np.ndarray:
+        """Boolean mask over the members."""
+        return np.array([bool(o.stable) for o in self.items], dtype=bool)
+
+    @property
+    def stable(self) -> OrbitSet:
+        """The stable orbits, as an :class:`OrbitSet`.
+
+        Filtering keeps the result surface (v6): it used to hand back a plain
+        ``list``, so the repr, ``to_frame()`` and ``.plot`` were lost.
+        """
+        return self._select(stable=True)
+
+    @property
+    def unstable(self) -> OrbitSet:
+        """The unstable orbits, as an :class:`OrbitSet`."""
+        return self._select(stable=False)
+
+    def _select(self, *, stable: bool) -> OrbitSet:
+        """Return the sub-set with the given stability, as this same class."""
+        return OrbitSet(
+            items=tuple(o for o in self.items if bool(o.stable) is stable), meta=self.meta
+        )
 
     def _noun(self) -> str:
         """Return ``orbit`` — what one item of this collection is."""
@@ -352,8 +423,8 @@ class OrbitSet(CollectionResult):
 def periodic_orbits(
     system: Any,
     period: int | float | None = None,
-    *,
     region: Any = None,
+    *,
     n_seeds: int = 300,
     method: str = "newton",
     lam: float = 0.05,
@@ -363,7 +434,7 @@ def periodic_orbits(
     dedup_tol: float = 1e-6,
     prime: bool = True,
     max_c: int | None = None,
-    seed: int | None = None,
+    seed: int | None = 0,
     ic: Any = None,
     transient: float = 0.0,
     steps_per_period: int = 2000,
@@ -393,11 +464,26 @@ def periodic_orbits(
 
     Parameters
     ----------
-    system : DiscreteMap
-        The map.
-    period : int
-        The period ``p`` (``p=1`` returns the fixed points as one-point orbits).
-    region, n_seeds, dedup_tol, seed
+    system : DiscreteMap or ContinuousSystem
+        The map, or the flow whose limit cycle to shoot for.
+    period : int or float
+        A **map**: the period ``p``, a count of ITERATIONS (``p=1`` returns the
+        fixed points as one-point orbits) — required, since a map's orbits are the
+        fixed points of ``f^p`` and ``p`` picks which root problem to solve.
+        A **flow**: the period *guess* ``T``, in TIME UNITS — a flow's period is a
+        real unknown that shooting solves for, so this only has to be close.
+    region : Box, Grid, (lo, hi) pairs, optional
+        Search region, one ``(lo, hi)`` pair per state component — the same
+        reading every ``region=`` door in the library uses.  Positional, like
+        ``fixed_points``' and ``basins``'.
+    seed : int, default 0
+        RNG seed for the multi-start / burn-in sampling, so the orbits found are
+        reproducible.  Pass ``seed=None`` for an explicitly unseeded search.
+
+        .. versionchanged:: 6.0
+            Was ``None``, so the same call could find a different set of orbits
+            on each run.
+    n_seeds, dedup_tol
         Seeding controls (see :func:`~tsdynamics.analysis.fixedpoints.fixed_points`).
     method : {"newton", "sd", "dl"}
         Root finder.  ``"newton"`` (default) = Newton on ``f^p``;
@@ -412,6 +498,29 @@ def periodic_orbits(
         Iterations per seed/matrix.
     prime : bool
         Keep only orbits of *minimal* period ``p`` (drop divisor-period orbits).
+
+    Other Parameters
+    ----------------
+    ic : array-like, optional
+        Starting point.  A **flow**: the shooting guess for ``x0`` (and the
+        burn-in start when it is not on the cycle).  A **map**: unused.
+    transient : float, default 0.0
+        Dynamics discarded before the shooting burn-in lands, in **time units**
+        (flows only — the unit ``run(transient=)`` uses for a flow).  A map takes
+        none: its orbits are roots, not the tail of a run.
+    steps_per_period : int, default 2000
+        Integration steps per period guess in the shooting/monodromy march
+        (flows only).  Higher is more accurate and slower.
+    n_points : int, default 400
+        How many points of the converged cycle to return in
+        :attr:`PeriodicOrbit.points` (flows only) — a sampling resolution, not an
+        accuracy knob.
+    min_amplitude : float, default 1e-6
+        Below this peak-to-peak amplitude a converged "cycle" is an equilibrium
+        the shooting collapsed onto, and is rejected (flows only).
+
+        .. versionchanged:: 6.0
+            These five were on the signature and in no docstring at all.
 
     Returns
     -------
@@ -952,6 +1061,15 @@ def estimate_period(
     y, step = _coerce_signal(data, dt, components)
     if y.size < 8:
         raise ValueError("estimate_period needs at least 8 samples.")
+    # Finiteness FIRST, before anything reads the shape of the curve.  A series
+    # carrying NaNs has no autocorrelation zero-crossing, so it used to be
+    # reported as "no autocorrelation zero-crossing — signal may be aperiodic or
+    # too short for its period" — an accurate description of the symptom and a
+    # false diagnosis of the cause, sending the caller to `method='fft'` or to
+    # collect more data when the data they have is unusable.  Same sentence as
+    # every sibling estimator uses.
+    if not np.all(np.isfinite(y)):
+        raise ValueError("estimate_period: series contains non-finite values (nan/inf).")
     if detrend:
         y = y - y.mean()
     if np.allclose(y, 0.0):
@@ -964,20 +1082,27 @@ def estimate_period(
         lag, abscissa, ordinate, curve_label = _fft_period_lag(y, step)
     else:
         raise ValueError(f"method must be 'autocorrelation' or 'fft', got {method!r}.")
-    # The diagnostic curve (autocorrelation function or power spectrum) rides on
-    # ``meta`` so :func:`period_diagnostic` can draw a ``DIAGNOSTIC_CURVE`` of how
-    # the estimate was read off, without changing the result *type* (it stays a
-    # plain :class:`ScalarResult`).
+    del abscissa, ordinate, curve_label  # recomputed by period_diagnostic; see below
+    # ``meta`` is PROVENANCE, not payload (contract §4.2 rule 8).  The diagnostic
+    # curve (autocorrelation function or power spectrum) used to ride here so
+    # :func:`period_diagnostic` could draw it without changing the result type —
+    # which made ``to_dict()`` for ONE float 30 824 characters of JSON, almost
+    # all of it two arrays nobody asked for.  The diagnostic *builder* recomputes
+    # the curve instead: one autocorrelation, on a plotting path.
+    #
+    # The unit is not a property of the analysis, it is a property of the CALL.
+    # The value is ``lag * step``: with a sampling interval it is a time, without
+    # one it is a count of samples.  A constant "samples" in the result layer's
+    # table made the repr wrong by a factor of 1/dt for every ``Trajectory``
+    # caller — the docstring's own example printed "6.65372 samples" for 6.65372
+    # TIME UNITS (665 samples).  Record which one this call measured.
     return ScalarResult(
         value=float(lag * step),
         meta={
             "analysis": "estimate_period",
             "method": method,
-            "period": float(lag * step),
-            "curve_abscissa": abscissa,
-            "curve_ordinate": ordinate,
-            "curve_xlabel": curve_label[0],
-            "curve_ylabel": curve_label[1],
+            "unit": "samples" if step == 1.0 else "time units",
+            "dt": float(step),
         },
     )
 
@@ -1013,13 +1138,24 @@ def period_diagnostic(data: Any, **kwargs: Any) -> Any:
     from .. import _plotbuilder as pb
 
     result = estimate_period(data, **kwargs)
-    meta = dict(result.meta)
-    abscissa = np.asarray(meta.get("curve_abscissa", np.empty(0)), dtype=float)
-    ordinate = np.asarray(meta.get("curve_ordinate", np.empty(0)), dtype=float)
-    method = str(meta.get("method", "autocorrelation"))
-    xlabel = str(meta.get("curve_xlabel", "lag"))
-    ylabel = str(meta.get("curve_ylabel", "value"))
     period = float(result)
+    method = str(dict(result.meta).get("method", "autocorrelation"))
+    # The curve is RECOMPUTED here, not carried on the result's ``meta``: ``meta``
+    # is provenance, and parking two full arrays on it made ``to_dict()`` for one
+    # float 30 824 characters of JSON for every caller, including the ones who
+    # never plot.  One extra autocorrelation on a plotting path is the cheaper
+    # side of that trade.
+    y, step = _coerce_signal(
+        data, kwargs.get("dt"), cast("int | str | None", kwargs.get("components"))
+    )
+    if kwargs.get("detrend", True):
+        y = y - y.mean()
+    if method == "fft":
+        _, abscissa, ordinate, (xlabel, ylabel) = _fft_period_lag(y, step)
+    else:
+        _, abscissa, ordinate, (xlabel, ylabel) = _autocorr_period_lag(
+            y, cast("int | None", kwargs.get("max_delay")), step
+        )
 
     # Mark the detected period: at its lag (autocorrelation) or its frequency 1/T
     # (the spectral peak the FFT picked).

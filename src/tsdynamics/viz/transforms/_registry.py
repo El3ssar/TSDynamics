@@ -27,9 +27,10 @@ from typing import TYPE_CHECKING, Any
 
 from ... import registry as _registry
 from .._frames import FrameSpace, OverlayRole, space_arity
-from ..spec import PlotKind
+from ..spec import Plot, PlotKind
 from ._base import (
     PART_KEYS,
+    SUBJECT_KINDS,
     ExampleFactory,
     Geometry,
     Part,
@@ -44,7 +45,7 @@ from ._base import (
 from ._primitives import PRIMITIVES, get_primitive, primitive_names
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from ..spec import Layer, PlotSpec
+    from ..spec import Layer
 
 __all__ = [
     "ADMITTED_SERIES_DIAGNOSTICS",
@@ -52,6 +53,7 @@ __all__ = [
     "PART_KEYS",
     "T",
     "TransformCall",
+    "allow",
     "build_spec",
     "compatibility",
     "draw",
@@ -143,6 +145,7 @@ def register(
     default_primitive: str | None = None,
     ndim: int | Sequence[int] | None = None,
     role: OverlayRole | str = OverlayRole.BASE,
+    subjects: Iterable[str] = (),
     aliases: Iterable[str] = (),
     requires: str | None = None,
     presentation: Presentation | None = None,
@@ -212,6 +215,20 @@ def register(
         The coordinate-axis count(s).  Derived from ``frame``; pass it only for a
         geometry whose shape varies *within* one space (a spatial field is a 2-D
         lattice or a 1-D profile).
+    subjects : sequence of str, optional
+        **What this transform can be handed**, when the ``source`` default is
+        wrong.  The vocabulary is ``flow`` / ``map`` / ``system`` /
+        ``trajectory`` / ``array`` plus any analysis-result **class name**
+        (matched against the whole MRO, so ``"ScalingResult"`` admits
+        ``DimensionResult``).  Omit it and it is derived from ``source``.
+
+        Declare it whenever the derived answer would over-promise: a field
+        transform that needs a vector field says ``subjects=("flow",)``, and a
+        transform that reads an analysis result names the class.  What
+        ``ts.viz.transforms.find(subject=…)`` advertises, ``subject.plot.<TAB>``
+        lists and ``ts.plot`` pairs is exactly this declaration.
+
+        .. versionadded:: 6.0
     role : OverlayRole or str, optional
         Draw order by meaning — ``field`` under ``base`` under ``overlay`` — so
         an overlay call is order-free.  Default ``base``.
@@ -377,6 +394,7 @@ def register(
             example=example,
             labels=tuple(str(label) for label in labels),
             aliases=tuple(str(a) for a in aliases),
+            _subjects=_validated_subjects(key, subjects),
         )
         _registry.plot_transforms.register(
             key,
@@ -391,6 +409,29 @@ def register(
         return fn
 
     return decorator
+
+
+def _validated_subjects(key: str, subjects: Iterable[str]) -> tuple[str, ...]:
+    """Validate a declared ``subjects=`` tuple.
+
+    A word outside :data:`~tsdynamics.viz.transforms._base.SUBJECT_KINDS` that is
+    not capitalised cannot be a result class name, so it is a typo and raises at
+    **registration** — where it is a one-word fix — rather than silently making
+    the transform unreachable from every subject.
+    """
+    from tsdynamics.errors import InvalidParameterError
+
+    declared = tuple(str(s) for s in subjects)
+    if not declared:
+        return ()
+    bad = [s for s in declared if s not in SUBJECT_KINDS and not s[:1].isupper()]
+    if bad:
+        raise InvalidParameterError(
+            f"transform {key!r} declares subjects={bad}, which name neither a subject kind "
+            f"({', '.join(sorted(SUBJECT_KINDS))}) nor an analysis result class "
+            "(capitalised, e.g. 'ScalingResult')."
+        )
+    return tuple(dict.fromkeys(declared))
 
 
 #: ``alias -> registered name``.  An alias is a second *spelling*, never a second
@@ -410,8 +451,30 @@ plot_transform = register
 
 
 def names() -> list[str]:
-    """Return every registered transform name, in registration order."""
-    return _registry.plot_transforms.names()
+    """Return every registered transform name, **sorted**.
+
+    The first of the four shared registry verbs.  Sorted like its three siblings
+    (``primitives`` / ``renderers`` / ``themes``) — it used to be registration
+    order, which is import order, which is not an order a reader can predict, and
+    it leaked into the "Registered transforms: [...]" refusal.
+    """
+    return sorted(_registry.plot_transforms.names())
+
+
+#: Retired ``kind=`` spellings that name a *picture* the transform vocabulary
+#: draws under another name (or with an option).  A caller reaching for one of
+#: these is asking a reasonable question and must be answered with the line that
+#: works, not with a did-you-mean guess against the registry.
+_RETIRED_KIND_SPELLINGS: dict[str, str] = {
+    "phase_portrait_2d": "ts.plot(traj, 'phase_portrait', ndim=2)",
+    "phase_portrait_3d": "ts.plot(traj, 'phase_portrait', ndim=3)",
+    "bifurcation": "ts.plot(sys, 'orbit_diagram', param='r')",
+    "scatter": "ts.plot(traj, 'phase_portrait', primitive='points')",
+    "image": "ts.viz.draw({'x': x, 'y': y, 'z': z}, 'image')",
+    "line": "ts.viz.draw({'x': x, 'y': y}, 'line')",
+    "histogram": "ts.viz.draw({'x': values}, 'histogram')",
+    "composite": "ts.viz.grid(p1, p2, cols=2)",
+}
 
 
 def get(name: str) -> PlotTransform:
@@ -420,17 +483,26 @@ def get(name: str) -> PlotTransform:
     Raises
     ------
     tsdynamics.errors.InvalidParameterError
-        If no transform of that name is registered.  The message lists the
-        registered names, because a name that is *almost* right
-        (``"nullcline"`` for ``"nullclines"``) is the common case.
+        If no transform of that name is registered.  The message names the
+        spelling that works: a retired ``kind=`` value
+        (``"phase_portrait_2d"``) is answered with the runnable line, and an
+        almost-right name (``"nullcline"`` for ``"nullclines"``) with a
+        did-you-mean.
     """
     import difflib
 
-    from tsdynamics.errors import InvalidParameterError
+    from tsdynamics.errors import InvalidParameterError, remedy
 
     try:
         record = _registry.plot_transforms.get(_ALIASES.get(name, name))
     except (KeyError, ValueError):
+        line = _RETIRED_KIND_SPELLINGS.get(name)
+        if line is not None:
+            raise InvalidParameterError(
+                f"{name!r} is not a plot transform — it is a semantic PlotKind, the IR's "
+                "own vocabulary, which no longer names a picture at a plotting door. "
+                "One word, one picture:" + remedy(line)
+            ) from None
         close = difflib.get_close_matches(name, names(), n=1, cutoff=0.5) or [
             n for n in names() if n.lower().startswith(name.lower()[:4])
         ]
@@ -501,6 +573,85 @@ def find(
             continue
         out.append(record.name)
     return sorted(out)
+
+
+def allow(transform: str, *primitives: str) -> PlotTransform:
+    """Add primitive(s) to a registered transform's declared row; return the new record.
+
+    **The extension point's missing half.**  A primitive you register is usable
+    only where some transform's row admits it — and every shipped row is a frozen
+    tuple written before your primitive existed, so a new primitive could reach
+    *none* of the 39 in-tree transforms::
+
+        @ts.viz.primitives.register("stem", requires=("x", "y"), marks=("line", "points"))
+        def stem(part, **o): ...
+
+        ts.viz.transforms.allow("time_series", "stem")   # now it is a legal cell
+        ts.plot(traj, "time_series", primitive="stem")
+
+    The declared row stays the **default** authority (it decides
+    ``default_primitive``, and it is what :func:`compatibility` prints); this verb
+    is how a user extends it deliberately, in one line, instead of reaching into
+    a frozen dataclass.  The structural checks a registration makes — the
+    primitive exists, and it can draw in the transform's coordinate space(s) —
+    are re-run here, so ``allow`` cannot create a cell that is impossible.
+
+    Parameters
+    ----------
+    transform : str
+        The registered transform (or an alias).
+    *primitives : str
+        Registered primitive names to admit.
+
+    Returns
+    -------
+    PlotTransform
+        The updated record — also re-registered, so every door sees it.
+
+    Raises
+    ------
+    tsdynamics.errors.InvalidParameterError
+        If a primitive is not registered, or cannot draw in this transform's
+        coordinate space.
+    """
+    from dataclasses import replace as _dc_replace
+
+    from tsdynamics.errors import InvalidParameterError
+
+    record = get(transform)
+    wanted = tuple(str(p) for p in primitives)
+    if not wanted:
+        raise InvalidParameterError(
+            f"allow({transform!r}) needs at least one primitive name; "
+            f"ts.viz.primitives.names() lists them."
+        )
+    unknown = sorted(set(wanted) - set(primitive_names()))
+    if unknown:
+        raise InvalidParameterError(
+            f"unknown primitive(s) {unknown}; registered primitives are "
+            f"{sorted(primitive_names())}. Register yours first with "
+            "ts.viz.primitives.register(...)."
+        )
+    for name in wanted:
+        prim = PRIMITIVES[name]
+        bad = [s.value for s in record.frame if not prim.accepts_frame(s)]
+        if bad:
+            raise InvalidParameterError(
+                f"primitive {name!r} cannot draw in coordinate space(s) {bad}, which is "
+                f"where {record.name!r} draws (it draws in "
+                f"{sorted(s.value for s in prim.frames or ())}). This pair is structurally "
+                "impossible, so allowing it would only move the failure later."
+            )
+    updated = _dc_replace(record, primitives=record.primitives | frozenset(wanted))
+    _registry.plot_transforms.register(
+        record.name,
+        updated,
+        replace=True,
+        source=record.source,
+        default_primitive=record.default_primitive,
+        requires=record.requires,
+    )
+    return updated
 
 
 def resolve(spec: str) -> tuple[PlotTransform, str | None]:
@@ -847,24 +998,36 @@ def draw(
     /,
     *,
     labels: Sequence[str] = (),
-    title: str = "",
-    kind: PlotKind | str | None = None,
     frame: FrameSpace | str = FrameSpace.FREE,
-    **primitive_options: Any,
-) -> PlotSpec:
+    **options: Any,
+) -> Plot:
     """**Hand arrays to a primitive and get a `Plot` back** — no transform required.
 
     The other half of the escape hatch (:func:`geometry` gets the numbers, this
-    takes numbers back), and the door for the plot the library does not have::
+    takes numbers back), and the door for the plot the library does not have.
+    It speaks **the same vocabulary as every other plotting door** — the ten
+    style keys and the seventeen figure keywords::
 
-        ts.viz.draw({"x": r, "y": C}, "line", labels=("log r", "log C(r)"))
+        ts.viz.draw({"x": r, "y": C}, "line",
+                    xlabel="log r", ylabel="log C(r)",
+                    color="crimson", xscale="log", yscale="log", theme="dark")
 
         ts.viz.draw([{"x": r, "y": C,   "label": "data"},
                      {"x": r, "y": fit, "label": "fit",
                       "style": {"linestyle": "dashed"}},
                      {"x": r, "y": lo, "y2": hi, "primitive": "band",
                       "style": {"alpha": 0.2}}],
-                    "line", labels=("log r", "log C(r)"), title="correlation sum")
+                    "line", title="correlation sum")
+
+    .. versionchanged:: 6.0
+       Measured before: **all ten style keys and sixteen of the seventeen figure
+       keywords raised**, and the message blamed the primitive — *"primitive
+       'line' does not accept keyword(s) ['color']; it accepts (none)"* — for a
+       word the door had simply never peeled.  Only ``title=`` worked.  The
+       ``kind=`` keyword was **removed**: it was dead by construction (passing it
+       skipped the fallback that supplies a kind, so ``spec_of`` raised before the
+       line that would have used it — *every* value raised), and a picture is
+       named by its transform now, not by a second kind vocabulary.
 
     Because it returns a :class:`~tsdynamics.viz.spec.Plot`, it **composes with
     everything** — that is closure, and it is why this is a function rather than
@@ -884,19 +1047,20 @@ def draw(
         How to draw it — ``ts.viz.primitives.names()`` lists them.  Defaults to
         ``"line"`` for a mapping (and to the geometry's own default otherwise).
     labels : sequence of str, optional
-        Axis labels, in axis order.
-    title : str, optional
-        Figure title.
-    kind : PlotKind or str, optional
-        The semantic kind to stamp.  Defaults to the primitive's own mark, which
-        is the honest answer for arrays that carry no further meaning.
+        The **frame's** axis names, in axis order — what the overlay check
+        compares, and the same argument :func:`make_frame` takes.  They double as
+        the drawn axis labels when no ``xlabel=`` / ``ylabel=`` is given; those
+        figure keywords win, being presentation rather than coordinate identity.
     frame : FrameSpace or str, optional
         The coordinate space to claim.  Defaults to
         :data:`~tsdynamics.viz._frames.FrameSpace.FREE` — *"I did not say"* —
         which overlays with anything, because a caller who hand-built the arrays
         made no coordinate claim to violate.
-    **primitive_options
-        Forwarded to the primitive (``bins=``, ``levels=``, …).
+    **options
+        Style keywords (``color`` / ``linewidth`` / ``alpha`` / ``cmap`` / …),
+        figure keywords (``title`` / ``xlabel`` / ``xlim`` / ``xscale`` /
+        ``legend`` / ``theme`` / …) and the chosen primitive's own options
+        (``bins=``, ``levels=``, …).
 
     Returns
     -------
@@ -904,20 +1068,84 @@ def draw(
     """
     from dataclasses import replace as _replace
 
-    geom = data if isinstance(data, Geometry) else _hand_built(data, frame, labels, title)
+    from ..spec import FIGURE_KEYS, apply_figure_keywords, split_figure_keywords
+    from ..style import normalize_style, style_names
+
+    figure = split_figure_keywords(options)
+    style = {k: options.pop(k) for k in list(options) if k in style_names()}
+    _reject_unknown_draw_options(primitive, options)
+
+    geom = (
+        data
+        if isinstance(data, Geometry)
+        else _hand_built(data, frame, labels, str(figure.get("title", "")))
+    )
     transform = record_for(geom)
-    layers = lower(geom, primitive, **primitive_options)
+    layers = lower(geom, primitive, **options)
 
     # A hand-built geometry carries no semantic kind and no transform declared one
     # for it, so the honest kind is the mark the chosen primitive emitted.
-    if kind is None and geom.kind is None and transform.kind is None:
+    if geom.kind is None and transform.kind is None:
         transform = _replace(
             transform, kind=PlotKind(str(layers[0].kind)) if layers else PlotKind.LINE
         )
     spec = spec_of(geom, transform, layers)
-    if kind is not None:
-        spec.kind = PlotKind(kind)
+    if style:
+        canon = normalize_style(style)
+        for layer in spec.layers:
+            layer.style = {**layer.style, **canon}
+    apply_figure_keywords(spec, {k: v for k, v in figure.items() if k in FIGURE_KEYS})
     return spec
+
+
+def _reject_unknown_draw_options(primitive: str | None, options: dict[str, Any]) -> None:
+    """Answer a word :func:`draw` cannot use — by name, in the shared vocabulary text.
+
+    ``kind=`` gets its own sentence: it was dead by construction (see
+    :func:`draw`), and a caller who typed it was reaching for a *picture*, which
+    is named by a transform now rather than by a second kind vocabulary.
+    Everything else is checked against the chosen primitive's declared options
+    **before** it reaches the primitive, so a style typo (``colour=``) is
+    answered with the style vocabulary instead of *"primitive 'line' ... accepts
+    (none)"* — a sentence about the wrong thing.
+    """
+    from tsdynamics.errors import InvalidParameterError, remedy
+
+    from ..spec import _unknown_plot_keyword_message
+
+    if "kind" in options:
+        value = options.pop("kind")
+        raise InvalidParameterError(
+            f"draw() has no kind= keyword (you passed kind={value!r}). A hand-built "
+            "geometry's honest kind is the mark its primitive emits — there is nothing "
+            "else it could be. Name the PICTURE with a transform instead:"
+            + remedy(f"ts.plot(subject, {value!r})")
+        )
+    if not options:
+        return
+    accepted: set[str] = {"primitive_options"}
+    if primitive is None:
+        accepted |= set().union(*(p.options for p in PRIMITIVES.values()))
+    else:
+        accepted |= set(get_primitive(primitive).options)
+    unknown = sorted(set(options) - accepted)
+    if not unknown:
+        return
+    # A word that IS a primitive option, just not *this* primitive's, is a
+    # different mistake from a word in no vocabulary at all — and it has a
+    # one-word fix, so it keeps its own sentence naming who does take it.
+    elsewhere = {
+        bad: sorted(n for n, prim in PRIMITIVES.items() if bad in prim.options) for bad in unknown
+    }
+    misplaced = {bad: owners for bad, owners in elsewhere.items() if owners}
+    if misplaced:
+        mine = sorted(get_primitive(primitive).options) if primitive is not None else []
+        told = "; ".join(f"{bad}= is an option of {', '.join(o)}" for bad, o in misplaced.items())
+        raise InvalidParameterError(
+            f"primitive {primitive!r} does not accept keyword(s) {sorted(misplaced)}; "
+            f"it accepts {', '.join(mine) or '(none)'}. {told}."
+        )
+    raise InvalidParameterError(_unknown_plot_keyword_message(unknown))
 
 
 def _hand_built(
@@ -946,9 +1174,7 @@ def _hand_built(
     )
 
 
-def build_spec(
-    subject: Any, name: str, /, *, primitive: str | None = None, **options: Any
-) -> PlotSpec:
+def build_spec(subject: Any, name: str, /, *, primitive: str | None = None, **options: Any) -> Plot:
     """Compute *and* draw — the one path every front door goes through.
 
     Parameters
@@ -967,7 +1193,7 @@ def build_spec(
 
     Returns
     -------
-    PlotSpec
+    Plot
     """
     transform, dotted = resolve(name)
     if dotted is not None and primitive is not None and dotted != primitive:

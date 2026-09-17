@@ -198,6 +198,48 @@ class RQAResult(AnalysisResult):
             f"L_max = {self.max_diagonal_length} · ENTR = {self.diagonal_entropy:.3f}"
         )
 
+    @property
+    def applicable(self) -> bool:
+        r"""Whether there were any recurrence points to quantify at all.
+
+        ``False`` when the matrix holds no recurrence point (``RR = 0``) or no
+        diagonal line was counted: ``DET``/``LAM``/``ENTR`` are then ``0`` by
+        vacuity, not by measurement.  Before v6 that vacuum printed the full
+        verdict — ``rqa(np.random.normal(size=300), threshold=1e-12)`` returned
+        ``DET = 0.000 … stochastic (few diagonal lines)``, a confident reading of
+        a matrix with zero points — the same defect
+        :attr:`~tsdynamics.analysis.results.WadaResult.applicable` was introduced
+        for, one subpackage away.
+
+        Returns
+        -------
+        bool
+        """
+        rr = float(self.recurrence_rate)
+        return bool(np.isfinite(rr) and rr > 0.0 and np.asarray(self.diagonal_lengths).size > 0)
+
+    @property
+    def deterministic(self) -> bool | None:
+        """Whether the diagonal statistics say the signal is deterministic.
+
+        ``None`` — never ``False`` — in the unnamed middle of the ``DET`` range,
+        and whenever the readout is not :attr:`applicable`.
+
+        Returns
+        -------
+        bool or None
+        """
+        if not self.applicable:
+            return None
+        det = float(self.determinism)
+        if not np.isfinite(det):
+            return None
+        if det >= _DETERMINISTIC_DET:
+            return True
+        if det <= _STOCHASTIC_DET:
+            return False
+        return None
+
     def _interpretation(self) -> str | None:
         """Name the structure the diagonal statistics show, when it is clear-cut.
 
@@ -205,16 +247,18 @@ class RQAResult(AnalysisResult):
         deterministic signal repeats stretches of its trajectory and drives it
         toward 1, while uncorrelated noise leaves only isolated points and drives
         it toward 0 (Marwan et al., 2007).  Both regimes are named only at the
-        ends of the range; the middle is left unnamed rather than rounded.
+        ends of the range; the middle is left unnamed rather than rounded — and
+        an **empty** matrix is named as such rather than read as "stochastic".
         """
-        det = float(self.determinism)
-        if not np.isfinite(det):
+        if not self.applicable:
+            return (
+                f"not applicable — no recurrence points at ε = {_sig(self.epsilon, 4)}, "
+                "so there are no lines to count"
+            )
+        verdict = self.deterministic
+        if verdict is None:
             return None
-        if det >= _DETERMINISTIC_DET:
-            return "deterministic"
-        if det <= _STOCHASTIC_DET:
-            return "stochastic (few diagonal lines)"
-        return None
+        return "deterministic" if verdict else "stochastic (few diagonal lines)"
 
     def _details(self) -> tuple[str, ...]:
         """Return the settings the measures were computed under."""
@@ -222,6 +266,19 @@ class RQAResult(AnalysisResult):
             f"(N={self.size}, RR={self.recurrence_rate:.3f}, ε={_sig(self.epsilon, 4)}, "
             f"l_min={self.min_diagonal}, v_min={self.min_vertical})",
         )
+
+    def _derived(self) -> dict[str, Any]:
+        """Export the applicability flag and the verdict the repr reports.
+
+        ``determinism`` is re-emitted as ``None`` when the readout does not
+        apply, matching
+        :meth:`~tsdynamics.analysis.results.WadaResult._derived`: a number that
+        was not measured must not export as ``0.0``.
+        """
+        data: dict[str, Any] = {"applicable": self.applicable, "deterministic": self.deterministic}
+        if not self.applicable:
+            data["determinism"] = None
+        return data
 
 
 def _line_stats(lengths: np.ndarray, min_length: int) -> tuple[float, float, int]:

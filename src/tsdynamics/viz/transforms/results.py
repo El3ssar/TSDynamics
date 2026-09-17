@@ -36,7 +36,7 @@ from ..spec import PlotKind
 from ._base import Geometry, Part, Presentation, make_frame
 from ._registry import register
 
-__all__ = ["basins", "ensemble_fan", "orbit_diagram", "recurrence"]
+__all__ = ["basins", "ensemble_fan", "orbit_diagram", "poincare_section", "recurrence"]
 
 
 def _demo_orbit(n: int = 160) -> Any:
@@ -69,6 +69,7 @@ def _demo_bistable() -> Any:
     source="data",
     frame=FrameSpace.GRID2,
     kind=PlotKind.RECURRENCE_PLOT,
+    aliases=("recurrence_plot",),  # the PlotKind spelling, so one word reaches one picture
     primitives=("image", "contour"),
     role=OverlayRole.FIELD,
     labels=("i", "j"),
@@ -120,6 +121,94 @@ def recurrence(subject: Any, *, recurrence_rate: float = 0.05, **kwargs: Any) ->
 
 
 # ---------------------------------------------------------------------------
+# poincare_section
+# ---------------------------------------------------------------------------
+
+
+@register(
+    name="poincare_section",
+    # It marches the flow until the orbit crosses the plane — points that are in
+    # no trajectory you already hold.
+    source="model",
+    subjects=("flow", "PoincareSection"),
+    frame=FrameSpace.STATE2,
+    kind=PlotKind.POINCARE_SECTION,
+    primitives=("points", "density"),
+    role=OverlayRole.OVERLAY,
+    presentation=Presentation(aspect="equal"),
+    analysis="tsdynamics.analysis.poincare_section",
+    example=lambda primitive: (_demo_flow(), {"plane": ("y", 0.0, "up"), "crossings": 200}),
+    doc="Where an orbit pierces a plane — the flow's discrete portrait.",
+)
+def poincare_section(
+    subject: Any,
+    *,
+    plane: Any = None,
+    crossings: int = 500,
+    **kwargs: Any,
+) -> Geometry:
+    """Draw the Poincaré section of a flow — the crossings, in the section plane.
+
+    **The view that had no name.**  A section was reachable only through
+    ``kind="poincare_section"``, a second vocabulary parallel to the transform
+    registry: it could not be overlaid, gridded, re-primitived (``"density"`` is
+    what a section of ten thousand crossings needs) or discovered through
+    ``ts.viz.transforms.names()``.  Registering it is what lets ``kind=`` retire.
+
+    Parameters
+    ----------
+    subject : ContinuousSystem or PoincareSection
+        The flow to cut, or a section already measured.
+    plane : tuple, optional
+        The cutting plane, in the library's one spelling — ``("y", 0.0)``,
+        ``("y", 0.0, "up")`` or ``(normal, offset)``.  Ignored (and unnecessary)
+        when a measured section is handed in.
+    crossings : int, optional
+        How many crossings to record.
+    **kwargs
+        Forwarded to :func:`tsdynamics.analysis.poincare_section`
+        (``direction``, ``skip_crossings``, ``dt``, ``seed``, …).
+
+    Returns
+    -------
+    Geometry
+        ``state2``, carrying the two in-plane axes of largest spread — the same
+        projection the section's own default view draws.
+    """
+    from tsdynamics.errors import InvalidParameterError
+
+    if hasattr(subject, "y") and hasattr(subject, "t"):
+        section = subject  # already measured
+    else:
+        if plane is None:
+            raise InvalidParameterError(
+                "poincare_section needs the plane to cut: one (axis, value[, direction]) "
+                "pair, e.g. ts.plot(rossler, 'poincare_section', plane=('y', 0.0, 'up'))."
+            )
+        from tsdynamics.analysis import poincare_section as _section
+
+        section = _section(subject, plane=plane, crossings=crossings, **kwargs)
+    i, j = section._section_axes()
+    names = section.variables or tuple(f"y{k}" for k in range(section.dim))
+    labels = (str(names[i]), str(names[j]))
+    return Geometry(
+        "poincare_section",
+        make_frame(FrameSpace.STATE2, labels),
+        channels={"x": section.y[:, i], "y": section.y[:, j]},
+        axis_labels=labels,
+        title=section._title("Poincaré section"),
+        meta=dict(section.meta),
+    )
+
+
+def _demo_flow() -> Any:
+    """Return the Rössler system — the section example everyone recognises."""
+    from tsdynamics.systems.continuous.chaotic_attractors import Rossler
+
+    return Rossler()
+
+
+# ---------------------------------------------------------------------------
 # orbit_diagram
 # ---------------------------------------------------------------------------
 
@@ -129,6 +218,7 @@ def recurrence(subject: Any, *, recurrence_rate: float = 0.05, **kwargs: Any) ->
     # point set cannot produce one — ``source="data"`` meant a Trajectory was
     # accepted and then died on ``subject.params``.
     source="model",
+    subjects=("system", "OrbitDiagram"),
     frame=FrameSpace.PARAM1,
     kind=PlotKind.ORBIT_DIAGRAM,
     primitives=("points", "density"),
@@ -186,6 +276,20 @@ def orbit_diagram(
         result, swept = subject, np.asarray(subject.values, dtype=float)
         param = str(subject.meta.get("param", param))
     else:
+        if param not in subject.params:
+            # ``param`` defaults to ``"r"`` (the logistic map's), so every system
+            # that does not happen to have one leaked ``KeyError: 'r'`` — the
+            # internal spelling of a parameter the caller never chose.
+            from tsdynamics.errors import InvalidParameterError, remedy
+
+            declared = ", ".join(subject.params) or "(none)"
+            raise InvalidParameterError(
+                f"orbit_diagram sweeps ONE parameter and {type(subject).__name__} has no "
+                f"{param!r}; its parameters are {declared}. Name the one to sweep:"
+                + remedy(
+                    f"ts.plot(system, 'orbit_diagram', param={next(iter(subject.params), 'a')!r})"
+                )
+            )
         if values is None:
             # Sweeping ``0.5r … 1.5r`` ran the Logistic map to r = 5.85, where
             # every orbit diverges: the analysis warned ~40 times and handed back

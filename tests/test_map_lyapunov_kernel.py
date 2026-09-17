@@ -25,6 +25,7 @@ import pytest
 pytest.importorskip("tsdynamics._rust")
 
 import tsdynamics as ts
+from tsdynamics.errors import InvalidParameterError
 from tsdynamics.systems import Henon, Ikeda, Logistic, Tinkerbell
 
 
@@ -103,12 +104,34 @@ def test_reortho_interval_is_answer_preserving() -> None:
 
 
 def test_max_lyapunov_map_equals_kernel_top_exponent() -> None:
-    """``max_lyapunov`` on a map is the kernel's leading exponent (top of the spectrum)."""
-    mle = float(ts.analysis.max_lyapunov(Henon(ic=[0.1, 0.1]), n=2000, steps_per=5))
-    # The map path runs the same kernel with steps = n*steps_per, k=1 from the
-    # burnt-in state; the result must equal the leading spectrum exponent to a few
-    # 1e-3 (same estimator, the transient placement aside) and the literature value.
+    """``max_lyapunov`` on a map IS ``lyapunov_spectrum(k=1)[0]`` — bit for bit.
+
+    Not "agrees to a tolerance": v6 folded the map path into a *call* to
+    ``lyapunov_spectrum``, so there is one estimator and the two doors cannot
+    drift.  They used to: ``n`` counted rescaling cycles of ten iterates at one
+    door and iterations at the other, so one nominal horizon gave 0.4197 here
+    and 0.4160 there while doing ten times the work.
+
+    Handed the same start state and no burn-in, the two numbers are the same
+    float.  The only thing left between them is ``max_lyapunov``'s own IC
+    policy (burn in, then delegate from the landed state), which is a documented
+    difference in *where on the attractor* you start, not in the estimator.
+    """
+    x0 = [-0.53024229, 0.29852734]  # a point on the Hénon attractor
+    mle = float(ts.analysis.max_lyapunov(Henon(), n=10_000, ic=x0, transient=0))
+    top = float(ts.analysis.lyapunov_spectrum(Henon(), k=1, n=10_000, ic=x0)[0])
+    assert mle == top, (mle, top)
     assert abs(mle - 0.419) < 0.05, mle
+
+
+def test_max_lyapunov_map_refuses_the_cycle_length_it_no_longer_has() -> None:
+    """``steps_per`` was the two-trajectory cycle length; the QR path has no cycle.
+
+    Ignoring the word would leave ``n`` meaning ``n * steps_per`` to the caller
+    and ``n`` to the library — the exact disagreement the fold removed.
+    """
+    with pytest.raises(InvalidParameterError, match="Count iterations with n instead"):
+        ts.analysis.max_lyapunov(Henon(ic=[0.1, 0.1]), n=2000, steps_per=5)
 
 
 def test_max_lyapunov_continuous_path_unchanged() -> None:

@@ -91,15 +91,24 @@ att = ts.analysis.attractors(sys, region, resolution=40, n_seeds=200,
                          dt=0.5, max_steps=2000, seed=0)
 
 att                         # AttractorSet(2 attractors, 0/200 diverged)
-[a.center for a in att]     # ≈ [[-1.0, 0.0], [1.0, 0.0]]  — the two well bottoms
-att.centers                 # the same, as an (n_attractors, dim) array
+att[0]                      # ≈ [-1.0, 0.0]   — indexing gives the CENTRE, an array
+att.centers                 # both of them, as an (n_attractors, dim) array
+att.details[0].cells        # the record, when you want the diagnostics
+att.by_id(1).center         # ...or by the label you read off a basin image
 ```
 
 Flows step by `dt` between cell checks, maps by one iteration. A raised or
 non-finite step is treated as divergence; a finite excursion outside the box is
 counted by a lost-counter, and a trajectory that never settles within
-`max_steps` is reported as diverged. Each `Attractor` carries its sampled
-`.points`, its representative `.center`, and the number of `.cells` it occupies.
+`max_steps` is reported as diverged.
+
+**Indexing an `AttractorSet` gives you numbers, not a class to learn.** `att[i]`
+is the `(dim,)` centre of attractor `i` and `np.asarray(att)` is the whole
+`(n, dim)` block, so a located attractor drops straight into arithmetic. The
+records are still there, one word away and aligned with the same index:
+`att.details[i]` is the `Attractor`, carrying its sampled `.points`, its
+`.center`, and the number of `.cells` it occupies. `att.by_id(k)` is the same
+record by the label painted into a basin image.
 
 !!! note "Tune `resolution` to the attractor scale"
     Too coarse and the tessellation merges genuinely distinct attractors; too

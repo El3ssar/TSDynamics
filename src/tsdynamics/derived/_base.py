@@ -14,6 +14,27 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 __all__ = ["DerivedSystem"]
 
 
+def _reject_wrapper_keywords(
+    view: Any, unknown: dict[str, Any], *, accepted: tuple[str, ...]
+) -> None:
+    """Refuse a leftover keyword **in the wrapper's own name**.
+
+    A wrapper's ``run`` used to forward its leftovers straight into the inner
+    system's ``reinit``, so ``pmap.run(steps=3, nonsense_kw=1)`` was reported as
+    ``nonsense_kw is not a valid Rossler.reinit() keyword`` — a method and a class
+    the caller never mentioned.  The word reached ``PoincareMap.run``; that is the
+    door that must answer for it.
+    """
+    if not unknown:
+        return
+    from tsdynamics.families._kwargs import run_keyword_error
+
+    bad = next(iter(unknown))
+    raise run_keyword_error(
+        view, bad, unknown[bad], family=view.family, accepted=accepted, verb="run"
+    )
+
+
 class DerivedSystem:
     """
     Base for wrappers that present an existing system through a new lens.
@@ -32,19 +53,28 @@ class DerivedSystem:
         self.system = system
 
     def __getattr__(self, name: str) -> Any:
-        """Teach the one retired plot name; leave every other miss verbatim.
+        """Answer a miss with the same teaching a system gives.
 
-        The five wrappers are plot *subjects* like any other, so a user who
-        reaches for the pre-v6 ``to_plot_spec`` on a section must get the same
-        two lines a system or a trajectory gives them, not a bare miss.  Nothing
-        else is intercepted — a wrapper does **not** forward unknown attributes
-        to the inner system, and adding a teaching branch must not start.
+        A wrapper is a *system* as far as a user is concerned — ``pm.integrate``
+        used to print a bare miss while ``lor.integrate`` printed the retired
+        name, its reason and the line to type, so the wrappers were the one
+        place in the library where guessing taught nothing.  This routes through
+        the very same builder (:func:`~tsdynamics.families.base._absent_name_error`),
+        which covers the retired verbs, the four deleted analysis namespaces and
+        the near-miss ranking.
+
+        A wrapper still does **not** forward unknown attributes to the inner
+        system: this raises, it never delegates.
         """
+        if name.startswith("_") or name in ("system",):
+            raise AttributeError(f"{type(self).__name__!r} object has no attribute {name!r}")
         if name == "to_plot_spec":
             from tsdynamics.utils.plot_namespace import plot_seam_error
 
             raise plot_seam_error(type(self).__name__, "view")
-        raise AttributeError(f"{type(self).__name__!r} object has no attribute {name!r}")
+        from tsdynamics.families.base import _absent_name_error
+
+        raise _absent_name_error(self, name)
 
     # --- forwarded surface ---
 
@@ -117,7 +147,12 @@ class DerivedSystem:
         every family and every wrapper: ``run()`` is a fresh run from ``ic``, and
         ``step()`` is the one that continues.
         """
-        raise NotImplementedError
+        raise NotImplementedError(
+            f"{type(self).__name__} inherits run() but does not implement it. "
+            "A wrapper that cannot produce a trajectory must bind "
+            "tsdynamics.families.base.Absent instead, so hasattr() and "
+            "isinstance(view, System) tell the truth."
+        )
 
     # --- visualization seam ---
 

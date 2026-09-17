@@ -108,8 +108,8 @@ limit cycle around it:
 
 ```python
 fps = ts.analysis.fixed_points(fhn)
-fps[0].x        # ≈ [-0.805, -0.131]  — the single equilibrium
-fps[0].stable   # False → the orbit spirals out onto a limit cycle
+fps[0]            # ≈ [-0.805, -0.131]  — the single equilibrium, as an array
+fps.is_stable[0]  # False → the orbit spirals out onto a limit cycle
 
 ts.analysis.estimate_period(fhn.run(final_time=400, dt=0.05, ic=[-1.0, 1.0])["v"], dt=0.05)
 # ≈ 39  — the relaxation-oscillation period
@@ -252,7 +252,7 @@ def step(u, n):                      # your stepper, whatever it is inside
     return [x]
 
 sysm = ts.WrappedSystem(step, dim=1, family="map",
-                        initial=[0.5], variables=("x",))
+                        ic=[0.5], variables=("x",))
 
 traj = sysm.run(500)                       # a Trajectory, like any other family
 float(ts.analysis.max_lyapunov(sysm, ic=[0.3]))     # ≈ 0.5 — chaotic

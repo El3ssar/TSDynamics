@@ -175,7 +175,8 @@ print(orbits)
 # OrbitSet  1 orbit of period 6 · 1 stable, 0 unstable   (VanDerPolCycle)
 #     [0] T = 6.66329  stable  |μ|max = 1  x0 = [ 2.0082 -0.0416]
 
-orb = orbits[0]
+orbits[0]        # the orbit itself, a (n_points, dim) array
+orb = orbits.details[0]
 orb.period       # ≈ 6.6633  (the μ = 1 Van der Pol limit-cycle period)
 orb.multipliers  # one trivial multiplier ≈ 1 (the flow direction) …
 orb.stable       # … and the other inside the unit circle → stable
@@ -218,13 +219,29 @@ Both estimators refine the peak parabolically to sub-sample resolution, so a
 coarse grid still gives an accurate period. The result is a `ScalarResult` —
 `float(result)` is the number, and it carries the diagnostic curve for plotting.
 
-## The result records
+## The numbers, and the records behind them
+
+**Indexing a result set gives you an array, never a class to learn.** `fps[i]` is
+the `(dim,)` point, `orbits[i]` is the `(p, dim)` orbit, and `np.asarray(...)` is
+the whole block — so a located root drops straight into arithmetic. The
+per-member quantities are vectorised alongside:
 
 ```python
-fp = ts.analysis.fixed_points(ts.systems.Henon())[0]
+fps = ts.analysis.fixed_points(ts.systems.Henon())
+fps[0]            # the first root, a (dim,) array
+fps.points        # every root, (n, dim)
+fps.eigenvalues   # every Jacobian spectrum, (n, dim)
+fps.is_stable     # (n,) booleans
+```
+
+The records are one word away, aligned with the same index — reach for them when
+you want the diagnostics of *one* member:
+
+```python
+fp = ts.analysis.fixed_points(ts.systems.Henon()).details[0]
 fp.x, fp.eigenvalues, fp.stable, fp.continuous
 
-orb = ts.analysis.periodic_orbits(ts.systems.Logistic(params={"r": 3.2}), 2)[0]
+orb = ts.analysis.periodic_orbits(ts.systems.Logistic(params={"r": 3.2}), 2).details[0]
 orb.points        # the orbit, shape (n_points, dim)
 orb.period        # int p (maps) or float T (flows)
 orb.multipliers   # eig(Df^p) (maps) or Floquet multipliers (flows)

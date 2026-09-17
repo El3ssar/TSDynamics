@@ -22,15 +22,40 @@ The whole surface, in one screen
     ts.viz.styles                                # the style vocabulary, printed
     ts.viz.compatibility()                       # the declared transform x primitive matrix
 
+One name per picture
+--------------------
+**A picture is named by its transform, positionally** — ``ts.plot(traj,
+"time_series")``, ``ts.plot(rossler, "poincare_section", plane=("y", 0.0))``,
+``ts.plot(traj, "phase_portrait", ndim=2)``.  :class:`~tsdynamics.viz.spec.PlotKind`
+is the IR's own vocabulary and is not a word you type at a plotting door; a
+retired ``kind=`` spelling is answered with the transform line that works.
+
+Composing is three operators and one arranger
+---------------------------------------------
+``a + b`` overlays, ``a | b`` puts them side by side, ``a / b`` stacks them, and
+:func:`grid` arranges any number into a 2-D panel grid.  Every one of them takes
+and returns a :class:`~tsdynamics.viz.spec.Plot`, so they nest::
+
+    (ts.plot(traj, "phase_portrait") | ts.plot(traj, "psd")) / ts.plot(traj)
+    ts.viz.grid(p1, p2, p3, cols=2, share_color=True).save("figure.pdf")
+
+A one-row grid **is** a row: ``ts.viz.grid(a, b, cols=2)`` and ``a | b`` build
+the same arrangement.
+
 Thirteen names, and the shape repeats
 -------------------------------------
 Four registries (``transforms`` / ``primitives`` / ``renderers`` / ``themes``)
 answer to the **same four verbs** — ``register`` / ``names`` / ``find`` / ``get``
-— so learning one teaches the rest.  Two drawing doors (:func:`plot`,
-:func:`draw`), one panel arranger (:func:`grid`), one received type
-(:class:`~tsdynamics.viz.spec.Plot`), the arrays escape hatch
-(:func:`geometry`), the matrix (:func:`compatibility`), the style table
-(:data:`styles`), the loader (:func:`load`), and the IR one dot away
+— so learning one teaches the rest: each is callable (``ts.viz.transforms()`` is
+its listing), each ``names()`` is sorted, and each ``find(text, /, **filters)``
+takes free text and returns **names** (``get(name)`` is how you reach a record).
+:data:`styles` answers the same listing verbs and deliberately refuses
+``register``: it is a contract with the backends, not an extension point.
+
+Two drawing doors (:func:`plot`, :func:`draw`), one panel arranger
+(:func:`grid`), one received type (:class:`~tsdynamics.viz.spec.Plot`), the
+arrays escape hatch (:func:`geometry`), the matrix (:func:`compatibility`), the
+style table (:data:`styles`), the loader (:func:`load`), and the IR one dot away
 (:mod:`~tsdynamics.viz.spec`).
 
 Everything else still exists — importable, reachable, tested.  It just stops
@@ -43,6 +68,7 @@ group and out-of-tree plot transforms through ``tsdynamics.plot_transforms``;
 """
 
 import os
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
 from .. import registry as _registry
@@ -189,8 +215,22 @@ class _PrimitiveRegistry:
 
         return get_primitive(name)
 
-    def find(self, *, requires: str | None = None, mark: str | None = None) -> list[str]:
-        """Return the primitives that consume ``requires`` and/or emit ``mark``."""
+    def find(
+        self, what: str = "", /, *, requires: str | None = None, mark: str | None = None
+    ) -> list[str]:
+        """Return the **names** of the primitives matching a query and filters.
+
+        The fourth shared registry verb, in the shape all four now have::
+
+            ts.viz.primitives.find("line")        # free text over name + summary
+            ts.viz.primitives.find(requires="z")  # what can draw a height channel
+            ts.viz.primitives.find(mark="image")
+
+        .. versionchanged:: 6.0
+            Took no positional argument, so ``primitives.find("line")`` raised
+            ``TypeError: find() takes 1 positional argument but 2 were given``.
+        """
+        text = what.lower()
         out = []
         for name in self.names():
             record = self.get(name)
@@ -198,20 +238,55 @@ class _PrimitiveRegistry:
                 continue
             if mark is not None and mark not in [str(m) for m in getattr(record, "marks", ())]:
                 continue
+            if text and text not in name.lower() and text not in getattr(record, "doc", "").lower():
+                continue
             out.append(name)
         return out
 
-    def register(self, *args: Any, **kwargs: Any) -> Any:
-        """Register a new primitive (forwards to the primitives module's decorator)."""
-        from . import transforms as _t
+    def register(
+        self,
+        name: str,
+        /,
+        *,
+        requires: Sequence[str] = (),
+        marks: Sequence[Any] = (),
+        frames: Sequence[Any] | None = None,
+        options: Sequence[str] = (),
+        emits_frame: Any = None,
+        doc: str = "",
+        replace: bool = False,
+    ) -> Any:
+        """Register a **new way of drawing** — one decorator, zero private imports.
 
-        hook = getattr(_t, "register_primitive", None)
-        if hook is None:
-            raise NotImplementedError(
-                "registering a new primitive is not wired yet; the four in-tree "
-                "primitive families are listed by ts.viz.primitives.names()."
-            )
-        return hook(*args, **kwargs)
+        ::
+
+            @ts.viz.primitives.register("stem", requires=("x", "y"),
+                                        marks=("line", "points"))
+            def stem(part, **options):
+                '''A vertical drop to the baseline plus a marker at each point.'''
+                ...
+
+        See :func:`tsdynamics.viz.transforms.register_primitive` — this facade is
+        the same function under the registry's shared verb name, with the same
+        signature.  It used to forward through ``(*args, **kwargs)``, so
+        ``help(ts.viz.primitives.register)`` showed nothing at all for the door
+        the library most wants people to walk through.
+
+        To draw a **shipped** transform with your new primitive, add it to that
+        transform's declared row with :func:`tsdynamics.viz.transforms.allow`.
+        """
+        from .transforms import register_primitive
+
+        return register_primitive(
+            name,
+            requires=requires,
+            marks=marks,
+            frames=frames,
+            options=options,
+            emits_frame=emits_frame,
+            doc=doc,
+            replace=replace,
+        )
 
     def __contains__(self, name: object) -> bool:
         """Whether a primitive of that name is registered."""
@@ -348,6 +423,19 @@ def grid(*plots: Any, rows: int | None = None, cols: int | None = None, **option
     *plots
         Anything :func:`plot` accepts — finished ``Plot`` objects, trajectories,
         systems, results, arrays.
+    A **single row or column is a row or a column**, not a degenerate grid:
+    ``ts.viz.grid(a, b, cols=2)`` and ``a | b`` build the *same* arrangement, and
+    ``rows=1`` / ``cols=1`` resolve to ``"row"`` / ``"stack"``.  They used to
+    produce two different ``Layout.mode`` values for one visible 1x2 figure —
+    two representations of one picture, which is the defect, not a detail.
+
+    Parameters
+    ----------
+    *plots
+        Anything :func:`plot` accepts — finished ``Plot`` objects, trajectories,
+        systems, results, arrays.  The panels of the returned grid **are** the
+        plots you passed (not copies), so ``g[0].style(...)`` restyles the panel
+        in place, which is what makes a grid inspectable.
     rows, cols : int, optional
         The grid shape; give one and the other is filled in, give neither and the
         grid is made near-square.
@@ -358,9 +446,48 @@ def grid(*plots: Any, rows: int | None = None, cols: int | None = None, **option
     Returns
     -------
     Plot
+
+    Raises
+    ------
+    tsdynamics.errors.InvalidParameterError
+        If ``layout=`` is passed — this verb always arranges a grid, and the
+        leak it used to produce named a private module path
+        (``tsdynamics.viz.transforms._frontdoor.plot() got multiple values``).
     """
-    built: Plot = plot(*plots, layout="grid", rows=rows, cols=cols, **options)
+    if "layout" in options:
+        from tsdynamics.errors import InvalidParameterError, remedy
+
+        wanted = options.pop("layout")
+        raise InvalidParameterError(
+            f"ts.viz.grid() always arranges a grid, so it takes no layout= "
+            f"(you passed {wanted!r})." + remedy("a | b   # one row", "a / b   # one column")
+        )
+    mode, rows, cols = _grid_mode(len(plots), rows, cols)
+    built: Plot = plot(*plots, layout=mode, rows=rows, cols=cols, **options)
     return built
+
+
+def _grid_mode(
+    n_panels: int, rows: int | None, cols: int | None
+) -> tuple[str, int | None, int | None]:
+    """Resolve a requested grid shape to the arrangement it actually is.
+
+    A 1xN grid *is* a row and an Nx1 grid *is* a stack, and the operators
+    (``a | b``, ``a / b``) build exactly those — so resolving here is what makes
+    ``ts.viz.grid(a, b, cols=2)`` and ``a | b`` the same ``Layout`` instead of
+    two descriptions of one figure.  ``rows``/``cols`` are dropped once the mode
+    fixes the shape.
+    """
+    from .spec import Layout
+
+    if n_panels <= 0:
+        return "grid", rows, cols
+    shape_rows, shape_cols = Layout(mode="grid", rows=rows, cols=cols).grid(n_panels)
+    if shape_rows == 1:
+        return "row", None, None
+    if shape_cols == 1:
+        return "stack", None, None
+    return "grid", rows, cols
 
 
 def load(source: str | os.PathLike[str]) -> Plot:

@@ -386,19 +386,33 @@ def _fixed_point_spectrum(
     return eig, True, "spectrum", {"analysis": None, "continuous": True}
 
 
+def _records_of(subject: Any) -> Any:
+    """Return a result collection's member **records**, or ``subject`` itself.
+
+    v6 made indexing an analysis collection give you *numbers*
+    (``fixed_points(sys)[0]`` is the state vector, not a ``FixedPoint``) and
+    moved the records to ``.details``.  This transform needs the records — it
+    draws eigenvalues, which the numbers do not carry — so it asks for them by
+    name.  A plain sequence of records, or anything else, passes through.
+    """
+    details = getattr(subject, "details", None)
+    return details if details is not None else subject
+
+
 def _as_fixed_point_sequence(subject: Any) -> list[Any] | None:
     """Return ``subject`` as a list of fixed-point-like members, or ``None``."""
     if isinstance(subject, (str, bytes, np.ndarray)) or _is_system(subject):
         return None
+    empty_set = type(subject).__name__.endswith("Set")
     try:
-        members = list(subject)
+        members = list(_records_of(subject))
     except TypeError:
         return None
     if members and all(hasattr(m, "eigenvalues") for m in members):
         return members
     # An *empty* result collection is still a fixed-point set; distinguish it
     # from an empty array by the class it came from.
-    if not members and type(subject).__name__.endswith("Set"):
+    if not members and empty_set:
         return members
     return None
 
@@ -426,6 +440,7 @@ def _example_fixed_point(_primitive: str) -> tuple[Any, dict[str, Any]]:
 @plot_transform(
     name="eigenvalue_plane",
     source="model",
+    subjects=("system", "FixedPoint", "FixedPointSet"),
     kind=PlotKind.EIGENVALUE_PLANE,
     frame=FrameSpace.COMPLEX,
     ndim=2,
@@ -553,6 +568,7 @@ def _example_periodic_orbit(_primitive: str) -> tuple[Any, dict[str, Any]]:
 @plot_transform(
     name="floquet_multipliers",
     source="model",
+    subjects=("system", "PeriodicOrbit", "OrbitSet"),
     kind=PlotKind.EIGENVALUE_PLANE,
     frame=FrameSpace.COMPLEX,
     ndim=2,
@@ -647,7 +663,10 @@ def floquet_multipliers(
             seed=seed,
         )
         found = periodic_orbits(subject, **shooting)
-        cycle = found[0] if not isinstance(found, tuple) and len(found) else found
+        # ``OrbitSet[0]`` is the orbit's POINTS since v6; the record carrying the
+        # multipliers this transform draws lives at ``.details[0]``.
+        records = _records_of(found)
+        cycle = records[0] if not isinstance(records, tuple) and len(records) else found
         return floquet_multipliers(cycle, trivial_tol=trivial_tol, boundary=boundary)
     else:
         mu = _as_complex(subject)

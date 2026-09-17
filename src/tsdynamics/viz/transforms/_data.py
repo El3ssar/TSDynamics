@@ -84,13 +84,18 @@ def _split_traj(source: Any) -> tuple[np.ndarray, np.ndarray, tuple[str, ...] | 
 
 
 def _is_discrete(source: Any) -> bool:
-    """Read ``source.system.is_discrete`` defensively (default ``False``)."""
+    """Whether this trajectory came from a **map** — read from ``system.family``.
+
+    It used to read ``system.is_discrete``, a name v6 removed.  ``getattr(…,
+    False)`` has a *legal* default, so the rename orphaned this reader in
+    silence: every map orbit was classified as a flow and drawn as a connected
+    LINE instead of the point sequence it is (a map's iterates are not joined —
+    that is the whole visual difference between the two families).  The rule
+    CLAUDE.md states for this class of defect is *do not read a removed name as
+    a string*; ``family`` is the live spelling.
+    """
     system = getattr(source, "system", None)
-    flag = getattr(system, "is_discrete", False)
-    try:
-        return bool(flag)
-    except Exception:  # pragma: no cover - defensive
-        return False
+    return getattr(system, "family", None) == "map" if system is not None else False
 
 
 def _component_index(name_or_index: int | str, names: tuple[str, ...] | None, dim: int) -> int:
@@ -447,6 +452,7 @@ def phase_portrait(
     source: Trajectory,
     *,
     components: Sequence[int | str] | None = None,
+    ndim: int | None = None,
     color_by: str | np.ndarray | Callable[..., np.ndarray] | None = None,
 ) -> Geometry:
     """Compute the orbit itself, over any two or three state components.
@@ -463,6 +469,15 @@ def phase_portrait(
     components : sequence of int or str, optional
         Two or three component selectors naming the display axes.  ``None`` uses
         the first two (or three) components.
+    ndim : {2, 3}, optional
+        Force the projection's dimensionality without naming which components —
+        ``ts.plot(traj, "phase_portrait", ndim=2)`` is the leading *pair* of a
+        3-D orbit.  This is the positional spelling of what ``kind=
+        "phase_portrait_2d"`` / ``"phase_portrait_3d"`` used to be the only way
+        to ask for; naming the components explicitly is still clearer when you
+        know them.  Ignored when ``components`` is given (they already say).
+
+        .. versionadded:: 6.0
     color_by : str, ndarray, or callable, optional
         Colour the curve / cloud by the ``"c"`` channel (see :func:`time_series`).
 
@@ -476,11 +491,26 @@ def phase_portrait(
     ------
     ValueError
         If fewer than two or more than three components are selected.
+    tsdynamics.errors.InvalidParameterError
+        If ``ndim`` is neither 2 nor 3, or the orbit has too few components for it.
     """
+    from tsdynamics.errors import InvalidParameterError
+
     t, y, names, is_discrete = _split_traj(source)
     dim = y.shape[1]
+    if ndim is not None and components is None:
+        if ndim not in (2, 3):
+            raise InvalidParameterError(
+                f"a phase portrait is 2-D or 3-D, not {ndim}-D; "
+                "for one component use ts.plot(traj, 'time_series')."
+            )
+        if dim < ndim:
+            raise InvalidParameterError(
+                f"ndim={ndim} needs {ndim} state components and this orbit has {dim}."
+            )
     if components is None:
-        sel = list(range(min(3, dim)))
+        width = ndim if ndim is not None else min(3, dim)
+        sel = list(range(min(width, dim)))
     else:
         sel = [_component_index(c, names, dim) for c in components]
     if not 2 <= len(sel) <= 3:
@@ -525,6 +555,7 @@ def phase_portrait(
 
 @plot_transform(
     name="delay_embedding",
+    aliases=("delay",),  # the kind= recipe spelling
     source="data",
     kind=PlotKind.PHASE_PORTRAIT_2D,
     frame=FrameSpace.STATE2,
@@ -587,6 +618,11 @@ def delay_embedding(
         given, if ``delay_time`` is asked of a bare array, or if the resolved lag
         is not ``1 <= delay < len(series)``.
     """
+    # Validate the lag BEFORE touching the subject: it needs no data, and a
+    # missing delay= used to surface as "float() argument must be a string or a
+    # real number, not 'VanDerPol'" from inside the series coercion — an internal
+    # leak about the wrong thing, for the one keyword the caller actually forgot.
+    _reject_missing_delay(delay, delay_time, tau)
     x = _scalar_series(series, components)
     lag = _resolve_delay(series, x.shape[0], delay, delay_time, tau)
     labels = (f"{label}(t)", f"{label}(t - {lag})")
@@ -603,10 +639,27 @@ def delay_embedding(
 #: The one runnable pair every delay error quotes, so the reader never has to
 #: work out which spelling carries which unit.
 _DELAY_HINT = (
-    "    ts.plot(traj, 'delay_embedding', delay=7)         # 7 SAMPLES\n"
-    "    traj.plot(kind='delay', delay_time=0.12)          # 0.12 TIME UNITS\n"
-    "(both spellings work on both front doors, and mean the same thing on each)"
+    "    ts.plot(traj, 'delay_embedding', delay=7)              # 7 SAMPLES\n"
+    "    traj.plot.delay_embedding(delay_time=0.12)             # 0.12 TIME UNITS\n"
+    "(both spellings work at every plotting door, and mean the same thing at each)"
 )
+
+
+def _reject_missing_delay(delay: int | None, delay_time: float | None, tau: Any) -> None:
+    """Raise unless exactly one delay spelling was given — before any data is read."""
+    from tsdynamics.errors import InvalidParameterError
+
+    if tau is not None:
+        raise InvalidParameterError(
+            "tau= is not a delay spelling in this library: it used to mean SAMPLES on "
+            "ts.plot(...) and TIME UNITS on the method door. Say which you "
+            f"mean:\n{_DELAY_HINT}"
+        )
+    if (delay is None) == (delay_time is None):
+        raise InvalidParameterError(
+            "a delay embedding needs exactly one of delay= (samples) or delay_time= "
+            f"(time units):\n{_DELAY_HINT}"
+        )
 
 
 def _resolve_delay(
@@ -624,7 +677,7 @@ def _resolve_delay(
     if tau is not None:
         raise InvalidParameterError(
             "tau= is not a delay spelling in this library: it used to mean SAMPLES on "
-            "ts.plot(...) and TIME UNITS on traj.plot(kind='delay', ...). Say which you "
+            "ts.plot(...) and TIME UNITS on the method door. Say which you "
             f"mean:\n{_DELAY_HINT}"
         )
     if (delay is None) == (delay_time is None):
@@ -730,6 +783,9 @@ def _field_and_host(
 
 @plot_transform(
     name="phase_portrait_field",
+    # It evaluates the vector field at points no trajectory visits — a flow, or a
+    # bare right-hand side f(u, t) on its own.
+    subjects=("flow", "function"),
     source="model",
     kind=PlotKind.PHASE_PORTRAIT_FIELD,
     frame=FrameSpace.STATE2,
@@ -855,6 +911,7 @@ def _map_graph(series: Any, lo: float, hi: float, n: int = 400) -> Part | None:
 
 @plot_transform(
     name="cobweb",
+    subjects=("map",),  # a cobweb is the staircase of a 1-D MAP iteration
     source="data",
     kind=PlotKind.COBWEB,
     frame=FrameSpace.STATE2,
@@ -1002,6 +1059,7 @@ def spacetime(source: Trajectory, *, transpose: bool = False) -> Geometry:
 
 @plot_transform(
     name="spatial_field",
+    aliases=("field",),  # the kind= recipe spelling
     source="data",
     kind=PlotKind.SPATIAL_FIELD,
     frame=FrameSpace.GRID2,

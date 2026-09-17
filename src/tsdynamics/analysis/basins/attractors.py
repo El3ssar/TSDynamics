@@ -27,7 +27,7 @@ from __future__ import annotations
 import warnings
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import numpy as np
 
@@ -35,7 +35,7 @@ from ...data import Ball, Box, Grid, sampler, set_distance
 from ...errors import ConvergenceError
 from ...utils.tolerances import BASIN_ATOL, BASIN_RTOL
 from .._common import reject_data
-from .._result import AnalysisResult
+from .._result import AnalysisResult, _ArrayBacked
 from .._result_base import _MAX_ITEMS
 from .._result_json import _pct, _state
 from ._common import (
@@ -96,9 +96,16 @@ def _is_stationary(state: np.ndarray, prev: np.ndarray) -> bool:
 
 
 @dataclass(frozen=True)
-class Attractor(AnalysisResult):
+class Attractor(_ArrayBacked, AnalysisResult):
     """
     One located attractor: a point cloud of states sampled on it.
+
+    **It IS its point cloud** (v6): ``np.asarray(attractor)`` is the
+    ``(m, dim)`` array of sampled states, ``attractor[0]`` is the first of them,
+    and ``len(attractor)`` is how many were sampled — so ``attractors(sys, …)[0]``
+    hands back numbers and the class stays invisible, showing itself only in the
+    repr.  The label and the coarse size are one dot away: :attr:`id`,
+    :attr:`center`, :attr:`cells`.
 
     Attributes
     ----------
@@ -107,9 +114,13 @@ class Attractor(AnalysisResult):
     points : ndarray, shape (m, dim)
         States sampled while the trajectory was on the attractor.  A fixed point
         collapses to one repeated point; a cycle/chaotic set spreads out.
+        ``np.asarray(attractor)`` returns it.
     cells : int
         Number of distinct grid cells the attractor occupies (a coarse size).
     """
+
+    #: The numbers this result *is* — see :class:`_ArrayBacked`.
+    _array_field: ClassVar[str] = "points"
 
     id: int = 0
     points: np.ndarray = field(default_factory=lambda: np.empty((0, 0)), repr=False, compare=False)
@@ -144,11 +155,35 @@ class Attractor(AnalysisResult):
         )
         return f"#{self.id}  {where}  {self.cells} cells"
 
+    def _derived(self) -> dict[str, Any]:
+        """Export the representative the repr reports — the answer, not a field.
+
+        ``points`` is an ``(m, dim)`` cloud, so a table row cannot carry it; the
+        centroid is what ``to_frame()`` needs for the row to say *where* the
+        attractor is rather than only how big it is.
+        """
+        if not np.asarray(self.points).size:
+            return {}
+        return {"center": self.center, "dim": self.dim}
+
 
 @dataclass(frozen=True)
 class AttractorSet(AnalysisResult):
     """
-    The attractors found in a region, keyed by integer id.
+    The attractors found in a region, indexing to **numbers**.
+
+    ``aset[0]`` is the first attractor's ``(dim,)`` centre as a plain
+    :class:`numpy.ndarray`, equal to ``np.asarray(aset)[0]``; iteration yields
+    those centres.  The :class:`Attractor` records are :attr:`details` (by
+    position) and :meth:`by_id` (by label), and :attr:`centers` / :attr:`cells` /
+    :attr:`ids` read the same data column-wise, so nothing here needs a loop::
+
+        aset = ts.analysis.attractors(system, region)
+        aset[0]            # array([-1.,  0.])   the centre
+        aset.centers       # (n, dim)
+        aset.cells         # (n,) int
+        aset.details[0]    # Attractor  #1  centre [-1, 0] · 3 cells
+        aset.by_id(2)      # the attractor LABELLED 2, as a record
 
     Attributes
     ----------
@@ -167,24 +202,42 @@ class AttractorSet(AnalysisResult):
     def __len__(self) -> int:  # noqa: D105
         return len(self.attractors)
 
-    def __iter__(self) -> Iterator[Attractor]:  # noqa: D105
-        return iter(self.attractors.values())
+    def __iter__(self) -> Iterator[np.ndarray]:
+        """Iterate the attractors' **centres** — numbers, not wrappers."""
+        return iter(self.centers)
 
     def __getitem__(self, key: Any) -> Any:
-        """Return the attractor at **position** ``key`` (or a list, for a slice).
+        """Return the **centre** of the attractor at position ``key``, shape ``(dim,)``.
 
-        Positional, like every Python sequence (contract §4.2 rule 6) — ids start
-        at 1, so ``aset[0]`` used to raise ``KeyError`` while ``aset[1]`` returned
-        the *first* attractor, which reads as positional and is not.  Look one up
-        by its label with :meth:`by_id`.
+        Positional, like every Python sequence — ids start at 1, so ``aset[0]``
+        once raised ``KeyError`` while ``aset[1]`` returned the *first*
+        attractor, which reads as positional and is not.
+
+        Numbers, not a wrapper (contract §4.2 rule 6): ``aset[0]`` used to hand
+        back an :class:`Attractor`, so a caller met a second class on the way to
+        a coordinate and ``np.asarray(aset)[0]`` was a *different* thing from
+        ``np.asarray(aset[0])``.  Both are now the same ``(dim,)`` centre.  The
+        records are :attr:`details`; :meth:`by_id` looks one up by its label.
         """
-        ordered = [self.attractors[k] for k in self.ids]
-        if isinstance(key, slice):
-            return ordered[key]
-        return ordered[key]
+        return self.centers[key]
+
+    @property
+    def details(self) -> tuple[Attractor, ...]:
+        """The :class:`Attractor` records, in the order ``[]`` indexes.
+
+        ``aset[0]`` is the centre; ``aset.details[0]`` is the attractor it came
+        from, with its repr, its ``points`` cloud and its ``cells`` count.  One
+        name across every collection in the library, so it is learned once.
+        """
+        return tuple(self.attractors[k] for k in self.ids)
 
     def by_id(self, key: int) -> Attractor:
-        """Return the attractor labelled ``key``.
+        """Return the **record** of the attractor labelled ``key``.
+
+        ``[]`` indexes by position and hands back numbers; an id is something you
+        read off a basin image and then want to know *about*, so this door hands
+        back the :class:`Attractor` itself — the same object :attr:`details`
+        holds.
 
         Raises
         ------
@@ -200,8 +253,17 @@ class AttractorSet(AnalysisResult):
 
     @property
     def centers(self) -> np.ndarray:
-        """Stack of attractor representatives, shape ``(n_attractors, dim)``."""
+        """Stack of attractor representatives, shape ``(n_attractors, dim)``.
+
+        The same array ``np.asarray(aset)`` returns: a SET arrays as one
+        representative per member, while a MEMBER arrays as its own point cloud.
+        """
         return np.array([self.attractors[k].center for k in self.ids])
+
+    @property
+    def cells(self) -> np.ndarray:
+        """How many grid cells each attractor occupies, shape ``(n_attractors,)``."""
+        return np.array([self.attractors[k].cells for k in self.ids], dtype=int)
 
     def match(self, point: Any, *, method: str = "centroid") -> int | None:
         """

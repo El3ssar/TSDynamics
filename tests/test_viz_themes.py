@@ -71,7 +71,7 @@ def test_themes_lists_what_exists():
     assert builtins == ["dark", "default", "minimal", "publication"]
     ts.viz.themes.register("lab", **HOUSE)
     assert ts.viz.themes.names() == ["dark", "default", "lab", "minimal", "publication"]
-    assert {t.name for t in ts.viz.themes.find()} == set(ts.viz.themes.names())
+    assert set(ts.viz.themes.find()) == set(ts.viz.themes.names())
 
 
 def test_register_derives_from_a_built_in():

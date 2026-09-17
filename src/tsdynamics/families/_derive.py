@@ -2,9 +2,9 @@
 
 Ruling **A3** cut the design's five derivation verbs to two, and the census is
 the argument: ``project`` and ``tangent`` had **no user callers**.  ``project``
-is ``traj[["x","z"]]`` when you want the numbers and
-``ts.derived.ProjectedSystem(sys, 0, 2)`` when you want the live low-dimensional
-stepping; ``tangent`` is Lyapunov machinery and lives at
+is ``traj["x", "z"]`` when you want the columns and
+``ts.derived.ProjectedSystem(sys, [0, 2])`` when you want the live
+low-dimensional stepping; ``tangent`` is Lyapunov machinery and lives at
 ``ts.derived.TangentSystem``.  ``copies`` was one word from ``ensemble`` with a
 different return type — its own docstring conceded the pair had already been
 renamed once for exactly that reason.
@@ -28,9 +28,30 @@ from typing import Any
 
 __all__ = ["DeriveMixin"]
 
+
+class _Unset:
+    """The sentinel ``poincare(at=...)`` uses, rendered legibly in ``help()``.
+
+    ``at=0.0`` is the commonest crossing value, so "not given" cannot be ``0.0``
+    and cannot be ``None`` either (``None`` is a legal ``plane``).  A bare
+    ``object()`` worked, but printed its **memory address** into the signature of
+    every one of the 151 built-in flows: ``at=<object object at 0x7fea54b8b6c0>``.
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        """Render as ``<unset>`` wherever a signature is printed."""
+        return "<unset>"
+
+
 #: "The caller did not pass this" — distinct from any value they *could* pass.
-#: Needed on ``poincare``, where ``at=0.0`` is the commonest crossing value.
-_UNSET: Any = object()
+_UNSET: Any = _Unset()
+
+#: The keywords ``poincare`` forwards to the section it builds.  Closed, so a
+#: typo names ``sys.poincare`` rather than ``PoincareMap.__init__`` — a class the
+#: caller never mentioned.
+_SECTION_KEYWORDS = ("dt", "max_time")
 
 
 class DeriveMixin:
@@ -45,7 +66,9 @@ class DeriveMixin:
         *,
         period: float | None = None,
         direction: Any = "up",
-        **kwargs: Any,
+        dt: float | None = None,
+        max_time: float | None = None,
+        **unknown: Any,
     ) -> Any:
         """Take a section of this flow — a plane, or a strobe.
 
@@ -81,8 +104,11 @@ class DeriveMixin:
         direction : int or str, default ``"up"``
             Crossing direction for a plane — a sign, or ``"up"`` / ``"down"`` /
             ``"both"``.  A direction inside the plane tuple wins.
-        **kwargs
-            ``dt`` / ``max_time``, forwarded to the section.
+        dt : float, optional
+            Detection step for the crossing march, in **time units**.
+        max_time : float, optional
+            How long to march before giving up on finding a crossing, in **time
+            units**.
 
         Returns
         -------
@@ -95,6 +121,20 @@ class DeriveMixin:
             the system exposes no drive hook to infer a period from.
         """
         from tsdynamics.errors import InvalidParameterError
+
+        if unknown:
+            from ._kwargs import run_keyword_error
+
+            bad = next(iter(unknown))
+            raise run_keyword_error(
+                self,
+                bad,
+                unknown[bad],
+                family=getattr(self, "family", "ode"),
+                accepted=("plane", "at", "period", "direction", *_SECTION_KEYWORDS),
+                verb="poincare",
+            )
+        kwargs = {k: v for k, v in (("dt", dt), ("max_time", max_time)) if v is not None}
 
         gave_plane = plane is not None or at is not _UNSET
         if gave_plane and period is not None:
@@ -151,17 +191,33 @@ class DeriveMixin:
         -------
         Ensemble
         """
-        if horizon:
+        _HORIZON = ("final_time", "dt", "steps", "t0", "transient", "seed")
+        given = [k for k in sorted(horizon) if k in _HORIZON]
+        if given:
             from tsdynamics.errors import InvalidParameterError, remedy
 
             raise InvalidParameterError(
                 f"ensemble() builds the batch; it does not run it, so it takes no "
-                f"{sorted(horizon)[0]!r}. One verb, one object (§3.2)."
+                f"{given[0]!r}. One verb, one object (§3.2)."
                 + remedy(
                     "band = system.ensemble(states)",
-                    f"batch = band.run({', '.join(f'{k}=...' for k in sorted(horizon))})",
+                    f"batch = band.run({', '.join(f'{k}=...' for k in given)})",
                     "batch.final          # the (n, dim) end states",
                 )
+            )
+        if horizon:
+            # NOT a horizon word, so the "run it instead" line would hand back a
+            # call that raises.  Answer it as the ordinary unknown keyword it is.
+            from ._kwargs import run_keyword_error
+
+            bad = sorted(horizon)[0]
+            raise run_keyword_error(
+                self,
+                bad,
+                horizon[bad],
+                family=getattr(self, "family", "ode"),
+                accepted=("states",),
+                verb="ensemble",
             )
         from tsdynamics.derived import Ensemble
 

@@ -106,7 +106,7 @@ def test_max_lyapunov_lorenz_not_corrupted_by_step():
         dt=0.05,
         n=250,
         steps_per=4,
-        transient=400,
+        transient=20.0,  # 400 protocol steps at dt=0.05; v6 measures this in TIME
         seed=2,
     )
     assert 0.7 < lam < 1.15

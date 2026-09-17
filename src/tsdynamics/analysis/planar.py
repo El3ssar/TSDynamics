@@ -64,13 +64,14 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from tsdynamics.errors import InvalidInputError, InvalidParameterError
+from tsdynamics.errors import InvalidInputError, InvalidParameterError, remedy
+
+from ._common import reject_system
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from tsdynamics.families import ContinuousSystem
 
 __all__ = [
-    "Curve",
     "FlowField",
     "Nullcline",
     "ScalarField",
@@ -104,6 +105,12 @@ def __dir__() -> list[str]:
 
 
 #: A polyline: ``(n, 2)`` of ``(x, y)`` points in the plane of the slice.
+#:
+#: It is an **alias of** :class:`numpy.ndarray`, not a class — nothing is ever an
+#: instance of ``Curve`` and ``Curve`` resolves from no public home, so the public
+#: signatures below spell ``numpy.ndarray`` outright rather than advertising a
+#: name a reader of ``help()`` cannot look up.  The alias stays as documentation
+#: of the *shape* convention for in-module readers.
 Curve = np.ndarray
 
 
@@ -121,10 +128,27 @@ def _require_flow(system: Any, what: str) -> ContinuousSystem:
     vector field at all — cannot serve them.
     """
     if not hasattr(system, "_rhs_numeric"):
+        # Every other wrong-subject door in the analysis layer ends with a line
+        # the reader can run; these eight did not, so "pass the system itself"
+        # was the whole of the advice.  A Trajectory knows its own system, and a
+        # map genuinely has no vector field — two different situations, two
+        # different lines.
+        held = type(system).__name__
+        if getattr(system, "system", None) is not None:
+            fix = remedy(f"ts.analysis.{what}(traj.system)")
+        elif getattr(system, "family", None) == "map":
+            fix = remedy(
+                "ts.analysis.find(system)",
+                lead=(
+                    "A map advances by iteration and has no vector field, so there is "
+                    "nothing here to evaluate. What a map DOES answer:"
+                ),
+            )
+        else:
+            fix = remedy(f"ts.analysis.{what}(system)")
         raise InvalidInputError(
             f"{what} needs a continuous system (it evaluates the right-hand side at points "
-            f"that are not in any trajectory), but got {type(system).__name__}. "
-            "Pass the system itself, not its output."
+            f"that are not in any trajectory), but got {held}." + fix
         )
     return system  # type: ignore[no-any-return]
 
@@ -166,6 +190,27 @@ def resolve_plane(
         )
     names: tuple[str, ...] | None = getattr(type(system), "variables", None)
     dim = int(getattr(system, "dim", 2))
+    # ``plane=`` is TWO WORDS in this library: here it is the pair of *view axes*
+    # of a slice, and at ``poincare_section`` / ``PoincareMap`` it is a cutting
+    # *section* ``(axis, offset[, direction])``.  A section spelling reaching this
+    # door used to be read as axes and draw a confident, wrong picture — measured,
+    # ``flow_field(lorenz, plane=("y", 0.0))`` returned a FlowField of the x-y
+    # plane with no complaint.  An offset is a *value*, so it is detectable: a
+    # non-integral number, or a third entry, can only be a section.
+    for item in items:
+        # A float can only be an OFFSET: a coordinate is named or indexed, and an
+        # index is an int.  Checking the type rather than the value is what makes
+        # ``("y", 0.0)`` — the commonest section spelling, and an exactly integral
+        # number — detectable at all.
+        if isinstance(item, (float, np.floating)):
+            raise InvalidParameterError(
+                f"plane={tuple(items)!r} looks like a Poincaré SECTION — (axis, offset) — "
+                f"but here plane= names the two view AXES of the slice, so {item!r} would "
+                f"have to be a coordinate index (an int) or a coordinate name.\n"
+                f"    plane=(0, 1)                       # the first two coordinates\n"
+                f'    plane=("x", "z")                   # ...by name\n'
+                f"    ts.analysis.poincare_section(system, {tuple(items)!r})   # a section"
+            )
     out: list[int] = []
     for item in items:
         if isinstance(item, str):
@@ -396,7 +441,7 @@ class Nullcline:
 
     index: int
     label: str
-    curves: list[Curve]
+    curves: list[np.ndarray]
 
     def __len__(self) -> int:
         """Return the number of disconnected branches."""
@@ -640,7 +685,7 @@ def streamlines(
     length: float | None = None,
     steps: int = 200,
     both_ways: bool = True,
-) -> list[Curve]:
+) -> list[np.ndarray]:
     """Integrate the sliced field from a seed lattice — the integral curves.
 
     Each streamline is an **arc-length-parametrized** integral curve: the field
@@ -662,7 +707,12 @@ def streamlines(
     plane, at, xlim, ylim
         The slice and window (see :func:`flow_field`).
     seeds : int or tuple of int, optional
-        Seeds per axis.  Default ``8`` (a 8x8 lattice, inset from the edges).
+        How many starting points per axis — the streamline lattice is
+        ``seeds x seeds``, inset from the edges.  Default ``8``.
+
+        It is a **lattice size**, not an RNG seed: nothing here is random, and
+        this function takes no ``seed=``.  The two words are one letter apart and
+        live in the same namespace, so read this one as "how many seed points".
     length : float, optional
         Arc length to integrate each direction.  ``None`` (default) uses the
         window's diagonal, which is the length that just crosses the picture.
@@ -776,7 +826,7 @@ def streamlines(
 
     forward = march(+1.0)
     backward = march(-1.0) if both_ways else [[(float(p[0]), float(p[1]))] for p in seed_points]
-    out: list[Curve] = []
+    out: list[np.ndarray] = []
     for back, fore in zip(backward, forward, strict=True):
         pts = back[::-1] + fore[1:]
         if len(pts) >= 2:
@@ -973,7 +1023,10 @@ def trace_determinant(
         from tsdynamics.analysis.fixedpoints.fixed import fixed_points
 
         found = fixed_points(system, **fixed_point_kwargs)
-        pts = np.asarray([fp.x for fp in found], dtype=float).reshape(len(found), -1)
+        # ``found.points`` is the ``(n, dim)`` matrix of the equilibria: indexing
+        # a result collection gives NUMBERS in v6, so there is no ``fp.x`` to
+        # gather here (the records are ``found.details``).
+        pts = np.asarray(found.points, dtype=float).reshape(len(found), -1)
     else:
         pts = np.atleast_2d(np.asarray(points, dtype=float))
 
@@ -1580,8 +1633,13 @@ def invariant_density(
     Raises
     ------
     tsdynamics.errors.InvalidInputError
-        If no finite sample survives.
+        If ``values`` is a system rather than its output (this measures a point
+        set, so it needs the run first), or if no finite sample survives.
     """
+    # It is the ONE data-first analysis in this module, and it was the only one
+    # with no guard: a system fell through to ``np.asarray(..., dtype=float)``
+    # and surfaced as "float() argument must be ... not 'Lorenz'".
+    reject_system(values, analysis="invariant_density")
     arr = np.asarray(values, dtype=float).ravel()
     arr = arr[np.isfinite(arr)]
     if arr.size == 0:

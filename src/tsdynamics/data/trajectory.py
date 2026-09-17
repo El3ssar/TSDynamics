@@ -21,7 +21,8 @@ The point-set operations (:meth:`Trajectory.minmax`,
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Literal, cast
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple, cast
 
 import numpy as np
 
@@ -51,6 +52,19 @@ _DELETED_TRAJECTORY_ACCESSORS: dict[str, tuple[str, ...]] = {
     "lyap": ("lyapunov_from_data",),
     "recurrence": ("recurrence_matrix", "rqa"),
     "chaos": ("zero_one_test",),
+}
+
+#: Methods that were a **second spelling** of the bracket and are therefore gone
+#: (``name -> (why, the lines to type instead)``).  The error is the migration
+#: guide: it names the one spelling and the line runs on the object that was held.
+_DELETED_TRAJECTORY_METHODS: dict[str, tuple[str, tuple[str, ...]]] = {
+    "sel": (
+        "selecting components is what the bracket does, and it returns a Trajectory",
+        (
+            "traj['x', 'z']      # a 2-column Trajectory (names carried)",
+            "traj['x']           # one component, as a plain (T,) array",
+        ),
+    ),
 }
 
 
@@ -146,6 +160,60 @@ _BUILDABLE_ROUTES: frozenset[str] = frozenset(
         "delay_embedding",
     }
 )
+
+
+class MinMax(NamedTuple):
+    """The per-component extent of a point set — ``lo, hi = traj.minmax()``."""
+
+    lo: np.ndarray
+    """Per-component minimum, shape ``(dim,)``."""
+    hi: np.ndarray
+    """Per-component maximum, shape ``(dim,)``."""
+
+
+@dataclass(frozen=True)
+class Neighbors:
+    """The answer :meth:`Trajectory.neighbors` gives: **states**, with their distances.
+
+    A small record rather than the KD-tree's raw ``(distances, indices)`` pair,
+    because a caller asking "what is near here?" means the nearby *states*, and
+    two unlabelled arrays are not an answer.  It still unpacks the way the pair
+    did, so ``d, i = traj.neighbors(q)`` is unchanged.
+
+    Attributes
+    ----------
+    distance : ndarray, shape (k,) or (m, k)
+        Distance from each query point to each neighbour, nearest first.
+    index : ndarray, shape (k,) or (m, k)
+        Row of :attr:`Trajectory.y` each neighbour came from.
+    state : ndarray, shape (k, dim) or (m, k, dim)
+        The neighbouring states themselves.  ``NaN`` where fewer than ``k``
+        neighbours exist.
+    """
+
+    distance: np.ndarray
+    index: np.ndarray
+    state: np.ndarray
+
+    def __iter__(self) -> Iterator[np.ndarray]:
+        """Unpack as ``(distance, index)`` — what the raw pair used to be."""
+        return iter((self.distance, self.index))
+
+    def __array__(self, dtype: Any = None, copy: bool | None = None) -> np.ndarray:
+        """``np.asarray(near)`` is the neighbouring **states**."""
+        arr = self.state if dtype is None else np.asarray(self.state, dtype=dtype)
+        return arr.copy() if copy is True else arr
+
+    def __repr__(self) -> str:
+        """State the answer: how many neighbours, and how far the nearest is."""
+        k = int(self.index.shape[-1])
+        queries = "" if self.index.ndim == 1 else f" for {self.index.shape[0]} query points"
+        nearest = float(np.min(self.distance)) if self.distance.size else float("nan")
+        return (
+            f"Neighbors  {k} nearest state{'s' if k != 1 else ''}{queries}"
+            f"   ·  closest at d = {nearest:.4g}"
+            "\n    near.state   near.distance   near.index"
+        )
 
 
 def _reject_unbuildable_kind(kind: str, route: str) -> None:
@@ -307,33 +375,21 @@ class Trajectory:
             return None
         return first
 
-    def sel(self, *keys: int | str) -> Trajectory:
-        """Select components **by name or index**, always returning a Trajectory.
+    def _columns(self, names: Sequence[str]) -> Trajectory:
+        """Build the sub-trajectory holding ``names``, carrying the names along.
 
-        The safe spelling for the two-character hazard ``traj["y"]`` (the
-        component named ``y``) versus ``traj.y`` (the whole state block): one
-        key or many, the answer is always a :class:`Trajectory` carrying ``t``,
-        ``meta`` and the names.
-
-        Examples
-        --------
-        >>> import tsdynamics as ts
-        >>> tr = ts.systems.Lorenz().run(final_time=1.0, dt=0.1, ic=[1.0, 1.0, 1.0])
-        >>> tr.sel("x", "z").shape
-        (11, 2)
+        The one place a column selection is assembled, so the selected block and
+        the names it answers to cannot disagree.  ``meta["variables"]`` is what
+        :attr:`variables` reads first, which is why the result names *its own*
+        columns instead of the producing system's full tuple.
         """
-        if not keys:
-            raise InvalidInputError(
-                "Trajectory.sel() needs at least one component to select.\n"
-                "    traj.sel('x')          # one component, still a Trajectory\n"
-                "    traj.sel('x', 'z')     # two"
-            )
-        idx = [self._component_index(k) if isinstance(k, str) else int(k) for k in keys]
-        names = self.variables
-        sub_meta = dict(self.meta)
-        if names is not None:
-            sub_meta["variables"] = tuple(names[i] for i in idx)
-        return Trajectory(self.t, self.y[:, idx], self.system, meta=sub_meta)
+        idx = [self._component_index(n) for n in names]
+        return Trajectory(
+            self.t,
+            self.y[:, idx],
+            self.system,
+            meta={**self.meta, "variables": tuple(self.variables[i] for i in idx)},
+        )
 
     # --- the teaching door (§5.6) ---
 
@@ -348,6 +404,12 @@ class Trajectory:
             raise AttributeError(name)
         if name == "to_plot_spec":
             raise _plot_seam_error("Trajectory", "traj")
+        if name in _DELETED_TRAJECTORY_METHODS:
+            why, lines = _DELETED_TRAJECTORY_METHODS[name]
+            raise AttributeError(
+                f"'Trajectory' object has no attribute {name!r}: {why}.\n"
+                + "\n".join(f"    {line}" for line in lines)
+            )
         from tsdynamics.analysis import _discovery
 
         try:
@@ -431,19 +493,47 @@ class Trajectory:
         return arr
 
     def __getitem__(self, key: Any) -> Any:
-        """
-        Component access by name, or joint row slicing.
+        """Select **columns by name**, or **rows by position** — one rule each.
 
-        - ``traj["x"]`` → 1-D component array (requires the system class to
-          declare ``variables``).
-        - ``traj[["x", "z"]]`` → ``(T, 2)`` array.
-        - anything else (int/slice/mask) slices ``t`` and ``y`` together and
-          returns a new :class:`Trajectory`.
+        ============================  ==========================================
+        ``traj["x"]``                 one component, as a plain ``(T,)`` array
+        ``traj["x", "z"]``            several components, as a **Trajectory**
+        ``traj[10:50]`` / ``traj[0]`` / ``traj[mask]` / ``traj[[0, 2]]``
+                                      rows, as a **Trajectory**
+        ============================  ==========================================
+
+        A **name** selects a column and a **number** selects a row; several
+        names give back the same type you started with, so the selection
+        composes (``traj["x", "z"][100:]``) and keeps its time axis, its names
+        and its provenance.  This is the pandas rule — ``df["a"]`` is the
+        series, ``df["a", "b"]`` the frame — and it is the only rule here.
+
+        .. versionchanged:: 6.0
+            ``traj[["x", "z"]]`` (the list spelling) was a second way to write
+            ``traj["x", "z"]``, and **both returned a bare array** while the
+            docs promised a ``Trajectory`` — so the time axis and the component
+            names were silently dropped by the spelling the docs taught.  The
+            list spelling now raises, naming the one that works, because a list
+            of *numbers* selects rows and a list cannot mean both.
+
+        Examples
+        --------
+        >>> import tsdynamics as ts
+        >>> tr = ts.systems.Lorenz().run(final_time=1.0, dt=0.1, ic=[1.0, 1.0, 1.0])
+        >>> tr["x"].shape
+        (11,)
+        >>> xz = tr["x", "z"]
+        >>> xz.shape, xz.variables
+        ((11, 2), ('x', 'z'))
         """
         if isinstance(key, str):
             return self.y[:, self._component_index(key)]
-        if isinstance(key, list | tuple) and key and all(isinstance(k, str) for k in key):
-            return self.y[:, [self._component_index(k) for k in key]]
+        if isinstance(key, tuple | list) and key:
+            named = [k for k in key if isinstance(k, str)]
+            if named and len(named) == len(key) and isinstance(key, tuple):
+                return self._columns(named)
+            if named or isinstance(key, tuple):
+                raise InvalidInputError(self._bad_key_message(key, named))
         if isinstance(key, int | np.integer):
             # Keep the result a well-formed Trajectory (one row), not a
             # corrupted one built from scalars.
@@ -455,23 +545,64 @@ class Trajectory:
             )
         return Trajectory(self.t[key], self.y[key], self.system, meta=self.meta)
 
+    def _bad_key_message(self, key: Any, named: list[str]) -> str:
+        """Explain a bracket that is neither a column selection nor a row one."""
+        cols = ", ".join(repr(n) for n in (named or list(self.variables[:2])))
+        if named and len(named) < len(key):
+            why = (
+                f"traj[{key!r}] mixes component names with positions. "
+                "A name selects a column, a number selects a row — never both at once."
+            )
+        elif isinstance(key, list):
+            why = (
+                f"traj[[{cols}]] is the retired list spelling of traj[{cols}]. "
+                "A list of numbers already selects ROWS, so a list cannot also mean "
+                "columns; there is one spelling now, and it gives back a Trajectory."
+            )
+        else:
+            why = (
+                "a trajectory has no joint (row, column) index — columns are named "
+                "and rows are numbered. Raw NumPy indexing is traj.y[...]."
+            )
+        return "\n".join(
+            (
+                why,
+                f"    traj[{cols}]".ljust(40) + "# the columns, as a Trajectory",
+                "    traj[10:50]".ljust(40) + "# the rows, as a Trajectory",
+            )
+        )
+
     @property
-    def variables(self) -> tuple[str, ...] | None:
-        """Component names declared by the system (instance attr or class ClassVar)."""
-        if self.system is None:
-            return None
-        # Instance lookup falls back to the ClassVar for the built-in families,
-        # and also honours per-instance names (e.g. WrappedSystem).
-        return getattr(self.system, "variables", None)
+    def variables(self) -> tuple[str, ...]:
+        """The name of **every** component — never ``None``.
+
+        Resolution order: the names this trajectory carries in
+        ``meta["variables"]`` (written by a column selection, so a sub-trajectory
+        names *its own* columns), then the producing system's ``variables``, then
+        the generated ``y0 … y{dim-1}``.
+
+        .. versionchanged:: 6.0
+            This used to be a pass-through to ``system.variables`` returning
+            ``None`` for measured data — so a bare-array trajectory printed
+            ``y0``/``y1`` column headings in :meth:`to_frame` and on its plot,
+            then refused ``traj["y0"]``; and a column selection reported the
+            *inner* system's full tuple, which made ``traj["x", "z"]["y"]``
+            silently return ``z``.  The names now come from one place and are
+            always as long as the state block is wide.
+        """
+        names = self.meta.get("variables")
+        if names is None and self.system is not None:
+            # Instance lookup falls back to the ClassVar for the built-in
+            # families, and also honours per-instance names (WrappedSystem).
+            names = getattr(self.system, "variables", None)
+        if names is not None:
+            resolved = tuple(str(n) for n in names)
+            if len(resolved) == self.dim:
+                return resolved
+        return tuple(f"y{i}" for i in range(self.dim))
 
     def _component_index(self, name: str) -> int:
         names = self.variables
-        if names is None:
-            raise KeyError(
-                f"{type(self.system).__name__ if self.system else 'This system'} declares no "
-                f"`variables`; use integer indexing or add e.g. variables = ('x', 'y', 'z') "
-                f"to the system class."
-            )
         try:
             return names.index(name)
         except ValueError:
@@ -522,16 +653,20 @@ class Trajectory:
 
     def after(self, t0: float) -> Trajectory:
         """
-        Drop the initial transient.
+        Drop the initial transient — keep the samples at or after ``t0``.
 
         Parameters
         ----------
         t0 : float
-            Keep only time points ``t >= t0``.
+            A **cut on the recorded time axis**, read in that axis's own unit:
+            time units for a flow, the iteration index for a map, the crossing
+            time for a section.  (It is a cut, not a horizon: ``run(t0=...)``
+            says where the integration *starts*.)
 
         Returns
         -------
         Trajectory
+            The tail, sharing this trajectory's system and provenance.
         """
         mask = self.t >= t0
         return Trajectory(self.t[mask], self.y[mask], self.system, meta=self.meta)
@@ -576,9 +711,7 @@ class Trajectory:
             If :mod:`pandas` is not installed.
         """
         pd = self._require_pandas()
-        names = self.variables or tuple(f"y{i}" for i in range(self.dim))
-        if len(names) != self.dim:  # a mis-declared ``variables`` must not silently truncate
-            names = tuple(f"y{i}" for i in range(self.dim))
+        names = self.variables
         frame = pd.DataFrame(
             self.y,
             index=pd.Index(self.t, name="t"),
@@ -717,7 +850,7 @@ class Trajectory:
         """
         from tsdynamics.viz.spec import PlotKind
 
-        all_names = self.variables or tuple(f"y{i}" for i in range(self.dim))
+        all_names = self.variables
 
         # A Poincaré section carries its intent in meta; honour it before the
         # dimensionality dispatch (only for the unmodified default view).
@@ -1125,15 +1258,12 @@ class Trajectory:
     def _is_discrete(self) -> bool:
         """Whether the producing system is a discrete map (default ``False``).
 
-        Reads ``self.system.is_discrete`` defensively — a synthetic trajectory
-        with no system, or one whose system does not expose the flag, is treated
-        as a flow.
+        Reads the **family word**, not the removed ``is_discrete`` flag: that
+        name is alive only through an internal alias table, so this would have
+        gone quiet — and answered "flow" for every map — the day the table is
+        emptied.  A synthetic trajectory with no system is treated as a flow.
         """
-        flag = getattr(self.system, "is_discrete", False)
-        try:
-            return bool(flag)
-        except Exception:  # pragma: no cover - defensive
-            return False
+        return getattr(self.system, "family", None) == "map"
 
     def _spacetime_spec(
         self, ys: np.ndarray, names: tuple[str, ...], *, transpose: bool = False
@@ -1339,9 +1469,14 @@ class Trajectory:
 
     # --- point-set operations ---
 
-    def minmax(self) -> tuple[np.ndarray, np.ndarray]:
-        """Return per-component ``(minima, maxima)``, each of shape ``(dim,)``."""
-        return self.y.min(axis=0), self.y.max(axis=0)
+    def minmax(self) -> MinMax:
+        """Return the per-component extent — ``(lo, hi)``, each of shape ``(dim,)``.
+
+        Unpacks like the bare tuple it used to be (``lo, hi = traj.minmax()``)
+        and names its halves (``traj.minmax().hi``), so a reader of the call
+        site does not have to remember which one comes first.
+        """
+        return MinMax(self.y.min(axis=0), self.y.max(axis=0))
 
     def standardize(self) -> Trajectory:
         """
@@ -1359,9 +1494,8 @@ class Trajectory:
             meta={**self.meta, "standardized": {"mean": mean, "std": std}},
         )
 
-    def neighbors(self, q: Any, k: int = 1) -> tuple[np.ndarray, np.ndarray]:
-        """
-        Nearest trajectory points to query point(s) ``q``.
+    def neighbors(self, q: Any, k: int = 1) -> Neighbors:
+        """Return the trajectory **states** nearest to query point(s) ``q``.
 
         Builds a KD-tree lazily on first call and caches it; subsequent
         queries are O(log T).
@@ -1369,23 +1503,58 @@ class Trajectory:
         Parameters
         ----------
         q : array-like, shape (dim,) or (m, dim)
-            Query point(s).
-        k : int
-            Number of neighbours per query point.
+            Query point(s).  A single point gives a result without the leading
+            query axis; ``m`` points keep it.
+        k : int, default 1
+            Number of neighbours per query point.  The ``k`` axis is **always**
+            present, whatever ``k`` is.
 
         Returns
         -------
-        (distances, indices)
-            As returned by :meth:`scipy.spatial.cKDTree.query`.
+        Neighbors
+            ``.state`` — the neighbouring states, shape ``(k, dim)`` (or
+            ``(m, k, dim)``); ``.distance`` and ``.index`` — shape ``(k,)`` (or
+            ``(m, k)``).  It unpacks as ``(distance, index)``, so
+            ``d, i = traj.neighbors(q)`` reads as it always did.
+
+        .. versionchanged:: 6.0
+            This handed back ``scipy.spatial.cKDTree.query``'s raw
+            ``(distances, indices)`` — two unlabelled arrays whose *rank* changed
+            with ``k`` (``k=1`` gave two scalars, ``k=2`` two arrays, so
+            ``i[0]`` worked for one and raised for the other), and which never
+            contained the thing a caller is usually after: the neighbouring
+            states.
+
+        Examples
+        --------
+        >>> import numpy as np, tsdynamics as ts
+        >>> tr = ts.systems.Lorenz().run(final_time=1.0, dt=0.1, ic=[1.0, 1.0, 1.0])
+        >>> near = tr.neighbors([1.0, 1.0, 1.0], k=2)
+        >>> near.state.shape, near.distance.shape, near.index.shape
+        ((2, 3), (2,), (2,))
         """
         from scipy.spatial import cKDTree
 
         if self._kdtree is None:
             self._kdtree = cKDTree(self.y)
-        return cast(
-            "tuple[np.ndarray, np.ndarray]",
-            self._kdtree.query(np.asarray(q, dtype=float), k=k),
-        )
+        query = np.asarray(q, dtype=float)
+        raw_d, raw_i = self._kdtree.query(query, k=k)
+        # scipy squeezes the ``k`` axis when ``k == 1``; restore it so the answer
+        # has one shape for every ``k``.  The *query* axis follows the input's
+        # rank, which is what a caller who passed one point means.
+        distance = np.asarray(raw_d, dtype=float)
+        index = np.asarray(raw_i)
+        if k == 1:
+            distance, index = distance[..., None], index[..., None]
+        # A query for more neighbours than there are points: scipy reports the
+        # one-past-the-end index with an infinite distance.  Report the state as
+        # NaN rather than indexing out of the array.
+        missing = index >= self.y.shape[0]
+        state = np.asarray(self.y, dtype=float)[np.where(missing, 0, index)]
+        if bool(missing.any()):
+            state = state.copy()
+            state[missing] = np.nan
+        return Neighbors(distance=distance, index=index, state=state)
 
     def set_distance(self, other: Any, *, method: str = "centroid") -> float:
         """

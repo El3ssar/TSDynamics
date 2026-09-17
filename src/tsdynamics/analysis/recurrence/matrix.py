@@ -105,9 +105,43 @@ class RecurrenceMatrix(AnalysisResult):
         """Return the dense boolean ``(N, N)`` matrix (materialises ``O(N^2)``)."""
         return cast(np.ndarray, self.matrix.toarray().astype(bool))
 
-    def __array__(self, dtype: Any = None) -> np.ndarray:  # noqa: D105
+    def __array__(self, dtype: Any = None, copy: bool | None = None) -> np.ndarray:  # noqa: D105
+        # NumPy 2.0 passes ``copy`` into ``__array__``; ``toarray`` always
+        # materialises a fresh buffer, so honoring it costs nothing.
         arr = self.toarray()
-        return arr.astype(dtype) if dtype is not None else arr
+        return arr.astype(dtype, copy=bool(copy)) if dtype is not None else arr
+
+    def to_frame(self) -> Any:
+        """Return the recurrent pairs as a tidy ``(nnz, 2)`` ``i`` / ``j`` table.
+
+        The base :meth:`~tsdynamics.analysis._result.AnalysisResult.to_frame`
+        would drop the matrix and tabulate ``['epsilon', 'metric',
+        'theiler_window']`` — the settings, with **the answer** missing (contract
+        §4.2 rule 8).  The matrix is never densified: the stored COO coordinates
+        are exactly the recurrences, so the frame is ``nnz`` rows, not
+        :math:`N^2`.  The settings ride on ``frame.attrs``.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Columns ``i`` / ``j``, one row per recurrent pair.
+
+        Raises
+        ------
+        ImportError
+            If :mod:`pandas` is not installed.
+        """
+        pd = self._require_pandas()
+        if self.matrix is None:
+            frame = pd.DataFrame({"i": [], "j": []})
+        else:
+            coo = self.matrix.tocoo()
+            frame = pd.DataFrame({"i": coo.row, "j": coo.col})
+        frame.attrs["meta"] = dict(self.meta) if self.meta else {}
+        frame.attrs["epsilon"] = float(self.epsilon)
+        frame.attrs["metric"] = self.metric
+        frame.attrs["theiler_window"] = int(self.theiler_window)
+        return frame
 
     def __plot_spec__(self, kind: str | None = None) -> Any:
         r"""Describe this recurrence matrix as a backend-agnostic :class:`PlotSpec`.

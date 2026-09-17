@@ -25,9 +25,9 @@ reference renderer when the chosen backend cannot draw a spec's kind:
   The renderer is then called with ``warn=False`` so it suppresses duplicate
   per-key warnings.
 - :func:`normalize_kind` / :data:`_KIND_ALIAS` — canonicalise friendly / legacy
-  kind spellings (the ``result.plot.phase()`` / ``.image()`` accessor strings) to
-  real :class:`~tsdynamics.viz.spec.PlotKind` members, so a backend's
-  kind-keyed preset table never trips over an alias.
+  kind spellings (``"phase"``, ``"image"``, …) to real
+  :class:`~tsdynamics.viz.spec.PlotKind` members, so a backend's kind-keyed
+  preset table never trips over an alias or over a kind read back from JSON.
 
 An in-tree backend module (``tsdynamics.viz.render.<name>``) self-registers by
 exposing a module-level ``register(registry)`` that adds its renderer callable
@@ -116,9 +116,9 @@ def normalize_kind(kind: PlotKind | str) -> PlotKind:
     """Resolve a kind spelling to a canonical :class:`~tsdynamics.viz.spec.PlotKind`.
 
     A :class:`~tsdynamics.viz.spec.PlotKind` passes through unchanged; a string is
-    looked up in :data:`_KIND_ALIAS` (friendly / legacy spellings such as the
-    ``result.plot.phase()`` / ``.image()`` accessor names) and otherwise coerced
-    directly.  Raises :class:`ValueError` for a string that is neither an alias
+    looked up in :data:`_KIND_ALIAS` (friendly / legacy spellings such as
+    ``"phase"`` or ``"image"``, including a kind read back from a serialized
+    envelope) and otherwise coerced directly.  Raises :class:`ValueError` for a string that is neither an alias
     nor a real kind.
     """
     if isinstance(kind, PlotKind):
@@ -438,14 +438,26 @@ class _RendererRegistry:
         return {name: _reg.renderers.get(name) for name in _reg.renderers.names()}
 
     def names(self) -> list[str]:
-        """Return the registered backend names, most-preferred first."""
-        return list(self._table())
+        """Return the registered backend names, **sorted** (like every other registry).
+
+        Preference order is a *dispatch* decision, not a listing one, and the
+        unsorted order leaked into every "installed backends are …" message.
+        :func:`find` keeps preference order, because there the order is the answer.
+        """
+        return sorted(self._table())
 
     def get(self, name: str) -> RendererCapabilities:
-        """Return one backend's declared :class:`RendererCapabilities`."""
+        """Return one backend's declared :class:`RendererCapabilities`.
+
+        Friendly aliases (``"mpl"`` → ``"matplotlib"``) resolve here, through the
+        **same** :func:`~tsdynamics.viz.render.caps._normalize_backend_name` the
+        dispatcher uses.  They used to resolve at ``p.render(backend="mpl")`` and
+        nowhere else, so one spelling worked at one door out of three.
+        """
         from tsdynamics.errors import InvalidParameterError
 
         table = self._table()
+        name = _normalize_backend_name(name)
         if name not in table:
             raise InvalidParameterError(
                 f"unknown rendering backend {name!r}; installed backends are {', '.join(table)}."
@@ -457,6 +469,8 @@ class _RendererRegistry:
 
     def find(
         self,
+        what: str = "",
+        /,
         *,
         writes: str | None = None,
         kind: PlotKind | str | None = None,
@@ -478,9 +492,17 @@ class _RendererRegistry:
         **flags
             Capability flags to match exactly (``supports_3d=True``,
             ``interactive=True``, ``web_export=True``, ``data_export=False``).
+
+        .. versionchanged:: 6.0
+            Gained the positional free-text query its three sibling registries
+            advertise, so ``ts.viz.renderers.find("html")`` works rather than
+            raising ``TypeError: find() takes 1 positional argument``.
         """
+        text = what.lower()
         out = []
-        for name in self.names():
+        for name in list(self._table()):
+            if text and text not in name.lower():
+                continue
             caps = self.get(name)
             if writes is not None and not caps.can_save(writes, animated=animated):
                 continue

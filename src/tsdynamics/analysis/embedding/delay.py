@@ -425,9 +425,11 @@ def optimal_delay(
     Raises
     ------
     ValueError
-        If ``method`` is not one of ``"mi"`` / ``"acf"`` / ``"acf_zero"``, or if
-        the underlying curve estimator rejects the series (constant input, bad
-        ``max_delay`` / ``bins``).
+        If ``method`` is not one of ``"mi"`` / ``"acf"`` / ``"acf_zero"``; if the
+        series is no longer than ``max_delay`` (there is then no curve to read a
+        lag off, and the answer would be arithmetic rather than a measurement);
+        or if the underlying curve estimator rejects the series (constant input,
+        bad ``max_delay`` / ``bins``).
 
     Notes
     -----
@@ -460,6 +462,18 @@ def optimal_delay(
     True
     """
     reject_system(data, analysis="optimal_delay")
+    # A lag can only be read off a curve the data can support.  ``np.arange(3.)``
+    # with ``max_delay=50`` used to come back a confident ``1``: the curve is
+    # three points long, the search finds "a first minimum" in it, and nothing
+    # says the number is arithmetic rather than a measurement.  Its sibling
+    # ``cao_dimension`` already refuses this by name ("series too short").
+    series = _as_series(data, component=components, analysis="optimal_delay")
+    if series.size <= int(max_delay):
+        raise ValueError(
+            f"series too short: {series.size} samples for max_delay={int(max_delay)}, so "
+            f"the lag curve has no lag it can measure at. Lower max_delay (below "
+            f"{series.size}) or supply more data."
+        )
     method = method.lower()
     if method == "mi":
         curve = mutual_information(data, max_delay=max_delay, bins=bins, components=components)

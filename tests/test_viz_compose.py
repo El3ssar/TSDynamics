@@ -562,22 +562,30 @@ def test_time_series_of_different_components_still_overlay():
     assert len(merged.layers) == 2
 
 
-def test_on_force_overlays_a_deliberate_mismatch_with_one_warning():
+def test_force_overlays_a_deliberate_mismatch_with_one_warning():
     from tsdynamics.viz.render.caps import VisualizationDegraded
 
-    with pytest.warns(VisualizationDegraded, match="on='force'"):
-        spec = viz.plot(_curve_spec(ylabel="v"), _marker_spec(ylabel="z"), on="force")
+    with pytest.warns(VisualizationDegraded, match="force=True"):
+        spec = viz.plot(_curve_spec(ylabel="v"), _marker_spec(ylabel="z"), force=True)
     assert len(spec.layers) == 2
 
 
-def test_unknown_on_value_raises():
-    with pytest.raises(InvalidParameterError, match="unknown on="):
-        viz.plot(_curve_spec(), _marker_spec(), on="forse")
+def test_the_retired_on_keyword_is_answered_by_name():
+    """``on=`` read as *"on which panel"* and its whole domain was one string.
+
+    A bool is the honest type and the honest name; the rename is taught at the
+    door the caller typed, not as an unknown keyword about ``__plot_spec__``.
+    """
+    for door in (lambda **kw: viz.plot(_curve_spec(), _marker_spec(), **kw),):
+        with pytest.raises(InvalidParameterError, match="no on= keyword"):
+            door(on="force")
+    with pytest.raises(InvalidParameterError, match="no on= keyword"):
+        viz.plot(_curve_spec(ylabel="v")).add(_marker_spec(ylabel="z"), on="force")
 
 
-def test_on_is_rejected_for_a_panelled_layout():
+def test_force_is_rejected_for_a_panelled_layout():
     with pytest.raises(InvalidParameterError, match="nothing to force"):
-        viz.plot(_curve_spec(), _marker_spec(), layout="stack", on="force")
+        viz.plot(_curve_spec(), _marker_spec(), layout="stack", force=True)
 
 
 def test_overlay_keeps_the_annotations_of_every_source():
@@ -634,7 +642,7 @@ def test_add_frame_check_and_force():
     with pytest.raises(InvalidParameterError, match="axes mismatch"):
         viz.plot(_curve_spec(ylabel="v")).add(_marker_spec(ylabel="z"))
     with pytest.warns(VisualizationDegraded):
-        forced = viz.plot(_curve_spec(ylabel="v")).add(_marker_spec(ylabel="z"), on="force")
+        forced = viz.plot(_curve_spec(ylabel="v")).add(_marker_spec(ylabel="z"), force=True)
     assert len(forced.layers) == 2
 
 
@@ -963,3 +971,74 @@ def test_every_orbit_in_an_overlay_gets_its_own_legend_entry():
     for spec in (one_shot, chained):
         labels = [layer.label for layer in spec.layers]
         assert len(set(labels)) == len(labels) == 3, labels
+
+
+# ---------------------------------------------------------------------------
+# v6 — one way to compose, and it does not alias
+# ---------------------------------------------------------------------------
+
+
+def test_plotting_a_plot_returns_a_copy_so_closure_is_not_an_aliasing_trap():
+    """``ts.plot(p)`` is documented as *closure*; it used to return ``p`` itself.
+
+    Every tweak mutates-and-returns-self, so ``q = ts.plot(p).relabel(title="…")``
+    renamed ``p``.  The ``a + b`` operator already composed "onto a COPY of a";
+    the two composition doors agree now.  A **grid's** panels genuinely *are* the
+    plots you passed — that is what makes ``g[0].style(...)`` work — so only the
+    sole-subject case copies.
+    """
+    original = viz.plot(_curve_spec(), title="original")
+    copied = viz.plot(original)
+    assert copied is not original
+    copied.relabel(title="mutated")
+    assert original.title == "original"
+    # ...and the grid keeps panel identity, deliberately.
+    a, b = viz.plot(_curve_spec("a")), viz.plot(_curve_spec("b"))
+    assert viz.plot(a, b, layout="grid").panels[0] is a
+
+
+def test_a_one_row_grid_is_a_row_and_a_one_column_grid_is_a_stack():
+    """``ts.viz.grid(a, b, cols=2)`` and ``a | b`` must be the same arrangement.
+
+    They used to build ``Layout.mode`` ``"grid"`` and ``"row"`` for one visible
+    1x2 figure — two representations of one picture.
+    """
+    import tsdynamics as ts
+
+    def pair():
+        return viz.plot(_curve_spec("a")), viz.plot(_curve_spec("b"))
+
+    a, b = pair()
+    assert ts.viz.grid(a, b, cols=2).layout.mode == (pair()[0] | pair()[1]).layout.mode == "row"
+    a, b = pair()
+    assert ts.viz.grid(a, b, rows=2).layout.mode == (pair()[0] / pair()[1]).layout.mode == "stack"
+    # A genuine 2-D grid stays a grid.
+    four = [viz.plot(_curve_spec(str(i))) for i in range(4)]
+    assert ts.viz.grid(*four, cols=2).layout.mode == "grid"
+
+
+def test_grid_refuses_layout_instead_of_leaking_a_private_module_path():
+    """``grid`` always arranges a grid; ``layout=`` used to leak ``_frontdoor.plot()``.
+
+    Measured: ``TypeError: tsdynamics.viz.transforms._frontdoor.plot() got
+    multiple values for keyword argument 'layout'`` — a private path, from a
+    verb whose own docstring says ``**options`` is forwarded to ``plot``.
+    """
+    import tsdynamics as ts
+
+    with pytest.raises(InvalidParameterError, match="always arranges a grid"):
+        ts.viz.grid(viz.plot(_curve_spec()), viz.plot(_curve_spec()), layout="row")
+
+
+def test_every_figure_keyword_and_style_key_lands_at_the_front_door():
+    """The style/figure vocabulary must be the same word list at ts.plot as elsewhere."""
+    import tsdynamics as ts
+    from tsdynamics.viz.spec import FIGURE_KEYS
+    from tsdynamics.viz.style import STYLE_KEYS
+
+    traj = _lorenz()
+    styled = ts.plot(traj, color="crimson", linewidth=2.0, title="Lorenz", xscale="linear")
+    assert styled.title == "Lorenz"
+    assert styled.layers[0].style["color"] == "crimson"
+    # The two vocabularies are disjoint and jointly the door's "naming" words.
+    assert not (set(STYLE_KEYS) & set(FIGURE_KEYS))

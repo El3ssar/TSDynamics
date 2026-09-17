@@ -59,7 +59,10 @@ class ContinuationResult(AnalysisResult):
         Global attractor id → basin fraction at each value (``nan`` where the
         attractor is absent).
     attractors : list[dict[int, Attractor]]
-        Per value, the located attractors keyed by their *global* (matched) id.
+        Per value, the located attractors keyed by their *global* (matched) id —
+        the records.  For the numbers, use :attr:`centers`, which is the same
+        information as one rectangular ``(n_values, n_ids, dim)`` array rather
+        than three nested containers.
     diverged : ndarray
         Diverged-or-untracked fraction at each value: the diverged share **plus**
         the basin mass of any attractor dropped by ``min_fraction``, so the
@@ -72,10 +75,65 @@ class ContinuationResult(AnalysisResult):
     attractors: list[dict[int, Attractor]] = field(default_factory=list, repr=False, compare=False)
     diverged: np.ndarray = field(default_factory=lambda: np.empty(0), repr=False, compare=False)
 
+    def __array__(self, dtype: Any = None, copy: bool | None = None) -> np.ndarray:
+        """Return the fraction bands as a ``(n_values, n_ids)`` float array.
+
+        Row ``k`` is the basin split at :attr:`values` ``[k]``, column ``j`` the
+        attractor :attr:`ids` ``[j]`` — so ``np.asarray(result)`` is the picture
+        the repr summarises, aligned with the parameter axis.  It used to be a
+        0-d *object* array holding the result itself.
+        """
+        ids = self.ids
+        n = int(np.asarray(self.values).size)
+        arr = np.full((n, len(ids)), np.nan, dtype=float)
+        for j, gid in enumerate(ids):
+            band = np.asarray(self.fractions[gid], dtype=float)
+            arr[: band.size, j] = band[:n]
+        return arr.astype(dtype, copy=bool(copy)) if dtype is not None else arr
+
     @property
     def ids(self) -> list[int]:
         """Sorted global attractor ids seen anywhere in the sweep."""
         return sorted(self.fractions)
+
+    @property
+    def centers(self) -> np.ndarray:
+        """Where each tracked attractor sits at each value: ``(n_values, n_ids, dim)``.
+
+        The numbers behind :attr:`attractors`, which is a *list of dicts of
+        records* — three containers deep before a coordinate.  Row ``k`` is the
+        parameter value :attr:`values` ``[k]``, column ``j`` the attractor
+        :attr:`ids` ``[j]``, and a value where that id is absent is ``nan``, so
+        the array is rectangular and aligns with ``np.asarray(self)`` index for
+        index::
+
+            cont.centers[:, 0, :]     # attractor ids[0]'s path through state space
+
+        An empty sweep gives shape ``(0, 0, 0)``.
+        """
+        ids = self.ids
+        n = int(np.asarray(self.values).size)
+        dim = next(
+            (
+                int(np.asarray(att.center).size)
+                for per_value in self.attractors
+                for att in per_value.values()
+            ),
+            0,
+        )
+        out = np.full((n, len(ids)), np.nan, dtype=float) if dim == 0 else None
+        if out is not None:
+            return out.reshape(n, len(ids), 0)
+        arr = np.full((n, len(ids), dim), np.nan, dtype=float)
+        index = {gid: j for j, gid in enumerate(ids)}
+        for k, per_value in enumerate(self.attractors[:n]):
+            for gid, att in per_value.items():
+                j = index.get(int(gid))
+                if j is None:
+                    continue
+                center = np.asarray(att.center, dtype=float).ravel()
+                arr[k, j, : center.size] = center[:dim]
+        return arr
 
     def tipping_points(self, *, threshold: float = 0.0) -> CollectionResult:
         """Tipping events along this continuation (see :func:`tipping_points`)."""
@@ -217,7 +275,9 @@ def continuation(
     region : Box, Ball, or Grid
         The region whose basin fractions are measured at each value.
     n : int, default 2000
-        Initial conditions sampled per value.
+        Number of random **initial conditions** sampled at each parameter value
+        — the same quantity ``attractors`` / ``fixed_points`` spell ``n_seeds``,
+        and what ``basin_fractions`` also calls ``n``.
     resolution : int or tuple of int, default 100
         Recurrence cells per axis (a Grid uses its own ``counts``).
     seed : int, optional

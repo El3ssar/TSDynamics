@@ -25,9 +25,13 @@ _RATE_ANALYSES = frozenset({"max_lyapunov"})
 #: Fixed units for the analyses that return a bare number.  A result may always
 #: override by recording ``meta["unit"]`` at the call site; this table exists so
 #: the ones that ship today read correctly without touching their estimators.
+#: ``estimate_period`` is deliberately ABSENT: its unit is not a constant.  The
+#: estimator returns ``lag * step``, so the answer is in **samples** only when
+#: the data carried no time axis; on a ``Trajectory`` it is in time units, and
+#: the hardcoded word made the repr wrong by a factor of ``1/dt`` (100x on the
+#: library's own docstring example).  It records ``meta["unit"]`` instead.
 _UNITS: dict[str, str] = {
     "optimal_delay": "samples",
-    "estimate_period": "samples",
     "embedding_dimension": "",
     "cao_dimension": "",
     "false_nearest_neighbors": "",
@@ -255,12 +259,30 @@ class ScalarResult(_NumericOps, AnalysisResult):
         floor :class:`~tsdynamics.analysis.LyapunovSpectrum` uses: a bare
         ``lambda > 0`` test would call floating-point noise chaos.
         """
+        chaotic = self.chaotic
+        if chaotic is None:
+            return None
+        return "→ chaotic (λ > 0)" if chaotic else "→ regular (λ ≤ 0)"
+
+    @property
+    def chaotic(self) -> bool | None:
+        r"""Whether the measured exponent says the dynamics is chaotic.
+
+        ``None`` — never ``False`` — when this scalar is not a Lyapunov exponent
+        (the only measurement that classifies) or is not finite, matching
+        :attr:`~tsdynamics.analysis.results.WadaResult.applicable`: a verdict is
+        reported only when it was measured.
+
+        Returns
+        -------
+        bool or None
+        """
         if (self.meta.get("analysis") if self.meta else None) != "max_lyapunov":
             return None
         value = float(self)
         if not np.isfinite(value):
             return None
-        return "→ chaotic (λ > 0)" if value > 0.0 else "→ regular (λ ≤ 0)"
+        return bool(value > 0.0)
 
     def __plot_spec__(self, kind: str | None = None) -> Any:
         """Describe the scalar as a one-point :class:`PlotSpec` (rarely plotted).
@@ -326,6 +348,20 @@ class CountResult(int, AnalysisResult):
         unit = self._unit()
         return f"= {int(self)}" + (f" {unit}" if unit else "")
 
+    def __array__(self, dtype: Any = None, copy: bool | None = None) -> np.ndarray:
+        """Return the count as a 0-d **integer** array — a drop-in stays an ``int``.
+
+        The base :meth:`~tsdynamics.analysis._result_base.AnalysisResult.__array__`
+        goes through ``float(self)``, which would hand back ``float64`` and break
+        ``np.asarray(tau)`` as an index.
+        """
+        arr = np.asarray(int(self))
+        if dtype is not None:
+            arr = arr.astype(dtype, copy=bool(copy))
+        elif copy:
+            arr = arr.copy()
+        return arr
+
     #: ``int.__repr__`` sits ahead of :class:`AnalysisResult` in the MRO, so the
     #: shared headline repr has to be claimed explicitly — otherwise a count
     #: reprs as a bare ``9`` and the console never says *what* was measured.
@@ -367,7 +403,7 @@ class CountResult(int, AnalysisResult):
         """
         data = {"value": int(self), "meta": _jsonify(self.meta)}
         if full:
-            data.update(self._derived())
+            data.update({k: _jsonify(v) for k, v in self._full_extras().items()})
         return data
 
     def _derived(self) -> dict[str, Any]:

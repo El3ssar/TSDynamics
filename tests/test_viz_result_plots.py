@@ -85,9 +85,18 @@ def test_backend_keyword_still_reaches_the_renderer(orbit_diagram, tmp_path: Pat
     assert sizes == [(3.0, 2.0), (8.0, 6.0)]
 
 
-def test_typed_accessor_still_works(orbit_diagram) -> None:  # noqa: ANN001
-    fig = orbit_diagram.plot.bifurcation()
-    assert fig is not None
+def test_the_namespace_offers_the_transform_that_draws_this_result(orbit_diagram) -> None:  # noqa: ANN001
+    """``.plot.bifurcation()`` forced a KIND; ``.plot.orbit_diagram()`` runs a TRANSFORM.
+
+    The old spelling relabelled this result's own spec ``bifurcation`` and changed
+    nothing else.  The name the namespace offers now is a registered transform,
+    reached identically as ``ts.plot(od, "orbit_diagram")``.
+    """
+    assert "orbit_diagram" in dir(orbit_diagram.plot)
+    spec = orbit_diagram.plot.orbit_diagram()
+    assert spec is not None
+    with pytest.raises(AttributeError, match="forced a plot KIND"):
+        getattr(orbit_diagram.plot, "bifurcation")  # noqa: B009 — the lookup IS the test
 
 
 # ---------------------------------------------------------------------------

@@ -4,7 +4,7 @@ Three records, and one rule that connects them:
 
 .. code-block:: text
 
-    subject  ──transform.compute──▶  Geometry  ──primitive.build──▶  [Layer]  ──▶  PlotSpec
+    subject  ──transform.compute──▶  Geometry  ──primitive.build──▶  [Layer]  ──▶  Plot
              (what to measure)      (numbers)   (how to draw it)     (the IR)
 
 A **transform** turns a subject (a :class:`~tsdynamics.data.Trajectory`, a system,
@@ -20,7 +20,7 @@ Why ``Geometry`` is not an IR
 -----------------------------
 It has no ``to_dict``, no schema version, and no renderer ever sees one — it
 dies at spec-build time.  The serializable IR is, and stays,
-:class:`~tsdynamics.viz.spec.PlotSpec`.  ``Geometry`` exists for one reason: if
+:class:`~tsdynamics.viz.spec.Plot`.  ``Geometry`` exists for one reason: if
 ``compute`` took the primitive as an argument, every transform would have to
 implement every primitive and the swap would not be a swap.
 
@@ -44,9 +44,10 @@ import numpy as np
 from .._frames import Frame, FrameSpace, OverlayRole, axis_name, space_arity
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from ..spec import Layer, PlotKind, PlotSpec
+    from ..spec import Layer, Plot, PlotKind
 
 __all__ = [
+    "SUBJECT_KINDS",
     "Channel",
     "ChannelType",
     "Geometry",
@@ -56,6 +57,7 @@ __all__ = [
     "Primitive",
     "Source",
     "make_frame",
+    "subject_kinds",
 ]
 
 #: The two — and only two — source categories a transform can declare.
@@ -74,6 +76,76 @@ __all__ = [
 #:
 #: There is deliberately no third category.
 Source = Literal["data", "model"]
+
+#: The closed vocabulary a transform may declare in ``subjects=``, beside any
+#: analysis-result **class name**.  Five words, each meaning exactly what its
+#: consumers need:
+#:
+#: ``system``
+#:     A system **object** — something with equations, which can be run.
+#: ``flow``
+#:     A **continuous system**: one with a vector field to evaluate at points no
+#:     trajectory visits.  A flow's *samples* are not a flow, because they carry
+#:     no right-hand side — they are ``trajectory`` / ``array``.
+#: ``map``
+#:     Discrete-time dynamics: a :class:`~tsdynamics.families.DiscreteMap` **or a
+#:     trajectory of one**.  Here the data *does* carry the distinction — the
+#:     iterates are what a cobweb staircases — which is why this word reaches
+#:     further than ``flow``.
+#: ``trajectory`` / ``array``
+#:     Measured samples, with or without a time axis.  ``array`` is the permissive
+#:     bucket: anything that is not a system, a trajectory, a result or a bare
+#:     right-hand side is read as numbers, because a user holding numbers should
+#:     not have to construct a library type to look at them.
+#: ``function``
+#:     A bare right-hand side ``f(u, t)`` — a model without a system around it.
+SUBJECT_KINDS: frozenset[str] = frozenset(
+    {"flow", "map", "system", "trajectory", "array", "function"}
+)
+
+
+def subject_kinds(subject: Any) -> frozenset[str]:
+    """Classify a plotting subject into the :data:`SUBJECT_KINDS` it answers to.
+
+    One function, consulted by :meth:`PlotTransform.accepts_subject` — which is
+    in turn what ``ts.plot`` pairing, ``ts.viz.transforms.find(subject=…)`` and
+    ``subject.plot.<TAB>`` all read — so *"can this be drawn from that?"* has a
+    single answer in the library rather than one per door.
+
+    An **analysis result** answers to every class name in its MRO, so declaring
+    ``subjects=("ScalingResult",)`` admits ``DimensionResult`` and
+    ``LyapunovFromData`` without naming either.  A result is deliberately not
+    ``"array"``: it may be array-like, but a Lyapunov spectrum drawn as a power
+    spectrum is a wrong picture, not a permissive one.  A result is recognised by
+    carrying ``__plot_spec__`` (the one seam every plottable has) while being
+    neither a system nor a trajectory — so this module still imports nothing from
+    :mod:`tsdynamics.analysis`.
+
+    Everything else falls into ``array``, which keeps the door as wide as it was:
+    a pandas Series, a list of lists, anything ``as_trajectory`` can coerce.
+    """
+    from tsdynamics.families import SystemBase
+
+    if isinstance(subject, SystemBase) or (
+        hasattr(subject, "family") and hasattr(subject, "dim") and hasattr(subject, "run")
+    ):
+        family = getattr(subject, "family", None)
+        return frozenset({"system", "map" if family == "map" else "flow"})
+    if isinstance(subject, np.ndarray | list | tuple):
+        return frozenset({"array"})
+    if hasattr(subject, "y") and hasattr(subject, "t"):  # a Trajectory (or subclass)
+        # Deliberately **not** ``"array"``: a trajectory is a trajectory, and
+        # every ``data`` transform lists both words anyway.  The one transform
+        # that declares ``array`` alone reads a recorded ``(times, estimates)``
+        # pair — which a Trajectory is not, and used to be offered.
+        system = getattr(subject, "system", None)
+        family = getattr(system, "family", None) if system is not None else None
+        return frozenset({"trajectory", "map"} if family == "map" else {"trajectory"})
+    if hasattr(subject, "__plot_spec__"):  # an analysis result (or an out-of-tree plottable)
+        return frozenset(cls.__name__ for cls in type(subject).__mro__ if cls is not object)
+    if callable(subject):
+        return frozenset({"function"})
+    return frozenset({"array"})
 
 
 class ChannelType(StrEnum):
@@ -491,21 +563,76 @@ class Geometry:
         return iter(self.parts)
 
     def __getitem__(self, key: str | int) -> Any:
-        """``g["x"]`` is a single-part geometry's **array**; ``g[0]`` is a :class:`Part`.
+        """``g["x"]`` is the channel's **array**; ``g[0]`` is one :class:`Part`.
 
         The two subscripts read differently and cannot be confused: a string names
         a channel (and asks the same question ``part["x"]`` does), an integer
         picks one of several drawable pieces.
 
+        On a **multi-part** geometry a string returns the channel **stacked over
+        the parts** — shape ``(n_parts, …)`` — which is what a caller reaching
+        into a three-component time series means by ``g["y"]``.  It used to raise,
+        sending them to ``g.parts[i]["y"]`` and a loop.  Parts whose channel has a
+        different length still raise, because stacking those would invent
+        alignment that is not there.
+
         Raises
         ------
         tsdynamics.errors.InvalidParameterError
-            For a string subscript on a multi-part geometry — the first part's
-            channel would be a quiet half-answer.  Use ``g.parts``.
+            For a channel this geometry does not carry, or one whose length
+            differs between parts.
         """
-        if isinstance(key, str):
+        if not isinstance(key, str):
+            return self.parts[key]
+        if len(self.parts) == 1:
             return self.channels[key].values
-        return self.parts[key]
+        return self._stacked(key)
+
+    def _stacked(self, name: str) -> np.ndarray:
+        """Return channel ``name`` stacked over every part that carries it."""
+        from tsdynamics.errors import InvalidParameterError
+
+        rows = [part.channels[name].values for part in self.parts if name in part.channels]
+        if not rows:
+            raise InvalidParameterError(
+                f"geometry {self.transform!r} carries no channel {name!r}; it has "
+                f"{sorted(self.channel_names())}."
+            )
+        widths = {np.shape(r) for r in rows}
+        if len(widths) != 1:
+            raise InvalidParameterError(
+                f"geometry {self.transform!r} has {name!r} at differing shapes across its "
+                f"{len(self.parts)} parts ({sorted(widths)}), so there is no array to stack; "
+                "iterate g.parts (each has .channels) instead."
+            )
+        return np.stack([np.asarray(r, dtype=float) for r in rows])
+
+    def __array__(self, dtype: Any = None, copy: bool | None = None) -> np.ndarray:
+        """Return this geometry's numbers as a **numeric** array.
+
+        ``ts.viz.geometry(...)`` is advertised as *the arrays escape hatch*, and
+        ``np.asarray`` of one used to be a ``(n_parts,)`` array of **objects** —
+        a silent non-answer that plots as nothing and arithmetics into a
+        ``TypeError`` far from the call site.
+
+        The array is the geometry's drawn channels in axis order (``x``, ``y``,
+        ``z`` where present), stacked: a single-part 2-D geometry gives
+        ``(2, n)``, a three-part time series ``(2, 3, n)``.  A geometry whose
+        parts carry different channels or differing lengths has no such array and
+        **raises**, naming ``g.parts`` — never an object array.
+        """
+        from tsdynamics.errors import InvalidInputError
+
+        shared = [c for c in ("x", "y", "z") if all(c in part.channels for part in self.parts)]
+        if not shared:
+            raise InvalidInputError(
+                f"geometry {self.transform!r} is not one array of numbers: its "
+                f"{len(self.parts)} part(s) share no coordinate channel (they carry "
+                f"{sorted(self.channel_names())}). Ask for one — np.asarray(g['u']) — "
+                "or iterate g.parts."
+            )
+        stacked = np.stack([np.asarray(self[c], dtype=float) for c in shared])
+        return stacked.astype(dtype) if dtype is not None else stacked
 
     def __repr__(self) -> str:  # noqa: D105
         return (
@@ -640,7 +767,7 @@ class Presentation:
         The axes aspect ratio.  ``"equal"`` for anything drawn in a metric space
         (a phase portrait, a basin image, a section).
     autocolor : bool, optional
-        Run :meth:`~tsdynamics.viz.spec.PlotSpec.autocolor` on the assembled
+        Run :meth:`~tsdynamics.viz.spec.Plot.autocolor` on the assembled
         spec — attach a colorbar and infer the colour range from the drawn data.
     legend : bool, optional
         ``True`` / ``False`` force a legend; ``None`` (default) attaches one when
@@ -756,41 +883,61 @@ class PlotTransform:
     example: ExampleFactory | None = None
     labels: tuple[str, ...] = ()
     aliases: tuple[str, ...] = ()
+    #: The declared subject vocabulary (see :attr:`subjects`).  Empty means
+    #: *"derive it from* :attr:`source` *"*, which is what 26 of the 39 in-tree
+    #: transforms do.
+    _subjects: tuple[str, ...] = ()
 
     @property
     def subjects(self) -> tuple[str, ...]:
-        """What this transform can be handed — **derived from** :attr:`source`.
+        """What this transform can be handed — declared, or derived from :attr:`source`.
 
-        ``model`` needs the right-hand side, so it takes a system and nothing
-        else; ``data`` needs samples, and a system supplies those for free by
-        being run.  Derived rather than declared because a *declared* default of
-        ``("trajectory", "array")`` — which nothing in the tree overrides — would
-        make all twelve ``model`` transforms unreachable from
-        ``system.plot.<TAB>``.
+        The vocabulary is closed and small (:data:`SUBJECT_KINDS`) plus **any
+        result class name**:
+
+        ``flow``
+            A continuous system — one with a vector field to evaluate.
+        ``map``
+            A discrete map (or a trajectory of one).
+        ``system``
+            Either; shorthand for ``("flow", "map")``.
+        ``trajectory`` / ``array``
+            Measured samples, with or without a time axis.
+        A class name (``"ScalingResult"``, ``"GALIResult"``)
+            That analysis result, or any subclass of it.
+
+        Derived when not declared: ``model`` → ``("system", "function")`` (it
+        needs a right-hand side, in a system or on its own),
+        ``data`` → ``("trajectory", "array", "system")``
+        (samples, and a system supplies those by being run).  An analysis result
+        is **never** admitted by the derived default — a Lyapunov spectrum is not
+        a time series — so a transform that reads one says which one.
         """
-        return ("system",) if self.source == "model" else ("trajectory", "array", "system")
+        if self._subjects:
+            return self._subjects
+        if self.source == "model":
+            return ("system", "function")
+        return ("trajectory", "array", "system")
 
     def accepts_subject(self, subject: Any) -> bool:
         """Whether this transform can be handed ``subject`` (by declared :attr:`subjects`).
 
         The check behind ``ts.plot(vdp, t1, t2, "vector_field", "nullclines")``:
         a named transform is applied to **every subject its source admits**, so a
-        field transform skips the trajectories instead of raising on them.
+        field transform skips the trajectories instead of raising on them.  It is
+        also what ``ts.viz.transforms.find(subject=…)`` answers with, and what
+        ``subject.plot.<TAB>`` lists — so it must be *true*, not permissive.
 
-        A ``data`` transform takes anything (a system supplies data by being
-        run).  A ``model`` transform refuses **measured data** — an array, a
-        trajectory — which is the one thing that genuinely cannot answer it, and
-        accepts everything else (a system, a bare right-hand side, an analysis
-        result that carries the model with it).  Refusing by an allow-list
-        instead would turn away ``eigenvalue_plane``'s ``FixedPoint``.
+        .. versionchanged:: 6.0
+           Measured before: ``find(subject=henon)`` advertised all **38**
+           transforms and **14 raised**, including every 2-D-flow field
+           transform; ``find(subject=lyapunov_spectrum)`` advertised 38 and
+           **22 raised**.  The old rule accepted everything that was not literally
+           an array or a trajectory, so a *map* was offered ``nullclines`` and a
+           *result* was offered ``vector_field``.  Declared subjects replace the
+           guess.
         """
-        from tsdynamics.families import SystemBase
-
-        if self.source != "model" or isinstance(subject, SystemBase):
-            return True
-        return not isinstance(subject, (np.ndarray, list, tuple)) and not (
-            hasattr(subject, "y") and hasattr(subject, "t")
-        )
+        return bool(set(self.subjects) & subject_kinds(subject))
 
     @property
     def available(self) -> bool:
@@ -841,8 +988,8 @@ class PlotTransform:
         )
 
 
-def spec_of(geometry: Geometry, transform: PlotTransform, layers: list[Layer]) -> PlotSpec:
-    """Assemble the :class:`~tsdynamics.viz.spec.PlotSpec` for a lowered geometry.
+def spec_of(geometry: Geometry, transform: PlotTransform, layers: list[Layer]) -> Plot:
+    """Assemble the :class:`~tsdynamics.viz.spec.Plot` for a lowered geometry.
 
     The one assembler every transform shares.  It reads only what the geometry
     and the transform *declared* — the kind, the axis labels and limits, the
@@ -861,7 +1008,7 @@ def spec_of(geometry: Geometry, transform: PlotTransform, layers: list[Layer]) -
 
     Returns
     -------
-    PlotSpec
+    Plot
     """
     from tsdynamics.errors import InvalidParameterError
 

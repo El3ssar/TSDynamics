@@ -115,7 +115,10 @@ def test_gali_input_validation():
         gali(ts.systems.Henon(), k=2, dt=0.1)
     with pytest.raises(ValueError, match="n applies to maps"):
         gali(ts.systems.Lorenz(), k=2, n=100)
-    with pytest.raises(NotImplementedError):
+    # A wrong SUBJECT is a TypeError everywhere in the analysis layer, so it is
+    # one here too — it used to be a NotImplementedError (a RuntimeError), the
+    # only door where `except TypeError` missed the mistake.
+    with pytest.raises(TypeError, match="infinite-dimensional history"):
         gali(ts.systems.MackeyGlass(), k=2)  # DDE: no finite tangent space here
 
 
@@ -143,9 +146,12 @@ def test_zero_one_quasiperiodic_is_regular():
 
 def test_zero_one_distribution_and_errors():
     x = ts.systems.Logistic(params={"r": 4.0}).run(steps=2500, ic=[0.3]).component("x")
-    k, k_c = zero_one_test(x, n_c=20, seed=0, return_distribution=True)
+    # One call, ONE return shape: the per-frequency K_c values ride on the result
+    # rather than turning the return into a tuple when a flag is set.
+    k = zero_one_test(x, n_c=20, seed=0)
+    k_c = k.distribution
     assert k_c.shape == (20,)
-    assert k == pytest.approx(float(np.median(k_c)))
+    assert float(k) == pytest.approx(float(np.median(k_c)))
     # The system overload integrates/iterates internally (like gali): a chaotic
     # map handed straight to the test scores K ≈ 1.
     assert zero_one_test(ts.systems.Logistic(params={"r": 4.0}), n=2500, ic=[0.3]) > 0.9
@@ -225,7 +231,7 @@ def test_expansion_entropy_input_validation():
         expansion_entropy(ts.systems.Henon(), Box([-2, -2], [2, 2]), dt=0.1)
     with pytest.raises(ValueError, match="region dimension"):
         expansion_entropy(ts.systems.Henon(), Box([0.0], [1.0]))  # 1-D box, 2-D map
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(TypeError, match="infinite-dimensional history"):
         expansion_entropy(ts.systems.MackeyGlass(), Box([0.0], [1.0]))
 
 

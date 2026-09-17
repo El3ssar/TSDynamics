@@ -51,6 +51,9 @@ entry-point group and are indistinguishable from in-tree ones.
 
 from __future__ import annotations
 
+import sys as _sys
+from types import ModuleType
+
 # ── internals: bound and importable, but off the curated tab surface ────────────
 # The redundant ``as`` form marks them as deliberate re-exports rather than unused
 # imports.  Nothing is removed — ``from tsdynamics.viz.transforms import lower``
@@ -112,6 +115,7 @@ from ._registry import (
 )
 from ._registry import (
     T,
+    allow,
     compatibility,
     draw,
     find,
@@ -162,9 +166,10 @@ __all__ = [
     "primitive_names",
     "get_primitive",
     "register_primitive",
-    # Introspecting the registry.
+    # Introspecting the registry, and extending a declared row.
     "transforms",
     "compatibility",
+    "allow",
     # Raw-array escape hatches.
     "geometry",
     "draw",
@@ -178,3 +183,26 @@ def __dir__() -> list[str]:
     pipeline stay bound and importable — see the internals block above.
     """
     return sorted(__all__)
+
+
+class _CallableModule(ModuleType):
+    """A module that is also callable — so ``ts.viz.transforms()`` lists the names.
+
+    The four registries advertise **one** shape (``register`` / ``names`` /
+    ``find`` / ``get``), and three of them are objects you can call to get the
+    listing.  ``transforms`` is a *module*, so ``ts.viz.transforms()`` was a
+    ``TypeError: 'module' object is not callable`` — one of the four ways "learn
+    one, know all four" was false.
+
+    Re-classing the module (rather than replacing it with a registry object)
+    keeps every other property intact: ``import tsdynamics.viz.transforms``,
+    ``from tsdynamics.viz.transforms import register``, ``isinstance(m,
+    ModuleType)`` and the submodule entry in ``sys.modules`` are all unchanged.
+    """
+
+    def __call__(self) -> list[str]:
+        """Return the registered transform names (the sorted listing)."""
+        return names()
+
+
+_sys.modules[__name__].__class__ = _CallableModule

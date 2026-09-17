@@ -83,9 +83,58 @@ class EmbeddingDimension(AnalysisResult):
         """Return the recommended embedding dimension, so it drops into ``embed``."""
         return int(self.dimension)
 
+    def __float__(self) -> float:
+        """Return the dimension as a float, so conversion and formatting agree.
+
+        Without it ``float(result)`` raised while ``f"{result:.3f}"`` returned
+        ``'3.000'`` — the format path fell back to ``__int__`` and the conversion
+        path did not, so one said the result is a number and the other said it is
+        not.
+        """
+        return float(self.dimension)
+
+    def __array__(self, dtype: Any = None, copy: bool | None = None) -> np.ndarray:
+        """Return the dimension as a 0-d **integer** array — it indexes and slices."""
+        arr = np.asarray(int(self.dimension))
+        if dtype is not None:
+            arr = arr.astype(dtype, copy=bool(copy))
+        elif copy:
+            arr = arr.copy()
+        return arr
+
+    @property
+    def saturated(self) -> bool:
+        r"""Whether the criterion was met **inside** the scanned range.
+
+        ``False`` when the selected dimension is the largest one tried, which
+        means the search hit its ceiling rather than finding saturation — and
+        the repr then says so instead of presenting the ceiling as the answer
+        (measured: ``m = 10`` reported with :math:`E_1 = 0.6`, nowhere near
+        saturation, with no flag).
+
+        Returns
+        -------
+        bool
+        """
+        dims = np.asarray(self.dims)
+        if dims.size < 2:
+            return False
+        return int(self.dimension) < int(dims[-1])
+
     def _answer(self) -> str:
         """Return ``m = <dimension>`` — the recommended embedding dimension."""
         return f"m = {int(self.dimension)}"
+
+    def _interpretation(self) -> str | None:
+        """Flag a search that hit its ceiling instead of finding saturation."""
+        dims = np.asarray(self.dims)
+        if dims.size < 2 or self.saturated:
+            return None
+        return f"⚠ did not saturate — m = {int(self.dimension)} is the largest tried; raise max_dim"
+
+    def _derived(self) -> dict[str, Any]:
+        """Export the dimension and whether the search actually saturated."""
+        return {"dimension": int(self.dimension), "saturated": self.saturated}
 
     def _context(self) -> str | None:
         """Return the method, delay and the dimension range that was scanned."""
@@ -263,6 +312,11 @@ def cao_dimension(
 ) -> EmbeddingDimension:
     r"""Cao's averaged-false-neighbour minimum embedding dimension.
 
+    The recommended estimator, and what ``embedding_dimension(x, method="cao")``
+    (the generic door) calls: Cao's :math:`E_1` saturates on its own, with no
+    rejection threshold to pick, where :func:`false_nearest_neighbors` needs
+    ``rtol`` / ``atol`` chosen for the data.
+
     Parameters
     ----------
     data : array-like or Trajectory
@@ -379,6 +433,12 @@ def false_nearest_neighbors(
 ) -> EmbeddingDimension:
     r"""Kennel's false-nearest-neighbour minimum embedding dimension.
 
+    The classic estimator, and what ``embedding_dimension(x, method="fnn")``
+    calls.  Choose it over :func:`cao_dimension` when you want an explicit,
+    interpretable rejection criterion (the fraction of neighbours that are false)
+    rather than a saturation curve — at the cost of choosing ``rtol`` / ``atol``
+    for your data.
+
     A neighbour found in dimension :math:`d` is *false* when extending to
     :math:`d+1` either stretches the pair by more than ``rtol`` relative to their
     :math:`d`-dimensional distance, or pushes them apart by more than ``atol``
@@ -489,6 +549,17 @@ def embedding_dimension(
     **kwargs: Any,
 ) -> EmbeddingDimension:
     """Estimate the minimum embedding dimension by the chosen method.
+
+    The one door for the question "how many coordinates does this attractor
+    need?", with ``method=`` naming the estimator — the shape every other
+    estimator-choosing analysis in the library has (``fixed_points(method=)``,
+    ``optimal_delay(method=)``, ``lyapunov_from_data(method=)``).  The two
+    estimators keep their own names and their own citations, so
+    ``embedding_dimension(x, method="cao")`` and ``cao_dimension(x)`` return the
+    *identical* object; type whichever reads better at your call site.  Reach for
+    :func:`cao_dimension` first if you have no reason to prefer otherwise — Cao's
+    :math:`E_1` needs no threshold to be chosen for it, which is the usual
+    difficulty with :func:`false_nearest_neighbors`.
 
     Parameters
     ----------

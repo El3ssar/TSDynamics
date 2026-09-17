@@ -238,8 +238,10 @@ one dot down, and the exception a wrong guess raises prints that address:
   returns a `TrajectoryBatch` carrying `.final`.
   `stroboscope`, `project`, `tangent` and `copies` are **gone from the object**
   (census: no user callers); each `AttributeError` names the replacement —
-  `ts.derived.ProjectedSystem(sys, 0, 2)` / `traj[["x","z"]]`,
-  `ts.derived.TangentSystem(sys, k=2)`, `sys.ensemble(states)`.
+  `ts.derived.ProjectedSystem(sys, [0, 2])` / `traj["x", "z"]`,
+  `ts.derived.TangentSystem(sys, k=2)`, `sys.ensemble(states)`. (Both of those
+  lines are *run* by a gate — the old `ProjectedSystem(sys, 0, 2)` spelling
+  raised `TypeError`, which is the one thing a remedy line may never do.)
 - **State-space geometry** (`data`): `Box`, `Ball`, `Grid`, `Region`, `region`,
   `as_region`, `sampler`, `grid_points`, `set_distance` → `ts.data.*`. Every
   `region=` door in the library reads **one `(lo, hi[, n])` pair per state
@@ -528,9 +530,16 @@ family itself. Re-exported from `families.base` / `tsdynamics.families` and the
 top level, so `from tsdynamics import Trajectory` and `from tsdynamics.data
 import Trajectory` are the same object.
 
-- Named components when the class declares `variables`: `traj["x"]`,
-  `traj[["x","z"]]`, `traj.component("x")`.
-- Point-set ops: `minmax()`, `standardize()`, `neighbors(q, k)` (lazy KD-tree).
+- **One indexing grammar**: *a name selects a column, several names select a
+  sub-trajectory, a number selects a row.* `traj["x"]` is the `(T,)` array;
+  `traj["x", "z"]` is a `Trajectory` that names its **own** columns (so
+  `traj["x", "z"]["z"]` is `z`, which the old `sel` spelling got wrong — it wrote
+  the names into `meta`, which `variables` never read); `traj[10:50]` is rows.
+  The list spelling `traj[["x","z"]]` raises, naming the one that works.
+  `traj.component("x")` survives for the by-index form.
+- Point-set ops: `minmax()`, `standardize()`, `neighbors(q, k)` → a `Neighbors`
+  record (`.state` / `.distance` / `.index`, one shape for every `k`; it used to
+  hand back scipy's raw `(distances, indices)`, rank-polymorphic in `k`).
 - **No topical accessors** — `traj.dims` / `traj.recurrence` / `traj.lyap` and
   `families/_accessors.py` are **gone** (ruling A2): an analysis is a free
   function whose first argument is its subject, so it is
@@ -951,11 +960,40 @@ raise on every numeric result. `np.asarray(fixed_points)` was a `(n,)` array of
 `_NumericOps` and `ArrayResult` now sit on `np.lib.mixins.NDArrayOperatorsMixin`
 **plus** `__array_ufunc__` (both halves are required — `__array_ufunc__` alone
 breaks `result * 2`, because `int.__mul__` returns `NotImplemented` without ever
-reaching NumPy), collections are complete sequences indexed **by position** with
-`by_id(k)` for a label lookup (`AttractorSet[0]` is now the first attractor; it
-used to raise `KeyError` because ids start at 1), and `to_dict(full=True)` adds
+reaching NumPy), and `to_dict(full=True)` adds
 the derived answers the repr reports (`kaplan_yorke`, `recurrence_rate`,
 `applicable`/`W`, `n_fit`/`r_squared`) — `full` only ever *adds* keys.
+
+**Indexing a collection gives you a `numpy.ndarray`, never a result object.**
+This is the owner's D1, applied at the root and to every sibling:
+`fixed_points(lor)[0]` is the `(3,)` point, `periodic_orbits(...)[0]` the
+`(p, dim)` orbit, `attractors(...)[0]` the `(dim,)` centre,
+`windowed_rqa(...)[0]` the measure row. Making the record classes *emulate*
+arrays was the half-measure that leaked: `np.asarray(fps[0])` worked while
+`fps[0].shape` and `fps[0].tolist()` raised, and on an `AttractorSet`
+`np.asarray(aset)[0]` (a centre) was a **different thing** from
+`np.asarray(aset[0])` (a whole point cloud).
+
+Nothing was deleted — the diagnostics moved **out of the way, not out of
+reach**, under one spelling learned once across all four collections:
+
+- **`.details`** — the records, aligned index-for-index with `[]`
+  (`fps.details[0].eigenvalues`);
+- the **vectorised per-member arrays** that were already there —
+  `fps.points` / `.eigenvalues` / `.is_stable`, `orbits.periods` /
+  `.multipliers`, `aset.centers` / `.cells`;
+- **`by_id(k)`** — still the by-label door, and still hands back the *record*
+  (an id is what you read off a basin image, and the next question is always
+  *about* that attractor). `BasinFractions.by_id` correctly stays a float: its
+  members **are** floats, so there is no record to hand back.
+
+Collections remain complete sequences indexed **by position** (`AttractorSet[0]`
+is the first attractor; it used to raise `KeyError`, because ids start at 1).
+All 32 reprs are byte-identical across the change. Two are deliberately *not*
+bare arrays, because a 2-tuple of plain Python is not a class to learn:
+`OrbitDiagram[i]` is `(value, points)` and `ReturnMap[i]` is `(v_n, v_{n+1})` —
+`for value, points in od` is the `dict.items()` of a parameter sweep, and
+`np.asarray(od)` is still the real `(N, 2)` scatter.
 
 **`ts.analysis.results`** is the namespace for the 32 classes (contract §2.7):
 off the flat `ts.analysis` listing, still importable, still what `isinstance`
@@ -964,6 +1002,43 @@ Gates: `tests/test_result_repr.py` (walks `AnalysisResult.__subclasses__()`, so 
 new result class cannot ship without a rendered fixture in
 `tests/_result_fixtures.py`), `tests/test_result_plain.py`,
 `tests/test_results_namespace.py`.
+
+### `result.plot` is the FIFTH plotting door, and it speaks the same words
+
+`result.plot` is a `_PlotAccessor` (`analysis/_result_viz.py`) — callable, and a
+**namespace of the transform names that admit this result**, exactly as
+`traj.plot` / `system.plot` are (`utils/plot_namespace.py`). So
+`result.plot.<TAB>` means one thing everywhere in the library, and
+`dim.plot.scaling_fit()` **is** `ts.plot(dim, "scaling_fit")`.
+
+Two things were wrong and are fixed:
+
+- **The eight kind-forcing methods are gone** — `.scaling()` `.diagnostic()`
+  `.time_series()` `.phase()` `.image()` `.bifurcation()` `.return_map()`
+  `.section()`. They did not build a different picture; they **relabelled** the
+  result's own spec with a different `PlotKind`. Measured over the 30 result
+  fixtures: *not one of the eight changed a single byte of layer data*, and each
+  was truthful only when the kind it forced already was the result's natural kind
+  — a no-op. `.time_series()` / `.image()` / `.bifurcation()` / `.section()` were
+  truthful on **zero** results, so `lyapunov_spectrum(lor).plot.section()`
+  returned a bar chart of exponents labelled `poincare_section`. The module had
+  already deleted `.histogram()` and `.spectrum()` on exactly that reasoning; the
+  other eight fail the same test. The replacement is strictly more capable,
+  because a transform *computes* where a relabel only renamed:
+  `ts.plot(dim, "scaling_fit")` builds **five** layers (curve, fitted line, window
+  markers) where `dim.plot.scaling()` built one. A guess at a retired name is
+  answered by name and says what it used to do.
+- **The style and figure vocabularies used to raise here.** Measured:
+  `result.plot(color=…)`, `(title=…)`, `(theme=…)` and `(xscale=…)` all raised
+  `InvalidParameterError` while `ts.plot(result, …)` accepted every one. The door
+  now splits its keywords four ways — the result's own `__plot_spec__` names, the
+  style vocabulary + `theme`, the 17 `FIGURE_KEYS`, then the renderer table — and
+  an unknown word names all four sets. `kind=` is refused, naming the transform
+  spelling.
+
+Gate: `tests/test_plot_accessor_kinds.py` (inverted from the stream that once
+proved each forced kind was a *valid* `PlotKind` — a valid kind is not a correct
+picture).
 
 ---
 
@@ -1236,13 +1311,35 @@ subpackages).
 - `max_lyapunov` (Benettin two-trajectory) needs `set_state` → raises for DDEs.
   Its continuous normalization divides by the **measured elapsed `time()`** of
   the reference run (not a guessed step-size attribute), so it is correct for
-  any continuous system including `WrappedSystem` stepped with `dt=None`. **For a
-  map (stream `perf/map-lyapunov-kernel`)** it is the **leading exponent of the
-  engine QR tangent-map spectrum** (`steps = n·steps_per` from the burnt-in state,
-  `k=1`), run in one Rust call — far faster and more robust than the per-iterate
-  two-trajectory rescaling (no `d0`/collapse tuning); a non-lowering `_step` or a
-  wheel-free env falls back to the two-trajectory loop. The **continuous-system
-  path is unchanged** — only the map path moved to the kernel.
+  any continuous system including `WrappedSystem` stepped with `dt=None`.
+  **Since v6 a map is answered by CALLING `lyapunov_spectrum(k=1)`** — one
+  machine, so the two doors cannot drift. They had: measured on Hénon from
+  `ic=[0.1, 0.1]`, `max_lyapunov(n=20000)` returned `0.41973…` and
+  `lyapunov_spectrum(k=1, n=20000)[0]` returned `0.41599…`, because `n` counted
+  *rescaling cycles of ten iterates* at one door and *iterations* at the other —
+  ten times the work for one nominal horizon. Handed the same start state and no
+  burn-in the two are now **the same float**; what remains between them is only
+  `max_lyapunov`'s own IC policy (burn in, then delegate from the landed state).
+  99 lines of duplicate QR machinery are gone, and `steps_per` is **refused by
+  name** on a map rather than silently reinterpreted. The **flow** path keeps the
+  two-trajectory estimator, because it is genuinely a different machine: it never
+  forms a Jacobian, so it is the only one available for a non-smooth RHS or a
+  `WrappedSystem` — and the delegation is conditional on the system actually
+  having a spectrum to delegate to, so a stepper-only `WrappedSystem` map keeps
+  its loop. *Behaviour change a user can feel:* `max_lyapunov(map, n=N)` now does
+  `N` iterations where it used to do `N * steps_per`.
+- **Units are stated at the door, and enforced.** `transient` was TIME at four
+  Lyapunov doors and a COUNT at two, for the same subject:
+  `max_lyapunov(lorenz, transient=500)` discarded ~10 time units where
+  `lyapunov_spectrum(lorenz, transient=500)` discarded 500 — 50× apart, sibling
+  functions, one word. It is time-for-a-flow / iterations-for-a-map everywhere
+  now, every shipped default is bit-identical, and an `int >= 100` on a flow is
+  **named** rather than read as a 100× longer burn-in. `lyapunov_spectrum` also
+  took `method=` for a kernel after v6 renamed that word to `solver=` at `run()`
+  — a user who obeyed the rule they had just been taught hit
+  `unexpected keyword 'solver'`. Both doors say `solver=` now, and the four
+  catalogue `_known_lyapunov["kwargs"]` dicts that carried `"method"` were
+  renamed with them.
 - `lyapunov_from_data` (A-LYAP) estimates the maximal exponent from a measured
   series via delay embedding + neighbour divergence (Kantz 1994 default,
   Rosenstein et al. 1993 optional); returns a `LyapunovFromData` carrying the
@@ -2540,6 +2637,12 @@ Two layers now cover them:
 | A repr shows `PoincareSection(crossings=…)` / an `OrbitSet` says "period 6" | Fixed in v6: **every** result's repr IS the answer (§4.3) — the section prints `PoincareSection  300 crossings of y = 0 up   ·  3-D states   (Rossler)` and a *flow's* period renders as the real number `T = 6.66329` (a map's stays an integer count). `summary()` exists on nothing. |
 | `ts.plot(traj, "psd", components="x")` used to raise | `components=` is the ONE spelling at every analysis and every transform door since v6 (M38). |
 | `system.to_plot_spec(...)` | The plotting seam is the dunder `__plot_spec__` — carried by systems, `Trajectory` and all 32 results, so `ts.plot` classifies a subject with ONE predicate. The verb you type is `plot`. |
+| `fixed_points(sys)[0].x` / `for fp in fps: fp.stable` | `[]` and iteration give **arrays** now (the owner's D1). Read `fps.points` / `.eigenvalues` / `.is_stable` for the vectorised answer, `fps.details[i]` for the record, `fps.by_id(k)` for a labelled one. Same four spellings on `OrbitSet`, `AttractorSet`, `WindowedRQA`. |
+| `traj[["x", "z"]]` | The list spelling raises, naming `traj["x", "z"]` — which returns a `Trajectory` that names its own columns, so a second selection off it is right. |
+| `result.plot.scaling()` / `.phase()` / `.section()` | The eight kind-forcing methods are gone — they relabelled the spec without redrawing it. `result.plot()` is this result's own view; `result.plot.<TAB>` lists the transforms that draw it (`result.plot.scaling_fit()`), and it takes the same style/figure vocabulary as every other plotting door. |
+| `WrappedSystem(initial=…)` | `ic=`, the word every other family uses. Refused by name. |
+| A docs fence calls `.show()` | `show()` warns on a windowless backend, and the doctest gate pins matplotlib to `Agg`, so a fence that displays fails under `filterwarnings=error`. Build the plot in the fence; teach `.show()` in prose or a `# skip-doctest` block. |
+| A tool reads `cls.default_ic` / `cls.reference` / `cls.known_lyapunov` | Those ClassVars are underscored since v6. Read them through `registry._classvar(cls, name)`, which knows both spellings — `docs/_tooling/figures.py` named the public one and drew **every** IC-declaring system's figure from the wrong start. |
 | A movie renders differently from its still, or you suspect the blitting | `TSDYNAMICS_NO_BLIT=1` writes every frame the unoptimised way; if that changes the picture it is a bug, not a setting — the compositor bit-compares probe frames and disables itself on any difference. |
 | A new animated artist is mutated per frame | Declare it on the `_LayerDriver` that mutates it, at the same site. An undeclared artist freezes at its first frame (it lands in the cached background); a declared one that the drivers do *not* mutate only costs a redraw. And the driver must be a pure function of the frame index — the compositor restores the frame it calibrated on, and `pingpong`/`loop` replay frame 0. |
 | `set_state` on a DDE | **Does not exist** (v6) — the state is a history function; use `reinit(u)` for a constant past or `run(history=...)`. |
@@ -2565,7 +2668,8 @@ import tsdynamics as ts
 # ODE — `run` is THE trajectory verb (integrate/iterate/trajectory are gone in v6)
 lor = ts.systems.Lorenz()
 traj = lor.run(final_time=100.0, dt=0.01, transient=10.0)
-traj["x"]                                   # named component
+traj["x"]                                   # one name  → the (T,) column
+traj["x", "z"]                              # two names → a Trajectory naming x, z
 exps = ts.analysis.lyapunov_spectrum(lor, final_time=300.0)  # [0.91, ~0, -14.57]
 exps.kaplan_yorke                           # → ~2.06
 
@@ -2603,9 +2707,12 @@ lor.run(final_time=1e3, events=[stop])                    # truncates at the cro
 # Maps — the horizon word is `steps` (a count; `final_time` is refused by name)
 h = ts.systems.Henon()
 h.run(5000, transient=500)
-ts.analysis.fixed_points(h)                 # analytic saddles
+fps = ts.analysis.fixed_points(h)           # analytic saddles
+fps[0]                                      # the point, as a (dim,) ARRAY
+fps.is_stable, fps.eigenvalues              # vectorised, one row per member
+fps.details[0].continuous                   # the record, when you want one member
 ts.analysis.fixed_points(ts.systems.VanDerPol(), region=[(-3, 3), (-3, 3)])  # plain bounds
-ts.analysis.max_lyapunov(h, ic=[0.1, 0.1])  # ≈ 0.42
+ts.analysis.max_lyapunov(h, ic=[0.1, 0.1])  # ≈ 0.42 — n counts ITERATIONS on a map
 
 # Analyses are FREE FUNCTIONS on their subject (ruling A2) — and they say so
 ts.analysis.find(h)                         # what can I measure on THIS?  (14)

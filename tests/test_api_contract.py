@@ -899,7 +899,7 @@ def test_a_trajectory_selects_components_with_plain_strings() -> None:
     """§4.1 — strings select columns; everything else selects rows."""
     traj = _traj()
     assert traj["x"].shape == (traj.y.shape[0],)
-    picked = traj[["x", "z"]]
+    picked = traj["x", "z"]
     assert getattr(picked, "y", picked).shape[1] == 2
 
 

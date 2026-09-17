@@ -304,8 +304,37 @@ class DiscreteMap(SystemBase, ABC):
         *,
         t: float | None = None,
         params: dict[str, Any] | None = None,
+        **unknown: Any,
     ) -> None:
-        """(Re)start stepping from state ``u`` at iteration count ``t``."""
+        """(Re)start stepping from state ``u`` at iteration count ``t``.
+
+        Parameters
+        ----------
+        u : array-like, optional
+            The state to restart from — ``dim`` numbers.  Resolved like ``ic=``
+            on :meth:`run`.
+        t : int, optional
+            The iteration count to restart the clock at, **in iterations** (a
+            map has no time).  Default 0.
+        params : dict, optional
+            Parameter overrides applied to this system **in place** before the
+            restart.  (``with_params`` is the non-mutating spelling.)
+
+        Raises
+        ------
+        InvalidParameterError
+            For any other keyword — refused **by name**.  This used to end in a
+            bare ``TypeError`` from the interpreter, so
+            ``except InvalidParameterError`` caught a typo on a flow and missed
+            the identical typo on a map.
+        """
+        reject_unknown_run_keywords(
+            self,
+            unknown,
+            family="map",
+            accepted=("t", "params"),
+            verb="reinit",
+        )
         if params:
             for k, v in params.items():
                 self.params[k] = v
@@ -321,9 +350,11 @@ class DiscreteMap(SystemBase, ABC):
 
     def step(self, n_or_dt: int | None = None) -> np.ndarray:
         """
-        Advance ``n`` iterations and return the new state.
+        Advance ``n_or_dt`` iterations and return the new state.
 
-        The first call performs an implicit :meth:`reinit`.
+        ``n_or_dt`` is an **iteration count** here — the one family where it is
+        not a time increment, because a map has no clock.  The first call
+        performs an implicit :meth:`reinit`.
 
         Parameters
         ----------
@@ -387,9 +418,14 @@ class DiscreteMap(SystemBase, ABC):
         """Overwrite the current state."""
         self._state_now = np.asarray(u, dtype=float).reshape(self.dim)
 
-    def time(self) -> float:
-        """Return the current iteration count."""
-        return float(self._n_now)
+    def time(self) -> int:
+        """Return the current iteration count — an ``int``, because it counts.
+
+        A flow's clock is a float time; a map's is a whole number of iterates,
+        and reporting ``7.0`` where the docstring promised a count made the two
+        readings of ``time()`` indistinguishable at a call site.
+        """
+        return int(self._n_now)
 
     def _resolve_iteration_count(
         self, n: int | None, kwargs: dict[str, Any], *, where: str, default: int
@@ -447,9 +483,14 @@ class DiscreteMap(SystemBase, ABC):
         Parameters
         ----------
         steps : int
-            Number of iterations. Default 1000.
+            How many iterations to return — the horizon word for a map, counted
+            in **iterations**.  (A flow measures its horizon in time and takes
+            ``final_time``; a map has no clock, so ``final_time`` is refused by
+            name.)  Default 1000.
         ic : array-like, optional
-            Initial state. Falls back to ``self.ic``, then random.
+            Initial state — ``dim`` numbers, one per state component.  Falls
+            back to ``self.ic``, then a random draw.  **Passing it here does not
+            change ``self.ic``**: one call, one run.
         max_retries : int
             Retry with a new random IC if divergence is detected — only when the
             initial condition was **not chosen by the user**.  An explicit ``ic``
@@ -458,8 +499,8 @@ class DiscreteMap(SystemBase, ABC):
         seed : int, optional
             Seed for the random-IC fallback and for the divergence retries, so an
             unseeded-IC run is reproducible.  Equivalent to the constructor's
-            ``seed=`` (see :meth:`SystemBase.ic_generator`); the resolved seed is
-            recorded on ``traj.meta["ic_seed"]``.
+            ``seed=``, and the same meaning it has on every other family; the
+            resolved seed is recorded on ``traj.meta["ic_seed"]``.
         backend : {"jit", "interp", "reference"}, optional
             Where the iteration runs.  Defaults to ``_default_backend``
             (``"jit"``).
@@ -491,13 +532,13 @@ class DiscreteMap(SystemBase, ABC):
             Leading stretch of the orbit to discard, in **iterations** (the same
             unit as ``steps``).  ``transient + steps`` iterations are run and the
             first ``transient`` dropped, so the returned trajectory still has
-            ``steps`` samples.  Spelled identically on every family and every
-            trajectory-producing verb — ``run`` / ``iterate`` / ``trajectory``
-            (on a flow the unit is time).
+            ``steps`` samples.  One word on every family, in that family's
+            **own horizon unit**: iterations here, **time** on a flow (see
+            :meth:`ContinuousSystem.run`).
 
             .. versionadded:: 6.0
-                Previously only :meth:`trajectory` accepted it, so a user who
-                found the canonical ``run`` verb could not discard a transient.
+                Only the retired ``trajectory`` verb used to accept it, so a
+                user who found ``run`` could not discard a transient at all.
 
         Returns
         -------
@@ -539,7 +580,7 @@ class DiscreteMap(SystemBase, ABC):
     def _iterate_with_retries(
         self, *, steps: int, ic: Any | None, max_retries: int, backend: str, seed: int | None
     ) -> Trajectory:
-        """Run :meth:`iterate`'s retry loop (wrapped by its IC rollback guard)."""
+        """Run :meth:`run`'s retry loop (wrapped by its IC rollback guard)."""
         # Iterate on the Rust engine.  Preserve the random-IC retry only when the
         # initial condition was not chosen by the user (a random draw can land
         # off-basin); a *user* ic — passed here or to the constructor — that
@@ -570,7 +611,7 @@ class DiscreteMap(SystemBase, ABC):
                     # for a random one that would trace a different orbit.
                     exc.add_note(
                         f"The initial condition {np.array2string(ic_arr, precision=6)} "
-                        f"was supplied explicitly, so {type(self).__name__}.iterate did "
+                        f"was supplied explicitly, so {type(self).__name__}.run did "
                         f"not retry from a random one: pass a different ic=, or omit it "
                         f"to let the random-IC retry find the attractor."
                     )
@@ -580,7 +621,7 @@ class DiscreteMap(SystemBase, ABC):
                 # Off-basin random draw diverged; warn (not stdout) and retry from
                 # a fresh random IC. Final exhaustion raises loudly below.
                 warnings.warn(
-                    f"{type(self).__name__}.iterate: {exc} "
+                    f"{type(self).__name__}.run: {exc} "
                     "Retrying from a new random initial condition.",
                     RuntimeWarning,
                     stacklevel=2,
@@ -589,7 +630,7 @@ class DiscreteMap(SystemBase, ABC):
                 object.__setattr__(self, "ic", ic_arr.copy())
                 object.__setattr__(self, "_ic_explicit", False)
         raise ConvergenceError(
-            f"{type(self).__name__}.iterate exhausted {max_retries} "
+            f"{type(self).__name__}.run exhausted {max_retries} "
             f"retries without a finite trajectory."
         )
 
@@ -604,7 +645,7 @@ class DiscreteMap(SystemBase, ABC):
 
         Divergence is reported (it is not silently returned and there is no
         random-IC retry — the engine's "diverge loudly" contract); the
-        random-IC retry lives in :meth:`iterate` for the implicit-ic case.
+        random-IC retry lives in :meth:`run` for the implicit-ic case.
 
         Notes
         -----
@@ -620,7 +661,7 @@ class DiscreteMap(SystemBase, ABC):
         Python tax over a 9 ms Rust kernel — so it was removed.  Divergence
         behaviour is unchanged: the message a caller sees is, as before, the one
         ``_run_map`` (engine) or ``_reference_map`` (reference) raises, and the
-        random-IC retry in :meth:`iterate` catches the same
+        random-IC retry in :meth:`run` catches the same
         :class:`ConvergenceError` type from the same place.
         """
         return self._dispatch(backend=backend, final_time=steps, ic=ic)
@@ -663,7 +704,7 @@ class DiscreteMap(SystemBase, ABC):
         n : int
             Number of iterations — a map's horizon word, exactly as on
             :meth:`run`. Default 5000.  ``steps=`` is accepted as its alias
-            here too (:meth:`iterate` names it that), so the same word works at
+            here too (:meth:`run` names it that), so the same word works at
             every map horizon door; passing both raises.
         ic : array-like, optional
             Initial state. Falls back to ``self.ic``, then random.
@@ -680,7 +721,7 @@ class DiscreteMap(SystemBase, ABC):
             the oracle, not for production use).
 
             .. versionchanged:: 6.0
-               Default moved from ``"interp"`` to ``"jit"`` (see :meth:`iterate`).
+               Default moved from ``"interp"`` to ``"jit"`` (see :meth:`run`).
 
         Returns
         -------

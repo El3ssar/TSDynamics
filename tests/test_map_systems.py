@@ -66,13 +66,22 @@ def test_map_iterate_shape_and_finiteness(map_entry) -> None:
 
 
 @pytest.mark.slow
-def test_map_custom_ic_stored() -> None:
+def test_map_explicit_ic_is_used_but_never_latched() -> None:
+    """An explicit ``run(ic=)`` starts the orbit and leaves the map alone (v6).
+
+    See ``test_ode_systems.py::test_ode_explicit_ic_is_used_but_never_latched``
+    — the same rule, in the map's own horizon word.
+    """
     import tsdynamics as ts
 
     h = ts.systems.Henon()
     ic = np.array([0.2, 0.3])
-    h.run(steps=50, ic=ic)
-    np.testing.assert_array_almost_equal(h.ic, ic)
+    traj = h.run(steps=50, ic=ic)
+    # A map's grid starts at the FIRST ITERATE (a flow's starts at the IC), so
+    # the evidence the IC was used is f(ic), not ic.
+    a, b = 1.4, 0.3
+    np.testing.assert_array_almost_equal(traj.y[0], [1 - a * ic[0] ** 2 + ic[1], b * ic[0]])
+    assert h.ic is None
 
 
 # ---------------------------------------------------------------------------

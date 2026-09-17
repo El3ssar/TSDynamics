@@ -215,8 +215,9 @@ def test_the_nullcline_crossings_are_the_equilibria():
 
     system = LotkaVolterra()
     curves = planar.nullclines(system, xlim=(0.2, 9.0), ylim=(0.2, 6.0), grid=401)
+    # v6 D1: a result set indexes/iterates to NUMBERS, so ``fp`` is the point.
     equilibria = [
-        fp.x for fp in fixed_points(system, seed=0) if 0.2 < fp.x[0] < 9.0 and 0.2 < fp.x[1] < 6.0
+        fp for fp in fixed_points(system, seed=0) if 0.2 < fp[0] < 9.0 and 0.2 < fp[1] < 6.0
     ]
     assert equilibria, "the coexistence equilibrium is inside the window"
     for point in equilibria:

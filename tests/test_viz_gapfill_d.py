@@ -299,13 +299,22 @@ def _sine(period: float = 20.0, n: int = 400) -> np.ndarray:
     return np.sin(2.0 * np.pi * t / period)
 
 
-def test_estimate_period_carries_curve_in_meta() -> None:
-    """estimate_period stays a ScalarResult but stashes the diagnostic curve."""
+def test_estimate_period_is_a_number_and_its_meta_is_provenance() -> None:
+    """``estimate_period`` is a ScalarResult whose ``meta`` records *how*, not *what*.
+
+    .. versionchanged:: 6.0
+       It used to stash the whole autocorrelation curve under
+       ``meta["curve_abscissa"]`` / ``["curve_ordinate"]``, which made
+       ``to_dict()`` for one float tens of thousands of characters of JSON.
+       ``meta`` is provenance; the curve reaches the plot through the transform
+       below (``period_diagnostic``), which recomputes it.
+    """
     res = estimate_period(_sine(period=20.0))
     assert np.isclose(float(res), 20.0, atol=1.0)
-    assert "curve_abscissa" in res.meta
-    assert "curve_ordinate" in res.meta
-    assert np.asarray(res.meta["curve_abscissa"]).size > 0
+    assert res.meta["analysis"] == "estimate_period"
+    assert res.meta["method"] == "autocorrelation"
+    big = [k for k, v in res.meta.items() if np.asarray(v, dtype=object).size > 32]
+    assert not big, f"meta is provenance, not payload; these are arrays: {big}"
 
 
 def test_period_diagnostic_autocorrelation_curve() -> None:

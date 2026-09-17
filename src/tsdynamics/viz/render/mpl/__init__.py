@@ -50,9 +50,15 @@ _WRITES_STATIC: frozenset[str] = frozenset(
         ".tif",
         ".tiff",
         ".webp",
-        ".gif",
     }
 )
+# ``.gif`` is deliberately **absent** here even though ``savefig`` accepts it.
+# A gif is a movie container, and ``savefig`` fills it with exactly one frame —
+# so ``ts.plot(traj).save("x.gif")`` wrote an 18 KB file that looked like a
+# working animation and was a still.  Its sibling ``.mp4`` already refused by
+# name ("'.mp4' is a movie format and this Plot is not animated"); the two
+# formats now answer the same question the same way.  An *animated* plot writes
+# ``.gif`` through ``_WRITES_ANIMATED`` below, which is the only honest gif.
 
 #: Extensions :class:`~matplotlib.animation.FuncAnimation`'s own ``save`` writes
 #: (ffmpeg / pillow) — the **only** way this library writes a movie, since plotly's

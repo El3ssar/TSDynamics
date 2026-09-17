@@ -91,9 +91,9 @@ class TestMapFixedPoints:
         a, b = 1.4, 0.3
         disc = np.sqrt((1 - b) ** 2 + 4 * a)
         expected = sorted([(-(1 - b) + disc) / (2 * a), (-(1 - b) - disc) / (2 * a)])
-        np.testing.assert_allclose(sorted(fp.x[0] for fp in fps), expected, rtol=1e-8)
-        assert all(not fp.stable for fp in fps)  # both saddles
-        for fp in fps:
+        np.testing.assert_allclose(sorted(fp.x[0] for fp in fps.details), expected, rtol=1e-8)
+        assert all(not fp.stable for fp in fps.details)  # both saddles
+        for fp in fps.details:
             assert fp.x[1] == pytest.approx(b * fp.x[0], rel=1e-8)
             assert not fp.continuous
 
@@ -108,9 +108,9 @@ class TestMapFixedPoints:
     def test_logistic_fixed_points(self) -> None:
         m = ts.systems.Logistic(params={"r": 2.5})
         fps = fixed_points(m, region=[(-0.5, 1.5)], seed=0)
-        xs = sorted(fp.x[0] for fp in fps)
+        xs = sorted(fp.x[0] for fp in fps.details)
         np.testing.assert_allclose(xs, [0.0, 1 - 1 / 2.5], atol=1e-9)
-        stable = {round(fp.x[0], 6): fp.stable for fp in fps}
+        stable = {round(fp.x[0], 6): fp.stable for fp in fps.details}
         assert stable[0.0] is False
         assert stable[round(1 - 1 / 2.5, 6)] is True
 
@@ -119,9 +119,9 @@ class TestMapFixedPoints:
         fps = fixed_points(
             ts.systems.Logistic(params={"r": 4.0}), region=[(-0.2, 1.2)], method="dl", seed=2
         )
-        xs = sorted(fp.x[0] for fp in fps)
+        xs = sorted(fp.x[0] for fp in fps.details)
         np.testing.assert_allclose(xs, [0.0, 0.75], atol=1e-8)
-        assert all(not fp.stable for fp in fps)
+        assert all(not fp.stable for fp in fps.details)
 
     def test_invalid_method_raises(self) -> None:
         # Still a ValueError (InvalidParameterError subclasses it), but the
@@ -156,9 +156,9 @@ class TestIntervalMethod:
         disc = np.sqrt((1 - b) ** 2 + 4 * a)
         expected = sorted([(-(1 - b) + disc) / (2 * a), (-(1 - b) - disc) / (2 * a)])
         assert len(fps) == 2
-        np.testing.assert_allclose(sorted(fp.x[0] for fp in fps), expected, rtol=1e-12)
-        assert all(not fp.stable for fp in fps)  # both saddles
-        for fp in fps:
+        np.testing.assert_allclose(sorted(fp.x[0] for fp in fps.details), expected, rtol=1e-12)
+        assert all(not fp.stable for fp in fps.details)  # both saddles
+        for fp in fps.details:
             assert fp.x[1] == pytest.approx(b * fp.x[0], rel=1e-10)
             assert not fp.continuous
 
@@ -169,7 +169,7 @@ class TestIntervalMethod:
 
         fps = fixed_points(ts.systems.Henon(), region=[(-3, 3), (-3, 3)], method="interval")
         step, _ = map_fns(ts.systems.Henon())
-        for fp in fps:
+        for fp in fps.details:
             x = np.asarray(fp.x)
             assert np.linalg.norm(step(x) - x) < 1e-12
 
@@ -177,8 +177,8 @@ class TestIntervalMethod:
         fps = fixed_points(
             ts.systems.Logistic(params={"r": 4.0}), region=[(-0.2, 1.2)], method="interval"
         )
-        np.testing.assert_allclose(sorted(fp.x[0] for fp in fps), [0.0, 0.75], atol=1e-12)
-        assert all(not fp.stable for fp in fps)
+        np.testing.assert_allclose(sorted(fp.x[0] for fp in fps.details), [0.0, 0.75], atol=1e-12)
+        assert all(not fp.stable for fp in fps.details)
 
     def test_lorenz_three_equilibria(self) -> None:
         fps = fixed_points(
@@ -186,7 +186,7 @@ class TestIntervalMethod:
         )
         c = np.sqrt(8 / 3 * (28 - 1))
         assert len(fps) == 3
-        for fp in fps:
+        for fp in fps.details:
             assert fp.continuous and not fp.stable
         _match(fps, np.array([0.0, 0.0, 0.0]))
         _match(fps, np.array([c, c, 27.0]))
@@ -210,7 +210,7 @@ class TestIntervalMethod:
         iv = fixed_points(ts.systems.Thomas(), region=region, method="interval")
         assert len(iv) == 27
         rhs = ts.systems.Thomas()._rhs_numeric()
-        for fp in iv:
+        for fp in iv.details:
             assert np.linalg.norm(rhs(np.asarray(fp.x), 0.0)) < 1e-9
             assert fp.continuous
         # interval is at least as complete as a moderate multi-start
@@ -223,11 +223,11 @@ class TestIntervalMethod:
         region = [(-30, 30), (-30, 30), (-5, 55)]
         iv = sorted(
             tuple(np.round(fp.x, 6))
-            for fp in fixed_points(ts.systems.Lorenz(), region=region, method="interval")
+            for fp in fixed_points(ts.systems.Lorenz(), region=region, method="interval").details
         )
         nw = sorted(
             tuple(np.round(fp.x, 6))
-            for fp in fixed_points(ts.systems.Lorenz(), region=region, n_seeds=400, seed=1)
+            for fp in fixed_points(ts.systems.Lorenz(), region=region, n_seeds=400, seed=1).details
         )
         assert iv == nw
 
@@ -251,7 +251,7 @@ class TestIntervalMethod:
         fps = fixed_points(ts.systems.Tent(), region=[(0.0, 1.0)], method="interval")
         assert len(fps) >= 1
         step, _ = map_fns(ts.systems.Tent())
-        for fp in fps:
+        for fp in fps.details:
             x = np.asarray(fp.x)
             assert np.linalg.norm(step(x) - x) < 1e-10
 
@@ -289,13 +289,13 @@ class TestFlowEquilibria:
         )
         c = np.sqrt(8 / 3 * (28 - 1))  # ±√72 = 8.48528…
         assert len(fps) == 3
-        for fp in fps:
+        for fp in fps.details:
             assert fp.continuous and not fp.stable  # all three unstable at ρ=28
         _match(fps, np.array([0.0, 0.0, 0.0]))
         _match(fps, np.array([c, c, 27.0]))
         _match(fps, np.array([-c, -c, 27.0]))
         # the origin is a real saddle (one strongly unstable real eigenvalue)
-        origin = next(fp for fp in fps if np.linalg.norm(fp.x) < 1e-5)
+        origin = next(fp for fp in fps.details if np.linalg.norm(fp.x) < 1e-5)
         assert origin.eigenvalues.real.max() == pytest.approx(11.8277, abs=1e-3)
 
     def test_rossler_equilibria(self) -> None:
@@ -306,7 +306,7 @@ class TestFlowEquilibria:
         d = np.sqrt(c * c - 4 * a * a)
         for x in ((c + d) / 2, (c - d) / 2):
             _match(fps, np.array([x, -x / a, x / a]), atol=1e-4)
-        assert all(not fp.stable for fp in fps)
+        assert all(not fp.stable for fp in fps.details)
 
     def test_flow_rejects_sd_dl(self) -> None:
         with pytest.raises(ValueError, match="method='newton'"):
@@ -324,7 +324,7 @@ class TestMapPeriodicOrbits:
     def test_logistic_period2(self) -> None:
         orbs = periodic_orbits(ts.systems.Logistic(params={"r": 3.2}), 2, seed=3)
         assert len(orbs) == 1
-        o = orbs[0]
+        o = orbs.details[0]
         r = 3.2
         disc = np.sqrt((r + 1) * (r - 3))
         expected = sorted([(r + 1 + disc) / (2 * r), (r + 1 - disc) / (2 * r)])
@@ -337,19 +337,19 @@ class TestMapPeriodicOrbits:
     def test_logistic_period3_window(self) -> None:
         orbs = periodic_orbits(ts.systems.Logistic(params={"r": 3.83}), 3, seed=4)
         assert len(orbs) == 2  # the saddle-node pair born at r = 1+√8
-        assert all(o.period == 3 for o in orbs)
-        mults = sorted(float(np.abs(o.multipliers).max()) for o in orbs)
+        assert all(o.period == 3 for o in orbs.details)
+        mults = sorted(float(np.abs(o.multipliers).max()) for o in orbs.details)
         assert mults[0] == pytest.approx(0.33, abs=0.05)  # stable node
         assert mults[1] == pytest.approx(1.65, abs=0.05)  # unstable saddle
-        assert {o.stable for o in orbs} == {True, False}
+        assert {o.stable for o in orbs.details} == {True, False}
 
     def test_period1_returns_fixed_points(self) -> None:
         orbs = periodic_orbits(
             ts.systems.Logistic(params={"r": 2.5}), 1, region=[(-0.5, 1.5)], seed=5
         )
-        xs = sorted(float(o.points[0, 0]) for o in orbs)
+        xs = sorted(float(o.points[0, 0]) for o in orbs.details)
         np.testing.assert_allclose(xs, [0.0, 0.6], atol=1e-8)
-        assert all(o.period == 1 for o in orbs)
+        assert all(o.period == 1 for o in orbs.details)
 
     def test_default_method_is_newton(self) -> None:
         """The default flipped from ``"dl"`` to ``"newton"`` in v6 (see below)."""
@@ -376,7 +376,7 @@ class TestMapPeriodicOrbits:
             ts.systems.Logistic(params={"r": 4.0}), period, region=[(0.0, 1.0)], seed=0
         )
         assert len(orbs) == n_prime
-        assert all(o.period == period for o in orbs)
+        assert all(o.period == period for o in orbs.details)
 
     def test_prime_filter_excludes_lower_period(self) -> None:
         # the period-2 orbit is a fixed point of f⁴; with prime=True it must NOT
@@ -385,7 +385,7 @@ class TestMapPeriodicOrbits:
         orbs4 = periodic_orbits(ts.systems.Logistic(params={"r": r}), 4, prime=True, seed=6)
         disc = np.sqrt((r + 1) * (r - 3))
         p2 = {round((r + 1 + disc) / (2 * r), 6), round((r + 1 - disc) / (2 * r), 6)}
-        for o in orbs4:
+        for o in orbs4.details:
             assert o.period == 4
             assert not (set(np.round(o.points.ravel(), 6)) & p2)
 
@@ -404,19 +404,23 @@ class TestFlowShooting:
     def test_vanderpol_mu1(self) -> None:
         orbits = periodic_orbits(_VanDerPol(params={"mu": 1.0}), 6.0, ic=[2.0, 0.0], transient=20.0)
         assert isinstance(orbits, OrbitSet) and len(orbits) == 1
-        orb = orbits[0]
+        orb = orbits.details[0]
         assert orb.period == pytest.approx(6.6632869, abs=2e-3)
         assert orb.residual < 1e-8 and orb.continuous and orb.stable
         # one trivial Floquet multiplier ≈ 1 (the flow direction)
         assert np.abs(np.abs(orb.multipliers) - 1.0).min() < 1e-2
 
     def test_vanderpol_mu05(self) -> None:
-        orb = periodic_orbits(_VanDerPol(params={"mu": 0.5}), 6.3, ic=[2.0, 0.0], transient=30.0)[0]
+        orb = periodic_orbits(
+            _VanDerPol(params={"mu": 0.5}), 6.3, ic=[2.0, 0.0], transient=30.0
+        ).details[0]
         assert orb.period == pytest.approx(6.3806758, abs=2e-3)
         assert orb.stable
 
     def test_auto_period_guess(self) -> None:
-        orb = periodic_orbits(_VanDerPol(params={"mu": 1.0}), ic=[0.5, 0.5], transient=20.0)[0]
+        orb = periodic_orbits(
+            _VanDerPol(params={"mu": 1.0}), ic=[0.5, 0.5], transient=20.0
+        ).details[0]
         assert orb.period == pytest.approx(6.6632869, abs=5e-2)
 
     def test_center_is_rejected(self) -> None:
@@ -497,9 +501,9 @@ def test_self_registered_in_analyses() -> None:
 
 
 def test_result_types() -> None:
-    assert isinstance(fixed_points(ts.systems.Henon(), seed=0)[0], FixedPoint)
+    assert isinstance(fixed_points(ts.systems.Henon(), seed=0).details[0], FixedPoint)
     assert isinstance(
-        periodic_orbits(ts.systems.Logistic(params={"r": 3.2}), 2, seed=0)[0], PeriodicOrbit
+        periodic_orbits(ts.systems.Logistic(params={"r": 3.2}), 2, seed=0).details[0], PeriodicOrbit
     )
 
 
@@ -605,7 +609,7 @@ def test_periodic_orbits_shared_monodromy_is_numerically_identical() -> None:
     """
     orbs = periodic_orbits(ts.systems.Logistic(params={"r": 3.2}), 2, method="newton", seed=3)
     assert len(orbs) == 1
-    o = orbs[0]
+    o = orbs.details[0]
     r = 3.2
     disc = np.sqrt((r + 1) * (r - 3))
     expected = sorted([(r + 1 + disc) / (2 * r), (r + 1 - disc) / (2 * r)])
@@ -717,8 +721,8 @@ class TestSeedDeterminism:
         np.random.seed(999)
         b = fixed_points(ts.systems.Thomas(), region=region, n_seeds=200, seed=0)
 
-        xa = sorted(tuple(np.asarray(fp.x)) for fp in a)
-        xb = sorted(tuple(np.asarray(fp.x)) for fp in b)
+        xa = sorted(tuple(np.asarray(fp.x)) for fp in a.details)
+        xb = sorted(tuple(np.asarray(fp.x)) for fp in b.details)
         assert len(a) == len(b)
         assert xa == xb
 
@@ -730,8 +734,8 @@ class TestSeedDeterminism:
         np.random.seed(2)
         d = fixed_points(ts.systems.Lorenz(), n_seeds=100, seed=7)
 
-        xc = sorted(tuple(np.asarray(fp.x)) for fp in c)
-        xd = sorted(tuple(np.asarray(fp.x)) for fp in d)
+        xc = sorted(tuple(np.asarray(fp.x)) for fp in c.details)
+        xd = sorted(tuple(np.asarray(fp.x)) for fp in d.details)
         assert len(c) == len(d)
         assert xc == xd
 
@@ -741,8 +745,8 @@ class TestSeedDeterminism:
         np.random.seed(50)
         b = periodic_orbits(ts.systems.Henon(), 2, seed=0)
 
-        xa = sorted(tuple(np.asarray(o.points[0])) for o in a)
-        xb = sorted(tuple(np.asarray(o.points[0])) for o in b)
+        xa = sorted(tuple(np.asarray(o.points[0])) for o in a.details)
+        xb = sorted(tuple(np.asarray(o.points[0])) for o in b.details)
         assert len(a) == len(b)
         assert xa == xb
 
@@ -891,7 +895,7 @@ class TestFixedPointPlotSpec:
         """
         fps = fixed_points(ts.systems.Henon(), seed=0)
         assert len(fps) == 2
-        for fp in fps:
+        for fp in fps.details:
             spec = fp.__plot_spec__()
             (text,) = [a.text for a in spec.annotations if a.kind == "text"]
             expected = fp.eigenvalues[np.argmax(np.abs(fp.eigenvalues))]

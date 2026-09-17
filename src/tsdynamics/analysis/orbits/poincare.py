@@ -44,7 +44,7 @@ def poincare_section(
     skip_crossings: int = 0,
     dt: float = 0.01,
     max_time: float = 1e4,
-    seed: int | None = None,
+    seed: int | None = 0,
 ) -> PoincareSection:
     """
     Poincaré surface of section.
@@ -108,12 +108,23 @@ def poincare_section(
         Number of leading crossings to discard before recording.  (A *section*
         transient is a count of crossings, deliberately distinct from the
         time/step ``transient`` of other analyses.)
-    dt, max_time : float
-        Detection step and integration ceiling (system mode) — see
-        :class:`~tsdynamics.derived.PoincareMap`.
-    seed : int, optional
+    dt : float, default 0.01
+        Crossing-**detection** step, in **time units** (system mode).  The march
+        is fixed-step ``rk4`` at this step, so ``dt`` bounds how finely a crossing
+        is bracketed before the Hermite refinement — it is not an output grid and
+        not a tolerance.  Ignored for a ``Trajectory``, whose sampling interval is
+        already fixed.
+    max_time : float, default 1e4
+        Ceiling on the integration horizon, in **time units** (system mode):
+        how long to march before giving up on collecting ``crossings`` crossings.
+    seed : int, default 0
         Seed for the random initial condition when the system has none
-        (system mode); makes the section reproducible.
+        (system mode), so the section is reproducible.  Pass ``seed=None`` for an
+        explicitly unseeded draw.
+
+        .. versionchanged:: 6.0
+            Was ``None``: the same call drew a different starting point, and so a
+            different set of crossings, every time it ran.
 
     Returns
     -------
@@ -129,6 +140,7 @@ def poincare_section(
     >>> section = poincare_section(Rossler(), crossings=500)     # section chosen + recorded
     >>> section = poincare_section(traj, plane=("z", 25.0))     # from data
     """
+    _reject_axes_pair(system, plane)
     if isinstance(system, Trajectory):
         return _section_from_data(system, plane, direction)
     seeded = _seeded_ic(system, None, seed)
@@ -137,6 +149,36 @@ def poincare_section(
         system.reinit(seeded)
     pmap = PoincareMap(system, plane, direction=direction, dt=dt, max_time=max_time)
     return pmap.run(crossings, transient=skip_crossings)
+
+
+def _reject_axes_pair(subject: Any, plane: tuple[Any, ...] | None) -> None:
+    """Refuse a *view-axes* pair where a cutting SECTION is wanted.
+
+    ``plane=`` is two different words in this library — a section ``(axis,
+    offset)`` here, a pair of view axes at the eight field analyses in
+    :mod:`tsdynamics.analysis.planar` — and each door used to read the other's
+    spelling without complaint.  Two entries that both NAME components can only
+    be the axes spelling (a section's second entry is a number), so that half is
+    detectable and is named rather than reinterpreted.
+    """
+    if plane is None or len(tuple(plane)) != 2:
+        return
+    first, second = tuple(plane)
+    if not (isinstance(first, str) and isinstance(second, str)):
+        return
+    names = getattr(subject, "variables", None) or ()
+    if first in names and second in names:
+        from tsdynamics.errors import InvalidParameterError
+
+        raise InvalidParameterError(
+            f"plane={(first, second)!r} names two COORDINATES, which is the view-axes "
+            f"spelling the field analyses take; a Poincaré section is a cutting surface, "
+            f"so it is an axis and the VALUE it is held at.\n"
+            f'    ts.analysis.poincare_section(system, ("{first}", 0.0))'
+            f"   # the section {first} = 0\n"
+            f"    ts.analysis.flow_field(system, plane={(first, second)!r})"
+            f"   # the {first}-{second} plane"
+        )
 
 
 def _section_from_data(

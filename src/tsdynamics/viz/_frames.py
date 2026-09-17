@@ -61,28 +61,33 @@ __all__ = [
 ON_VALUES: frozenset[str] = frozenset({"force"})
 
 
-def force_requested(on: str | None) -> bool:
-    """Validate an ``on=`` value and return whether the frame check is forced.
+def force_requested(on: bool | str | None) -> bool:
+    """Return whether the frame check is forced, validating the value given.
 
-    Every door that takes ``on=`` (:func:`tsdynamics.viz.plot`,
-    :meth:`tsdynamics.viz.spec.PlotSpec.add`,
-    :meth:`tsdynamics.analysis.AnalysisResult.overlay_on`) validates it here, so
-    a typo is an error at all three rather than a silently-not-forced overlay at
-    one of them.
+    The single validator every overlay door goes through, so a typo is an error
+    at all of them rather than a silently-not-forced overlay at one.
+
+    The public spelling is ``force=True`` (:func:`tsdynamics.viz.plot`,
+    :meth:`tsdynamics.viz.spec.Plot.add`).  The string ``"force"`` is still
+    accepted here because :meth:`tsdynamics.analysis.AnalysisResult.overlay_on`
+    passes its own ``on=`` straight through; this function is that method's
+    validator, not a second public grammar.
 
     Raises
     ------
     tsdynamics.errors.InvalidParameterError
-        If ``on`` is neither ``None`` nor ``"force"``.
+        If the value is neither a bool, ``None``, nor ``"force"``.
     """
     from tsdynamics.errors import InvalidParameterError
 
-    if on is None:
+    if on is None or on is False:
         return False
+    if on is True:
+        return True
     if on not in ON_VALUES:
         raise InvalidParameterError(
-            f"unknown on={on!r}; the only accepted value is 'force' (overlay a "
-            "deliberate frame mismatch with a warning instead of an error)."
+            f"unknown force={on!r}; force= is a bool — force=True overlays a "
+            "deliberate frame mismatch with a warning instead of an error."
         )
     return True
 
@@ -481,7 +486,7 @@ _KIND_FRAME: dict[str, tuple[FrameSpace, int]] = {
     "line_family": (FrameSpace.SCALING, 1),
     "categorical_bar": (FrameSpace.CATEGORY, 1),
     # ``IMAGE`` is a *mark*, but ``_KIND_ALIAS`` lets it be a spec kind (the
-    # ``result.plot.image()`` accessor), and a bare image is a lattice — not the
+    # the retired ``result.plot.image()`` accessor), and a bare image is a lattice — not the
     # ``SCALING`` curve the default would make it.
     "image": (FrameSpace.GRID2, 2),
 }
@@ -589,7 +594,7 @@ def check_overlay(specs: Sequence[PlotSpec], *, force: bool = False) -> Frame:
         if not force:
             raise InvalidParameterError(message)
         warnings.warn(
-            f"on='force': {message} Drawing them on one set of axes anyway — "
+            f"force=True: {message} Drawing them on one set of axes anyway — "
             "the picture may not mean what it looks like.",
             VisualizationDegraded,
             stacklevel=3,
@@ -609,7 +614,7 @@ def _mismatch_message(base_spec: PlotSpec, base: Frame, other_spec: PlotSpec, ot
     """
     tail = (
         " Use layout='stack' / 'row' / 'grid' to give each its own panel, "
-        "or on='force' to overlay them anyway."
+        "or force=True to overlay them anyway."
     )
     if base.space is not other.space:
         return (
@@ -630,5 +635,5 @@ def _mismatch_message(base_spec: PlotSpec, base: Frame, other_spec: PlotSpec, ot
     return (
         f"axes mismatch {base.describe()} vs {other.describe()} ({'; '.join(differing)}) — "
         f"the two are different planes, so the {other_spec.kind} would land in the wrong "
-        "place. Pass the same components= to both, or on='force' to overlay them anyway."
+        "place. Pass the same components= to both, or force=True to overlay them anyway."
     )

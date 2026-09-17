@@ -91,12 +91,15 @@ att = ts.analysis.attractors(sys, region, resolution=40, n_seeds=200,
                          dt=0.5, max_steps=2000, seed=0)
 
 att                          # AttractorSet(2 attractors, 0/200 diverged)
-[a.center for a in att]      # ≈ [[-1.000, -0.000], [1.000, 0.000]]
+att.centers                  # ≈ [[-1.000, -0.000], [1.000, 0.000]]
 ```
 
-Two attractors, located at the well bottoms, and nothing escaped the box. Each
-[`Attractor`](../analysis/basins.md) carries a `.center` (its located point set's
-centroid), an integer id, and the recurrent cells that identified it.
+Two attractors, located at the well bottoms, and nothing escaped the box.
+Indexing the set gives you the **numbers**: `att[0]` is the first centre as a
+plain `(dim,)` array. The records live alongside, at the same index —
+`att.details[0]` is the [`Attractor`](../analysis/basins.md), carrying its
+`.center` (its located point set's centroid), an integer id, and the recurrent
+cells that identified it.
 
 !!! tip "Reading the knobs"
     `resolution` sets the recurrence-cell count per axis: too coarse and two

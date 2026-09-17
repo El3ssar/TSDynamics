@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, ClassVar, cast
+from typing import Any, ClassVar
 
 import numpy as np
 
@@ -13,7 +13,7 @@ from tsdynamics.errors import (
     InvalidParameterError,
     remedy,
 )
-from tsdynamics.families import DelaySystem, DiscreteMap
+from tsdynamics.families import DelaySystem
 
 from .._common import reject_data, reject_system
 from .._discovery import register as _register
@@ -48,13 +48,30 @@ _ALIGN_FRACTION = 0.05
 #: 20 -> 0.659, 40 -> 0.747, 100 -> 0.890, 200 -> 0.889, 400 -> 0.907.
 _DEFAULT_WINDOW = 200.0
 
-#: Default number of measured cycles for ``max_lyapunov`` on a **map** (a map has
-#: no ``dt``, so a cycle count already *is* a fixed window).
-_DEFAULT_MAP_CYCLES = 2000
+#: Default horizon for ``max_lyapunov`` on a **map**, in ITERATIONS — the same
+#: unit ``lyapunov_spectrum(map, n=)`` counts in, which is what lets one door
+#: delegate to the other.  It is the pre-v6 default expressed honestly: 2000
+#: rescaling cycles of ``steps_per = 10`` iterations was always 20 000 iterates.
+_DEFAULT_MAP_ITERATIONS = 20_000
 
 #: Floor on the automatically-sized cycle count, so a coarsely-stepped flow still
 #: averages over enough independent rescalings.
 _MIN_CYCLES = 200
+
+#: Historical burn-in for ``max_lyapunov``, in protocol steps (a flow) or
+#: iterations (a map).  It is what ``transient=None`` resolves to, so the shipped
+#: default is bit-identical to the pre-v6 ``transient: int = 500``.
+_DEFAULT_BURN_STEPS = 500
+
+#: How many off-basin initial conditions ``max_lyapunov`` will try on a map
+#: before giving up and re-raising the divergence.
+_MAX_IC_RETRIES = 10
+
+#: An ``int`` ``transient`` at or above this on a **flow** is refused rather than
+#: read as a time.  ``transient`` means time for a flow now; the pre-v6 spelling
+#: was a step count, and a step count large enough to be one (500 steps ≈ 5 time
+#: units at the default ``dt``) would silently become a ~100x longer burn-in.
+_TRANSIENT_AMBIGUITY_FLOOR = 100
 
 
 @dataclass(frozen=True, eq=False)
@@ -278,6 +295,14 @@ def kaplan_yorke_dimension(spectrum: Any) -> ScalarResult:
     and :math:`(j+1)`-th exponents gives a fractional estimate of the attractor's
     information dimension.
 
+    When you already hold a :class:`LyapunovSpectrum`, ``spectrum.kaplan_yorke``
+    is the same number and the shorter spelling — it calls this.  Reach for the
+    function when the exponents came from somewhere else: a literature spectrum,
+    a hand-written array, another library's output.  That is what it takes, and
+    why both exist::
+
+        ts.analysis.kaplan_yorke_dimension([0.906, 0.0, -14.572])   # Lorenz, from the paper
+
     Parameters
     ----------
     spectrum : array-like
@@ -385,7 +410,7 @@ def lyapunov_spectrum(
     transient: float | None = None,
     dt: float | None = None,
     ic: Any | None = None,
-    method: str | None = None,
+    solver: str | None = None,
     rtol: float | None = None,
     atol: float | None = None,
     backend: str | None = None,
@@ -426,14 +451,25 @@ def lyapunov_spectrum(
         Solver tolerances for the flow / DDE variational integration (they have
         no meaning for a map, whose tangent iteration is exact arithmetic).
     transient : float, optional
-        Amount discarded before averaging (a flow burn-in **time**).  Maps
-        reorthonormalise from the initial condition and take no transient here.
+        Dynamics discarded before averaging, in **time units** — the same unit
+        as ``final_time``, and the same unit ``run(transient=)`` uses for a flow.
+        A **map** takes none here: its QR iteration reorthonormalises from the
+        initial condition, so there is nothing to discard.
     dt : float, optional
-        Sampling / integration step (flows only).
+        Integration step for the variational system, in **time units** (flows
+        only; a map iterates).  Defaults to the family's own step.
     ic : array-like, optional
         Initial condition.  Falls back to ``system.ic``, then random.
-    method : str, optional
-        Solver kernel (continuous flows only).
+    solver : str, optional
+        Numerical kernel for the variational integration (continuous flows
+        only), e.g. ``"rk45"`` / ``"bdf"``.  ``solver=`` picks a *kernel*;
+        ``method=`` picks an *estimator*, and this analysis has one — so
+        ``method=`` raises, naming this word.
+
+        .. versionchanged:: 6.0
+            Was ``method=``.  v6 renamed the kernel word to ``solver=`` at
+            ``run()`` for exactly this reason, and this door had not followed —
+            so obeying the library's own rule here used to be a dead end.
     backend : {"jit", "interp", "reference"}, optional
         Which engine runs the tangent dynamics.  Named here because this free
         function is the ONLY door in v6 (ruling A2): a keyword the removed method
@@ -458,8 +494,8 @@ def lyapunov_spectrum(
         existing ``except TypeError`` keeps catching it.
     ValueError
         If ``k <= 0``, or a keyword is passed to the wrong family (``final_time``
-        / ``dt`` / ``transient`` / ``method`` for a map; ``n`` for a flow; or a
-        ``method`` for a DDE, which selects its engine via ``backend``).
+        / ``dt`` / ``transient`` / ``solver`` for a map; ``n`` for a flow; or a
+        ``solver`` for a DDE, which selects its engine via ``backend``).
 
     Examples
     --------
@@ -509,13 +545,26 @@ def lyapunov_spectrum(
     # (the naming gate in ``test_polish_standards.py`` bans ``steps`` as a
     # *parameter spelling*), and an alias is a courtesy, not a second word.
     steps = aliases.pop("steps", None)
+    if "method" in aliases:
+        # v6 split the two words everywhere else — ``solver=`` selects a numerical
+        # kernel, ``method=`` selects an *estimator* — and ``run()`` already says
+        # so in its own refusal.  This door kept the old spelling, so a user who
+        # obeyed the rule they had just been taught hit "unexpected keyword
+        # 'solver'" and had nowhere to go.  Same sentence, same fix, both doors.
+        raise InvalidParameterError(
+            "method= selects an *estimator* in v6, and lyapunov_spectrum has only one "
+            "(Benettin QR); the numerical kernel is solver=."
+            + remedy('ts.analysis.lyapunov_spectrum(system, solver="bdf")')
+        )
     if aliases:
         # An unknown keyword is a call-shape error, so it must stay catchable as
         # the ``TypeError`` the interpreter would have raised (``InvalidInputError``
         # subclasses it); ``InvalidParameterError`` is a ``ValueError`` and is for
         # a keyword that exists with a bad value.
         raise InvalidInputError(
-            f"lyapunov_spectrum got an unexpected keyword argument {sorted(aliases)[0]!r}."
+            f"lyapunov_spectrum got an unexpected keyword argument {sorted(aliases)[0]!r}. "
+            f"It takes k, final_time (a flow) / n (a map), transient, dt, ic, solver, "
+            f"rtol, atol, backend and reortho_interval."
             + remedy("ts.analysis.lyapunov_spectrum(system, k=2, final_time=200.0)")
         )
     if steps is not None:
@@ -537,42 +586,65 @@ def lyapunov_spectrum(
 
     if getattr(system, "family", None) == "map":
         # Maps: horizon is `n` (iterations); no time, solver or burn-in concept.
+        # Every refusal below names the unit, because the mistake is never a typo
+        # — it is the right word for the other kind of dynamics.
         if final_time is not None:
-            raise ValueError("lyapunov_spectrum: final_time is for flows; a map uses n.")
-        if dt is not None:
-            raise ValueError("lyapunov_spectrum: dt has no meaning for a discrete map.")
-        if transient is not None:
-            raise ValueError(
-                "lyapunov_spectrum: transient is not supported for a map spectrum "
-                "(the QR iteration reorthonormalises from the initial condition)."
+            raise InvalidParameterError(
+                "final_time is a horizon in TIME UNITS and a map has no continuous time; "
+                "a map's horizon is n, a count of ITERATIONS."
+                + remedy("ts.analysis.lyapunov_spectrum(system, n=5000)")
             )
-        if method is not None:
-            raise ValueError("lyapunov_spectrum: a map spectrum has no solver method.")
+        if dt is not None:
+            raise InvalidParameterError(
+                "dt is an integration step in TIME UNITS and a map has no continuous time "
+                "— every map step is exactly one iteration."
+                + remedy("ts.analysis.lyapunov_spectrum(system, n=5000)")
+            )
+        if transient is not None:
+            raise InvalidParameterError(
+                "transient is a burn-in and a map spectrum has nothing to discard: the QR "
+                "iteration reorthonormalises from the initial condition. Burn in yourself "
+                "and pass the landed state."
+                + remedy("ts.analysis.lyapunov_spectrum(system, n=5000, ic=traj.y[-1])")
+            )
+        if solver is not None:
+            raise InvalidParameterError(
+                "solver names a numerical kernel for a differential equation, and a map is "
+                "iterated exactly — there is no kernel to choose."
+                + remedy("ts.analysis.lyapunov_spectrum(system, n=5000)")
+            )
         if n is not None:
             fwd["n"] = n
         if reortho_interval is not None:
             fwd["reortho_interval"] = reortho_interval
     else:
         if reortho_interval is not None:
-            raise ValueError(
-                "lyapunov_spectrum: reortho_interval counts ITERATIONS, so it is a "
-                "map keyword; a flow reorthonormalises once per dt chunk."
+            raise InvalidParameterError(
+                "reortho_interval counts ITERATIONS between reorthonormalisations, so it "
+                "is a map keyword; a flow reorthonormalises once per dt chunk."
+                + remedy("ts.analysis.lyapunov_spectrum(system, dt=0.01)")
             )
         # Flows (ODE/DDE): horizon is `final_time`; transient is a burn-in time.
         if n is not None:
-            raise ValueError("lyapunov_spectrum: n is for maps; a flow/DDE uses final_time.")
+            raise InvalidParameterError(
+                "n is a count of ITERATIONS and a flow advances in continuous time; its "
+                "horizon is final_time, a length in TIME UNITS."
+                + remedy("ts.analysis.lyapunov_spectrum(system, final_time=200.0)")
+            )
         if final_time is not None:
             fwd["final_time"] = final_time
         if transient is not None:
             fwd["transient"] = transient
         if dt is not None:
             fwd["dt"] = dt
-        if method is not None:
+        if solver is not None:
             if isinstance(system, DelaySystem):
-                raise ValueError(
-                    "lyapunov_spectrum: a DDE selects its engine via backend, not method."
+                raise InvalidParameterError(
+                    "a DDE's variational system is integrated by the engine's method of "
+                    "steps, which has no selectable kernel; choose the engine with backend=."
+                    + remedy('ts.analysis.lyapunov_spectrum(system, backend="jit")')
                 )
-            fwd["method"] = method
+            fwd["method"] = solver
         # The solver tolerances the family estimator has always taken.  They are
         # named here because the free function is the ONLY door in v6 (ruling
         # A2), so a keyword the removed method accepted and this one refuses is a
@@ -593,103 +665,134 @@ def lyapunov_spectrum(
     return LyapunovSpectrum(values=exponents, meta=meta)
 
 
-def _max_lyapunov_map(
+def _resolve_transient(transient: float | None, *, is_map: bool) -> float | None:
+    """Read ``transient`` in the unit its family measures dynamics in.
+
+    Time for a flow, iterations for a map — the rule ``run(transient=)`` already
+    follows, and the rule this function's own docstring states.  ``None`` comes
+    back as ``None``, meaning "the historical burn-in of
+    :data:`_DEFAULT_BURN_STEPS` protocol steps", so no shipped default moves.
+
+    The ``int``-on-a-flow refusal is the whole point of the guard: before v6
+    this keyword counted *protocol steps* for both families, so the same
+    ``transient=500`` that meant "≈5 time units" would now mean 500 time units
+    — a 100x longer burn-in, with no error and no visible symptom beyond the
+    wait.  A value that large cannot be disambiguated, so it is named, not
+    guessed.
+    """
+    if transient is None:
+        return None
+    value = float(transient)
+    if not np.isfinite(value) or value < 0.0:
+        unit = "iterations" if is_map else "time units"
+        raise InvalidParameterError(
+            f"transient is the dynamics discarded before measuring, in {unit}, so it "
+            f"must be finite and >= 0; got {transient!r}."
+            + remedy("ts.analysis.max_lyapunov(system)")
+        )
+    if is_map:
+        if value != int(value):
+            raise InvalidParameterError(
+                f"transient counts ITERATIONS for a map, so it must be a whole number; "
+                f"got {transient!r}." + remedy("ts.analysis.max_lyapunov(system, transient=500)")
+            )
+        return value
+    if (
+        isinstance(transient, (int, np.integer))
+        and not isinstance(transient, bool)
+        and int(transient) >= _TRANSIENT_AMBIGUITY_FLOOR
+    ):
+        raise InvalidParameterError(
+            f"transient={transient} is ambiguous: in v6 it is the dynamics discarded "
+            f"before measuring in TIME UNITS for a flow (it counted protocol steps "
+            f"before), and {transient} time units is about {transient} / "
+            f"dt steps — roughly 100x the old burn-in. Say which you meant:\n"
+            f"    ts.analysis.max_lyapunov(system, transient={float(transient)})"
+            f"   # {transient} time units\n"
+            f"    ts.analysis.max_lyapunov(system)"
+            f"   # the default burn-in ({_DEFAULT_BURN_STEPS} steps)"
+        )
+    return value
+
+
+def _burn_in_map(system: Any, *, ic: Any | None, iterations: float | None) -> np.ndarray:
+    """Iterate a map from ``ic`` past the burn-in; return the landed state."""
+    ref = system.copy()
+    ref.reinit(ic)
+    count = _DEFAULT_BURN_STEPS if iterations is None else int(iterations)
+    for _ in range(count):
+        ref.step()
+    return np.asarray(ref.state(), dtype=float)
+
+
+def _map_max_exponent(
     system: Any,
     *,
-    n: int,
-    steps_per: int,
-    transient: int,
+    iterations: int,
+    transient: float | None,
     ic: Any | None,
     seed: int | None,
-) -> float | None:
-    """Maximal exponent of a map as the top of the Rust QR tangent-map spectrum.
+    backend: str | None,
+) -> float:
+    """Return a map's maximal exponent: burn in, then ask :func:`lyapunov_spectrum`.
 
-    Burns in ``transient`` map iterations to land on the attractor, then runs the
-    engine kernel (:func:`tsdynamics.engine.run.map_lyapunov`) for ``n * steps_per``
-    iterations and returns the leading exponent (``k=1``).  Returns ``None`` to
-    decline — so :func:`max_lyapunov` falls back to the two-trajectory loop — when
-    the map will not lower to the engine IR
-    (:class:`~tsdynamics.engine.compile.TapeCompileError`) or the compiled wheel is
-    absent (:class:`~tsdynamics.engine.run.EngineNotAvailableError`).
-
-    ``seed`` makes the off-basin random-IC retry reproducible: each retry draws
-    its initial condition from a seeded ``numpy`` generator (``U[0, 1)^dim``, the
-    same distribution :meth:`~tsdynamics.families.base.SystemBase.resolve_ic`
-    uses for a random fallback) rather than the unseeded global RNG, so a result
-    that triggers the retry is deterministic when ``seed`` is given — matching the
-    two-trajectory path's seed contract.
+    The estimator is not re-implemented here — that is the whole point of the
+    v6 fold.  What *is* here is the **initial-condition policy**, because it is
+    ``max_lyapunov``'s own contract: a random draw can land off-basin and
+    diverge, and a retry that re-drew from the unseeded global RNG made a seeded
+    call non-reproducible.  So the retry IC comes from ``default_rng(seed)``, and
+    an explicit ``ic`` that diverges re-raises instead of being quietly replaced
+    by a different starting point.  Passing the landed state on as an explicit
+    ``ic`` also keeps the delegate's own (unseeded) retry out of the picture.
     """
-    from tsdynamics.engine import run
-    from tsdynamics.engine.compile import (
-        TapeCompileError,
-        lower_map_cached,
-        tape_jacobian_is_smooth,
-    )
-
-    # Only a genuine DiscreteMap has an analytic _step/_jacobian to lower; a
-    # WrappedSystem (adapted external stepper — is_discrete=True but no _step) and
-    # anything else must take the two-trajectory loop.
-    if not isinstance(system, DiscreteMap):
-        return None
-
-    name = type(system).__name__
-    try:
-        tape = lower_map_cached(system, with_jacobian=True)
-        tape_arrays = tape.to_arrays()
-    except TapeCompileError:
-        return None  # a non-lowering _step (piecewise/ufunc) → two-trajectory loop
-    except run.EngineNotAvailableError:  # pragma: no cover - wheel-free env
-        return None
-    # A piecewise map's lowered Jacobian collapses at kinks (the full-height Tent's
-    # dyadic orbit hits x=0.5, poisoning the QR growth), so decline → two-trajectory.
-    if not tape_jacobian_is_smooth(tape):
-        return None
-
-    steps = max(1, int(n) * int(steps_per))
-    burn = max(0, int(transient))
-
-    # Burn-in + the kernel run, with random-IC retry on divergence (a random draw
-    # can land off-basin); an explicit ``ic`` that diverges re-raises. The retry
-    # draws a *reproducible* random IC from a seeded generator when ``seed`` is
-    # given, so a retried result is deterministic (the two-trajectory path's
-    # contract); with ``seed=None`` the draw is unseeded, matching the prior
-    # behaviour.
-    ic_explicit = ic is not None
     rng = np.random.default_rng(seed)
-    dim = cast("int", system.dim)
-    max_retries = 10
-    for attempt in range(max_retries):
-        ref = system.copy()
+    dim = int(system.dim)
+    ic_explicit = ic is not None
+    for attempt in range(_MAX_IC_RETRIES):
+        if attempt == 0:
+            start_ic = ic
+        elif seed is None:
+            start_ic = None  # unseeded random fallback (the family's resolve_ic)
+        else:
+            start_ic = rng.random(dim)  # reproducible random retry IC
         try:
-            if attempt == 0:
-                ref.reinit(ic)
-            elif seed is None:
-                ref.reinit(None)  # unseeded random fallback (resolve_ic)
-            else:
-                ref.reinit(rng.random(dim))  # reproducible random retry IC
-            for _ in range(burn):
-                ref.step()
-            start = np.asarray(ref.state(), dtype=float)
-            exponents, _intervals = run.map_lyapunov(
-                tape_arrays,
-                start,
-                steps=steps,
-                k=1,
-                reortho_interval=1,
-                name=name,
-            )
-        except run.EngineNotAvailableError:  # pragma: no cover - wheel-free env
-            return None
+            landed = _burn_in_map(system, ic=start_ic, iterations=transient)
+            spectrum = lyapunov_spectrum(system, k=1, n=iterations, ic=landed, backend=backend)
         except (ConvergenceError, ArithmeticError):
-            if ic_explicit or attempt == max_retries - 1:
+            if ic_explicit or attempt == _MAX_IC_RETRIES - 1:
                 raise
-            continue  # off-basin random draw diverged; retry from a fresh IC
-        return float(exponents[0])
-
-    # Unreachable: the loop returns on success or re-raises on the last attempt.
-    raise ConvergenceError(  # pragma: no cover
-        f"{name}.max_lyapunov: map iterates diverge from every tried IC."
+            continue
+        return float(np.asarray(spectrum)[0])
+    raise ConvergenceError(  # pragma: no cover - the loop returns or re-raises
+        f"{type(system).__name__}.max_lyapunov: iterates diverge from every tried IC."
     )
+
+
+def _burn_in_flow(ref: Any, *, dt: float | None, transient: float | None) -> int:
+    """Advance ``ref`` past the burn-in; return the number of steps it took.
+
+    ``transient`` is a **time**, so the loop watches the clock rather than
+    counting a number of steps chosen for it — which is what makes the burn-in
+    the same amount of *dynamics* at every ``dt``.  ``None`` is the historical
+    default and is still a step count, so the shipped number does not move.  The
+    step count comes back because the caller sizes its averaging window from the
+    measured per-step advance.
+    """
+    if transient is None:
+        for _ in range(_DEFAULT_BURN_STEPS):
+            ref.step(dt)
+        return _DEFAULT_BURN_STEPS
+    if transient <= 0.0:
+        return 0
+    t0 = float(ref.time())
+    steps = 0
+    # A step count still bounds the loop: a system whose clock does not advance
+    # (a WrappedSystem driven externally) must not spin forever.
+    budget = _DEFAULT_BURN_STEPS * 1000
+    while float(ref.time()) - t0 < transient and steps < budget:
+        ref.step(dt)
+        steps += 1
+    return steps
 
 
 def max_lyapunov(
@@ -700,21 +803,41 @@ def max_lyapunov(
     final_time: float | None = None,
     steps_per: int = 10,
     dt: float | None = None,
-    transient: int = 500,
+    transient: float | None = None,
     ic: Any | None = None,
-    seed: int | None = None,
+    seed: int | None = 0,
+    backend: str | None = None,
 ) -> ScalarResult:
-    r"""Maximal Lyapunov exponent, by two-trajectory rescaling.
+    r"""Maximal Lyapunov exponent — the one number that says "chaotic".
 
-    Benettin et al. (1976).
+    Two machines behind one name, chosen by family, and they are chosen for you:
 
-    Runs a reference and a perturbed copy of the system in lockstep through
-    the :class:`~tsdynamics.families.System` protocol — no Jacobian needed, so it
-    works for any ODE or map (including ones with non-smooth right-hand
-    sides).  The separation is rescaled back to ``d0`` after every cycle and the
-    accumulated :math:`\ln(d / d_0)` is averaged over elapsed time.  Not
-    available for DDEs (their state cannot be ``set_state``-ed); use
-    ``DelaySystem.lyapunov_spectrum`` instead.
+    **A map** is answered by :func:`lyapunov_spectrum` with ``k=1`` — literally,
+    by calling it — so the two doors cannot disagree.  The QR tangent-map
+    iteration runs in one Rust kernel call and is both faster and more robust
+    than rescaling two orbits (no ``d0`` to tune, nothing to collapse).
+
+    **A flow** is answered by Benettin two-trajectory rescaling (Benettin et al.
+    1976): a reference and a perturbed copy stepped in lockstep through the
+    :class:`~tsdynamics.families.System` protocol, the separation rescaled back
+    to ``d0`` every cycle and :math:`\ln(d / d_0)` averaged over elapsed time.
+    **Choose it over ``lyapunov_spectrum`` when there is no usable Jacobian** —
+    it never forms one, so it works on a non-smooth right-hand side and on a
+    :class:`~tsdynamics.families.WrappedSystem` wrapping an external stepper,
+    where the variational path cannot go.  When a Jacobian *is* available,
+    ``lyapunov_spectrum(system, k=1)[0]`` is the more accurate answer and gives
+    you the rest of the spectrum for the same integration.
+
+    .. versionchanged:: 6.0
+        The map path is now a delegation rather than a second implementation,
+        and ``n`` counts **iterations** on a map, as it does at
+        :func:`lyapunov_spectrum`.  It used to count *rescaling cycles* of
+        ``steps_per`` iterations each, so ``max_lyapunov(m, n=20000)`` did ten
+        times the work of ``lyapunov_spectrum(m, k=1, n=20000)`` and the two
+        returned different numbers for one nominal horizon.
+
+    Neither path is available for DDEs (their state cannot be ``set_state``-ed);
+    use ``ts.analysis.lyapunov_spectrum(dde, k=1)`` instead.
 
     The perturbation starts in a *random* direction, so its first cycles measure
     a mixture of every exponent — for a dissipative flow it initially **shrinks**
@@ -730,24 +853,23 @@ def max_lyapunov(
     Parameters
     ----------
     system : System
-        ODE or map.
+        A flow (ODE) or a discrete map.
     d0 : float
-        Perturbation size restored at every rescaling.
+        Perturbation size restored at every rescaling (flows only).
     n : int, optional
-        Number of *measured* rescaling cycles.  ``None`` (the default) sizes the
-        averaging **window**, not the cycle count: a flow runs however many
-        cycles cover :data:`_DEFAULT_WINDOW` time units (measured from the
-        reference clock, so it is right whatever ``dt`` and whatever per-step
-        advance the system makes), a map runs
-        :data:`_DEFAULT_MAP_CYCLES` iterating cycles.  That is what makes the
-        estimate independent of ``dt``: a *count* of cycles is a window of
-        ``n * steps_per * dt`` **time**, so a fixed count silently shortens the
-        window as ``dt`` shrinks — with the pre-fix ``n = 2000`` default,
-        ``dt = 0.001`` averaged over 20 time units and returned 0.659 for Lorenz
-        against a true 0.906 (27 % low), exactly the bias the v6 defaults were
-        raised to remove at ``dt = 0.01``.  Pass ``n`` explicitly to fix the
-        cycle count instead (and then keep ``n * steps_per * dt`` well above
-        ~100 time units, or accept that bias).
+        The horizon, counted in the unit the family iterates in:
+
+        * a **map** — a count of **ITERATIONS**, exactly as at
+          :func:`lyapunov_spectrum`.  Default :data:`_DEFAULT_MAP_ITERATIONS`.
+        * a **flow** — a count of **RESCALING CYCLES**, each ``steps_per``
+          protocol steps.  ``None`` (the default) sizes the averaging *window*
+          instead of the count: enough cycles to cover :data:`_DEFAULT_WINDOW`
+          time units, measured from the reference clock, so the estimate does
+          not move with ``dt``.  (A fixed count *is* a window of
+          ``n * steps_per * dt`` time, so it silently shortens as ``dt``
+          shrinks: with the pre-v6 ``n = 2000`` default, ``dt = 0.001``
+          averaged over 20 time units and returned 0.659 for Lorenz against a
+          true 0.906.)  Prefer ``final_time`` — it says what it means.
     final_time : float, optional
         Averaging-window length for a **flow**, in **time units** — the quantity
         that actually sets the accuracy of the estimate, expressed directly
@@ -762,23 +884,49 @@ def max_lyapunov(
             ``n * steps_per * dt`` for ``n`` — so the one keyword every other
             Lyapunov entry point spelled ``final_time`` was simply missing here.
     steps_per : int, default 10
-        Protocol steps between rescalings.
+        Protocol steps between rescalings (**flows only** — a map's QR iteration
+        reorthonormalises every iterate, so there is no cycle length to set).
     dt : float, optional
-        Step size for continuous systems (default: the system's step default).
-    transient : int
-        Protocol steps discarded before measuring.
+        Integration step for a flow, in **time units** (default: the system's
+        own step).  Rejected for a map, which iterates.
+    transient : float, optional
+        Dynamics discarded before measuring — **time units** for a flow
+        (the unit ``final_time`` and ``run(transient=)`` use), **iterations**
+        for a map.  ``None`` (the default) keeps the historical burn-in:
+        :data:`_DEFAULT_BURN_STEPS` protocol steps for a flow,
+        :data:`_DEFAULT_BURN_STEPS` iterations for a map.
+
+        .. versionchanged:: 6.0
+            Was a count of protocol steps *for both families*, so the one word
+            the rest of the library measures in time measured in steps here.
+            An integer ``>= 100`` on a flow is refused rather than silently
+            read as a 100x longer burn-in — see :exc:`InvalidParameterError`.
     ic : array-like, optional
         Initial condition for the reference trajectory.
-    seed : int, optional
-        Seed for the random perturbation direction (two-trajectory path) and for
-        the off-basin random-IC retry on the map engine-kernel path, so a result
-        that triggers the retry is reproducible.
+    seed : int, default 0
+        Seed for the random perturbation direction (flow) and for the off-basin
+        random-IC retry (map), so a repeated call returns the same number.
+        Pass ``seed=None`` for an explicitly unseeded draw.
+
+        .. versionchanged:: 6.0
+            Was ``None``, so the default answer was not reproducible.
+    backend : {"jit", "interp", "reference"}, optional
+        Which engine runs a **map**'s QR tangent iteration; forwarded to
+        :func:`lyapunov_spectrum`.  A flow's two-trajectory loop drives the
+        system through the stepping protocol and takes the system's own backend.
 
     Returns
     -------
     ScalarResult
-        Estimated maximal exponent (per unit time / per iteration), a drop-in for
-        its ``float`` value that also carries ``.meta`` / ``.summary()``.
+        Estimated maximal exponent — **per unit time** for a flow, **per
+        iteration** for a map — a drop-in for its ``float`` value that also
+        carries ``.meta`` and the ``.plot`` seam.
+
+    See Also
+    --------
+    lyapunov_spectrum : all ``k`` exponents; the more accurate answer whenever
+        the system has a usable Jacobian, and what this delegates to for a map.
+    lyapunov_from_data : the same question from a measured series, with no model.
 
     Raises
     ------
@@ -787,8 +935,12 @@ def max_lyapunov(
         :func:`lyapunov_from_data` on the series.
     NotImplementedError
         If ``system`` is a delay system (it has no ``set_state``).
-    ValueError
-        If ``dt`` is passed for a discrete map.
+    InvalidParameterError
+        If a keyword carries the other family's unit: ``dt`` / ``final_time``
+        for a map (both are times, and a map has none), ``steps_per`` for a map,
+        or an ``int`` ``transient >= 100`` for a flow — which is the pre-v6
+        step-count spelling of a keyword that now means time, and is refused
+        rather than silently read as a 100x longer burn-in.
     ConvergenceError
         If the two trajectories collapse or diverge (zero / non-finite
         separation), or a continuous system's clock does not advance (so neither
@@ -812,11 +964,33 @@ def max_lyapunov(
                 lead="Use the delay system's own engine estimator:",
             )
         )
-    if system.family == "map" and dt is not None:
+    is_map = system.family == "map"
+    # The fold applies exactly where ``lyapunov_spectrum`` can answer.  An adapted
+    # external stepper (``WrappedSystem(family="map")``) has no ``_lyapunov_spectrum``
+    # — no Jacobian, no tape — so for it the two-trajectory loop is not a second
+    # implementation of anything, it is the only machine, and its cycle vocabulary
+    # (``n`` cycles of ``steps_per`` iterates) stands.
+    delegates = is_map and callable(getattr(system, "_lyapunov_spectrum", None))
+    if is_map and dt is not None:
         raise InvalidParameterError(
-            "dt has no meaning for discrete maps — omit it (every step is one iteration)."
-            + remedy("ts.analysis.max_lyapunov(system, n=2000)")
+            "dt is an integration step in TIME UNITS and a map has no continuous time "
+            "— every map step is exactly one iteration."
+            + remedy("ts.analysis.max_lyapunov(system, n=20000)")
         )
+    if delegates and steps_per != 10:
+        # ``steps_per`` was the cycle length of the two-trajectory loop.  The map
+        # path is now ``lyapunov_spectrum(k=1)``, whose QR iteration
+        # reorthonormalises every iterate — there is no cycle to lengthen, and
+        # silently ignoring the word would leave ``n`` meaning ``n * steps_per``
+        # to the caller and ``n`` to the library.
+        raise InvalidParameterError(
+            f"steps_per is the number of protocol steps between rescalings of the "
+            f"two-trajectory loop, and a map does not use it: its maximal exponent is "
+            f"the top of the QR tangent-map spectrum, which reorthonormalises every "
+            f"iterate. Count iterations with n instead; got steps_per={steps_per!r}."
+            + remedy(f"ts.analysis.max_lyapunov(system, n={20000 if n is None else int(n)})")
+        )
+    transient_n = _resolve_transient(transient, is_map=is_map)
     if not (d0 > 0.0) or not np.isfinite(d0):
         # The separation is rescaled back to d0 every cycle and the log-ratio is
         # ln(d / d0): a zero d0 divides by zero, a negative one takes the log of a
@@ -828,20 +1002,21 @@ def max_lyapunov(
             + remedy("ts.analysis.max_lyapunov(system, d0=1e-9)")
         )
     if n is not None and int(n) < 1:
+        unit = "iterations" if is_map else "measured rescaling cycles"
         raise InvalidParameterError(
-            f"n is the number of measured rescaling cycles, so it must be >= 1; got "
-            f"{n!r}. Omit it to size the averaging window automatically."
+            f"n is a count of {unit}, so it must be >= 1; got {n!r}. "
+            f"Omit it to size the horizon automatically."
             + remedy("ts.analysis.max_lyapunov(system)")
         )
     if final_time is not None:
         # ``n`` (a cycle count) and ``final_time`` (a window in time) set the same
         # quantity two different ways, so accepting both would leave one silently
         # ignored.  A map has no clock for a time window to mean anything on.
-        if system.family == "map":
+        if is_map:
             raise InvalidParameterError(
-                "final_time is a window in time units, and a map has no continuous "
-                "time — its horizon is a count of iterations."
-                + remedy("ts.analysis.max_lyapunov(system, n=2000)")
+                "final_time is a window in TIME UNITS, and a map has no continuous "
+                "time — its horizon is n, a count of ITERATIONS."
+                + remedy("ts.analysis.max_lyapunov(system, n=20000)")
             )
         if n is not None:
             raise InvalidParameterError(
@@ -857,53 +1032,55 @@ def max_lyapunov(
                 + remedy("ts.analysis.max_lyapunov(system, final_time=200.0)")
             )
 
-    # Maps: the maximal exponent is the leading entry of the QR tangent-map
-    # spectrum, run in one Rust engine call (stream perf/map-lyapunov-kernel) —
-    # thousands of times faster than the per-iteration two-trajectory rescaling, and
-    # more robust (no perturbation-size / collapse tuning).  The continuous-system
-    # path below is unchanged.  Only the map path moves to the kernel; a map whose
-    # ``_step`` will not lower, or a wheel-free environment, falls back to the
-    # two-trajectory loop transparently.
-    if system.family == "map":
-        n_cycles = _DEFAULT_MAP_CYCLES if n is None else int(n)
-        mle = _max_lyapunov_map(
-            system, n=n_cycles, steps_per=steps_per, transient=transient, ic=ic, seed=seed
+    # A map's maximal exponent IS the top of its Lyapunov spectrum, so this asks
+    # for it — by calling the public function, not by running a second copy of the
+    # same QR tangent-map iteration.  Two implementations of one quantity is how
+    # ``max_lyapunov(m, n=20000)`` and ``lyapunov_spectrum(m, k=1, n=20000)`` came
+    # to return different numbers for one nominal horizon (they counted different
+    # things), and a delegation cannot drift.
+    if delegates:
+        iterations = _DEFAULT_MAP_ITERATIONS if n is None else int(n)
+        mle = _map_max_exponent(
+            system,
+            iterations=iterations,
+            transient=transient_n,
+            ic=ic,
+            seed=seed,
+            backend=backend,
         )
-        if mle is not None:
-            meta = AnalysisResult.build_meta(
-                system, analysis="max_lyapunov", n=n_cycles, transient=transient
-            )
-            return ScalarResult(value=mle, meta=meta)
-    else:
-        n_cycles = 0 if n is None else int(n)  # resolved from the clock below
+        meta = AnalysisResult.build_meta(
+            system, analysis="max_lyapunov", n=iterations, transient=transient_n
+        )
+        return ScalarResult(value=mle, meta=meta)
 
+    n_cycles = 0 if n is None else int(n)  # resolved from the clock below
     rng = np.random.default_rng(seed)
     ref = system.copy()
     ref.reinit(ic)
     t_burn = float(ref.time())
-    for _ in range(transient):
-        ref.step(dt)
+    transient_steps = _burn_in_flow(ref, dt=dt, transient=transient_n)
 
-    if n is None:
-        if system.family == "map":
-            n_cycles = _DEFAULT_MAP_CYCLES
-        else:
-            # Size the averaging window in TIME, read off the reference clock —
-            # the per-step advance is whatever the system actually makes (an
-            # explicit ``dt``, a family default, a WrappedSystem's own step), and
-            # guessing it is what made the estimate dt-dependent.
-            per_step = (float(ref.time()) - t_burn) / transient if transient > 0 else 0.0
-            if not np.isfinite(per_step) or per_step <= 0.0:
-                t_probe = float(ref.time())  # transient=0: one probe step
-                ref.step(dt)
-                per_step = float(ref.time()) - t_probe
-            if not np.isfinite(per_step) or per_step <= 0.0:
-                raise ConvergenceError(
-                    "max_lyapunov: the reference clock did not advance, so the "
-                    "averaging window cannot be sized — pass an explicit n (and dt)."
-                )
-            window = _DEFAULT_WINDOW if final_time is None else float(final_time)
-            n_cycles = max(_MIN_CYCLES, int(np.ceil(window / (steps_per * per_step))))
+    if n is None and is_map:
+        # A stepper-only map (no ``_lyapunov_spectrum`` to delegate to): the cycle
+        # count already IS a fixed window, because a map has no ``dt`` to shorten it.
+        n_cycles = _DEFAULT_MAP_ITERATIONS // max(1, steps_per)
+    elif n is None:
+        # Size the averaging window in TIME, read off the reference clock — the
+        # per-step advance is whatever the system actually makes (an explicit
+        # ``dt``, a family default, a WrappedSystem's own step), and guessing it
+        # is what made the estimate dt-dependent.
+        per_step = (float(ref.time()) - t_burn) / transient_steps if transient_steps > 0 else 0.0
+        if not np.isfinite(per_step) or per_step <= 0.0:
+            t_probe = float(ref.time())  # transient=0: one probe step
+            ref.step(dt)
+            per_step = float(ref.time()) - t_probe
+        if not np.isfinite(per_step) or per_step <= 0.0:
+            raise ConvergenceError(
+                "max_lyapunov: the reference clock did not advance, so the "
+                "averaging window cannot be sized — pass an explicit n (and dt)."
+            )
+        window = _DEFAULT_WINDOW if final_time is None else float(final_time)
+        n_cycles = max(_MIN_CYCLES, int(np.ceil(window / (steps_per * per_step))))
 
     pert = system.copy()
     direction = rng.normal(size=system.dim)
@@ -935,7 +1112,8 @@ def max_lyapunov(
     for _ in range(n_cycles):
         log_sum += cycle()
 
-    if system.family == "map":
+    if is_map:
+        # Per ITERATION, and a map's clock counts them, so the window is exact.
         elapsed = float(n_cycles * steps_per)
     else:
         # Normalize by the *actual* elapsed integration time, read from the
@@ -955,7 +1133,7 @@ def max_lyapunov(
         system,
         analysis="max_lyapunov",
         n=n_cycles,
-        transient=transient,
+        transient=transient_n,
         final_time=final_time,
         window=elapsed,
     )

@@ -8,7 +8,7 @@ import numpy as np
 
 from tsdynamics.families import Trajectory
 
-from ._base import DerivedSystem
+from ._base import DerivedSystem, _reject_wrapper_keywords
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from tsdynamics.viz.spec import PlotSpec
@@ -87,7 +87,7 @@ class StroboscopicMap(DerivedSystem):
         return cast(float, self.system.time())
 
     def run(
-        self, steps: int = 100, *, ic: Any | None = None, transient: int = 0, **kwargs: Any
+        self, steps: int = 100, *, ic: Any | None = None, transient: int = 0, **unknown: Any
     ) -> Trajectory:
         """Collect ``steps`` once-per-period samples — **from a fresh start**.
 
@@ -99,11 +99,13 @@ class StroboscopicMap(DerivedSystem):
         Parameters
         ----------
         steps : int
-            Number of once-per-period samples to collect.
+            Number of once-per-period samples to collect — the horizon word,
+            counted in **forcing periods**.
+        ic : array-like, optional
+            Start state for the inner flow — ``system.dim`` numbers.
         transient : int
-            Number of leading periods to step through and discard.
-        **kwargs
-            Forwarded to :meth:`reinit` (``ic`` is popped) when non-empty.
+            Leading stretch to discard, in this view's own horizon unit:
+            **forcing periods**.
 
         Returns
         -------
@@ -111,7 +113,8 @@ class StroboscopicMap(DerivedSystem):
             The strobed samples — continuous sample times in ``t`` (one period
             apart), full-dimensional states in ``y``.
         """
-        self.reinit(ic, **kwargs)
+        _reject_wrapper_keywords(self, unknown, accepted=("steps", "ic", "transient"))
+        self.reinit(ic)
         if transient:
             self.system.step(transient * self.period)
         times = np.empty(steps)
@@ -157,7 +160,7 @@ class StroboscopicMap(DerivedSystem):
         Notes
         -----
         Sampling starts from the inner flow's **live cursor** (this calls
-        :meth:`trajectory`, which steps the wrapped system as a side effect with
+        :meth:`run`, which steps the wrapped system as a side effect with
         no transient discarded), so the picture reflects wherever the system
         currently sits — :meth:`reinit` first for a deterministic start state, or
         burn the transient in beforehand to image the attractor rather than the

@@ -422,7 +422,7 @@ def scaling_fit(
     a ``MARKERS`` highlight of the fitted scaling region ``x[lo:hi+1]``, and a
     ``LINE`` of the fit of the given ``slope`` drawn across the fit region — the
     schema the fractal-dimension estimators, ``LyapunovFromData`` and the
-    uncertainty exponent all emit, so a single ``result.plot.scaling()`` renders
+    uncertainty exponent all emit, so a single ``result.plot()`` renders
     them identically.
 
     The fit line is given **either** as a ready ``line_y`` array (already evaluated

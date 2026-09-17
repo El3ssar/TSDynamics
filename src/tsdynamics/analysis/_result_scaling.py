@@ -15,6 +15,20 @@ from tsdynamics.analysis._result_base import AnalysisResult
 from tsdynamics.analysis._result_json import _sig
 from tsdynamics.analysis._result_scalar import _NumericOps
 
+#: Fewest curve points a slope may be read from and still be called *trusted*.
+#: A line through **two** points has :math:`R^2 = 1` and ``stderr = 0`` by
+#: construction — the most reassuring diagnostics in the library, printed for the
+#: least evidence.  Reachable through the public ``min_window=`` keyword on every
+#: dimension estimator, so it is not a theoretical case.
+_MIN_TRUSTWORTHY_FIT = 4
+
+#: Coefficient of determination a fit must clear to be called *trusted*.
+_MIN_TRUSTWORTHY_R2 = 0.98
+
+#: Below this many fit points :math:`R^2` is not reported at all — it is not a
+#: measurement there, it is an identity.
+_MIN_MEANINGFUL_R2_FIT = 3
+
 
 @dataclass(frozen=True, eq=False)
 class ScalingResult(_NumericOps, AnalysisResult):
@@ -28,7 +42,7 @@ class ScalingResult(_NumericOps, AnalysisResult):
     false-nearest-neighbour embedding diagnostics all fit this mould.
 
     :class:`ScalingResult` is the *one* schema for that whole family, so a single
-    generic ``result.plot.scaling()`` renders any of them and any consumer can
+    generic ``result.plot()`` renders any of them and any consumer can
     find "the curve" and "the fit" without knowing which estimator produced it.
 
     The number is :attr:`estimate`; ``float(result)`` returns it, and the full
@@ -180,7 +194,48 @@ class ScalingResult(_NumericOps, AnalysisResult):
             return float("nan")
         return float(1.0 - np.sum(residual**2) / ss_tot)
 
+    @property
+    def trusted(self) -> bool:
+        r"""Whether the reported slope rests on enough straight curve to believe.
+
+        Computed, not asserted: ``n_fit >= 4`` **and** the fit's :math:`R^2` is
+        finite and at least ``0.98``.  Before v6 ``trusted`` was a constructor
+        flag defaulting to ``True``, so a two-point window printed
+        ``D_corr = 1.8183 ± 0 … R² = 1`` and called itself trusted — a line
+        through two points always has :math:`R^2 = 1`.
+
+        A subclass that carries its own extra check (a Rényi monotonicity test, a
+        plateau search) declares ``trusted`` as a **field** and ANDs this floor in
+        at construction, so the flag can only ever get *stricter*.
+
+        Returns
+        -------
+        bool
+        """
+        return self._fit_is_believable()
+
+    def _fit_is_believable(self) -> bool:
+        """Return whether the fit window is long enough and straight enough."""
+        r2 = self.r_squared
+        return bool(
+            self.n_fit >= _MIN_TRUSTWORTHY_FIT and np.isfinite(r2) and r2 >= _MIN_TRUSTWORTHY_R2
+        )
+
     # -- the readout ------------------------------------------------------
+
+    def _fit_quality_clause(self) -> str:
+        """Return the hedge that names *why* the fit does not support the number.
+
+        Lifted here from the two subclasses that had it, so the base and
+        :class:`~tsdynamics.analysis.results.ExpansionEntropyResult` hedge too.
+        """
+        if self.n_fit < _MIN_MEANINGFUL_R2_FIT:
+            return f"⚠ UNTRUSTED — {self.n_fit} fit pts is a line through its own endpoints"
+        return "⚠ UNTRUSTED — no clean scaling region"
+
+    def _interpretation(self) -> str | None:
+        """Hedge when the fit does not support the number; stay silent otherwise."""
+        return None if self.trusted else self._fit_quality_clause()
 
     def _quantity(self) -> str:
         """Return the symbol the answer is named by (``D_corr``, ``λ_max``, …)."""
@@ -215,17 +270,25 @@ class ScalingResult(_NumericOps, AnalysisResult):
         return float(x[lo]), float(x[hi])
 
     def _details(self) -> tuple[str, ...]:
-        """Return the one line that says whether the fit is believable."""
+        """Return the one line that says whether the fit is believable.
+
+        :math:`R^2` is **suppressed** below :data:`_MIN_MEANINGFUL_R2_FIT`
+        points: there it is an identity, not a measurement, and printing
+        ``R² = 1`` for a two-point window is the most reassuring diagnostic in
+        the library attached to the least evidence.
+        """
         lo, hi = self._window_for_repr()
         r2 = self.r_squared
         bits = [f"{self.n_fit} fit pts", f"x ∈ [{_sig(lo, 3)}, {_sig(hi, 3)}]"]
-        if np.isfinite(r2):
+        if self.n_fit < _MIN_MEANINGFUL_R2_FIT:
+            bits.append(f"R² undefined ({self.n_fit} fit pts)")
+        elif np.isfinite(r2):
             bits.append(f"R² = {_sig(r2, 5)}")
         return (f"({', '.join(bits)})",)
 
     def _derived(self) -> dict[str, Any]:
         """Export the fit diagnostics the repr reports (``n_fit`` / ``r_squared``)."""
-        return {"n_fit": self.n_fit, "r_squared": self.r_squared}
+        return {"n_fit": self.n_fit, "r_squared": self.r_squared, "trusted": bool(self.trusted)}
 
     # -- visualization ---------------------------------------------------
 
@@ -244,7 +307,7 @@ class ScalingResult(_NumericOps, AnalysisResult):
         kind : str, optional
             An override for the semantic spec kind (the closed
             :class:`~tsdynamics.viz.spec.PlotKind` vocabulary).  ``None`` (the
-            default) uses ``SCALING_FIT``; the ``.plot.scaling()`` seam passes
+            default) uses ``SCALING_FIT``; the ``scaling_fit`` transform passes
             ``"scaling_fit"`` explicitly, which resolves to the same kind.
 
         Returns

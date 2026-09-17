@@ -554,7 +554,7 @@ def test_unstable_equilibrium_is_not_reported_as_an_attractor(resolution):
     # just above it is separately rejected by the invariance check)
     assert any("attraction check" in str(w.message) for w in caught)
     assert res.n_attractors == 1
-    (only,) = res.attractors
+    (only,) = res.attractors.details
     assert float(only.points.mean()) == pytest.approx(-0.1, abs=1e-3)
 
 
@@ -627,7 +627,7 @@ def test_concentric_attractors_are_not_merged_by_a_shared_centroid(resolution):
         seed=0,
     )
     assert len(ats) == 2
-    radii = sorted(float(np.mean(np.linalg.norm(a.points, axis=1))) for a in ats)
+    radii = sorted(float(np.mean(np.linalg.norm(a.points, axis=1))) for a in ats.details)
     np.testing.assert_allclose(radii, [1.0, 3.0], atol=1e-3)
 
 
@@ -775,7 +775,7 @@ def test_magnetic_pendulum_fractal_basin_image():
         )
     assert res.n_attractors == 3
     # the three surviving attractors ARE the three magnets ...
-    centers = np.array([a.points.mean(axis=0)[:2] for a in res.attractors])
+    centers = np.array([a.points.mean(axis=0)[:2] for a in res.attractors.details])
     for mag in _MAGNETS:
         assert np.linalg.norm(centers - np.array(mag), axis=1).min() < 0.1
     # ... and their basins dominate the slice.

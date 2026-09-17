@@ -13,104 +13,162 @@ from typing import Any, ClassVar
 import numpy as np
 
 from tsdynamics.analysis._result_base import _MAX_ITEMS, AnalysisResult
-from tsdynamics.analysis._result_json import _is_frame_scalar, _jsonify
+from tsdynamics.analysis._result_json import _jsonify, _row_for
 from tsdynamics.analysis._result_viz import VisualizationNotInstalled
-
-#: Widest vector field :func:`_spread` will turn into columns.
-_MAX_SPREAD = 32
-
-
-def _content_fields(item: Any) -> tuple[str, ...] | None:
-    """Return the fields a TABLE should carry — the content, not the repr selection.
-
-    ``_display_fields`` answers *what the one-line repr shows*, and a field
-    marked ``repr=False`` (a fixed point's ``eigenvalues``) is deliberately
-    absent from it.  A table is the other question, so it reads the dataclass
-    fields and drops only ``meta``.
-    """
-    import dataclasses
-
-    if dataclasses.is_dataclass(item) and not isinstance(item, type):
-        return tuple(f.name for f in dataclasses.fields(item) if f.name != "meta")
-    display = getattr(item, "_display_fields", None)
-    return tuple(display()) if callable(display) else None
-
-
-def _spread(name: str, value: Any) -> dict[str, Any]:
-    """Expand a vector display field into one column per component.
-
-    Returns ``{}`` for anything that is not a short 1-D numeric sequence, so a
-    nested structure is dropped rather than rendered as a repr string.
-    """
-    try:
-        arr = np.asarray(value)
-    except Exception:  # pragma: no cover - defensive
-        return {}
-    if arr.ndim != 1 or arr.size == 0 or arr.size > _MAX_SPREAD:
-        return {}
-    if not np.issubdtype(arr.dtype, np.number):
-        return {}
-    return {f"{name}{i}": _jsonify(v) for i, v in enumerate(arr.tolist())}
 
 
 @dataclass(frozen=True, eq=False)
 class CollectionResult(AnalysisResult):
-    """A homogeneous collection of result items that behaves like a ``list``.
+    """A homogeneous collection of measurements that indexes to **numbers**.
 
     Wraps a bare ``list`` return (``fixed_points`` → fixed points,
     ``periodic_orbits`` → orbits) so it carries the result surface while
-    ``for item in result``, ``result[0]`` and ``len(result)`` keep working.
-    Indexing with an ``int`` returns the item; slicing returns a plain ``list``
-    of items, matching list semantics.
+    ``for x in result``, ``result[0]`` and ``len(result)`` keep working.
 
-    Subclasses add domain selectors (``.stable`` / ``.unstable``) and a tidy
+    **Indexing and iteration give numbers** (contract §4.2 rule 6).
+    ``fixed_points(sys)[0]`` is the ``(dim,)`` point as a plain
+    :class:`numpy.ndarray` — not a ``FixedPoint`` the caller has to learn to
+    unwrap — so it has ``.shape``, ``.tolist()``, a numeric ``dtype``, and
+    ``np.asarray(result)[i]`` is the very same row.  The per-member *records*,
+    which carry the repr, the verdict and the diagnostics, did not go away: they
+    are :attr:`details`, one dot out of the way, indexed in the same order.
+
+    Every per-member diagnostic is additionally a **vectorised** attribute on the
+    collection (``fps.points`` / ``fps.eigenvalues`` / ``fps.is_stable``), so the
+    common case needs neither a loop nor a record.
+
+    Subclasses add those selectors (``.stable`` / ``.unstable``) and a tidy
     :meth:`to_frame`.
 
     Attributes
     ----------
     items : tuple
-        The collected result items, in order.
+        The collected result records, in order.  :attr:`details` is the public
+        spelling; this is the field the dataclass stores.
     """
 
     _repr_fields: ClassVar[tuple[str, ...]] = ()
 
     items: tuple[Any, ...] = ()
 
-    def __iter__(self) -> Any:  # noqa: D105
-        return iter(self.items)
+    # -- the sequence protocol, over NUMBERS ---------------------------------
+
+    def _item_value(self, item: Any) -> Any:
+        """Return the numbers member ``item`` stands for — what ``[]`` hands back.
+
+        A member that is a plain value (``tipping_points`` collects plain dicts)
+        is handed back unchanged; a member that is a *result* contributes the
+        numbers it stands for — its representative point (see
+        :meth:`_item_point`), else the scalar it converts to.  Overridden where
+        the natural answer is richer than one point: an :class:`OrbitSet` member
+        is its whole ``(p, dim)`` orbit, not the orbit's centroid.
+
+        A result with neither is handed back as itself rather than dropped; no
+        in-tree collection holds one, and ``test_indexing_a_collection_gives_numbers``
+        fails if one ever ships.
+        """
+        if not isinstance(item, AnalysisResult):
+            return item
+        point = self._item_point(item)
+        if point is not None:
+            return point
+        number = item._as_number()
+        return item if number is None else number
+
+    def __iter__(self) -> Any:
+        """Iterate the members' **numbers** (:attr:`details` iterates the records)."""
+        return iter([self._item_value(item) for item in self.items])
 
     def __len__(self) -> int:  # noqa: D105
         return len(self.items)
 
-    def __getitem__(self, key: Any) -> Any:  # noqa: D105
+    def __getitem__(self, key: Any) -> Any:
+        """Return member ``key``'s numbers; a slice gives the list of them.
+
+        ``fps[0]`` is a ``(dim,)`` :class:`numpy.ndarray`, equal to
+        ``np.asarray(fps)[0]``.  ``fps.details[0]`` is the record it came from.
+        """
         if isinstance(key, slice):
-            return list(self.items[key])
-        return self.items[key]
+            return [self._item_value(item) for item in self.items[key]]
+        return self._item_value(self.items[key])
 
     def __bool__(self) -> bool:  # noqa: D105
         return bool(self.items)
 
-    def __contains__(self, item: Any) -> bool:  # noqa: D105
-        return any(x is item or x == item for x in self.items)
+    @staticmethod
+    def _matches(value: Any, probe: Any) -> bool:
+        """Whether ``value`` equals ``probe``, for array-valued members too.
 
-    def __reversed__(self) -> Any:  # noqa: D105
-        return reversed(self.items)
+        ``value == probe`` is *elementwise* once the members are arrays, and
+        ``any()`` over an array raises "truth value is ambiguous" — so ``in`` /
+        :meth:`index` / :meth:`count` compare whole values here rather than
+        relying on a scalar ``__eq__``.
+        """
+        if value is probe:
+            return True
+        try:
+            return bool(np.array_equal(np.asarray(value), np.asarray(probe)))
+        except (TypeError, ValueError):
+            return bool(value == probe)
+
+    def __contains__(self, item: Any) -> bool:
+        """Whether any member equals ``item`` — compared as numbers, or as records."""
+        return any(
+            self._matches(value, item) or self._matches(record, item)
+            for value, record in zip(self, self.items, strict=True)
+        )
+
+    def __reversed__(self) -> Any:
+        """Iterate the members' numbers, last to first."""
+        return reversed([self._item_value(item) for item in self.items])
 
     def index(self, item: Any) -> int:
-        """Return the position of ``item``, like :meth:`list.index`."""
-        return list(self.items).index(item)
+        """Return the position of ``item``, like :meth:`list.index`.
+
+        Matches on the member's numbers or on its record, so both
+        ``fps.index(fps[0])`` and ``fps.index(fps.details[0])`` answer ``0``.
+        """
+        for i, (value, record) in enumerate(zip(self, self.items, strict=True)):
+            if self._matches(value, item) or self._matches(record, item):
+                return i
+        raise ValueError(f"{item!r} is not in this {type(self).__name__}")
 
     def count(self, item: Any) -> int:
-        """Return how many items equal ``item``, like :meth:`list.count`."""
-        return list(self.items).count(item)
+        """Return how many members equal ``item``, like :meth:`list.count`."""
+        return sum(
+            1
+            for value, record in zip(self, self.items, strict=True)
+            if self._matches(value, item) or self._matches(record, item)
+        )
+
+    @property
+    def details(self) -> tuple[Any, ...]:
+        """The member **records**, in the order ``[]`` indexes — the objects ``[]`` no longer hands back.
+
+        ``fps[0]`` is the point; ``fps.details[0]`` is the
+        :class:`~tsdynamics.analysis.results.FixedPoint` that point came from,
+        with its repr, its ``eigenvalues`` and its ``stable`` verdict.  One name
+        across every collection in the library (an
+        :class:`~tsdynamics.analysis.results.AttractorSet`'s attractors, an
+        :class:`~tsdynamics.analysis.results.OrbitSet`'s orbits, a
+        :class:`~tsdynamics.analysis.results.WindowedRQA`'s per-window
+        readouts), so it is learned once.
+        """  # noqa: E501
+        return self.items
 
     def by_id(self, key: Any) -> Any:
-        """Return the item whose ``id`` attribute is ``key``.
+        """Return the **record** whose ``id`` attribute is ``key``.
 
-        ``[]`` indexes a collection **by position** (contract §4.2 rule 6), the
-        way every Python sequence does; when the items carry their own integer
-        labels this is the explicit spelling for looking one up.  Raises
-        :class:`KeyError` when no item carries that id.
+        ``[]`` indexes a collection by *position* and hands back numbers
+        (contract §4.2 rule 6); when the members carry their own integer labels
+        this is the explicit spelling for looking one up, and — because a label
+        is something you read off a picture and then want to know *about* — it
+        hands back the record, exactly as :attr:`details` does.
+
+        Raises
+        ------
+        KeyError
+            If no member carries that id.
         """
         for item in self.items:
             if getattr(item, "id", None) == key:
@@ -129,6 +187,11 @@ class CollectionResult(AnalysisResult):
         array rather than silently dropping or padding rows.
         """
         points = [self._item_point(item) for item in self.items]
+        if not self.items:
+            # An EMPTY collection is an empty array of numbers, not an empty
+            # array of objects: ``np.asarray(tipping_points(...))`` must stay
+            # usable in arithmetic when nothing was found.
+            return np.empty(0, dtype=float if dtype is None else dtype)
         if points and all(p is not None and p.size for p in points):
             sizes = {int(p.size) for p in points if p is not None}
             if len(sizes) == 1:
@@ -199,7 +262,7 @@ class CollectionResult(AnalysisResult):
         ]
         data: dict[str, Any] = {"items": items, "meta": _jsonify(self.meta)}
         if full:
-            data.update({k: _jsonify(v) for k, v in self._derived().items()})
+            data.update({k: _jsonify(v) for k, v in self._full_extras().items()})
         return data
 
     def __plot_spec__(self, kind: str | None = None) -> Any:
@@ -291,28 +354,11 @@ class CollectionResult(AnalysisResult):
             If :mod:`pandas` is not installed.
         """
         pd = self._require_pandas()
-        rows: list[dict[str, Any]] = []
-        for item in self.items:
-            display = _content_fields(item)
-            if display is not None:
-                row: dict[str, Any] = {}
-                for name in display:
-                    try:
-                        value = getattr(item, name)
-                    except AttributeError:
-                        continue
-                    if _is_frame_scalar(value):
-                        row[name] = _jsonify(value)
-                    else:
-                        # A VECTOR field is the content, not decoration: a table
-                        # of fixed points used to arrive with the coordinates and
-                        # the eigenvalues silently dropped, three columns of
-                        # booleans where the answer should be.  One column per
-                        # component, named ``x0 x1 …`` / ``eigenvalues0 …``.
-                        row.update(_spread(name, value))
-                rows.append(row)
-            else:
-                rows.append({"value": _jsonify(item)})
-        frame = pd.DataFrame(rows)
+        # A VECTOR field is the content, not decoration: a table of fixed points
+        # used to arrive with the coordinates and the eigenvalues silently
+        # dropped, three columns of booleans where the answer should be.  Since
+        # v6 ``_row_for`` builds a member's row and a *singular* member's whole
+        # frame, so one fixed point tabulates exactly like one row of its set.
+        frame = pd.DataFrame([_row_for(item) for item in self.items])
         frame.attrs["meta"] = dict(self.meta) if self.meta else {}
         return frame

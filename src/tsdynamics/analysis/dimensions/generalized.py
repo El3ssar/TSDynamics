@@ -524,6 +524,14 @@ def generalized_dimension(
 ) -> DimensionResult:
     r"""Generalized (Rényi) dimension :math:`D_q` by box counting.
 
+    The one Rényi estimator: :func:`box_counting_dimension` is this at
+    :math:`q = 0` and :func:`information_dimension` is this at :math:`q = 1`,
+    both by delegation, so those names cost nothing to learn and can never give a
+    different answer.  :math:`D_2` from *this* function is the Rényi
+    :math:`q = 2`, which is a **different estimator** from
+    :func:`correlation_dimension` (box occupancies vs pairwise distances);
+    prefer that one for :math:`D_2` alone.
+
     Parameters
     ----------
     data : Trajectory or array-like, shape (N, dim)
@@ -608,6 +616,12 @@ def generalized_dimension(
 def box_counting_dimension(data: Any, *, strict: bool = False, **kwargs: Any) -> DimensionResult:
     r"""Box-counting (capacity) dimension :math:`D_0`, with a self-consistency check.
 
+    Numerically **identical** to ``generalized_dimension(data, 0.0)`` — it calls
+    it — so there is one estimator here, under the name the literature uses for
+    :math:`q = 0`.  Choose this one when :math:`D_0` is the quantity you want;
+    choose :func:`generalized_dimension` when :math:`q` is a variable you are
+    sweeping, and :func:`dimension_spectrum` when you want the whole curve.
+
     :math:`D_0` is the count of occupied boxes,
     :math:`N(\epsilon) \sim \epsilon^{-D_0}` — the :math:`q = 0` member of
     :func:`generalized_dimension`, and the *hardest* order to estimate: weighting
@@ -659,6 +673,10 @@ def box_counting_dimension(data: Any, *, strict: bool = False, **kwargs: Any) ->
 
 def information_dimension(data: Any, *, strict: bool = False, **kwargs: Any) -> DimensionResult:
     r"""Information dimension :math:`D_1`, with a self-consistency check.
+
+    Numerically **identical** to ``generalized_dimension(data, 1.0)`` — it calls
+    it — under the name the literature uses for :math:`q = 1`.  See
+    :func:`box_counting_dimension` for when to reach for which spelling.
 
     The :math:`q \to 1` limit of the Rényi family: the slope of the Shannon
     information :math:`\sum_i p_i \log p_i` against :math:`\log \epsilon`.

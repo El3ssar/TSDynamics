@@ -50,6 +50,11 @@ _FIT_ACCEPTABLE_R2 = 0.9
 #: alpha means halving the initial uncertainty barely improves predictability.
 _FINAL_STATE_SENSITIVE_ALPHA = 0.8
 
+#: Fewest uncertainty radii a power-law verdict may be read from.  Below four,
+#: :data:`_FIT_ACCEPTABLE_R2` is passed by construction rather than by
+#: measurement — a straight line through two points scores ``R² = 1``.
+_MIN_UNCERTAINTY_RADII = 4
+
 
 def _resolve_attractor_id(result: BasinsResult, attractor_id: int | None) -> int:
     """Pick which attractor to measure, or say which ones there are.
@@ -196,7 +201,7 @@ class UncertaintyExponent(AnalysisResult):
         :math:`\log\varepsilon` with the fitted slope :math:`\alpha`.  This builds
         that spec directly — a ``SCATTER`` of the curve, the fit region marked,
         and the fit line drawn from the slope :math:`\alpha` and an intercept
-        recovered from the curve mean — so a single ``result.plot.scaling()``
+        recovered from the curve mean — so a single ``result.plot()``
         renders it like every other dimension / Lyapunov-from-data scaling result.
         The :mod:`tsdynamics.viz.spec` import is lazy, so building a spec never
         pulls a plotting library.
@@ -205,7 +210,7 @@ class UncertaintyExponent(AnalysisResult):
         ----------
         kind : str, optional
             Override the semantic kind.  ``None`` uses ``SCALING_FIT``; the
-            ``.plot.scaling()`` seam passes ``"scaling_fit"`` explicitly, which
+            ``scaling_fit`` transform passes ``"scaling_fit"`` explicitly, which
             resolves to the same kind.
 
         Returns
@@ -246,6 +251,39 @@ class UncertaintyExponent(AnalysisResult):
             f"in a {int(self.state_dimension)}-D state space"
         )
 
+    @property
+    def applicable(self) -> bool:
+        r"""Whether enough radii were measured for a power law to be read off.
+
+        ``False`` below :data:`_MIN_UNCERTAINTY_RADII` radii: :math:`R^2` clears
+        any acceptance level trivially on two or three points, so the verdict was
+        gated on a diagnostic that could not fail — measured, a two-radius run
+        printed ``final-state sensitive (fractal boundary)``.
+
+        Returns
+        -------
+        bool
+        """
+        return int(np.asarray(self.epsilons).size) >= _MIN_UNCERTAINTY_RADII
+
+    @property
+    def final_state_sensitive(self) -> bool | None:
+        r"""Whether :math:`\alpha \ll 1` — a fractal basin boundary.
+
+        The one adjective-named spelling of the verdict (contract §4.2 rule 10).
+        ``None`` — never ``False`` — when the test does not apply or the power
+        law itself did not fit.
+
+        Returns
+        -------
+        bool or None
+        """
+        if not self.applicable:
+            return None
+        if not np.isfinite(self.r_squared) or self.r_squared < _FIT_ACCEPTABLE_R2:
+            return None
+        return bool(self.alpha <= _FINAL_STATE_SENSITIVE_ALPHA)
+
     def _interpretation(self) -> str | None:
         r"""Say what the exponent means for predictability.
 
@@ -253,13 +291,20 @@ class UncertaintyExponent(AnalysisResult):
         :math:`f \sim \varepsilon^{\alpha}`, so :math:`\alpha \ll 1` means halving
         the uncertainty in the initial condition barely reduces the chance of
         predicting the wrong attractor — *final-state sensitivity*.  The verdict
-        is withheld when the power law itself did not fit.
+        is withheld when the power law itself did not fit, and when there were
+        too few radii for the fit to be a measurement at all.
         """
-        if not np.isfinite(self.r_squared) or self.r_squared < _FIT_ACCEPTABLE_R2:
+        n = int(np.asarray(self.epsilons).size)
+        if not self.applicable:
+            return f"not applicable — {n} radii is too few to read a power law"
+        verdict = self.final_state_sensitive
+        if verdict is None:
             return "no clean power law (R² below the acceptance level)"
-        if self.alpha <= _FINAL_STATE_SENSITIVE_ALPHA:
-            return "final-state sensitive (fractal boundary)"
-        return "smooth boundary (α ≈ 1)"
+        return "final-state sensitive (fractal boundary)" if verdict else "smooth boundary (α ≈ 1)"
+
+    def _derived(self) -> dict[str, Any]:
+        """Export the applicability flag and the verdict the repr reports."""
+        return {"applicable": self.applicable, "final_state_sensitive": self.final_state_sensitive}
 
     def _details(self) -> tuple[str, ...]:
         """Return the fit quality and the range of uncertainty radii."""
@@ -335,6 +380,20 @@ class WadaResult(AnalysisResult):
             return "not applicable — this image has no basin boundary cells"
         return f"W = {_sig(self.W, 4)} at radius {int(self.radii[-1])}"
 
+    @property
+    def wada(self) -> bool | None:
+        """Whether the boundary is Wada — the one adjective-named verdict spelling.
+
+        ``None`` — never ``False`` — when the test does not :attr:`apply
+        <applicable>`.  :attr:`is_wada` is the raw field and stays; this is the
+        spelling every other classifying result uses (contract §4.2 rule 10).
+
+        Returns
+        -------
+        bool or None
+        """
+        return bool(self.is_wada) if self.applicable else None
+
     def _interpretation(self) -> str | None:
         """Name the verdict, but only when the test applied."""
         if not self.applicable:
@@ -349,7 +408,7 @@ class WadaResult(AnalysisResult):
 
     def _derived(self) -> dict[str, Any]:
         """Export ``applicable`` and ``W`` — ``W`` is ``None`` when nothing was measured."""
-        return {"applicable": self.applicable, "W": self.W}
+        return {"applicable": self.applicable, "W": self.W, "wada": self.wada}
 
 
 # ---------------------------------------------------------------------------

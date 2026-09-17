@@ -19,6 +19,7 @@ from ...errors import invalid_value, remedy
 from .._common import reject_system
 from .._result import ScalingResult
 from .._result_json import _sig
+from .._result_scaling import _MIN_MEANINGFUL_R2_FIT
 from ._scaling import local_slopes
 
 __all__ = ["DimensionResult"]
@@ -31,6 +32,12 @@ __all__ = ["DimensionResult"]
 #: It is a floor, not a sufficiency test: a trustworthy estimate needs orders of
 #: magnitude more, which is why the result also carries its fit region.
 MIN_DIMENSION_POINTS = 32
+
+#: Largest coordinate magnitude a pairwise-distance estimator can take.  Squaring
+#: anything above ``sqrt(f64::MAX)`` overflows, and the k-d tree then reports it
+#: as a problem with the Minkowski exponent ``p`` — a keyword the caller did not
+#: pass.  The same overflow scale the engine's divergence guard uses.
+_PAIRWISE_OVERFLOW_SCALE = 1e150
 
 
 def require_min_points(points: np.ndarray, *, analysis: str, reason: str) -> None:
@@ -131,6 +138,23 @@ def _as_points(data: Any, *, analysis: str | None = None) -> np.ndarray:
         raise ValueError(f"need at least two points, got {arr.shape[0]}.")
     if not np.all(np.isfinite(arr)):
         raise ValueError("point set contains non-finite values (nan/inf).")
+    # A magnitude whose SQUARE overflows cannot be handed to a k-d tree: scipy
+    # answers with "The value of p too large for this dataset; For such large p,
+    # consider using the special case p=np.inf" — advice about a keyword the
+    # caller never passed, from a library they never imported.  Name the data's
+    # own scale and the fix that belongs to it.
+    extent = float(np.max(np.abs(arr)))
+    if extent > _PAIRWISE_OVERFLOW_SCALE:
+        raise ValueError(
+            f"point coordinates reach {extent:.3g}, and squaring that overflows a float64, "
+            f"so no pairwise distance can be computed. Rescale first — the dimension is "
+            f"scale-invariant, so nothing is lost."
+            + remedy(
+                "ts.analysis.correlation_dimension(traj.standardize())",
+                "ts.analysis.correlation_dimension(data / np.abs(data).max())",
+                lead="Either of these:",
+            )
+        )
     return np.ascontiguousarray(arr)
 
 
@@ -443,6 +467,20 @@ class DimensionResult(ScalingResult):
     #: answer.  Mirrors ``LyapunovFromData.trusted``.
     trusted: bool = True
 
+    def __post_init__(self) -> None:
+        """AND the estimator's own check with the shared fit-quality floor.
+
+        ``trusted`` can only ever get *stricter*: the Rényi monotonicity test
+        above is this estimator's extra condition, and
+        :meth:`~tsdynamics.analysis._result.ScalingResult._fit_is_believable` is
+        the floor every scaling result must clear (enough points, straight
+        enough).  Without it a two-point window — reachable through the public
+        ``min_window=`` keyword — reported ``D_corr = 1.8183 ± 0``, ``R² = 1``
+        and ``trusted = True``.
+        """
+        if self.trusted and not self._fit_is_believable():
+            object.__setattr__(self, "trusted", False)
+
     @property
     def dimension(self) -> float:
         """The estimated dimension (alias of :attr:`estimate`)."""
@@ -480,7 +518,7 @@ class DimensionResult(ScalingResult):
         Builds a ``SCALING_FIT`` spec — the log--log curve as a scatter layer, the
         selected scaling region highlighted, and the fitted line drawn from
         :attr:`intercept` and :attr:`dimension` — the same schema every scaling
-        estimator emits, so a single ``result.plot.scaling()`` renders it.  The
+        estimator emits, so a single ``result.plot()`` renders it.  The
         :mod:`tsdynamics.viz.spec` import is lazy, so building a spec never pulls a
         plotting library.
 
@@ -557,13 +595,22 @@ class DimensionResult(ScalingResult):
         bits.append(f"{self.n_fit} fit pts")
         bits.append(f"{self._ABSCISSA.get(self.kind, 'x')} ∈ [{_sig(lo, 3)}, {_sig(hi, 3)}]")
         r2 = self.r_squared
-        if np.isfinite(r2):
+        # R² is an identity, not a measurement, below three points: a line
+        # through two of them always scores 1.
+        if self.n_fit < _MIN_MEANINGFUL_R2_FIT:
+            bits.append(f"R² undefined ({self.n_fit} fit pts)")
+        elif np.isfinite(r2):
             bits.append(f"R² = {_sig(r2, 5)}")
         lines = [f"({', '.join(bits)})"]
         if not self.trusted:
+            # Two ways to lose trust, and the reader needs to know which: the
+            # shared fit-quality floor (too few points / not straight), or this
+            # estimator's own Rényi monotonicity check.
             lines.append(
-                "⚠ D_q rises with q, which no measure can do — the box count has not "
-                "converged at these scales; inspect .plot.scaling()"
+                self._fit_quality_clause()
+                if not self._fit_is_believable()
+                else "⚠ D_q rises with q, which no measure can do — the box count has not "
+                "converged at these scales; inspect .plot()"
             )
         return tuple(lines)
 
@@ -573,6 +620,7 @@ class DimensionResult(ScalingResult):
             "dimension": self.dimension,
             "n_fit": self.n_fit,
             "r_squared": self.r_squared,
+            "trusted": bool(self.trusted),
         }
 
 

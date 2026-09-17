@@ -224,13 +224,22 @@ def test_ode_time_starts_at_zero() -> None:
 
 
 @pytest.mark.slow
-def test_ode_custom_ic_stored() -> None:
+def test_ode_explicit_ic_is_used_but_never_latched() -> None:
+    """An explicit ``run(ic=)`` starts the run and leaves the system alone.
+
+    v6 stopped an explicit ``ic=`` mutating ``self.ic``: measured, ``lor.ic``
+    was ``None`` and after ``lor.run(ic=[3, 3, 3])`` it was ``[3., 3., 3.]``, so
+    a later bare ``run()`` silently started somewhere the caller never asked
+    for.  The *auto-resolved* cases still latch — that is what makes a bare
+    ``run()`` twice reproducible, and the test below pins it.
+    """
     import tsdynamics as ts
 
     ic = [1.0, 1.0, 1.0]
     lor = ts.systems.Lorenz()
-    lor.run(final_time=1.0, dt=0.1, ic=ic)
-    np.testing.assert_array_almost_equal(lor.ic, ic)
+    traj = lor.run(final_time=1.0, dt=0.1, ic=ic)
+    np.testing.assert_array_almost_equal(traj.y[0], ic)
+    assert lor.ic is None
 
 
 @pytest.mark.slow

@@ -403,7 +403,10 @@ def test_rqa_warns_when_lmax_saturates(sine):
     matrix can express.  Returning that silently is the trap this warns about
     (it is the default outcome for a densely sampled flow at ``theiler=0``).
     """
-    const = np.zeros((50, 1))
+    # Not exactly constant -- a flat series is refused up front now (its whole
+    # recurrence plot is ones, so DET / LAM / ENTR are vacuous) -- but well inside
+    # the threshold, which is what saturates L_max.
+    const = np.linspace(0.0, 1e-12, 50).reshape(50, 1)
     with pytest.warns(UserWarning, match="saturated"):
         res = rec.rqa(const, threshold=1e-9)
     assert res.max_diagonal_length == 49  # == N - 0 - 1

@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import numpy as np
 
-from tsdynamics.families import ContinuousSystem, DelaySystem, DiscreteMap
+from tsdynamics.families import ContinuousSystem, DelaySystem, DiscreteMap, Trajectory
 from tsdynamics.utils.tolerances import DEFAULT_ATOL, DEFAULT_RTOL
 
 from ._base import DerivedSystem
@@ -173,6 +173,65 @@ class TangentSystem(DerivedSystem):
         self._sum_growths = np.zeros(self.k)
         self._elapsed = 0.0
         self._map_engine_stale = False
+
+    def run(
+        self,
+        steps: int = 2000,
+        n_or_dt: float | None = None,
+        *,
+        ic: Any | None = None,
+    ) -> Trajectory:
+        """Record the running Lyapunov estimates as a :class:`Trajectory`.
+
+        A tangent system's trajectory is not a state orbit — it is the **growth**
+        of the deviation vectors, i.e. each exponent's running estimate settling
+        as the time-average accumulates.  That is what this records, one column
+        per exponent, named ``lambda1 … lambdak``, so it plots, tabulates and
+        indexes like any other trajectory::
+
+            tang = ts.derived.TangentSystem(lor, k=3)
+            conv = tang.run(steps=2000)
+            conv["lambda1"][-1]        # the leading exponent at the horizon
+            ts.plot(conv)              # the convergence read-out
+
+        .. versionchanged:: 6.0
+            ``run`` was inherited from
+            :class:`~tsdynamics.derived._base.DerivedSystem` and raised a
+            ``NotImplementedError`` **with an empty message**, while ``hasattr``
+            and ``isinstance(tang, System)`` both answered ``True`` — a member
+            that lies.  The numbers it returns are exactly :meth:`convergence`'s,
+            which it calls.
+
+        Parameters
+        ----------
+        steps : int, optional
+            Number of tangent steps to record.  Default ``2000``.
+        n_or_dt : float, optional
+            Per-step increment — **iterations** for a map, a ``dt`` in **time
+            units** for a flow.  ``None`` uses the family default.
+        ic : array-like, optional
+            Start state for the base system; ``None`` resolves its default.
+
+        Returns
+        -------
+        Trajectory
+            ``(steps, k)``: the running estimate of each exponent after every
+            step, against the base system's clock.
+        """
+        times, estimates = self.convergence(steps, n_or_dt, ic=ic)
+        names = tuple(f"lambda{i + 1}" for i in range(self.k))
+        return Trajectory(
+            times,
+            estimates,
+            self,
+            meta={
+                "system": type(self.system).__name__,
+                "derived": "TangentSystem",
+                "k": self.k,
+                "variables": names,
+                "quantity": "running Lyapunov estimate",
+            },
+        )
 
     def reinit(
         self,

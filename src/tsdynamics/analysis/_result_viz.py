@@ -4,8 +4,8 @@ Holds the plotting machinery split out of ``analysis/_result.py``:
 :class:`VisualizationNotInstalled` (the canonical public exception the whole viz
 layer raises), the renderer-registry probe ``_available_renderers``, and the
 :class:`_PlotAccessor` that backs ``AnalysisResult.plot`` (callable *and* a
-namespace of typed kind methods).  Nothing here imports a plotting library at
-module scope — every viz import is deferred to call time.
+namespace of the transform names that admit this result).  Nothing here imports a
+plotting library at module scope — every viz import is deferred to call time.
 """
 
 from __future__ import annotations
@@ -142,27 +142,57 @@ def _accepts_var_keyword(to_spec: Any) -> bool:
     return any(p.kind is p.VAR_KEYWORD for p in sig.parameters.values())
 
 
+def _style_vocabulary() -> frozenset[str]:
+    """Return the canonical per-layer style words plus ``theme`` (lazily resolved)."""
+    try:
+        from tsdynamics.viz.style import style_names
+    except Exception:  # pragma: no cover - viz layer unavailable
+        return frozenset({"theme"})
+    return frozenset(style_names()) | {"theme"}
+
+
+def _figure_vocabulary() -> frozenset[str]:
+    """Return the figure words every plotting door applies (``title`` / ``xscale`` / …)."""
+    try:
+        from tsdynamics.viz.spec import FIGURE_KEYS
+    except Exception:  # pragma: no cover - viz layer unavailable
+        return frozenset()
+    return frozenset(FIGURE_KEYS) - {"theme"}
+
+
 def _split_plot_kwargs(
     to_spec: Any, tweaks: dict[str, Any], owner: str
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Split ``.plot(**tweaks)`` into ``(spec_kwargs, backend_kwargs)``, or raise.
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """Split ``.plot(**tweaks)`` four ways, or raise naming every accepted set.
 
-    See :meth:`_PlotAccessor._render` for why this exists.  A keyword the result's
-    ``__plot_spec__`` declares wins over the renderer table, because that is where
-    the caller's intent lives (a result that declares ``path=`` means its own
-    ``path``).
+    Returns ``(spec_kwargs, style_kwargs, figure_kwargs, backend_kwargs)``.
+
+    See :meth:`_PlotAccessor._render` for why this exists.  Precedence is
+    deliberate: a keyword the result's ``__plot_spec__`` declares wins, because
+    that is where the caller's intent lives (a result that declares ``path=``
+    means its own ``path``); then style, then figure, then the renderer table.
     """
     spec_names = _spec_keywords(to_spec)
     takes_any = _accepts_var_keyword(to_spec)
+    style_names_ = _style_vocabulary()
+    figure_names = _figure_vocabulary()
     renderer_names = _renderer_kwargs()
     spec_kw: dict[str, Any] = {}
+    style_kw: dict[str, Any] = {}
+    figure_kw: dict[str, Any] = {}
     backend_kw: dict[str, Any] = {}
     unknown: list[str] = []
     for name, value in tweaks.items():
-        if name in spec_names or takes_any:
+        if name in spec_names:
             spec_kw[name] = value
+        elif name in style_names_:
+            style_kw[name] = value
+        elif name in figure_names:
+            figure_kw[name] = value
         elif name in renderer_names:
             backend_kw[name] = value
+        elif takes_any:
+            spec_kw[name] = value
         else:
             unknown.append(name)
     if unknown:
@@ -171,21 +201,78 @@ def _split_plot_kwargs(
         accepted = ", ".join(sorted(spec_names)) or "(none)"
         raise InvalidParameterError(
             f"{owner}.plot() got unexpected keyword argument(s) "
-            f"{', '.join(repr(u) for u in sorted(unknown))}. "
-            f"Accepted spec keywords for this result: {accepted}. "
-            f"Accepted backend keywords: {', '.join(sorted(renderer_names))}."
+            f"{', '.join(repr(u) for u in sorted(unknown))}.\n"
+            f"    Spec keywords for this result: {accepted}\n"
+            f"    Style keywords: {', '.join(sorted(style_names_))}\n"
+            f"    Figure keywords: {', '.join(sorted(figure_names))}\n"
+            f"    Backend keywords (at render()): {', '.join(sorted(renderer_names))}"
         )
-    return spec_kw, backend_kw
+    return spec_kw, style_kw, figure_kw, backend_kw
+
+
+#: The eight ``kind``-forcing methods v6 removed from :class:`_PlotAccessor`.
+#: Named in the ``AttributeError`` so a reader who learned one is told what it
+#: actually did, not merely that it is gone.  See the class docstring for the
+#: measurement.
+_RETIRED_KIND_METHODS: frozenset[str] = frozenset(
+    {
+        "scaling",
+        "diagnostic",
+        "time_series",
+        "phase",
+        "image",
+        "bifurcation",
+        "return_map",
+        "section",
+    }
+)
+
+
+def _transform_names(result: Any) -> list[str]:
+    """Every registered plot transform whose declared subjects admit ``result``.
+
+    The same question :class:`~tsdynamics.utils.plot_namespace.PlotNamespace`
+    asks for a trajectory or a system, asked for a result — so ``.plot.<TAB>``
+    means one thing everywhere in the library.
+    """
+    try:
+        from tsdynamics.viz import transforms as _transforms
+
+        found = _transforms.find(subject=result)
+    except Exception:  # pragma: no cover - viz layer unavailable
+        return []
+    return sorted(r if isinstance(r, str) else getattr(r, "name", str(r)) for r in found)
 
 
 class _PlotAccessor:
-    """The ``result.plot`` seam: callable *and* a namespace of typed methods.
+    """The ``result.plot`` seam: callable *and* a namespace of transform names.
 
-    ``result.plot()`` renders the result's default view; the named methods
-    (``result.plot.scaling()``, ``.phase()``, …) force a particular semantic
-    plot kind.  Every entry point funnels through :meth:`_render`, which seeds the
-    in-tree backends and renders, raising :class:`VisualizationNotInstalled` only
-    when no rendering backend can be registered (a wheel-free environment).
+    ``result.plot()`` draws the result's own view.  ``result.plot.<TAB>`` lists
+    the registered transforms that admit **this** result and
+    ``result.plot.scaling_fit()`` is exactly ``ts.plot(result, "scaling_fit")`` —
+    the same gesture, meaning the same thing, that ``traj.plot`` and
+    ``system.plot`` already carry (:class:`~tsdynamics.utils.plot_namespace.PlotNamespace`).
+
+    .. versionchanged:: 6.0
+        **The eight kind-forcing methods are gone** (``.scaling()`` /
+        ``.diagnostic()`` / ``.time_series()`` / ``.phase()`` / ``.image()`` /
+        ``.bifurcation()`` / ``.return_map()`` / ``.section()``).  They did not
+        build a different picture — they **relabelled** the result's own spec
+        with a different :class:`~tsdynamics.viz.spec.PlotKind`.  Measured over
+        the 30 result fixtures: not one of the eight changed a single byte of
+        layer data, and each was *truthful* only when the kind it forced already
+        was the result's natural kind — a no-op.  ``.time_series()``,
+        ``.image()``, ``.bifurcation()`` and ``.section()`` were truthful on
+        **zero** results, so
+        ``lyapunov_spectrum(lor).plot.section()`` returned a bar chart of
+        exponents labelled ``poincare_section``.  This module already deleted
+        ``.histogram()`` and ``.spectrum()`` on exactly that reasoning; the
+        remaining eight fail the same test.
+
+        The replacement is strictly more capable, because a transform *computes*
+        where a relabel only renamed: ``ts.plot(dim, "scaling_fit")`` builds
+        **five** layers (the curve, the fitted line, the window markers) where
+        ``dim.plot.scaling()`` built one.
     """
 
     __slots__ = ("_result",)
@@ -193,85 +280,82 @@ class _PlotAccessor:
     def __init__(self, result: AnalysisResult) -> None:
         self._result = result
 
-    def __call__(
-        self, backend: str | None = None, *, kind: str | None = None, **tweaks: Any
-    ) -> Any:
-        """Render the result's default view (see :meth:`_render`)."""
-        return self._render(kind=kind, backend=backend, **tweaks)
+    def __call__(self, backend: str | None = None, **tweaks: Any) -> Any:
+        """Build this result's plot (see :meth:`_render`)."""
+        return self._render(backend=backend, **tweaks)
 
-    # -- typed kind methods (the closed plot vocabulary; see viz.PlotKind) --
+    def _names(self) -> list[str]:
+        """Every transform that admits this result (the tab surface)."""
+        return _transform_names(self._result)
 
-    def scaling(self, **kw: Any) -> Any:
-        """Plot as a log--log scaling fit (dimensions / Lyapunov-from-data)."""
-        return self._render(kind="scaling_fit", **kw)
+    def __getattr__(self, name: str) -> Any:
+        if name.startswith("_"):
+            raise AttributeError(name)
+        import functools
 
-    def diagnostic(self, **kw: Any) -> Any:
-        """Plot as a diagnostic growth/decay curve (GALI, divergence)."""
-        return self._render(kind="diagnostic_curve", **kw)
+        names = self._names()
+        if name in names:
+            from tsdynamics.viz import plot as _plot
 
-    def time_series(self, **kw: Any) -> Any:
-        """Plot as a one-dimensional time series."""
-        return self._render(kind="time_series", **kw)
+            bound = functools.partial(_plot, self._result, name)
+            bound.__doc__ = f"ts.plot(result, {name!r}, **kwargs) — see ts.viz.compatibility()."
+            return bound
 
-    def phase(self, **kw: Any) -> Any:
-        """Plot as a 2-D phase portrait (3-D results pass ``kind="phase_portrait_3d"``)."""
-        return self._render(kind="phase_portrait_2d", **kw)
+        import difflib
 
-    def image(self, **kw: Any) -> Any:
-        """Plot as a 2-D image (recurrence matrix, basins)."""
-        return self._render(kind="image", **kw)
+        who = type(self._result).__name__
+        close = difflib.get_close_matches(name, names, n=2, cutoff=0.55)
+        hint = "".join(f"\n    result.plot.{c}()" for c in close)
+        extra = ""
+        if name in _RETIRED_KIND_METHODS:
+            extra = (
+                f"\n  ({name!r} forced a plot KIND: it relabelled this result's own spec "
+                f"without changing a byte of it, so it drew the wrong name over the right "
+                f"picture — or the right name over an unchanged one.)"
+            )
+        raise AttributeError(
+            f"no plot transform named {name!r} for a {who}."
+            + extra
+            + (f"  Did you mean:{hint}" if close else "")
+            + "\n    result.plot()                 # this result's own view"
+            + f"\n    result.plot.<TAB>             # the {len(names)} that draw this"
+            + "\n    ts.viz.compatibility()        # the whole matrix"
+        )
 
-    def bifurcation(self, **kw: Any) -> Any:
-        """Plot as a bifurcation / orbit diagram."""
-        return self._render(kind="bifurcation", **kw)
+    def __dir__(self) -> list[str]:
+        """Tab-completion is the point: the transforms that draw this result."""
+        return self._names()
 
-    def return_map(self, **kw: Any) -> Any:
-        """Plot as a first-return / next-amplitude map."""
-        return self._render(kind="return_map", **kw)
+    def _render(self, *, backend: str | None = None, **tweaks: Any) -> Any:
+        """Build this result's plot, or raise :class:`VisualizationNotInstalled`.
 
-    # NOTE (v6, sanctioned public API break): ``.histogram()`` and ``.spectrum()``
-    # are gone.  Their data producers — the surrogate null distribution and the
-    # power spectrum — left with the generic time-series layer in the v6 scope
-    # surgery, so nothing in the library builds either kind.  The methods did not
-    # fail: ``_render(kind=...)`` only *relabels* the spec, so the caller got the
-    # result's ordinary layers under a histogram/spectrum name.  Verified on a
-    # DimensionResult: ``.plot.histogram()`` drew the log C(r) scaling fit, axes
-    # and title intact, titled "correlation dimension" — a plot of the wrong
-    # thing, presented as the right thing.  A method that silently draws
-    # something else is worse than one that is absent, so it is absent.
-
-    def section(self, **kw: Any) -> Any:
-        """Plot as a Poincaré section."""
-        return self._render(kind="poincare_section", **kw)
-
-    def _render(self, *, kind: str | None = None, backend: str | None = None, **tweaks: Any) -> Any:
-        """Resolve a backend and render, or raise :class:`VisualizationNotInstalled`.
-
-        The ``kind`` requested by a typed method routes into ``__plot_spec__`` (so
-        the *spec* carries the semantic kind), and rendering goes through the
-        documented ``PlotSpec.render(backend, **backend_kw)`` contract — ``kind``
-        is never passed to ``render``.
-
-        **Keyword routing.**  ``**tweaks`` is split three ways: a keyword the
-        result's own ``__plot_spec__`` declares is forwarded there (this is what
-        makes ``OrbitDiagram.plot(annotate=True)`` reachable at all), a keyword in
+        **One vocabulary, five doors.**  ``**tweaks`` is split the way
+        ``traj.plot`` and ``system.plot`` split theirs: a keyword the result's own
+        ``__plot_spec__`` declares goes to the spec builder (this is what makes
+        ``OrbitDiagram.plot(annotate=True)`` reachable), the **style** vocabulary
+        (:data:`~tsdynamics.viz.style.STYLE_KEYS` and its aliases) plus ``theme``
+        is applied to the finished spec, the **figure** vocabulary
+        (:data:`~tsdynamics.viz.spec.FIGURE_KEYS` — ``title`` / ``xlabel`` /
+        ``xscale`` / …) is applied as an inline tweak, a keyword in
         :func:`_renderer_kwargs` goes to the renderer, and anything else raises
-        :class:`~tsdynamics.errors.InvalidParameterError` naming both accepted
-        sets.  Previously *every* keyword went to the renderer, whose ``**_kw``
-        catch-all absorbed it — so a spec-shaping parameter was silently dropped
-        and a misspelled one was silently ignored.
+        naming every accepted set.
+
+        .. versionchanged:: 6.0
+            The style and figure vocabularies used to raise here while working at
+            the other four doors — measured, ``result.plot(color="red")``,
+            ``(title=…)``, ``(theme=…)`` and ``(xscale=…)`` all raised
+            ``InvalidParameterError`` while ``ts.plot(result, …)`` accepted every
+            one.  Style at the call site is the library's rule; a door that is
+            the exception is the defect.
 
         Parameters
         ----------
-        kind : str, optional
-            The semantic plot kind a typed accessor method forces (e.g.
-            ``"scaling_fit"``), or ``None`` for the result's natural kind.
         backend : str, optional
             The renderer to use (``"matplotlib"`` / ``"plotly"`` / …); ``None``
             lets :meth:`~tsdynamics.viz.spec.PlotSpec.render` pick the default.
         **tweaks
             Spec-shaping keywords (whatever this result's ``__plot_spec__``
-            accepts) and/or backend keywords (:func:`_renderer_kwargs`).
+            accepts), style keywords, figure keywords, and/or backend keywords.
 
         Returns
         -------
@@ -293,9 +377,22 @@ class _PlotAccessor:
             If no rendering backend can be registered, or the result has no
             ``__plot_spec__`` method.
         InvalidParameterError
-            If a keyword is recognised by neither ``__plot_spec__`` nor the
-            renderer contract.
+            If a keyword is recognised by none of the four vocabularies, or if
+            ``kind=`` is passed — v6 collapsed the plot ``kind`` into the
+            transform name, so the spelling is ``ts.plot(result, "<name>")``.
         """
+        from tsdynamics.errors import InvalidParameterError
+
+        if "kind" in tweaks:
+            names = self._names()
+            offered = ", ".join(f"result.plot.{n}()" for n in names) or "(none for this result)"
+            raise InvalidParameterError(
+                f"kind= is not how a picture is chosen any more: v6 collapsed the plot "
+                f"kind into the TRANSFORM NAME, so there is one spelling to learn and it "
+                f"is the same at every door.\n"
+                f"    result.plot()                 # this result's own view\n"
+                f"    {offered}"
+            )
         renderers = _available_renderers()
         if renderers is None:
             raise VisualizationNotInstalled(_VIZ_HINT)
@@ -304,15 +401,17 @@ class _PlotAccessor:
             raise VisualizationNotInstalled(
                 f"{type(self._result).__name__} has no __plot_spec__() yet, so it cannot be plotted."
             )
-        spec_kw, backend_kw = _split_plot_kwargs(to_spec, tweaks, type(self._result).__name__)
-        # A typed method (e.g. .scaling()) requests a kind; pass it to __plot_spec__
-        # when that result accepts an override, else fall back to its natural kind.
-        try:
-            spec = to_spec(kind=kind, **spec_kw) if kind is not None else to_spec(**spec_kw)
-        except TypeError:
-            if spec_kw:  # a declared keyword must not be silently dropped
-                raise
-            spec = to_spec()
+        spec_kw, style_kw, figure_kw, backend_kw = _split_plot_kwargs(
+            to_spec, tweaks, type(self._result).__name__
+        )
+        spec = to_spec(**spec_kw)
+        theme = style_kw.pop("theme", None)
+        if theme is not None:
+            spec.theme(theme)
+        if style_kw:
+            spec.style(**style_kw)
+        if figure_kw:
+            spec.tweak(**figure_kw)
         # ``plot`` builds.  A caller who named a backend or passed a renderer
         # option is asking for that drawing to happen, so it still happens — but
         # what comes back is the spec, which is what every other ``.plot()`` in
@@ -321,5 +420,10 @@ class _PlotAccessor:
             spec.render(backend, **backend_kw)
         return spec
 
-    def __repr__(self) -> str:  # noqa: D105
-        return f"<plot accessor for {type(self._result).__name__}>"
+    def __repr__(self) -> str:
+        """Say what this draws and what to type next."""
+        names = self._names()
+        who = type(self._result).__name__
+        head = f"<plot namespace for {who}: {len(names)} transforms>"
+        shown = ", ".join(names) if names else "(none registered for this result)"
+        return f"{head}\n    {shown}\n    call it — result.plot() — for this result's own view"

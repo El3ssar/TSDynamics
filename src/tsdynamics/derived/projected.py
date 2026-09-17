@@ -7,7 +7,7 @@ from typing import Any, cast
 
 import numpy as np
 
-from tsdynamics.errors import InvalidInputError
+from tsdynamics.errors import InvalidInputError, InvalidParameterError, remedy
 from tsdynamics.families import Trajectory
 
 from ._base import DerivedSystem
@@ -49,20 +49,34 @@ class ProjectedSystem(DerivedSystem):
         complete: Callable[[np.ndarray], Any] | None = None,
     ) -> None:
         super().__init__(system)
-        names = getattr(type(system), "variables", None)
+        if isinstance(components, str | int | np.integer):
+            components = (components,)
+        # The INSTANCE names, not ``type(system).variables``: every system names
+        # every component since v6, but a generated tuple (Lorenz96's ``y0..y4``,
+        # a field system's blocks) lives only on the instance — so reading the
+        # class refused the names of the 5 built-ins that generate theirs, and of
+        # every user system that does not declare them on the class.
+        names = tuple(getattr(system, "variables", ()) or ())
         idx = []
         for c in components:
             if isinstance(c, str):
-                if names is None:
-                    raise ValueError(
-                        f"{type(system).__name__} declares no `variables`; "
-                        f"use integer component indices."
+                if c not in names:
+                    raise InvalidParameterError(
+                        f"{type(system).__name__} has no component {c!r}; it names "
+                        f"{names if names else 'nothing'}."
+                        + remedy(f"ts.derived.ProjectedSystem(system, {list(range(2))})")
                     )
                 idx.append(names.index(c))
             else:
                 idx.append(int(c))
         if not idx:
-            raise ValueError("components must be non-empty")
+            raise InvalidParameterError(
+                "components must name at least one component of the system."
+                + remedy(
+                    "ts.derived.ProjectedSystem(system, ['x', 'z'])",
+                    "ts.derived.ProjectedSystem(system, [0, 2])",
+                )
+            )
         self.components = tuple(idx)
         self.complete = complete
 
@@ -118,6 +132,10 @@ class ProjectedSystem(DerivedSystem):
                 f"ProjectedSystem.{verb} with a projected-dimensional state "
                 f"(size {u_arr.size}) needs a `complete=` callable to reconstruct the "
                 f"full {self.system.dim}-D state."
+                + remedy(
+                    "ts.derived.ProjectedSystem(system, [0, 2], "
+                    "complete=lambda v: [v[0], 0.0, v[1]])"
+                )
             )
         raise InvalidInputError(
             f"ProjectedSystem.{verb}: state of size {u_arr.size} matches neither the "
@@ -141,9 +159,20 @@ class ProjectedSystem(DerivedSystem):
         shown = ", ".join(names[i] if 0 <= i < len(names) else str(i) for i in self.components)
         return f"ProjectedSystem({type(self.system).__name__}, {shown})"
 
-    def run(self, *args: Any, **kwargs: Any) -> Trajectory:
-        """Full-system trajectory with projected columns."""
-        traj = self.system.run(*args, **kwargs)
+    def run(self, *args: Any, **run_kw: Any) -> Trajectory:
+        """Run the **full** system and keep only the projected columns.
+
+        Takes the inner family's own ``run`` vocabulary verbatim — ``final_time``
+        / ``dt`` for a flow, ``steps`` for a map — so an unknown keyword is
+        refused by the family that owns the word, with its reason.
+
+        Returns
+        -------
+        Trajectory
+            ``(T, len(components))``, back-referencing *this* wrapper so
+            ``traj["x"]`` names the surviving columns.
+        """
+        traj = self.system.run(*args, **run_kw)
         meta = {**traj.meta, "projected": self.components}
         # Back-reference ``self`` (not the inner system): the returned ``y`` holds
         # only the projected columns, and ``self.variables`` names exactly those —

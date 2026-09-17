@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
+from collections.abc import Iterable, Sequence
+from typing import TYPE_CHECKING, Any, NamedTuple, cast, overload
 
 import numpy as np
 
@@ -13,30 +14,102 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 __all__ = ["Ensemble", "EnsembleSystem", "TrajectoryBatch"]
 
 
-class TrajectoryBatch(list["Trajectory"]):
-    """What ``Ensemble.run(...)`` returns — the trajectories, plus the batch view.
+class EnsembleSamples(NamedTuple):
+    """What :meth:`Ensemble.collect` records — ``times, states = band.collect(n)``.
 
-    A ``list`` subclass, so it iterates, indexes and ``len()``s like the list of
-    trajectories it is.  ``.final`` is the ``(n, dim)`` array of end states —
-    exactly what ``system.ensemble(ics, final_time=...)`` used to return before
-    ``ensemble`` became a noun.
+    A named pair rather than a bare tuple: ``states`` is a three-axis block and
+    "which axis is which" is not something a call site should have to remember.
     """
 
-    __slots__ = ()
+    times: np.ndarray
+    """The common member time after each step, shape ``(steps,)``."""
+    states: np.ndarray
+    """Every member's state after each step, shape ``(steps, size, dim)``."""
+
+
+class TrajectoryBatch(Sequence["Trajectory"]):
+    """What ``Ensemble.run(...)`` returns — the trajectories, plus the batch view.
+
+    A **read-only sequence**: it iterates, indexes, ``len()``s and unpacks like
+    the list of trajectories it is, and ``np.asarray(batch)`` is the
+    ``(n, T, dim)`` block.  ``.final`` is the ``(n, dim)`` array of end states —
+    exactly what ``system.ensemble(ics, final_time=...)`` used to return before
+    ``ensemble`` became a noun.
+
+    .. versionchanged:: 6.0
+        It was a ``list`` **subclass**, so ten mutation verbs (``append``,
+        ``sort``, ``clear``, ``pop``, …) sat on the tab surface of a *result* and
+        could corrupt it: ``batch.append("x")`` then made ``.final`` raise
+        ``AttributeError: 'str' object has no attribute 'y'``, and ``batch.sort()``
+        raised comparing two trajectories.  A batch is a measurement, not a
+        workspace; ``list(batch)`` is still one keystroke away.
+    """
+
+    __slots__ = ("_members",)
+
+    def __init__(self, members: Iterable[Trajectory] = ()) -> None:
+        self._members: tuple[Trajectory, ...] = tuple(members)
+
+    # --- the sequence protocol ---
+
+    @overload
+    def __getitem__(self, index: int) -> Trajectory: ...
+
+    @overload
+    def __getitem__(self, index: slice) -> tuple[Trajectory, ...]: ...
+
+    def __getitem__(self, index: int | slice) -> Trajectory | tuple[Trajectory, ...]:
+        """Member ``i`` (or a tuple of members for a slice)."""
+        return self._members[index]
+
+    def __len__(self) -> int:
+        """Return the number of members in the batch."""
+        return len(self._members)
+
+    def __eq__(self, other: object) -> bool:
+        """Compare member-wise against another batch or any sequence of members."""
+        if isinstance(other, TrajectoryBatch):
+            return self._members == other._members
+        if isinstance(other, list | tuple):
+            return list(self._members) == list(other)
+        return NotImplemented
+
+    __hash__ = None  # type: ignore[assignment]
+
+    # --- the batch view ---
 
     @property
     def final(self) -> np.ndarray:
         """The ``(n, dim)`` final states, one row per member."""
-        if not self:
+        if not self._members:
             return np.empty((0, 0))
-        return np.array([np.asarray(t.y)[-1] for t in self], dtype=float)
+        return np.array([np.asarray(t.y)[-1] for t in self._members], dtype=float)
+
+    @property
+    def t(self) -> np.ndarray:
+        """The shared time axis, shape ``(T,)`` — every member runs one window."""
+        if not self._members:
+            return np.empty((0,))
+        return np.asarray(self._members[0].t, dtype=float)
+
+    @property
+    def y(self) -> np.ndarray:
+        """Every member's states stacked, shape ``(n, T, dim)``."""
+        if not self._members:
+            return np.empty((0, 0, 0))
+        return np.asarray([np.asarray(m.y, dtype=float) for m in self._members], dtype=float)
+
+    def __array__(self, dtype: Any = None, copy: bool | None = None) -> np.ndarray:
+        """``np.asarray(batch)`` is the ``(n, T, dim)`` state block."""
+        arr = self.y if dtype is None else np.asarray(self.y, dtype=dtype)
+        return arr.copy() if copy is True else arr
 
     def to_frame(self) -> Any:
         """Return one long-format ``DataFrame``, with a ``member`` column."""
         import pandas as pd
 
         frames = []
-        for i, traj in enumerate(self):
+        for i, traj in enumerate(self._members):
             frame = traj.to_frame()
             frame.insert(0, "member", i)
             frames.append(frame)
@@ -49,10 +122,15 @@ class TrajectoryBatch(list["Trajectory"]):
         return _plot(*self, *transforms, **kwargs)
 
     def __repr__(self) -> str:
-        if not self:
+        """State what the batch holds, and the one attribute most callers want."""
+        if not self._members:
             return "TrajectoryBatch(empty)"
-        rows, dim = np.asarray(self[0].y).shape
-        return f"TrajectoryBatch({len(self)} trajectories, t: {rows}, var: {dim})"
+        rows, dim = np.asarray(self._members[0].y).shape
+        return (
+            f"TrajectoryBatch  {len(self._members)} trajectories"
+            f"   ·  {rows} samples  ·  {dim}-D states"
+            "\n    batch.final   # the (n, dim) end states   ·   batch[i]   ·   batch.plot()"
+        )
 
 
 class Ensemble:
@@ -89,6 +167,21 @@ class Ensemble:
             member = system.copy()
             member.reinit(s)
             self.members.append(member)
+
+    def __getattr__(self, name: str) -> Any:
+        """Answer a miss with the same teaching a system gives.
+
+        ``band.integrate`` used to be a bare ``AttributeError`` while
+        ``lor.integrate`` named the retired verb and the line to type — and an
+        ``Ensemble`` is the object the headline ``sys.ensemble(...)`` hands you,
+        so it is a likely place to guess.  It does **not** delegate to the
+        template: it raises, teaching.
+        """
+        if name.startswith("_") or name in ("template", "members"):
+            raise AttributeError(f"{type(self).__name__!r} object has no attribute {name!r}")
+        from tsdynamics.families.base import _absent_name_error
+
+        raise _absent_name_error(self, name)
 
     @property
     def size(self) -> int:
@@ -129,17 +222,79 @@ class Ensemble:
         for member in self.members:
             member.reinit(u, **kwargs)
 
-    def run(self, *args: Any, **kwargs: Any) -> TrajectoryBatch:
+    def run(
+        self,
+        final_time: float | None = None,
+        dt: float | None = None,
+        *,
+        steps: int | None = None,
+        transient: float | None = None,
+        seed: int | None = None,
+        **run_kw: Any,
+    ) -> TrajectoryBatch:
         """Run every member and return a :class:`TrajectoryBatch`.
 
-        Every argument is forwarded verbatim to the template family's ``run``,
-        with each member's own initial state supplied as ``ic=``::
+        Takes the **template family's own** ``run`` vocabulary — ``final_time`` /
+        ``dt`` for a flow, ``steps`` for a map — and forwards it verbatim, with
+        each member's own initial state supplied as ``ic=``::
 
             band = lor.ensemble(np.random.rand(100, 3))
             batch = band.run(final_time=10.0)
             batch.final          # the (100, 3) end states
+
+        Parameters
+        ----------
+        final_time : float, optional
+            Flow horizon, in time units.
+        dt : float, optional
+            Output sampling interval, in time units.
+        steps : int, optional
+            Map horizon, in iterations.  A flow refuses it by name.
+        transient : float, optional
+            Leading stretch discarded, in the template family's own horizon unit.
+        seed : int, optional
+            For an **SDE** batch, member ``i`` draws its noise from
+            ``seed_for(seed, i)`` — depending only on the index, which is the
+            engine's parallel-equals-serial contract.  On every other family it
+            is forwarded as the shared initial-condition seed.
+        **run_kw
+            Everything else the template family's ``run`` accepts (``solver``,
+            ``rtol``, ``atol``, ``backend``, ``max_step``, …).  An unknown word
+            is refused **by the family that owns it**, with its reason.
+
+        Returns
+        -------
+        TrajectoryBatch
+
+        Raises
+        ------
+        InvalidParameterError
+            If ``ic=`` is passed: an ensemble's initial states are the ones it
+            was built with.
         """
-        seed = kwargs.pop("seed", None)
+        if "ic" in run_kw:
+            from tsdynamics.errors import InvalidParameterError, remedy
+
+            raise InvalidParameterError(
+                "an ensemble's initial states are the ones you built it with, so "
+                "run() has no ic=. One state per member, given once."
+                + remedy(
+                    "band = system.ensemble(states)   # the (n, dim) starts",
+                    "batch = band.run(final_time=10.0)",
+                )
+            )
+        # Forward by NAME, never positionally: a bare ``(dt,)`` tuple would be
+        # read by the template as ``final_time``.  A word the template family
+        # does not have (``steps`` on a flow) is refused by that family, by name.
+        kwargs: dict[str, Any] = dict(run_kw)
+        for word, value in (
+            ("final_time", final_time),
+            ("dt", dt),
+            ("steps", steps),
+            ("transient", transient),
+        ):
+            if value is not None:
+                kwargs[word] = value
         per_member_seed: list[int | None]
         if self.family == "sde" and seed is not None:
             # Member ``i`` draws its noise from ``seed_for(seed, i)`` — depending
@@ -153,7 +308,7 @@ class Ensemble:
                 kwargs["seed"] = seed
             per_member_seed = [None] * len(self.members)
 
-        return TrajectoryBatch(self._run_members(args, kwargs, per_member_seed))
+        return TrajectoryBatch(self._run_members((), kwargs, per_member_seed))
 
     def _run_members(
         self, args: tuple[Any, ...], kwargs: dict[str, Any], seeds: list[int | None]
@@ -236,9 +391,7 @@ class Ensemble:
 
     # --- ensemble collection ---
 
-    def collect(
-        self, steps: int, n_or_dt: float | int | None = None
-    ) -> tuple[np.ndarray, np.ndarray]:
+    def collect(self, steps: int, n_or_dt: float | int | None = None) -> EnsembleSamples:
         """Step every member ``steps`` times and stack the sampled states.
 
         Advances the whole ensemble synchronously, recording each member's state
@@ -256,9 +409,10 @@ class Ensemble:
 
         Returns
         -------
-        (times, states)
-            ``times`` shape ``(steps,)`` (the common member time after each step);
-            ``states`` shape ``(steps, size, dim)`` — sample, member, component.
+        EnsembleSamples
+            A named pair — ``.times`` shape ``(steps,)``, ``.states`` shape
+            ``(steps, size, dim)`` (sample, member, component).  It unpacks as
+            ``times, states = band.collect(n)`` like the bare tuple it replaced.
         """
         if steps <= 0:
             raise ValueError(f"steps must be positive, got {steps}")
@@ -267,7 +421,7 @@ class Ensemble:
         for k in range(steps):
             states[k] = self.step(n_or_dt)
             times[k] = self.time()
-        return times, states
+        return EnsembleSamples(times, states)
 
     # --- visualization seam ---
 

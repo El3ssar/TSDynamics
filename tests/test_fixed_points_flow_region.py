@@ -68,17 +68,17 @@ class TestFlowEquilibriaNoRegion:
     def test_lorenz_returns_all_three_equilibria_without_region(self) -> None:
         """region=None must recover origin + C± — not just the on-hull subset."""
         fps = fixed_points(ts.systems.Lorenz(), seed=0)
-        coords = [fp.x for fp in fps]
+        coords = [fp.x for fp in fps.details]
 
         # Exactly the three analytic equilibria, all classified as flow points.
         assert len(fps) == 3
-        assert all(fp.continuous for fp in fps)
+        assert all(fp.continuous for fp in fps.details)
         for eq in _lorenz_equilibria():
             assert _match(coords, eq), f"missing equilibrium {eq} from {coords}"
 
         # The origin in particular is a real saddle the chaotic orbit avoids; it
         # is the equilibrium the pre-fix box-clip dropped.
-        origin = next(fp for fp in fps if np.linalg.norm(fp.x) < 1e-5)
+        origin = next(fp for fp in fps.details if np.linalg.norm(fp.x) < 1e-5)
         assert origin.eigenvalues.real.max() > 0.0
 
     @pytest.mark.parametrize("seed", [0, 1, 2, 3])
@@ -106,7 +106,7 @@ class TestFlowEquilibriaNoRegion:
         Shimizu-Morioka's 3 depending on the seed — silently, with no warning.
         """
         fps = fixed_points(getattr(ts.systems, name)(), seed=seed)
-        coords = [fp.x for fp in fps]
+        coords = [fp.x for fp in fps.details]
         assert len(fps) == len(equilibria)
         for eq in equilibria:
             assert _match(coords, eq, tol=1e-4), f"missing {eq} from {coords}"
@@ -164,7 +164,7 @@ class TestFlowEquilibriaNoRegion:
         """
         fps = fixed_points(ts.systems.JerkCircuit(), seed=seed)
         assert len(fps) == 1
-        np.testing.assert_allclose(fps[0].x, np.zeros(3), atol=1e-6)
+        np.testing.assert_allclose(fps.details[0].x, np.zeros(3), atol=1e-6)
 
     def test_a_partially_sampled_orbit_is_not_a_hull(self) -> None:
         """An orbit that goes non-finite mid-sample yields no box at all."""
@@ -177,7 +177,7 @@ class TestFlowEquilibriaNoRegion:
         """An explicit region remains a hard search domain (the complement)."""
         # A box around C+ only; the origin and C- lie outside and must be clipped.
         fps = fixed_points(ts.systems.Lorenz(), region=[(5, 12), (5, 12), (20, 32)], seed=0)
-        coords = [fp.x for fp in fps]
+        coords = [fp.x for fp in fps.details]
         assert len(fps) == 1
         c = math.sqrt((8.0 / 3.0) * 27.0)
         assert _match(coords, np.array([c, c, 27.0]))

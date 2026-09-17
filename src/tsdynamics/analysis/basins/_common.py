@@ -28,7 +28,7 @@ import numpy as np
 from ...data import Ball, Box, Grid, as_region
 from ...data.sampling import DEFAULT_REGION_RESOLUTION
 from ...data.sampling import _region_example as _region_example
-from ...errors import InvalidInputError, remedy
+from ...errors import InvalidInputError, InvalidParameterError, remedy
 from .._common import reject_system
 
 __all__: list[str] = []
@@ -226,12 +226,37 @@ def _as_label_array(basins: Any, *, analysis: str | None = None) -> np.ndarray:
         reject_system(basins, analysis=analysis)
     else:
         reject_system(basins, analysis=analysis, hint=_BASIN_HINT.format(who="metric"))
+    # A ``Trajectory`` is measured data, and it coerces to a perfectly good float
+    # array — so without this it reached the integrality test below and was
+    # reported as "basin labels must be integers", a sentence that never mentions
+    # the Trajectory the caller passed.  Named analyses go through the one
+    # message builder, which knows these are *result*-first and says which
+    # analysis makes their subject.
+    if hasattr(basins, "t") and hasattr(basins, "y"):
+        from .._discovery import wrong_subject
+
+        raise wrong_subject(
+            analysis or "basin metrics",
+            type(basins).__name__,
+            "data",
+            has_system=getattr(basins, "system", None) is not None,
+        )
     labels = getattr(basins, "labels", basins)
     arr = np.asarray(labels)
     if not np.issubdtype(arr.dtype, np.integer):
         rounded = np.rint(arr)
         if not np.allclose(arr, rounded, equal_nan=False):
-            raise ValueError("basin labels must be integers (attractor ids; -1 = diverged).")
+            # A ``ValueError`` (via ``InvalidParameterError``): the argument IS a
+            # label image, its *values* are wrong -- so ``except ValueError``
+            # keeps catching it, as it did before the message was rewritten.
+            raise InvalidParameterError(
+                f"basin labels are attractor ids: integers >= 1, with -1 marking a "
+                f"diverged cell. Got a {arr.dtype} array that is not integral."
+                + remedy(
+                    "b = ts.analysis.basins(system, region)",
+                    lead="Compute the label image first:",
+                )
+            )
         arr = rounded.astype(np.int64)
     # Drop degenerate (size-1) axes so a slice of a higher-dim system is treated
     # at its effective dimension (a 2-D image of a 4-D flow is genuinely 2-D).

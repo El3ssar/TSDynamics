@@ -99,16 +99,111 @@ def _jsonify(obj: Any) -> Any:
 def _is_frame_scalar(value: Any) -> bool:
     """Return whether ``value`` belongs in a single DataFrame cell.
 
-    True for plain scalars and 0-d arrays; False for containers and n-d arrays.
-    Tests the type directly rather than via ``numpy.ndim`` so a ragged/mixed
-    container (e.g. ``(1, [2, 3])``) is excluded rather than raising when NumPy
-    tries to coerce it to an array.
+    True for plain scalars and 0-d arrays; False for containers, n-d arrays, and
+    the structured payloads a result embeds (a nested
+    :class:`~tsdynamics.analysis._result_base.AnalysisResult`, a state-space
+    ``Box``/``Ball``/``Grid``).  Tests the type directly rather than via
+    ``numpy.ndim`` so a ragged/mixed container (e.g. ``(1, [2, 3])``) is excluded
+    rather than raising when NumPy tries to coerce it to an array.
+
+    The structured exclusion is v6: ``BasinsResult.to_frame()`` used to hand back
+    a cell holding ``{'lo': [-2.0, -2.0], 'hi': ...}`` and ``BasinFractions`` a
+    cell holding a whole ``AttractorSet`` — neither is a table.  Those payloads
+    ride on ``frame.attrs`` instead.
     """
+    from dataclasses import is_dataclass
+
+    from tsdynamics.analysis._result_base import AnalysisResult
+
     if isinstance(value, (list, tuple, set, frozenset, Mapping)):
         return False
     if isinstance(value, np.ndarray):
         return value.ndim == 0
-    return True
+    # An int-backed result (``CountResult``) *is* its number and stays a cell.
+    if isinstance(value, AnalysisResult):
+        return isinstance(value, (int, float, str))
+    if is_dataclass(value) and not isinstance(value, (int, float, str, type)):
+        return False
+    # A SciPy sparse matrix (a recurrence plot) is a whole image, not a cell.
+    return not (hasattr(value, "tocoo") and hasattr(value, "nnz"))
+
+
+#: Widest vector field :func:`_spread` will turn into columns.
+_MAX_SPREAD = 32
+
+
+def _content_fields(item: Any) -> tuple[str, ...] | None:
+    """Return the fields a TABLE should carry — the content, not the repr selection.
+
+    ``_display_fields`` answers *what the one-line repr shows*, and a field
+    marked ``repr=False`` (a fixed point's ``eigenvalues``, an attractor's
+    ``points``) is deliberately absent from it.  A table is the other question,
+    so it reads the dataclass fields and drops only ``meta``.
+
+    Lives here rather than in ``_result_collection`` because **every**
+    :meth:`~tsdynamics.analysis._result_base.AnalysisResult.to_frame` uses it
+    since v6: a singular member used to tabulate its booleans and drop its
+    coordinates while its plural tabulated them properly — the same information,
+    two answers.
+    """
+    import dataclasses
+
+    if dataclasses.is_dataclass(item) and not isinstance(item, type):
+        return tuple(f.name for f in dataclasses.fields(item) if f.name != "meta")
+    display = getattr(item, "_display_fields", None)
+    return tuple(display()) if callable(display) else None
+
+
+def _spread(name: str, value: Any) -> dict[str, Any]:
+    """Expand a vector display field into one column per component.
+
+    Returns ``{}`` for anything that is not a short 1-D numeric sequence, so a
+    nested structure is dropped rather than rendered as a repr string.
+    """
+    try:
+        arr = np.asarray(value)
+    except Exception:  # pragma: no cover - defensive
+        return {}
+    if arr.ndim != 1 or arr.size == 0 or arr.size > _MAX_SPREAD:
+        return {}
+    if not np.issubdtype(arr.dtype, np.number):
+        return {}
+    return {f"{name}{i}": _jsonify(v) for i, v in enumerate(arr.tolist())}
+
+
+def _row_for(item: Any) -> dict[str, Any]:
+    """Return one tidy DataFrame row for ``item`` — scalars kept, vectors spread.
+
+    The row is the item's **content**: its dataclass fields, plus the derived
+    quantities its repr reports (``_derived``), which are the answer as often as
+    the fields are — a Lyapunov spectrum's ``kaplan_yorke``, an attractor's
+    ``center``.  A value that is itself a result / a mapping / a grid / a sparse
+    matrix / a higher-dimensional array is **dropped** rather than parked in a
+    cell: a table cell holding a ``dict`` or an ``AnalysisResult`` is not a table
+    (contract §4.2 rule 8).
+    """
+    names = _content_fields(item)
+    if names is None:
+        return {"value": _jsonify(item)}
+    row: dict[str, Any] = {}
+
+    def _put(name: str, value: Any) -> None:
+        if _is_frame_scalar(value):
+            row[name] = _jsonify(value)
+        else:
+            row.update(_spread(name, value))
+
+    for name in names:
+        try:
+            _put(name, getattr(item, name))
+        except AttributeError:
+            continue
+    derived = getattr(item, "_derived", None)
+    if callable(derived):
+        for name, value in derived().items():
+            if name not in row:
+                _put(name, value)
+    return row
 
 
 #: Above this many components a state vector is elided in a repr (contract §4.2

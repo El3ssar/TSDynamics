@@ -27,11 +27,23 @@ from tsdynamics.viz.spec import PlotKind, PlotSpec
 
 
 class _FakeSystem:
-    """A minimal stand-in carrying ``is_discrete`` / ``variables``."""
+    """A minimal stand-in carrying ``family`` / ``variables``, like a real system.
+
+    ``family`` is the v6 spelling (``"ode"`` / ``"map"`` / …); ``is_discrete`` was
+    removed.  A test stand-in that keeps a removed attribute alive is how a
+    rename passes its own suite while every real system silently answers the
+    default — so this fake declares the live name and *derives* the dead one,
+    which is deletable the moment the last reader is repointed.
+    """
 
     def __init__(self, *, is_discrete: bool, variables: tuple[str, ...] | None) -> None:
-        self.is_discrete = is_discrete
+        self.family = "map" if is_discrete else "ode"
         self.variables = variables
+
+    @property
+    def is_discrete(self) -> bool:
+        """Deprecated spelling of ``family == "map"`` — for readers not yet repointed."""
+        return self.family == "map"
 
 
 def _flow_traj(dim: int = 3, n: int = 40, variables: tuple[str, ...] | None = None) -> Trajectory:

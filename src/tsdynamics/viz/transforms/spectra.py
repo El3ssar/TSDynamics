@@ -411,6 +411,9 @@ def _example_convergence(_primitive: str) -> tuple[Any, dict[str, Any]]:
 
 @plot_transform(
     name="lyapunov_convergence",
+    # It runs the tangent dynamics (a measured orbit cannot answer it) — or reads a
+    # recorded ``(times, estimates)`` pair, which arrives as a plain array.
+    subjects=("system", "array"),
     source="data",
     kind=PlotKind.DIAGNOSTIC_CURVE,
     frame=FrameSpace.SCALING,
@@ -549,6 +552,7 @@ def _example_gali(_primitive: str) -> tuple[Any, dict[str, Any]]:
 
 @plot_transform(
     name="gali_curves",
+    subjects=("system", "GALIResult"),
     source="data",
     kind=PlotKind.DIAGNOSTIC_CURVE,
     frame=FrameSpace.SCALING,
@@ -924,6 +928,7 @@ def _example_scaling(_primitive: str) -> tuple[Any, dict[str, Any]]:
 
 @plot_transform(
     name="scaling_fit",
+    subjects=("ScalingResult",),  # it draws a fit a ScalingResult already carries
     source="data",
     kind=PlotKind.SCALING_FIT,
     frame=FrameSpace.SCALING,

@@ -37,7 +37,7 @@ import tsdynamics as ts
 
 lorenz = ts.systems.Lorenz().run(final_time=200.0, dt=0.01, ic=[1, 1, 1])
 
-ts.plot(lorenz, "hilbert", components="x").show()
+ts.plot(lorenz, "hilbert", components="x")
 ```
 
 That is 20,001 samples on a 142 × 142 grid. Everything else is a keyword:
@@ -190,7 +190,7 @@ ts.plot(
     ts.plot(lorenz, "hilbert_difference", components="x", curve="Hilbert"),
     ts.plot(lorenz, "hilbert_difference", components="x", curve="rowmajor"),
     layout="row",
-).show()
+)
 ```
 
 The Hilbert panel is a recursive tree of ridges. The row-major panel is a
@@ -246,7 +246,7 @@ spectrum = ts.plot(lorenz, "hilbert_fourier", components="x")
 
 ts.plot(image, spectrum, layout="row").save("hilbert.pdf")
 image.render("plotly")            # interactive heatmap
-image.style(cmap="magma").show()  # the usual style vocabulary
+image.style(cmap="magma")   # the usual style vocabulary
 ```
 
 The two do **not** overlay: the image lives on `(cell x, cell y)` and the Fourier

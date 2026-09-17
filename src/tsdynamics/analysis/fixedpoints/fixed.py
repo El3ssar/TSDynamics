@@ -32,7 +32,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 import numpy as np
 
@@ -40,7 +40,7 @@ from tsdynamics.errors import InvalidParameterError, invalid_value, remedy
 from tsdynamics.families import ContinuousSystem, DiscreteMap
 
 from .._common import reject_data
-from .._result import AnalysisResult, CollectionResult
+from .._result import AnalysisResult, CollectionResult, _ArrayBacked
 from .._result_json import _sig, _state
 from . import _common as _c
 
@@ -48,17 +48,24 @@ __all__ = ["FixedPoint", "FixedPointSet", "fixed_points"]
 
 
 @dataclass(frozen=True)
-class FixedPoint(AnalysisResult):
+class FixedPoint(_ArrayBacked, AnalysisResult):
     """A fixed point (map) or equilibrium (flow) with its linear stability data.
 
-    An :class:`~tsdynamics.analysis._result.AnalysisResult`, so it carries
-    ``.meta`` / the readout ``repr`` / ``.to_dict()`` / the ``.plot`` seam alongside its
-    point and stability data.
+    **It IS its point** (v6): ``np.asarray(fp)`` is the ``(dim,)`` state,
+    ``fp[0]`` is a float, ``fp - other`` and ``np.linalg.norm(fp)`` work, and
+    ``len(fp)`` is the state-space dimension — so ``fixed_points(sys)[0]`` hands
+    back numbers and the class stays invisible, showing itself only in the repr,
+    which states the answer.  The stability data is one dot away and never in the
+    way: :attr:`eigenvalues`, :attr:`stable`, :attr:`continuous`.
+
+    It is also an :class:`~tsdynamics.analysis._result.AnalysisResult`, so it
+    carries ``.meta`` / the readout ``repr`` / ``.to_dict()`` / ``.to_frame()`` /
+    the ``.plot`` seam.
 
     Attributes
     ----------
     x : ndarray
-        The point, shape ``(dim,)``.
+        The point, shape ``(dim,)``.  ``np.asarray(fp)`` returns it.
     eigenvalues : ndarray
         Eigenvalues of the Jacobian at ``x`` — map multipliers (of :math:`Df`) for
         a discrete map, or eigenvalues of the vector-field Jacobian for a flow.
@@ -70,10 +77,28 @@ class FixedPoint(AnalysisResult):
         which stability convention ``stable`` uses.
     """
 
+    #: The numbers this result *is* — see :class:`_ArrayBacked`.
+    _array_field: ClassVar[str] = "x"
+
     x: np.ndarray = field(default_factory=lambda: np.empty(0), compare=False)
     eigenvalues: np.ndarray = field(default_factory=lambda: np.empty(0), repr=False, compare=False)
     stable: bool = False
     continuous: bool = False
+
+    def __float__(self) -> float:
+        """Return the coordinate of a **1-D** system's fixed point.
+
+        A scalar map's fixed point is a number, so ``float(fp)`` is the obvious
+        thing to write; on a higher-dimensional system it raises, naming the
+        array, rather than silently returning the first coordinate.
+        """
+        x = np.asarray(self.x, dtype=float).ravel()
+        if x.size == 1:
+            return float(x[0])
+        raise TypeError(
+            f"this fixed point has {x.size} coordinates, so it is not one number. "
+            "Use np.asarray(fp) for the point, or fp[i] for a coordinate."
+        )
 
     def _gauge(self) -> str:
         """Return the eigenvalue reading that decides the classification."""
@@ -205,23 +230,71 @@ class FixedPoint(AnalysisResult):
 
 @dataclass(frozen=True, eq=False)
 class FixedPointSet(CollectionResult):
-    """The set of fixed points / equilibria found, behaving like a ``list``.
+    """The set of fixed points / equilibria found, indexing to **numbers**.
 
-    A :class:`~tsdynamics.analysis._result.CollectionResult`: iterate it, index it
-    (``fps[0]`` is a :class:`FixedPoint`), take its ``len``, and read
-    :attr:`stable` / :attr:`unstable` sublists — while it carries ``.meta`` /
-    the readout ``repr`` / ``.to_frame()`` / the ``.plot`` seam.
+    A :class:`~tsdynamics.analysis._result.CollectionResult`: iterate it, index
+    it, take its ``len``, and read :attr:`stable` / :attr:`unstable` — while it
+    carries ``.meta`` / the readout ``repr`` / ``.to_frame()`` / the ``.plot``
+    seam.
+
+    ``fps[0]`` is the ``(dim,)`` point as a plain :class:`numpy.ndarray`, equal
+    to ``np.asarray(fps)[0]`` — so it has ``.shape``, ``.tolist()`` and a numeric
+    ``dtype``, and nothing about the :class:`FixedPoint` class has to be learned
+    to use the answer.  That record is :attr:`details`::
+
+        fps = ts.analysis.fixed_points(system)
+        fps[0]                 # array([-1.13, -0.34])      the point
+        fps.points             # (n, dim)   every point
+        fps.eigenvalues        # (n, dim)   every spectrum
+        fps.is_stable          # (n,) bool  the mask
+        fps.details[0]         # FixedPoint  x* = [-1.13, -0.34]  unstable
+
+    :attr:`points`, :attr:`eigenvalues` and :attr:`is_stable` are the same data
+    column-wise, so nothing here needs a loop.
     """
 
     @property
-    def stable(self) -> list[FixedPoint]:
-        """The stable fixed points / equilibria in the set."""
-        return [fp for fp in self.items if fp.stable]
+    def points(self) -> np.ndarray:
+        """Every point, as one ``(n, dim)`` float array (same as ``np.asarray(self)``)."""
+        return np.asarray(self)
 
     @property
-    def unstable(self) -> list[FixedPoint]:
-        """The unstable fixed points / equilibria in the set."""
-        return [fp for fp in self.items if not fp.stable]
+    def eigenvalues(self) -> np.ndarray:
+        """Every member's Jacobian spectrum, as one ``(n, dim)`` array.
+
+        Complex when any eigenvalue is; a ragged set (members of differing
+        dimension) falls back to an object array rather than padding.
+        """
+        rows = [np.asarray(fp.eigenvalues).ravel() for fp in self.items]
+        if rows and len({r.size for r in rows}) == 1:
+            return np.asarray(rows)
+        return np.asarray(rows, dtype=object)
+
+    @property
+    def is_stable(self) -> np.ndarray:
+        """Boolean mask over the members — ``fps.points[fps.is_stable]`` selects."""
+        return np.array([bool(fp.stable) for fp in self.items], dtype=bool)
+
+    @property
+    def stable(self) -> FixedPointSet:
+        """The stable fixed points / equilibria, as a :class:`FixedPointSet`.
+
+        Filtering keeps the result surface (v6): it used to hand back a plain
+        ``list``, so the repr, ``to_frame()`` and ``.plot`` were lost the moment
+        you narrowed the set.
+        """
+        return self._select(stable=True)
+
+    @property
+    def unstable(self) -> FixedPointSet:
+        """The unstable fixed points / equilibria, as a :class:`FixedPointSet`."""
+        return self._select(stable=False)
+
+    def _select(self, *, stable: bool) -> FixedPointSet:
+        """Return the sub-set with the given stability, as this same class."""
+        return FixedPointSet(
+            items=tuple(fp for fp in self.items if bool(fp.stable) is stable), meta=self.meta
+        )
 
     def _noun(self) -> str:
         """Return ``point`` — what one item of this collection is."""
@@ -355,8 +428,8 @@ class FixedPointSet(CollectionResult):
 
 def fixed_points(
     system: Any,
-    *,
     region: Any = None,
+    *,
     n_seeds: int = 200,
     tol: float = 1e-12,
     max_iter: int = 60,
@@ -365,7 +438,7 @@ def fixed_points(
     lam: float = 0.05,
     beta: float = 1.0,
     max_c: int | None = None,
-    seed: int | None = None,
+    seed: int | None = 0,
 ) -> FixedPointSet:
     r"""
     Find the fixed points of a map, or the equilibria of a flow.
@@ -427,13 +500,18 @@ def fixed_points(
     max_c : int, optional
         Cap on the number of stabilising matrices tried (``sd``/``dl``).  The full
         set has ``2^dim · dim!`` members; if capped, a warning is emitted.
-    seed : int, optional
+    seed : int, default 0
         RNG seed for the multi-start sampling.  All randomness (the box seeds and
         the burn-in orbit's starting state) is drawn from a *local*
         :class:`numpy.random.Generator` seeded with this value, so a given ``seed``
         is fully reproducible regardless of the global ``numpy.random`` state.
-        ``seed=None`` (the default) is non-deterministic — the sampling varies from
-        call to call.
+        Pass ``seed=None`` for an explicitly non-deterministic search.
+
+        .. versionchanged:: 6.0
+            Was ``None``.  Multi-start is a *sampling* method, so an unseeded
+            default made the shipped answer vary run to run: measured, three
+            identical ``fixed_points(Thomas(), region=[(-5, 5)] * 3,
+            n_seeds=60)`` calls found 16, 19 and 17 equilibria.
 
     Returns
     -------

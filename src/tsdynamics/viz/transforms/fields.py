@@ -108,6 +108,10 @@ def _demo_orbit() -> Any:
 
 @plot_transform(
     name="ftle",
+    # It evaluates the vector field at points no trajectory visits, through an
+    # analysis that requires a continuous SYSTEM (measured: a bare callable is
+    # refused by the estimator itself).
+    subjects=("flow",),
     source="model",
     kind=PlotKind.PHASE_PORTRAIT_2D,
     frame=FrameSpace.STATE2,
@@ -194,6 +198,10 @@ def ftle(
 
 @plot_transform(
     name="escape_time",
+    # It evaluates the vector field at points no trajectory visits, through an
+    # analysis that requires a continuous SYSTEM (measured: a bare callable is
+    # refused by the estimator itself).
+    subjects=("flow",),
     source="model",
     kind=PlotKind.PHASE_PORTRAIT_2D,
     frame=FrameSpace.STATE2,
@@ -277,6 +285,10 @@ def escape_time(
 
 @plot_transform(
     name="transient_time",
+    # It evaluates the vector field at points no trajectory visits, through an
+    # analysis that requires a continuous SYSTEM (measured: a bare callable is
+    # refused by the estimator itself).
+    subjects=("flow",),
     source="model",
     kind=PlotKind.PHASE_PORTRAIT_2D,
     frame=FrameSpace.STATE2,

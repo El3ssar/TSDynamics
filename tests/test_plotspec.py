@@ -647,17 +647,23 @@ def test_a_positional_transform_name_on_the_method_names_the_front_door():
     A reader who has seen that call tries the same on the method and used to get
     ``TypeError: plot() takes 1 positional argument but 2 were given`` — which
     names neither the concept nor a spelling that works.
+
+    Both spellings it offers are the *transform's own name*: at the front door
+    and as a method on the ``plot`` namespace.  It deliberately does not offer
+    ``kind=``, which v6 collapsed into the transform name — a refusal that
+    taught a retired spelling would be a second thing to unlearn.
     """
     import tsdynamics as ts
     from tsdynamics.errors import InvalidParameterError
 
     traj = ts.systems.Lorenz().run(final_time=1.0, dt=0.1, ic=[1.0, 1.0, 1.0])
-    for subject, call in (
-        ("traj", lambda: traj.plot("delay_embedding", delay=7)),
-        ("system", lambda: ts.systems.Lorenz().plot("phase_portrait")),
+    for subject, call, transform in (
+        ("traj", lambda: traj.plot("delay_embedding", delay=7), "delay_embedding"),
+        ("system", lambda: ts.systems.Lorenz().plot("phase_portrait"), "phase_portrait"),
     ):
         with pytest.raises(InvalidParameterError) as excinfo:
             call()
         message = str(excinfo.value)
         assert f"ts.plot({subject}, " in message  # the front-door spelling
-        assert f"{subject}.plot(kind=" in message  # ... and the kind spelling
+        assert f"{subject}.plot.{transform}(" in message  # ... and the method spelling
+        assert "kind=" not in message  # never the spelling v6 retired

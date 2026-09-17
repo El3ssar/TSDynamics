@@ -31,9 +31,10 @@ from typing import Any, ClassVar
 import numpy as np
 
 from tsdynamics.data import Box, sampler
-from tsdynamics.errors import InvalidParameterError
+from tsdynamics.errors import InvalidInputError, InvalidParameterError, remedy
 from tsdynamics.families import ContinuousSystem, DiscreteMap
 
+from .._common import reject_data
 from .._result import AnalysisResult, ScalingResult
 from .._tangent import flow_fns, map_fns, rk4_variational
 from . import _common as _c
@@ -100,20 +101,71 @@ class ExpansionEntropyResult(ScalingResult):
         r"""Return ``H0`` — the symbol expansion entropy is known by."""
         return "H0"
 
+    @property
+    def applicable(self) -> bool:
+        r"""Whether enough trajectories survived the region for the fit to mean anything.
+
+        ``False`` on a degenerate fit — fewer than two survivors, or a
+        ``stderr`` of exactly zero, which is what an empty survivor set produces.
+        Before v6 the "indistinguishable from zero" guard was written
+        ``se > 0.0 and abs(h) < 2*se``, so ``0 ± 0`` fell straight through to the
+        **most** confident branch and a run where nothing survived printed
+        ``H0 = 0 ± 0   non-chaotic (H0 ≤ 0)``.
+
+        Returns
+        -------
+        bool
+        """
+        se = float(self.stderr)
+        return bool(self.n_survivors >= 2 and np.isfinite(se) and se > 0.0)
+
+    @property
+    def chaotic(self) -> bool | None:
+        r"""Whether :math:`H_0 > 0` — Hunt & Ott's definition of chaos.
+
+        ``None`` — never ``False`` — when the fit is not :attr:`applicable` or
+        the slope is within two standard errors of zero.
+
+        Returns
+        -------
+        bool or None
+        """
+        h, se = float(self.estimate), float(self.stderr)
+        if not self.applicable or not np.isfinite(h):
+            return None
+        if abs(h) < 2.0 * se:
+            return None
+        return bool(h > 0.0)
+
     def _interpretation(self) -> str | None:
         r"""Name the dynamics: a **positive** expansion entropy is chaos.
 
         Hunt & Ott (2015) define chaos as :math:`H_0 > 0`, so this is the one
         place the sign genuinely is the verdict.  It is read against the fit's
         own standard error rather than against zero, so a slope indistinguishable
-        from flat is not sold as a positive one.
+        from flat is not sold as a positive one — and a fit with **no** surviving
+        trajectories (``0 ± 0``) says so rather than taking the confident branch.
         """
-        h, se = float(self.estimate), float(self.stderr)
+        h = float(self.estimate)
         if not np.isfinite(h):
             return None
-        if np.isfinite(se) and se > 0.0 and abs(h) < 2.0 * se:
+        if not self.applicable:
+            return (
+                f"not applicable — {self.n_survivors} of {self.n_samples} samples "
+                "stayed in the region"
+            )
+        if not self.trusted:
+            return self._fit_quality_clause()
+        verdict = self.chaotic
+        if verdict is None:
             return "indistinguishable from zero (H0 within 2 s.e. of 0)"
-        return "chaotic (H0 > 0)" if h > 0.0 else "non-chaotic (H0 ≤ 0)"
+        return "chaotic (H0 > 0)" if verdict else "non-chaotic (H0 ≤ 0)"
+
+    def _derived(self) -> dict[str, Any]:
+        r"""Export the entropy, the applicability flag and the verdict."""
+        data = super()._derived()
+        data.update(entropy=self.entropy, applicable=self.applicable, chaotic=self.chaotic)
+        return data
 
     def _context(self) -> str | None:
         """Return how many sampled initial conditions survived the whole run."""
@@ -144,7 +196,9 @@ def expansion_entropy(
         The restricting region :math:`S`.  ``None`` uses the (10%-expanded)
         bounding box of a burn-in orbit.
     n_samples : int, default 1000
-        Number of initial conditions sampled uniformly in the region.
+        Number of **initial conditions** sampled uniformly in the region — the
+        same quantity ``attractors`` / ``fixed_points`` spell ``n_seeds`` and
+        ``basin_fractions`` / ``continuation`` spell ``n``.
     n : int, optional
         Number of iterations (maps).  Default 15.  (Kept modest: the raw tangent
         product is not renormalised, so very long horizons overflow.)
@@ -166,8 +220,11 @@ def expansion_entropy(
 
     Raises
     ------
-    NotImplementedError
-        If ``system`` is neither a discrete map nor a continuous flow.
+    InvalidInputError
+        If ``system`` is measured data rather than a model, or is neither a
+        discrete map nor a continuous flow.  A ``TypeError`` subclass, like every
+        other wrong-subject refusal in the analysis layer — it used to be a
+        ``NotImplementedError``, so ``except TypeError`` missed it here alone.
     InvalidParameterError
         If ``n_samples < 1``; if the step count is degenerate (``n < 1`` for a
         map, ``final_time <= 0`` or ``dt <= 0`` for a flow); if ``dt`` is passed
@@ -185,14 +242,24 @@ def expansion_entropy(
     ----------
     Hunt & Ott, "Defining chaos", *Chaos* **25** (2015) 097618.
     """
+    # Measured data first, and through the shared guard (see ``gali``): expansion
+    # entropy re-integrates the equations' tangent dynamics from a lattice of
+    # starts, so a point set cannot stand in for the model.
+    reject_data(system, analysis="expansion_entropy")
     if isinstance(system, DiscreteMap):
         mode = "map"
     elif isinstance(system, ContinuousSystem):
         mode = "flow"
     else:
-        raise NotImplementedError(
-            f"expansion_entropy supports discrete maps and continuous flows, not "
-            f"{type(system).__name__}."
+        raise InvalidInputError(
+            f"expansion_entropy evolves the tangent dynamics of a map or a continuous "
+            f"flow, and {type(system).__name__} is neither (a delay system's tangent "
+            f"space is the infinite-dimensional history, and a derived wrapper has no "
+            f"equations of its own)."
+            + remedy(
+                "ts.analysis.expansion_entropy(system, region)",
+                lead="Measure it on the underlying system:",
+            )
         )
 
     n_samples = int(n_samples)

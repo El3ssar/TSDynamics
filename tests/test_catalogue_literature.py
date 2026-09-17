@@ -403,7 +403,7 @@ def test_thomas_origin_is_an_equilibrium() -> None:
     # suite run; the tight box makes the recovery deterministic.)
     region = Box([-1.0, -1.0, -1.0], [1.0, 1.0, 1.0])
     fps = ts.analysis.fixed_points(sys, region=region, n_seeds=200, seed=0)
-    locations = np.array([fp.x for fp in fps])
+    locations = fps.points
     nearest = float(np.min(np.linalg.norm(locations, axis=1)))
     # Newton converges to the root to full tolerance; 1e-6 is the dedup scale.
     assert nearest < 1e-6

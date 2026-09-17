@@ -207,19 +207,24 @@ def test_base_result_classes_expose_contract(cls):
 def test_analysis_result_plot_seam_raises_until_a_backend_lands(_no_render_backend):
     """The ``.plot`` seam exists on every result but raises when no backend is registered.
 
-    Visualization is deferred in v4: ``result.plot`` resolves to the accessor
-    (callable *and* a namespace of typed kind methods), but every entry point —
-    the bare call and each typed method — raises
-    :class:`VisualizationNotInstalled` while no renderer is registered.
+    ``result.plot`` resolves to the accessor — callable, *and* a namespace of the
+    transforms that admit this result — but the verb raises
+    :class:`VisualizationNotInstalled` while no renderer is registered, with every
+    vocabulary the door accepts.
+
+    The eight typed kind methods this used to sweep are gone (they relabelled the
+    spec rather than rebuilding it); a guess at one is an ``AttributeError``
+    naming what to type, which is a different question and lives in
+    ``tests/test_plot_accessor_kinds.py``.
     """
     result = ScalarResult(1.23, meta={"system": "probe"})
     accessor = result.plot
     assert accessor is not None
     with pytest.raises(VisualizationNotInstalled):
         result.plot()
-    for kind_method in ("scaling", "diagnostic", "time_series", "phase", "image"):
+    for vocabulary in ({"color": "red"}, {"title": "t"}, {"theme": "dark"}, {"figsize": (3, 2)}):
         with pytest.raises(VisualizationNotInstalled):
-            getattr(accessor, kind_method)()
+            result.plot(**vocabulary)
 
 
 # ---------------------------------------------------------------------------
@@ -486,7 +491,7 @@ def test_runtime_result_contract(name, thunk, _no_render_backend):
             result.plot().render()
     if isinstance(result, AnalysisResult):
         with pytest.raises(VisualizationNotInstalled):
-            result.plot.scaling()
+            result.plot(title="still refused without a backend")
 
 
 @pytest.mark.parametrize("name", sorted(_TODICT_NOT_JSON))
@@ -509,7 +514,7 @@ def test_known_non_json_to_dict_is_still_a_mapping(name):
 # ---------------------------------------------------------------------------
 
 #: The canonical scaling-curve field set every ``ScalingResult`` must expose so a
-#: single generic ``result.plot.scaling()`` renders any of them.
+#: single generic ``result.plot()`` renders any of them.
 _SCALING_FIELDS = ("estimate", "stderr", "abscissa", "ordinate", "fit_region", "intercept")
 
 
@@ -538,7 +543,7 @@ def test_scaling_result_exposes_canonical_schema(cls):
     The whole scaling-curve family (every fractal dimension, the data-Lyapunov
     exponent, expansion entropy, …) shares ``(estimate, stderr, abscissa,
     ordinate, fit_region, intercept)`` plus the ``local_slopes`` / ``scaling_window``
-    diagnostics and ``float(result)`` — so one ``result.plot.scaling()`` renders
+    diagnostics and ``float(result)`` — so one ``result.plot()`` renders
     any of them.  Discovered via ``__subclasses__``, so a new scaling result is
     swept automatically.
     """
@@ -2541,16 +2546,24 @@ def test_transform_call_still_accepts_its_real_options() -> None:
 # ── PlotSpec.show() — the fourth verb everyone's fingers already know ──────
 
 
-def test_plotspec_show_exists_and_returns_the_figure(monkeypatch) -> None:
-    """``spec.show()`` renders and hands back the figure, headless included."""
+def test_plotspec_show_displays_and_says_so_when_it_cannot(monkeypatch) -> None:
+    """``spec.show()`` DISPLAYS — it is not a second way to get the figure.
+
+    It returns ``None`` like every other ``show`` a user's fingers know, and the
+    figure has exactly one door: ``spec.fig``.  On a backend with no window the
+    call would otherwise be a silent no-op, so it warns and names the two ways
+    out.
+    """
     import matplotlib.pyplot as plt
 
     from tsdynamics.viz import spec as spec_mod
+    from tsdynamics.viz.render.caps import VisualizationDegraded
 
     monkeypatch.setattr(spec_mod, "_mpl_backend_is_interactive", lambda: False)
     spec = ts.systems.Lorenz().run(final_time=2.0, dt=0.05, ic=[1.0, 1.0, 1.0]).__plot_spec__()
-    figure = spec.show()
-    assert figure.__class__.__module__.startswith("matplotlib")
+    with pytest.warns(VisualizationDegraded, match="has no window"):
+        assert spec.show() is None
+    assert spec.fig.__class__.__module__.startswith("matplotlib")
     plt.close("all")
 
 
@@ -2663,7 +2676,7 @@ def test_region_primitives_are_accepted_but_never_required() -> None:
     bounds = ts.analysis.fixed_points(VanDerPol(), region=[(-3.0, 3.0), (-3.0, 3.0)], seed=0)
     boxed = ts.analysis.fixed_points(VanDerPol(), region=Box([-3.0, -3.0], [3.0, 3.0]), seed=0)
     assert len(bounds) == len(boxed) == 1
-    np.testing.assert_allclose(bounds[0].x, boxed[0].x, atol=1e-8)
+    np.testing.assert_allclose(bounds.points, boxed.points, atol=1e-8)
 
     for prim in (
         Box([-1.0, -1.0], [1.0, 1.0]),

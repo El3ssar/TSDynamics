@@ -110,7 +110,7 @@ class HyperBao(ContinuousSystem):
             "dt": 0.05,
             "transient": 50.0,
             "final_time": 200.0,
-            "method": "dop853",
+            "solver": "dop853",
             "rtol": 1e-6,
             "atol": 1e-8,
         },

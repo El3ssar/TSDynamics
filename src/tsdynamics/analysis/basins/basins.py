@@ -23,7 +23,7 @@ Both reuse the recurrence finder in
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -136,11 +136,23 @@ class BasinsResult(AnalysisResult):
 
     @property
     def fractions(self) -> dict[int, float]:
-        """Fraction of grid cells in each attractor's basin (diverged cells excluded).
+        """Fraction of grid CELLS in each attractor's basin.
 
-        Keyed by attractor id (``>= 1``); the diverged share is reported separately
-        by :attr:`diverged_fraction` (so this mirrors
-        :attr:`BasinFractions.fractions`).
+        A **census of this image**: every cell of the lattice, counted once, with
+        the diverged/lost share reported separately by :attr:`diverged_fraction`.
+
+        This is *not* the same statistic as :func:`basin_fractions`, despite the
+        shared word, and the two measurably disagree -- on Van der Pol,
+        ``{1: 0.9922}`` here against ``{1: 1.0}`` there.  That function is Monte
+        Carlo **basin stability** (Menck et al. 2013): an estimate, with a
+        standard error, of the share of a *measure* over the region, from
+        randomly drawn initial conditions.  This one is an exact count of a
+        particular grid, so it depends on the grid and carries no error bar --
+        and it includes cells that never settled, which the sampler drops.
+
+        Use this to read off the picture you just drew; use
+        :func:`basin_fractions` to estimate how likely a randomly perturbed state
+        is to end up on each attractor.
         """
         ids, counts = np.unique(self.labels, return_counts=True)
         total = self.labels.size
@@ -150,6 +162,19 @@ class BasinsResult(AnalysisResult):
     def diverged_fraction(self) -> float:
         """Fraction of cells that diverged / never settled."""
         return float(np.mean(self.labels == DIVERGED))
+
+    def __array__(self, dtype: Any = None, copy: bool | None = None) -> np.ndarray:
+        """Return the **label image** — the basin diagram is that integer field.
+
+        ``np.asarray(basins(...))`` used to be a 0-d *object* array holding the
+        result, which plots as nothing.
+        """
+        arr = np.asarray(self.labels)
+        if dtype is not None:
+            arr = arr.astype(dtype, copy=bool(copy))
+        elif copy:
+            arr = arr.copy()
+        return arr
 
     def __plot_spec__(self, kind: str | None = None) -> Any:
         """Describe this basin diagram as a backend-agnostic :class:`PlotSpec`.
@@ -335,15 +360,38 @@ class BasinFractions(AnalysisResult):
         """Id of the attractor with the largest basin (``None`` if all diverged)."""
         return max(self.fractions, key=self.fractions.__getitem__) if self.fractions else None
 
-    def __getitem__(self, key: int) -> float:
-        """Return the basin fraction of attractor **id** ``key`` — see :meth:`by_id`.
+    def __len__(self) -> int:
+        """Return how many attractors have a share (contract §4.2 rule 6)."""
+        return len(self.fractions)
 
-        Unlike :class:`~tsdynamics.analysis.results.AttractorSet`, which is a
-        sequence and indexes by *position*, ``BasinFractions`` is a mapping from
-        attractor id to share, so ``[]`` is an id lookup here (contract §4.2
-        rule 6, mutation M-C3-3).
+    def __iter__(self) -> Iterator[float]:
+        """Iterate the shares themselves, in ascending id order."""
+        return iter(float(self.fractions[k]) for k in self.ids)
+
+    def __getitem__(self, key: Any) -> Any:
+        """Return the basin fraction at **position** ``key`` (or a list, for a slice).
+
+        Positional, like every other collection in the library (contract §4.2
+        rule 6).  ``[]`` used to be an *id* lookup here — the exact defect v6
+        fixed one file away for
+        :class:`~tsdynamics.analysis.results.AttractorSet` ("ids start at 1, so
+        ``aset[0]`` raised ``KeyError``"), left in place on its sibling: ``bf[0]``
+        raised ``KeyError: 0``, and because there was no ``__iter__`` the legacy
+        sequence protocol made ``list(bf)`` and ``for x in bf`` raise it too.
+        Look a share up by its attractor label with :meth:`by_id`.
         """
-        return self.fractions[key]
+        ordered = [float(self.fractions[k]) for k in self.ids]
+        return ordered[key]
+
+    def __array__(self, dtype: Any = None, copy: bool | None = None) -> np.ndarray:
+        """Return the shares as a ``(n_attractors,)`` float array, in id order."""
+        arr = np.array([float(self.fractions[k]) for k in self.ids], dtype=float)
+        return arr.astype(dtype, copy=bool(copy)) if dtype is not None else arr
+
+    @property
+    def ids(self) -> list[int]:
+        """Sorted attractor ids — the order ``[]``, iteration and ``np.asarray`` use."""
+        return sorted(self.fractions)
 
     def __plot_spec__(self, kind: str | None = None) -> Any:
         r"""Describe the basin fractions as a backend-agnostic :class:`PlotSpec`.
@@ -412,13 +460,17 @@ class BasinFractions(AnalysisResult):
         )
 
     def by_id(self, key: int) -> float:
-        """Return the basin fraction of attractor ``key`` — the same as ``self[key]``.
+        """Return the basin fraction of the attractor **labelled** ``key``.
 
-        ``BasinFractions`` is a *mapping* from attractor id to share, not a
-        sequence of items, so ``[]`` stays an id lookup here (a positional one
-        would silently return a different attractor's share on any set whose ids
-        do not start at 0).  ``by_id`` is the explicit spelling of the same
-        thing, so code that wants to be unambiguous can say so.
+        ``[]`` is positional (the sequence convention every collection here
+        follows); this is the explicit id lookup, the same pairing
+        :class:`~tsdynamics.analysis.results.AttractorSet` uses.  The whole
+        ``{id: share}`` mapping is still :attr:`fractions`.
+
+        Raises
+        ------
+        KeyError
+            If no attractor carries that id.
         """
         return float(self.fractions[int(key)])
 
@@ -612,6 +664,14 @@ def basin_fractions(
     al., 2013).  The estimate is dimension-free — its standard error
     :math:`\sqrt{p(1-p)/n}` depends only on the fraction and ``n``.
 
+    **Not the same statistic as** ``basins(system, region).fractions``, despite
+    the shared word: that is an exact *census* of one grid image (every cell
+    counted once, diverged cells included in the total), this is a Monte Carlo
+    estimate over a *measure* with a standard error.  They measurably disagree —
+    on Van der Pol, ``{1: 1.0}`` here against ``{1: 0.9922}`` there.  Ask this
+    one "how likely is a random perturbation to land here?"; ask that one "what
+    does this picture show?".
+
     Parameters
     ----------
     system : System
@@ -620,7 +680,10 @@ def basin_fractions(
         The measure to sample initial conditions from (uniform over a Box/Ball, or
         a Grid's bounding box).
     n : int, default 10000
-        Number of random initial conditions.
+        Number of random **initial conditions** drawn from ``region`` — the same
+        quantity ``attractors`` / ``fixed_points`` / ``periodic_orbits`` spell
+        ``n_seeds``.  The standard error of every reported fraction is
+        :math:`\sqrt{p(1-p)/n}`, so this is the accuracy knob.
     resolution : int or tuple of int, default 100
         Recurrence cells per axis (a Grid uses its own ``counts``).
     seed : int, optional

@@ -818,11 +818,21 @@ class _ThemeRegistry:
         """Return a theme by name, or the active default when ``name`` is ``None``."""
         return get_theme(name)
 
-    def find(self, **filters: Any) -> list[Theme]:
-        """Return the registered themes whose fields match every keyword in ``filters``.
+    def find(self, what: str = "", /, **filters: Any) -> list[str]:
+        """Return the **names** of the themes matching a free-text query and filters.
 
-        ``ts.viz.themes.find(grid=True)`` — one ``getattr`` per filter, the same
-        shape every other registry's ``find`` has.
+        The fourth shared registry verb, in the shape all four now have —
+        ``find(text, /, **filters) -> list[str]``::
+
+            ts.viz.themes.find("dark")        # free text over the name
+            ts.viz.themes.find(grid=True)     # by declared field
+
+        .. versionchanged:: 6.0
+            It took no positional argument (``themes.find("dark")`` was a
+            ``TypeError``) and returned :class:`Theme` objects while its three
+            siblings returned names — two of the four ways the "learn one, know
+            all four" promise was false.  ``get(name)`` is how you reach the
+            record, which is the same lesson everywhere.
         """
         unknown = [k for k in filters if not hasattr(Theme, k) and k not in Theme.__annotations__]
         if unknown:
@@ -832,10 +842,12 @@ class _ThemeRegistry:
             raise InvalidParameterError(
                 f"themes have no field {unknown[0]!r}; the fields are {fields}."
             )
+        text = what.lower()
         return [
-            t
-            for _, t in sorted(THEMES.items())
-            if all(getattr(t, k, None) == v for k, v in filters.items())
+            name
+            for name, t in sorted(THEMES.items())
+            if (not text or text in name.lower())
+            and all(getattr(t, k, None) == v for k, v in filters.items())
         ]
 
     def register(self, name: str, theme: Theme | None = None, /, **fields: Any) -> Theme:
@@ -957,18 +969,60 @@ class _StyleTable:
             )
         return STYLE_KEYS[canonical]
 
-    def find(self, *, honored_by: str | None = None) -> list[StyleKey]:
-        """Return the style keys a backend genuinely renders.
+    def find(self, what: str = "", /, *, honored_by: str | None = None) -> list[str]:
+        """Return the **names** of the style keys matching a query and filters.
 
         ``ts.viz.styles.find(honored_by="threejs")`` is the honest answer to "what
         will actually change if I switch backend?" — the same declaration the
         dispatcher's :class:`~tsdynamics.viz.render.caps.VisualizationDegraded`
-        warning is generated from.
+        warning is generated from.  ``ts.viz.styles.find("color")`` is free text
+        over the key name and its aliases.
+
+        .. versionchanged:: 6.0
+            Took no positional query and returned :class:`StyleKey` objects;
+            all four registries answer ``find(text, /, **filters) -> list[str]``
+            now, and ``get(name)`` is the one way to reach a record.
         """
-        keys = [STYLE_KEYS[n] for n in sorted(STYLE_KEYS)]
-        if honored_by is None:
-            return keys
-        return [k for k in keys if honored_by in k.honored_by]
+        text = what.lower()
+        out = []
+        for name in sorted(STYLE_KEYS):
+            key = STYLE_KEYS[name]
+            if honored_by is not None and honored_by not in key.honored_by:
+                continue
+            if text and text not in name.lower() and not any(text in a for a in key.aliases):
+                continue
+            out.append(name)
+        return out
+
+    def register(self, name: str, *args: Any, **kwargs: Any) -> Any:
+        """Refuse, by name: the style vocabulary is **closed**, and says why.
+
+        The other four registries are extension points; this one is a *contract*.
+        Every :class:`StyleKey` declares ``honored_by`` — which backends genuinely
+        render it — and ``tests/test_viz_honoring_contract.py`` draws every claim
+        and inspects the artifact.  A key a user adds is honored by no backend, so
+        registering one would only buy a keyword that silently does nothing, which
+        is the exact defect ``normalize_style``'s drop-with-a-warning exists to
+        prevent.
+
+        Raises
+        ------
+        tsdynamics.errors.InvalidParameterError
+            Always — naming the two things that *are* extensible.
+        """
+        del args, kwargs
+        from tsdynamics.errors import InvalidParameterError, remedy
+
+        raise InvalidParameterError(
+            f"the style vocabulary is closed, so {name!r} cannot be registered: a style key "
+            "is a contract each backend must honor (StyleKey.honored_by), and one no "
+            "renderer draws would be a keyword that silently does nothing. What IS "
+            "extensible: a look (a theme) and a way of drawing (a primitive)."
+            + remedy(
+                "ts.viz.themes.register('mine', palette=('#264653', '#e76f51'))",
+                "ts.viz.primitives.register('mine', requires=('x', 'y'))",
+            )
+        )
 
     def __iter__(self) -> Any:
         """Iterate the canonical :class:`StyleKey` records, sorted by name."""

@@ -794,12 +794,12 @@ SHOWCASE: dict[str, Showcase] = {
         per_primitive={
             "contour": Variant(
                 call='ts.plot(duff, "ftle", xlim=(-2.0, 2.0), ylim=(-1.5, 1.5), '
-                'grid=121, time=8.0, primitive="contour")',
+                'grid=121, final_time=8.0, primitive="contour")',
                 caption="The same field as level sets — the ridge as a contour crowd.",
             ),
             "surface3d": Variant(
                 call='ts.plot(duff, "ftle", xlim=(-2.0, 2.0), ylim=(-1.5, 1.5), '
-                'grid=81, time=8.0, primitive="surface3d")',
+                'grid=81, final_time=8.0, primitive="surface3d")',
                 caption="The FTLE field as a landscape; the ridge is a literal ridge.",
             ),
         },
@@ -955,7 +955,7 @@ COMPOSITIONS: list[tuple[str, Showcase]] = [
             "traj = duff.run(final_time=60.0, dt=0.01, ic=[1.4, 0.0, 0.0])",
             call="ts.viz.plot(\n"
             '    ts.plot(duff, "ftle", xlim=(-2.0, 2.0), ylim=(-1.5, 1.5),\n'
-            "            grid=161, time=8.0),\n"
+            "            grid=161, final_time=8.0),\n"
             '    ts.plot(traj, "phase_portrait", components=("x", "y"), color="w"),\n'
             ")",
             caption=(

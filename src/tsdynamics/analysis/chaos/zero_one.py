@@ -106,16 +106,47 @@ class ZeroOneResult(ScalarResult):
         The cumulative translation components :math:`p_c(n)` / :math:`q_c(n)` at a
         representative frequency — a bounded blob (regular) or a diffusing cloud
         (chaotic).  Empty when the plane was not captured.
+    distribution : numpy.ndarray
+        The per-frequency :math:`K_c` values, shape ``(n_c,)``;
+        :attr:`value` is their median.
     """
 
     _repr_fields: ClassVar[tuple[str, ...]] = ("value",)
 
     p: np.ndarray = field(default_factory=lambda: np.empty(0), repr=False, compare=False)
     q: np.ndarray = field(default_factory=lambda: np.empty(0), repr=False, compare=False)
+    #: The per-frequency :math:`K_c` values whose median is :attr:`value`.  It is
+    #: a field rather than a second *return shape*: ``return_distribution=True``
+    #: made one call return either a result or a ``(result, ndarray)`` tuple, so
+    #: the caller had to know which before they could use the answer.
+    distribution: np.ndarray = field(default_factory=lambda: np.empty(0), repr=False, compare=False)
 
     def _answer(self) -> str:
         r"""Return ``K = <value>`` — the median growth indicator."""
         return f"K = {_sig(float(self), 6)}"
+
+    @property
+    def chaotic(self) -> bool | None:
+        r"""Whether :math:`K \approx 1` — the 0–1 test's verdict.
+
+        The one adjective-named spelling of the verdict (contract §4.2 rule 10);
+        the repr printed ``chaotic (K ≈ 1)`` while the instance surface was
+        ``p``, ``q``, ``value`` and nothing said so.  ``None`` — never ``False``
+        — when :math:`K` is stranded between the two poles, which is the
+        *inconclusive* reading, not a negative one.
+
+        Returns
+        -------
+        bool or None
+        """
+        k = float(self)
+        if not np.isfinite(k):
+            return None
+        if k >= _CHAOTIC_K:
+            return True
+        if k <= _REGULAR_K:
+            return False
+        return None
 
     def _interpretation(self) -> str | None:
         r"""Name the dynamics from :math:`K`.
@@ -127,14 +158,16 @@ class ZeroOneResult(ScalarResult):
         usual cause is an oversampled observable, which the test warns about
         separately, and picking a side there would hide it.
         """
-        k = float(self)
-        if not np.isfinite(k):
+        if not np.isfinite(float(self)):
             return None
-        if k >= _CHAOTIC_K:
-            return "chaotic (K ≈ 1)"
-        if k <= _REGULAR_K:
-            return "regular (K ≈ 0)"
-        return "inconclusive (K is between the two poles — check sampling)"
+        verdict = self.chaotic
+        if verdict is None:
+            return "inconclusive (K is between the two poles — check sampling)"
+        return "chaotic (K ≈ 1)" if verdict else "regular (K ≈ 0)"
+
+    def _derived(self) -> dict[str, Any]:
+        r"""Export the verdict the repr reports."""
+        return {"chaotic": self.chaotic}
 
     def __plot_spec__(self, kind: str | None = None) -> Any:
         r"""Describe the translation plane :math:`(p_c, q_c)` as a :class:`PlotSpec`.
@@ -310,7 +343,6 @@ def zero_one_test(
     n_cut: int | None = None,
     seed: int | None = 0,
     oversampling: str = "resample",
-    return_distribution: bool = False,
 ) -> ZeroOneResult | tuple[ZeroOneResult, np.ndarray]:
     r"""Run the 0--1 test for chaos on a system or a measured observable.
 
@@ -334,8 +366,9 @@ def zero_one_test(
     dt : float, optional
         Sampling / integration step for a flow (system input).  Default 0.1.
     transient : float, optional
-        Discarded before recording — a flow burn-in **time**, a map / discrete
-        burn-in in **steps** (system input).
+        Dynamics discarded before recording, in the unit the family advances in:
+        **time units** for a flow, **iterations** for a map (system input) — the
+        same rule ``run(transient=)`` follows.
     ic : array-like, optional
         Initial condition (system input).
     n_c : int, default 100
@@ -360,17 +393,15 @@ def zero_one_test(
         decimates as far as it can and warns.  ``"warn"`` leaves the observable
         alone and raises an :class:`OversamplingWarning`.  ``"ignore"`` disables
         the guard entirely (you are then on your own).
-    return_distribution : bool, default False
-        If true, also return the per-frequency :math:`K_c` array.
 
     Returns
     -------
-    ZeroOneResult or (ZeroOneResult, ndarray)
+    ZeroOneResult
         The median correlation growth indicator :math:`K` (``~0`` regular, ``~1``
         chaotic) as a drop-in for its ``float`` value (``result > 0.9`` and
-        ``float(result)`` work) carrying ``.meta`` and the translation plane
-        :math:`(p_c, q_c)` (``result.plot()`` renders it); with
-        ``return_distribution`` also the ``K_c`` values.  The correlation method
+        ``float(result)`` work) carrying ``.meta``, the translation plane
+        :math:`(p_c, q_c)` (``result.plot()`` renders it) and the per-frequency
+        ``result.distribution`` the median was taken over.  The correlation method
         returns a Pearson
         coefficient, so :math:`K \in [-1, 1]` in principle (a regular orbit can
         give a small negative :math:`K`); it concentrates near ``0`` (regular) or
@@ -475,8 +506,7 @@ def zero_one_test(
     meta["samples_per_oscillation"] = float(spo)
     meta["stride"] = int(stride)
     meta["n_samples"] = int(n_pts)
-    result = ZeroOneResult(value=k, p=p_rep, q=q_rep, meta=meta)
-    return (result, k_c) if return_distribution else result
+    return ZeroOneResult(value=k, p=p_rep, q=q_rep, distribution=k_c, meta=meta)
 
 
 def __dir__() -> list[str]:

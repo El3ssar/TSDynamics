@@ -286,14 +286,27 @@ def cache_key(entry) -> str:
 
 
 def _resolve_ic(sys_obj, override):
+    """Resolve the IC a figure is drawn from: an override, the class's, or random.
+
+    The declared IC is read through :func:`tsdynamics.registry._classvar`, the
+    one reader that knows both spellings.  v6 moved the catalogue ClassVars
+    behind an underscore (``default_ic`` → ``_default_ic``) and this site still
+    named the public one, so every figure of a system that *declares* an IC was
+    drawn from the wrong start — and here it did not even fail quietly: reading
+    it off the class raised ``AttributeError: type object 'Lorenz' has no
+    attribute 'default_ic'``, which took the whole golden-figure gate with it.
+    """
+    from tsdynamics.registry import _classvar
+
     if override == "0.1*ones":
         return 0.1 * np.ones(sys_obj.dim)
     if override is not None:
         return np.asarray(override, dtype=float)
-    if type(sys_obj).default_ic is not None:
+    declared = _classvar(type(sys_obj), "default_ic")
+    if declared is not None:
         # Honor a class-level basin IC (single source of truth) before
         # falling back to random; the retry loop still re-rolls on failure.
-        return np.asarray(type(sys_obj).default_ic, dtype=float).reshape(sys_obj.dim)
+        return np.asarray(declared, dtype=float).reshape(sys_obj.dim)
     return None  # family default resolution (random U[0,1)^dim, with retries)
 
 

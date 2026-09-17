@@ -14,7 +14,7 @@ You define the dynamics once; the whole toolkit follows.
 
 Two things tie it together. First, **the `Trajectory`** — every `run` call
 returns one: a `(T, dim)` array of states with named components (`traj["x"]`),
-row/column selection (`traj[10:50]`, `traj[["x", "z"]]`, `traj.after(t)`) and
+row/column selection (`traj[10:50]`, `traj["x", "z"]`, `traj.after(t)`) and
 provenance carried in `traj.meta`. Second, **the calling convention**:
 
 > **Every analysis is a free function whose FIRST argument is the thing it is

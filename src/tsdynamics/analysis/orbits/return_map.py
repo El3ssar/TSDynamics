@@ -68,6 +68,22 @@ class ReturnMap(AnalysisResult):
     def __len__(self) -> int:
         return int(self.current.size)
 
+    def __getitem__(self, key: Any) -> Any:
+        """Return the ``(current, successor)`` pair at position ``key`` — what iteration yields.
+
+        It was sized and iterable but **not** subscriptable, so ``rm[0]`` raised
+        ``TypeError`` while ``len(rm)`` and ``for a, b in rm`` both worked, and
+        ``np.asarray(rm)`` degenerated to a 0-d object array.
+        """
+        return list(zip(self.current, self.successor, strict=True))[key]
+
+    def __array__(self, dtype: Any = None, copy: bool | None = None) -> np.ndarray:
+        """Return the map as the ``(n, 2)`` scatter it draws: :math:`(v_n, v_{n+1})`."""
+        arr = np.column_stack(
+            [np.asarray(self.current, dtype=float), np.asarray(self.successor, dtype=float)]
+        )
+        return arr.astype(dtype, copy=bool(copy)) if dtype is not None else arr
+
     def flat(self) -> tuple[np.ndarray, np.ndarray]:
         """Return the scatter-plot arrays ``(current, successor)``."""
         return self.current, self.successor
@@ -211,7 +227,7 @@ def return_map(
     transient: float = 0.0,
     skip_crossings: int = 0,
     ic: Any | None = None,
-    seed: int | None = None,
+    seed: int | None = 0,
     **integrate_kwargs: Any,
 ) -> ReturnMap:
     r"""
@@ -245,25 +261,36 @@ def return_map(
     n : int, default 2000
         Number of section crossings to collect when integrating a system in
         ``kind="poincare"`` mode.
-    final_time, dt : float
-        Integration horizon and detection / output step used when ``system`` is
-        a flow.  In extremum mode ``dt`` only needs to resolve the peaks; the
+    final_time : float, default 200.0
+        Integration horizon, in **time units**, when ``system`` is a flow
+        (extremum mode only).
+    dt : float, default 0.01
+        Step, in **time units**, when ``system`` is a flow.  In extremum mode it
+        is the *output sampling* step and only needs to resolve the peaks — the
         recorded value is sharpened by parabolic interpolation, so a coarse grid
-        still gives accurate extrema.  In ``kind="poincare"`` mode only ``dt``
-        is used (the section is marched until ``n`` crossings); ``final_time``,
-        ``ic``, ``transient`` and ``**integrate_kwargs`` apply to extremum mode
-        and are ignored.
+        still gives accurate extrema.  In ``kind="poincare"`` mode it is the
+        crossing-**detection** step of the section march.  Ignored for a
+        ``Trajectory`` / a bare series, which are already sampled.
+        In ``kind="poincare"`` mode ``final_time``, ``ic``, ``transient`` and
+        ``**integrate_kwargs`` do not apply and are ignored (the section is
+        marched until ``n`` crossings).
     transient : float, default 0.0
-        Elapsed **time** discarded before recording extrema (``kind="max"`` /
-        ``"min"``, system input).
+        Dynamics discarded before recording extrema, in **time units** — the unit
+        ``final_time`` and ``run(transient=)`` use (``kind="max"`` / ``"min"``,
+        system input).  The *section* transient is the separate
+        ``skip_crossings``, because a count of crossings is a different quantity
+        from an elapsed time.
     skip_crossings : int, default 0
         Number of leading **crossings** discarded before recording
         (``kind="poincare"``, system input).
     ic : array-like, optional
         Initial state when ``system`` is a flow.
-    seed : int, optional
-        Seed for the random initial condition when the system has none; makes
-        the map reproducible.
+    seed : int, default 0
+        Seed for the random initial condition when the system has none, so the
+        map is reproducible.  Pass ``seed=None`` for an unseeded draw.
+
+        .. versionchanged:: 6.0
+            Was ``None`` — the same call returned a different map each run.
     **integrate_kwargs
         Forwarded to ``system.run`` (extremum mode, system input).
 

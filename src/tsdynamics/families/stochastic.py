@@ -486,7 +486,13 @@ class StochasticSystem(SystemBase, ABC):
 
     def step(self, n_or_dt: float | None = None) -> np.ndarray:
         """
-        Advance by ``dt`` (default ``0.01``) and return the new state.
+        Advance by ``n_or_dt`` and return the new state.
+
+        ``n_or_dt`` is a **time increment**, in the same unit as ``final_time``,
+        and for an SDE it is also the noise scale (the increment is drawn
+        ``~ N(0, dt)``); omitting it uses the stepper's ``dt`` — the ``dt=`` given
+        to :meth:`reinit`, else ``_default_step_dt`` (``0.01``, the number every
+        continuous family uses).
 
         The first call performs an implicit :meth:`reinit`. Each call draws a
         fresh diagonal Wiener increment from the stepper's seeded stream, so
@@ -597,21 +603,30 @@ class StochasticSystem(SystemBase, ABC):
         Parameters
         ----------
         final_time : float, default 100.0
-            End of the integration window.
+            End of the integration window, **in time units** — the horizon word
+            for a flow.
         dt : float, default 0.02
-            Fixed step size *and* output sampling interval — for an SDE the step
-            is the noise scale (each increment is drawn ``~ N(0, dt)``), so the
-            output grid and the discretisation share one ``dt``.
+            Fixed step size *and* output sampling interval, **in time units**.
+            For an SDE the step **is** the noise scale (each increment is drawn
+            ``~ N(0, dt)``), so the output grid and the discretisation share one
+            ``dt`` — unlike a deterministic flow, coarsening it changes the path,
+            not just the sampling.
         t0 : float, default 0.0
-            Start time (the IC is the state at ``t0``).
+            Where the integration **starts**, in time units (the IC is the state
+            at ``t0``).
         ic : array-like, optional
-            Initial state. Falls back to ``self.ic``, then ``U[0, 1)^dim``.
+            Initial state at ``t0`` — ``dim`` numbers, one per state component.
+            Falls back to ``self.ic``, then a ``U[0, 1)^dim`` draw.
         solver : str, optional
             ``"euler_maruyama"`` (default, order 0.5) or ``"milstein"``
             (order 1.0).
         seed : int, optional
-            Seed for the noise realisation (random if omitted). The resolved seed
-            is recorded in ``traj.meta["seed"]`` so a run can be reproduced.
+            Makes the whole run reproducible: it seeds the **noise realisation**
+            *and* the random initial-condition draw.  (Every other family has
+            only the second source of randomness, so there ``seed=`` means the
+            draw alone — this is the one family where it also fixes the path.)
+            Random if omitted; the resolved seed is recorded in
+            ``traj.meta["seed"]``, and the IC seed in ``traj.meta["ic_seed"]``.
 
             .. note::
                ``integrate(seed=s)`` draws its noise from the **raw** seed ``s``,
@@ -640,7 +655,8 @@ class StochasticSystem(SystemBase, ABC):
             Leading stretch of the path to discard, in **time units** (the same
             unit as ``final_time``).  The window is extended to
             ``transient + final_time`` and everything before ``t0 + transient``
-            dropped.  Spelled identically on every family.
+            dropped.  One word on every family, in that family's **own horizon
+            unit**: time here, **iterations** on a map.
 
             .. versionadded:: 6.0
 
@@ -700,7 +716,7 @@ class StochasticSystem(SystemBase, ABC):
         seed: int | None,
         backend: str | None,
     ) -> Trajectory:
-        """Run :meth:`integrate`'s body (wrapped by its IC rollback guard)."""
+        """Run :meth:`run`'s body (wrapped by its IC rollback guard)."""
         from tsdynamics.engine import run
 
         backend = backend if backend is not None else self._default_backend
@@ -776,7 +792,7 @@ class StochasticSystem(SystemBase, ABC):
         ics : array-like, shape (n, dim)
             The batch of initial conditions.
         final_time, dt, t0, method, seed
-            As in :meth:`integrate` (``seed`` is the ensemble's base seed).
+            As in :meth:`run` (``seed`` is the ensemble's base seed).
         backend : {"jit", "interp", "reference"}, optional
             Defaults to ``_default_backend`` (``"jit"``).  ``"jit"`` / ``"interp"``
             fan the batch out on the compiled engine's rayon pool;
@@ -786,7 +802,7 @@ class StochasticSystem(SystemBase, ABC):
 
             .. versionchanged:: 6.0
                Default moved from ``"interp"`` to ``"jit"`` (see
-               :meth:`integrate`).
+               :meth:`run`).
 
         Returns
         -------

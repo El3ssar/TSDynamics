@@ -220,7 +220,9 @@ def test_a_stable_cycle_has_one_trivial_multiplier_and_the_rest_inside(factory, 
     options = dict(options)
     guess = options.pop("period_guess", None)
     orbits = ts.analysis.periodic_orbits(factory(), guess, **options)
-    orbit = orbits[0]
+    # v6: indexing a result collection gives you NUMBERS (``orbits[0]`` is the
+    # orbit's points); the record carrying the multipliers is ``.details[0]``.
+    orbit = orbits.details[0]
     assert orbit.stable
     mu = np.asarray(orbit.multipliers, dtype=complex)
     trivial = np.argmin(np.abs(mu - 1.0))

@@ -382,7 +382,7 @@ class Chen(ContinuousSystem):
             "dt": 0.02,
             "transient": 50.0,
             "final_time": 300.0,
-            "method": "dop853",
+            "solver": "dop853",
             "rtol": 1e-9,
             "atol": 1e-12,
         },

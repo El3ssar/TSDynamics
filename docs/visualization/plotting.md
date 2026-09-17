@@ -298,7 +298,7 @@ its components, or hand it to an analysis:
 ```python
 t = np.linspace(0.0, 40.0, 2000)
 traj = ts.Trajectory(t, points)          # no system required
-ts.analysis.recurrence_matrix(traj, recurrence_rate=0.05).plot().show()
+ts.analysis.recurrence_matrix(traj, recurrence_rate=0.05).plot()
 ```
 
 !!! warning "A delay in *time units* needs a real `dt`"

@@ -43,9 +43,21 @@ from tsdynamics.viz.transforms import (
 
 
 class _DemoSystem:
+    """A stand-in carrying ``family`` — the v6 spelling a real system has.
+
+    ``is_discrete`` was removed in v6 and is derived here, not stored: a test
+    fake that keeps a removed attribute alive is how a rename passes its own
+    suite while every real system silently answers the default.
+    """
+
     def __init__(self, discrete: bool = False, variables: tuple[str, ...] | None = None) -> None:
-        self.is_discrete = discrete
+        self.family = "map" if discrete else "ode"
         self.variables = variables
+
+    @property
+    def is_discrete(self) -> bool:
+        """Deprecated spelling of ``family == "map"`` — for readers not yet repointed."""
+        return self.family == "map"
 
 
 def _traj(dim: int = 3, n: int = 120):
@@ -926,3 +938,228 @@ def test_the_matrix_reads_as_an_answer_to_what_can_i_draw():
     for record in transforms():
         assert record.name in text
         assert record.doc in text
+
+
+# ---------------------------------------------------------------------------
+# v6 — one vocabulary, honest verbs
+# ---------------------------------------------------------------------------
+
+
+def test_draw_speaks_the_same_vocabulary_as_every_other_plotting_door() -> None:
+    """``ts.viz.draw`` is a door, not a primitive wrapper.
+
+    Measured before v6: **all ten style keys and sixteen of the seventeen figure
+    keywords raised**, and the message blamed the primitive — *"primitive 'line'
+    does not accept keyword(s) ['color']; it accepts (none)"* — for a word the
+    door had simply never peeled.  Only ``title=`` worked.
+    """
+    import numpy as np
+
+    import tsdynamics as ts
+    from tsdynamics.viz.spec import FIGURE_KEYS
+    from tsdynamics.viz.style import STYLE_KEYS
+
+    r = np.logspace(-1.0, 1.0, 24)
+    c = r**2.0
+    values = {
+        "color": "crimson",
+        "linewidth": 2.0,
+        "alpha": 0.5,
+        "cmap": "viridis",
+        "marker": "circle",
+        "markersize": 4.0,
+        "linestyle": "dashed",
+        "fill": True,
+        "filled": True,
+        "fillalpha": 0.2,
+        "zorder": 3,
+        "title": "t",
+        "xlabel": "log r",
+        "ylabel": "log C",
+        "zlabel": "z",
+        "xscale": "log",
+        "yscale": "log",
+        "zscale": "linear",
+        "xlim": (0.1, 10.0),
+        "ylim": (0.01, 100.0),
+        "zlim": (0.0, 1.0),
+        "xticks": [0.1, 1.0],
+        "yticks": [1.0],
+        "zticks": [0.0],
+        "clim": (0.0, 1.0),
+        "colorbar": False,
+        "legend": True,
+        "theme": "dark",
+    }
+    vocabulary = sorted(set(STYLE_KEYS) | set(FIGURE_KEYS))
+    for key in vocabulary:
+        assert key in values, f"the gate must exercise every word: {key} is missing"
+        ts.viz.draw({"x": r, "y": c}, "line", **{key: values[key]})
+    # ...and they land, rather than being accepted and dropped.
+    p = ts.viz.draw(
+        {"x": r, "y": c}, "line", xlabel="log r", ylabel="log C", xscale="log", color="crimson"
+    )
+    assert (p.x.label, p.y.label, p.x.scale) == ("log r", "log C", "log")
+    assert p.layers[0].style["color"] == "crimson"
+    # ...and the aliases canonicalise here exactly as at every other door.
+    assert ts.viz.draw({"x": r, "y": c}, "line", lw=3.0).layers[0].style["linewidth"] == 3.0
+
+
+def test_draw_has_no_kind_keyword_and_says_which_word_names_a_picture() -> None:
+    """``kind=`` on ``draw`` was dead by construction: every value raised.
+
+    Passing it skipped the fallback that supplies a kind, so ``spec_of`` raised
+    before the line that would have used it — and the message never mentioned
+    ``kind`` at all.
+    """
+    import numpy as np
+
+    import tsdynamics as ts
+    from tsdynamics.errors import InvalidParameterError
+
+    r = np.linspace(0.0, 1.0, 8)
+    with pytest.raises(InvalidParameterError, match="no kind= keyword"):
+        ts.viz.draw({"x": r, "y": r}, "line", kind="time_series")
+
+
+def test_every_view_kind_uniquely_served_has_a_transform_spelling() -> None:
+    """One word, one picture — the transform name, positionally.
+
+    ``kind=`` used to be the only way to ask for three views: a Poincaré section
+    (no transform existed), and the two forced dimensionalities of a phase
+    portrait.  Each has a positional spelling now, which is what lets the second
+    vocabulary retire.
+    """
+    import numpy as np
+
+    import tsdynamics as ts
+
+    plt = pytest.importorskip("matplotlib.pyplot")
+    from tsdynamics.viz.spec import PlotKind
+
+    ros = ts.systems.Rossler()
+    tr = ts.systems.Lorenz().run(final_time=6.0, dt=0.05, ic=[1.0, 1.0, 1.0])
+    try:
+        assert "poincare_section" in ts.viz.transforms.names()
+        section = ts.plot(ros, "poincare_section", plane=("y", 0.0, "up"), crossings=40)
+        assert section.kind is PlotKind.POINCARE_SECTION
+        assert ts.plot(tr, "phase_portrait", ndim=2).kind is PlotKind.PHASE_PORTRAIT_2D
+        assert ts.plot(tr, "phase_portrait", ndim=3).kind is PlotKind.PHASE_PORTRAIT_3D
+        # The recipe spellings ``kind="delay"`` / ``kind="field"`` are aliases now.
+        assert ts.viz.transforms.get("delay").name == "delay_embedding"
+        assert ts.viz.transforms.get("field").name == "spatial_field"
+        assert ts.viz.transforms.get("recurrence_plot").name == "recurrence"
+        # A retired PlotKind spelling is answered with the line that works.
+        with pytest.raises(Exception, match=r"phase_portrait', ndim=2"):
+            ts.viz.transforms.get("phase_portrait_2d")
+        assert np.isfinite(section.layers[0].data["x"]).all()
+    finally:
+        plt.close("all")
+
+
+def test_find_subject_advertises_only_what_that_subject_can_be_handed() -> None:
+    """``find(subject=…)`` is the user's question and must not over-promise.
+
+    Measured before v6: a **map** was advertised all 38 transforms and 14 raised
+    (every 2-D-flow field transform among them); an analysis **result** was
+    advertised all 38 and 22 raised.  The old rule accepted everything that was
+    not literally an array or a trajectory.
+    """
+    import numpy as np
+
+    import tsdynamics as ts
+
+    lor, vdp, henon = ts.systems.Lorenz(), ts.systems.VanDerPol(), ts.systems.Henon()
+    traj = lor.run(final_time=6.0, dt=0.05, ic=[1.0, 1.0, 1.0])
+    spectrum = ts.analysis.lyapunov_spectrum(lor, final_time=20.0)
+    field_transforms = {
+        "vector_field",
+        "flow_speed",
+        "nullclines",
+        "streamlines",
+        "trace_determinant",
+        "ftle",
+        "escape_time",
+        "transient_time",
+    }
+    for subject, label in ((henon, "a map"), (traj, "a trajectory"), (spectrum, "a result")):
+        offered = set(ts.viz.transforms.find(subject=subject))
+        assert not (offered & field_transforms), f"{label} was offered a vector-field transform"
+    # A cobweb is the staircase of a MAP iteration; a 3-D flow's orbit has none,
+    # and used to draw one anyway (kind='cobweb', two layers, no complaint).
+    assert "cobweb" in ts.viz.transforms.find(subject=henon)
+    assert "cobweb" not in ts.viz.transforms.find(subject=traj)
+    # A 2-D flow keeps every field transform, which is the case that must not regress.
+    assert field_transforms <= set(ts.viz.transforms.find(subject=vdp))
+    # A recorded (times, estimates) pair is an ARRAY; a Trajectory is not one,
+    # and was offered the transform that reads such a pair.
+    assert "lyapunov_convergence" not in ts.viz.transforms.find(subject=traj)
+    assert "lyapunov_convergence" in ts.viz.transforms.find(subject=lor)
+    # A bare array is still data.
+    assert "psd" in ts.viz.transforms.find(subject=np.sin(np.linspace(0, 40, 400)))
+
+
+def test_a_user_primitive_can_be_applied_to_a_shipped_transform() -> None:
+    """The extension point's missing half — ``ts.viz.transforms.allow``.
+
+    Measured before v6: a newly registered primitive could reach **none** of the
+    shipped transforms, because every declared row is a frozen tuple written
+    before that primitive existed.  ``PlotTransform`` is frozen and there was no
+    public verb to extend a row, so "define your own plots using the primitives"
+    worked only with a transform you also wrote yourself.
+    """
+    import numpy as np
+
+    import tsdynamics as ts
+    from tsdynamics.errors import InvalidParameterError
+
+    plt = pytest.importorskip("matplotlib.pyplot")
+
+    @ts.viz.primitives.register("stem_gate", requires=("x", "y"), marks=("line", "points"))
+    def stem_gate(part, **options):
+        """A vertical drop to the baseline plus a marker at each point."""
+        x, y = part["x"], part["y"]
+        xs = np.repeat(x, 3)
+        ys = np.empty(3 * len(y))
+        ys[0::3], ys[1::3], ys[2::3] = 0.0, y, np.nan
+        return [{"mark": "line", "x": xs, "y": ys}, {"mark": "points", "x": x, "y": y}]
+
+    traj = ts.systems.Lorenz().run(final_time=2.0, dt=0.1, ic=[1.0, 1.0, 1.0])
+    try:
+        assert "stem_gate" in ts.viz.primitives.names()
+        with pytest.raises(InvalidParameterError, match="not valid for transform"):
+            ts.plot(traj, "time_series", primitive="stem_gate")
+        ts.viz.transforms.allow("time_series", "stem_gate")
+        drawn = ts.plot(traj, "time_series", primitive="stem_gate")
+        assert len(drawn.layers) == 6  # three components x (line + points)
+        drawn.render()
+        # A structurally impossible cell is still refused, by allow() itself.
+        with pytest.raises(InvalidParameterError, match="structurally impossible"):
+            ts.viz.transforms.allow("psd", "quiver")  # a quiver draws in state2 only
+        with pytest.raises(InvalidParameterError, match="unknown primitive"):
+            ts.viz.transforms.allow("time_series", "no_such_primitive")
+    finally:
+        plt.close("all")
+        record = ts.viz.transforms.get("time_series")
+        object.__setattr__(record, "primitives", record.primitives - {"stem_gate"})
+
+
+def test_geometry_hands_back_numbers_not_objects() -> None:
+    """``ts.viz.geometry`` is advertised as the arrays escape hatch.
+
+    ``np.asarray`` of one used to be an ``(n_parts,)`` array of **objects** — a
+    silent non-answer that plots as nothing and arithmetics into a ``TypeError``
+    far from the call site.
+    """
+    import numpy as np
+
+    import tsdynamics as ts
+
+    traj = ts.systems.Lorenz().run(final_time=4.0, dt=0.05, ic=[1.0, 1.0, 1.0])
+    portrait = ts.viz.geometry(traj, "phase_portrait")
+    arr = np.asarray(portrait)
+    assert arr.dtype == np.float64 and arr.shape == (3, traj.y.shape[0])
+    series = ts.viz.geometry(traj, "time_series")
+    stacked = np.asarray(series)
+    assert stacked.dtype == np.float64 and stacked.shape[0] == 2  # (x, y) over 3 parts
+    assert series["y"].shape == (3, traj.y.shape[0])  # multi-part channel, stacked

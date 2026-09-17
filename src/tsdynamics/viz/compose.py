@@ -5,12 +5,12 @@ describes **one panel**, :func:`plot` arranges one or more things into a figure:
 
 - :func:`plot` takes any mix of plottables (a :class:`~tsdynamics.data.Trajectory`,
   a system, an analysis result) and already-built
-  :class:`~tsdynamics.viz.spec.PlotSpec` objects,
+  :class:`~tsdynamics.viz.spec.Plot` objects,
   converts each to a spec, and returns a **spec** — a single-panel spec for
   ``layout="overlay"`` (everything drawn on one set of axes) or a
   :data:`~tsdynamics.viz.spec.PlotKind.COMPOSITE` spec for ``layout="stack"`` /
   ``"row"`` / ``"grid"`` (one panel each).
-- Because the input type and the return type are **the same** (a ``PlotSpec``), a
+- Because the input type and the return type are **the same** (a ``Plot``), a
   ``plot(...)`` result feeds straight back into ``plot(...)``: build each panel
   with one flat call, then arrange the panels with another::
 
@@ -27,12 +27,12 @@ whitelist that used to decide it.  So::
       ts.viz.plot(traj_xy, fixed_points_xz)                 # raises: different planes
 
 and the draw order is fixed **by role** (fields under curves under markers), not
-by argument order, so the call is order-free.  Pass ``on="force"`` to overlay a
+by argument order, so the call is order-free.  Pass ``force=True`` to overlay a
 deliberate mismatch with a warning.  Grow a figure incrementally with
-:meth:`~tsdynamics.viz.spec.PlotSpec.add`, which goes through the same merge.
+:meth:`~tsdynamics.viz.spec.Plot.add`, which goes through the same merge.
 
 The returned spec renders itself (notebook display, ``.plot()``, ``.save(...)``,
-``.render(...)``); see :class:`tsdynamics.viz.spec.PlotSpec`.
+``.render(...)``); see :class:`tsdynamics.viz.spec.Plot`.
 
 This module imports **no plotting library** — it only builds the backend-agnostic
 IR — so ``import tsdynamics`` stays plot-free (``tsdynamics.viz`` itself is lazy).
@@ -50,9 +50,11 @@ from .spec import (
     Layer,
     Layout,
     Legend,
+    Plot,
     PlotKind,
     PlotSpec,
     apply_figure_keywords,
+    reject_on_keyword,
     split_figure_keywords,
 )
 
@@ -73,14 +75,14 @@ def plot(
     layout: str = "overlay",
     animate: bool | dict[str, Any] | Animation = False,
     fps: float | None = None,
-    on: str | None = None,
+    force: bool = False,
     rows: int | None = None,
     cols: int | None = None,
     share_x: bool | None = None,
     share_y: bool | None = None,
     share_color: bool | None = None,
     **build_kw: Any,
-) -> PlotSpec:
+) -> Plot:
     """Compose one or more things into a single (possibly multi-panel) spec.
 
     Parameters
@@ -88,7 +90,7 @@ def plot(
     *things
         The things to plot — any mix of plottables (a
         :class:`~tsdynamics.data.Trajectory`, a system, an analysis result) and
-        already-built :class:`~tsdynamics.viz.spec.PlotSpec` objects (including
+        already-built :class:`~tsdynamics.viz.spec.Plot` objects (including
         specs returned by an earlier ``plot`` call).  A single list/tuple argument is
         unwrapped, so ``plot([a, b])`` and ``plot(a, b)`` are equivalent.
     layout : {"overlay", "stack", "row", "grid", "frames"}, optional
@@ -108,12 +110,14 @@ def plot(
         :class:`tsdynamics.viz._frames.Frame`).  That is what lets a basin image,
         its attractors, a trajectory and the equilibria share one axes, and what
         refuses an ``(x, y)`` portrait under an ``(x, z)`` overlay.
-    on : {"force"}, optional
-        ``"force"`` overlays a deliberate frame mismatch anyway, warning once
+    force : bool, default False
+        Overlay a deliberate frame mismatch anyway, warning once
         (:class:`~tsdynamics.viz.render.caps.VisualizationDegraded`) instead of
         raising.  Only meaningful for ``layout="overlay"``.
 
-        .. versionadded:: 6.0
+        .. versionchanged:: 6.0
+           Was ``on="force"``, whose whole domain was one string and whose name
+           read as *"on which panel"*.  ``on=`` raises now, naming ``force=``.
     animate : bool or dict or Animation, optional
         Animate the **whole figure**.  A composite plays every panel in lockstep on
         one shared clock (each panel keeps its own per-kind head default); an
@@ -141,11 +145,11 @@ def plot(
         Forwarded to each non-spec thing's ``__plot_spec__`` (``components`` /
         ``kind`` / the per-kind options), so ``plot(a, b, components="x")``
         composes the same view of each.  Cannot be combined with an already-built
-        ``PlotSpec`` argument.
+        ``Plot`` argument.
 
     Returns
     -------
-    PlotSpec
+    Plot
         A single-panel spec (overlay) or a ``COMPOSITE`` spec (panelled).  The
         result renders itself — ``.plot()`` / ``.save(...)`` / ``.render(...)``.
 
@@ -155,7 +159,7 @@ def plot(
     ``"row"`` / ``"grid"``): renderers resolve the theme per panel as
     ``panel.theme or composite.theme or get_theme(None)`` — the panel's own theme
     wins, then the composite-level theme (set via
-    :meth:`~tsdynamics.viz.spec.PlotSpec.theme` on the returned spec), then
+    :meth:`~tsdynamics.viz.spec.Plot.theme` on the returned spec), then
     the active global default.  An overlay (single panel) uses
     ``spec.theme or get_theme(None)`` directly.  To give every panel the same
     theme, call ``result.theme("dark")`` on the composite result; to style
@@ -164,6 +168,7 @@ def plot(
     """
     from tsdynamics.errors import InvalidParameterError
 
+    reject_on_keyword(build_kw, "viz.plot()", "ts.plot(a, b, force=True)")
     items = unwrap_container(things)
     if not items:
         raise InvalidParameterError("plot() needs at least one thing to plot.")
@@ -178,6 +183,15 @@ def plot(
         "share_color": share_color,
     }
 
+    if len(specs) == 1 and isinstance(items[0], PlotSpec):
+        # ``ts.plot(p)`` used to return *p itself*, so the documented "closure"
+        # property was an aliasing trap: ``q = ts.plot(p).relabel(title="…")``
+        # renamed ``p``, because every tweak mutates and returns self.  ``a + b``
+        # already composed "onto a COPY of a"; the two composition doors now
+        # agree.  Only the sole-subject case copies — ``ts.viz.grid(a, b).panels``
+        # genuinely *are* ``a`` and ``b``, which is what makes a grid inspectable.
+        specs = [_fresh_copy(specs[0])]
+
     mode = layout.mode if isinstance(layout, Layout) else layout
     if isinstance(layout, Layout):
         layout_kw = {
@@ -186,11 +200,11 @@ def plot(
         }
     if mode == "overlay":
         _reject_layout_kw_for_overlay(layout_kw)
-        result = _overlay(specs, on=on)
+        result = _overlay(specs, force=force)
     elif mode in _COMPOSITE_MODES:
-        if on is not None:
+        if force:
             raise InvalidParameterError(
-                f"on={on!r} applies to layout='overlay' (one set of axes); panelled "
+                "force=True applies to layout='overlay' (one set of axes); panelled "
                 "layouts draw each thing in its own frame, so there is nothing to force."
             )
         result = _composite(specs, mode, layout_kw)
@@ -207,6 +221,20 @@ def plot(
         _apply_figure_animation(result, animate if animate is not False else True, fps)
     apply_presentation(result, style, figure)
     return result
+
+
+def _fresh_copy(spec: PlotSpec) -> PlotSpec:
+    """Deep-copy a plot and drop its rendered-figure state.
+
+    The same copy :meth:`Plot._compose` (the ``a + b`` operator) takes, hoisted
+    so the operator door and the call door cannot drift.
+    """
+    import copy as _copy
+
+    fresh = _copy.deepcopy(spec)
+    fresh._figure_cache = None
+    fresh._figure_handed_out = False
+    return fresh
 
 
 #: The pre-v6 private spelling of :func:`to_spec`.  ``Plot.add`` imports it by
@@ -285,8 +313,8 @@ def apply_presentation(spec: PlotSpec, style: dict[str, Any], figure: dict[str, 
     """Apply peeled style / figure keywords to a finished spec.
 
     On a composite these apply to **every** panel — that is what the underlying
-    :meth:`~tsdynamics.viz.spec.PlotSpec.style` /
-    :meth:`~tsdynamics.viz.spec.PlotSpec.relabel` tweaks already do (``title``
+    :meth:`~tsdynamics.viz.spec.Plot.style` /
+    :meth:`~tsdynamics.viz.spec.Plot.relabel` tweaks already do (``title``
     stays figure-level).  An undocumented "first panel only" would be exactly the
     two-meanings-for-one-spelling defect this pass exists to end.
     """
@@ -350,8 +378,8 @@ def _apply_figure_animation(
         result.animation = _make(result.kind)
 
 
-def to_spec(thing: Any, build_kw: dict[str, Any]) -> PlotSpec:
-    """Convert one ``thing`` to a :class:`PlotSpec` (forwarding ``build_kw``).
+def to_spec(thing: Any, build_kw: dict[str, Any]) -> Plot:
+    """Convert one ``thing`` to a :class:`Plot` (forwarding ``build_kw``).
 
     The single coercion every composition door goes through: a finished ``Plot``
     passes through untouched (closure), anything carrying ``__plot_spec__``
@@ -397,7 +425,7 @@ def to_spec(thing: Any, build_kw: dict[str, Any]) -> PlotSpec:
 # ---------------------------------------------------------------------------
 
 
-def _overlay(specs: list[PlotSpec], *, on: str | None = None) -> PlotSpec:
+def _overlay(specs: list[PlotSpec], *, force: bool | str | None = False) -> PlotSpec:
     """Merge frame-compatible specs into one single-panel spec.
 
     Two policy decisions live here, and they are the whole of the v6 composability
@@ -430,7 +458,7 @@ def _overlay(specs: list[PlotSpec], *, on: str | None = None) -> PlotSpec:
     if len(specs) == 1:
         return specs[0]
 
-    frame = check_overlay(specs, force=force_requested(on))
+    frame = check_overlay(specs, force=force_requested(force))
 
     # Stable sort by role: field (0) < base (1) < overlay (2).
     order = sorted(range(len(specs)), key=lambda i: (int(role_of(specs[i])), i))

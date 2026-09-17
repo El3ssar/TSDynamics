@@ -132,9 +132,12 @@ def test_item_lines_use_the_compact_form_not_the_member_headline(name):
     Members override ``_as_item()``; a collection that renders ``str(item)``
     instead prints the member's full headline on every row — the class name and
     the system, twice per line, for the whole list.
+
+    The rows are built from the **records** (``.details``), not from what ``[]``
+    hands back — indexing gives numbers, and an array has no readout.
     """
     result = RESULTS[name]
-    member = next(iter(result))
+    member = result.details[0]
     for line in repr(result).splitlines()[1:]:
         assert type(member).__name__ not in line, f"{name}: item row repeats the class name"
     assert member._as_item() in repr(result)
@@ -262,3 +265,157 @@ def test_lyapunov_repr_shows_the_dimension_only_when_something_expands():
     """``D_KY`` on a spectrum with no positive exponent would look like a measurement."""
     assert "D_KY" in repr(_spectrum([0.916, 0.000189, -14.583], system="Lorenz"))
     assert "D_KY" not in repr(_spectrum([1e-5, -2e-5, -3e-4], system="LotkaVolterra"))
+
+
+# ---------------------------------------------------------------------------
+# A verdict must be SUPPORTED by the data (contract §4.2 rule 9)
+#
+# ``WadaResult.applicable`` was the archetype and the only one: five other
+# results printed a confident regime off a degenerate measurement.  Each case
+# below was reproduced on the shipped code before this change; the comment on
+# each records what it printed.
+# ---------------------------------------------------------------------------
+
+
+def _degenerate_cases() -> dict[str, object]:
+    """One deliberately-degenerate instance per hedging rule."""
+    from tsdynamics.analysis.results import (
+        DimensionResult,
+        EmbeddingDimension,
+        ExpansionEntropyResult,
+        GALIResult,
+        RQAResult,
+        UncertaintyExponent,
+    )
+
+    return {
+        # was: "DET = 0.000 · LAM = 0.000 · L_max = 0 · ENTR = 0.000   stochastic
+        #       (few diagonal lines)" — from a matrix with ZERO recurrence points.
+        "rqa-with-no-recurrence-points": RQAResult(
+            recurrence_rate=0.0,
+            determinism=0.0,
+            laminarity=0.0,
+            avg_diagonal_length=0.0,
+            max_diagonal_length=0,
+            divergence=float("inf"),
+            diagonal_entropy=0.0,
+            trapping_time=0.0,
+            max_vertical_length=0,
+            size=300,
+            epsilon=1e-12,
+            theiler_window=0,
+            min_diagonal=2,
+            min_vertical=2,
+            diagonal_lengths=np.empty(0, dtype=int),
+            vertical_lengths=np.empty(0, dtype=int),
+            meta={"analysis": "rqa"},
+        ),
+        # was: "H0 = 0 ± 0   non-chaotic (H0 <= 0)   (0/60 survivors)" — the
+        # ``se > 0.0`` clause let a 0 +/- 0 fit through to the CONFIDENT branch.
+        "expansion-entropy-with-no-survivors": ExpansionEntropyResult(
+            estimate=0.0,
+            stderr=0.0,
+            abscissa=np.arange(9.0),
+            ordinate=np.zeros(9),
+            fit_region=(0, 8),
+            intercept=0.0,
+            n_samples=60,
+            n_survivors=0,
+            meta={"analysis": "expansion_entropy"},
+        ),
+        # was: "D_corr = 1.8183 ± 0   (correlation, q=2, 2 fit pts, R² = 1)" and
+        # ``trusted = True`` — a line through two points always scores R² = 1.
+        "dimension-from-a-two-point-fit": DimensionResult(
+            estimate=1.8183,
+            stderr=0.0,
+            abscissa=np.array([-0.691, -0.23]),
+            ordinate=np.array([-1.0, -0.162]),
+            fit_region=(0, 1),
+            intercept=0.0,
+            kind="correlation",
+            q=2.0,
+            meta={"analysis": "correlation_dimension"},
+        ),
+        # was: "GALI_2 = 1 at the end   regular (GALI bounded)   (1 samples ...)"
+        # — a verdict read off the curve's own starting value.
+        "gali-from-one-sample": GALIResult(
+            k=2,
+            times=np.zeros(1),
+            values=np.ones(1),
+            is_discrete=True,
+            meta={"analysis": "gali", "system": "Henon"},
+        ),
+        # was: "m = 10" with E1 = 0.6 and no flag — the ceiling the search failed
+        # to escape, presented as the answer.
+        "embedding-dimension-at-the-ceiling": EmbeddingDimension(
+            dimension=10,
+            dims=np.arange(1, 11),
+            method="cao",
+            delay=9,
+            afn_e1=np.linspace(0.2, 0.6, 10),
+            meta={"analysis": "cao_dimension"},
+        ),
+        # was: "final-state sensitive (fractal boundary)" off TWO radii — the R²
+        # acceptance gate cannot fail on a two-point fit.
+        "uncertainty-exponent-from-two-radii": UncertaintyExponent(
+            alpha=0.66,
+            boundary_dimension=1.34,
+            state_dimension=2,
+            epsilons=np.array([0.01, 0.02]),
+            f=np.array([0.10, 0.16]),
+            r_squared=1.0,
+            meta={"analysis": "uncertainty_exponent"},
+        ),
+        # was: "not Wada (W < 0.95)" for an image with 2 basins — the archetype,
+        # already fixed; kept here so the whole family is checked in one place.
+        "wada-with-two-basins": RESULTS["WadaResult"],
+        # A dense two-point recurrence plot is not degenerate; the sparse one is.
+        "recurrence-matrix-is-not-a-verdict": RESULTS["RecurrenceMatrix"],
+    }
+
+
+#: The words a hedged repr may use.  ``not applicable`` / ``UNTRUSTED`` /
+#: ``did not saturate`` are the three shapes; a bare regime word is the defect.
+_HEDGES = ("not applicable", "UNTRUSTED", "did not saturate", "too few")
+
+#: A confident regime word must NOT appear in a hedged repr.
+_REGIME_WORDS = ("chaotic", "regular", "deterministic", "stochastic", "final-state sensitive")
+
+
+@pytest.mark.parametrize("case", sorted(_degenerate_cases()))
+def test_a_degenerate_result_hedges(case):
+    """A confident number where nothing was measured is a wrong answer."""
+    result = _degenerate_cases()[case]
+    text = repr(result)
+    if case == "recurrence-matrix-is-not-a-verdict":
+        assert result._interpretation() is None  # it classifies nothing at all
+        return
+    assert any(h in text for h in _HEDGES), f"{case}: the repr states a verdict it cannot support"
+    if case != "embedding-dimension-at-the-ceiling":
+        assert not any(w in text for w in _REGIME_WORDS), f"{case}: named a regime anyway"
+
+
+def test_a_degenerate_result_reports_none_not_false_for_its_verdict():
+    """``None`` means *not measured*; ``False`` would mean *measured negative*."""
+    cases = _degenerate_cases()
+    assert cases["rqa-with-no-recurrence-points"].deterministic is None
+    assert cases["expansion-entropy-with-no-survivors"].chaotic is None
+    assert cases["gali-from-one-sample"].chaotic is None
+    assert cases["uncertainty-exponent-from-two-radii"].final_state_sensitive is None
+    assert cases["wada-with-two-basins"].wada is None
+    assert cases["dimension-from-a-two-point-fit"].trusted is False
+    assert cases["embedding-dimension-at-the-ceiling"].saturated is False
+
+
+def test_a_degenerate_result_exports_none_for_the_number_it_did_not_measure():
+    """``to_dict(full=True)`` must not hand back a vacuous ``0.0`` as a reading."""
+    cases = _degenerate_cases()
+    assert cases["rqa-with-no-recurrence-points"].to_dict(full=True)["determinism"] is None
+    assert cases["wada-with-two-basins"].to_dict(full=True)["W"] is None
+
+
+def test_r_squared_is_not_printed_for_a_fit_that_cannot_fail_it():
+    """``R² = 1`` off two points is an identity, not a diagnostic."""
+    text = repr(_degenerate_cases()["dimension-from-a-two-point-fit"])
+    assert "R² undefined (2 fit pts)" in text
+    assert "R² = 1" not in text

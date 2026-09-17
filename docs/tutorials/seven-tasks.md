@@ -173,12 +173,14 @@ print(ts.analysis.fixed_points(lor))
 
 The two nontrivial equilibria sit at the centre of each wing of the butterfly,
 and their complex eigenvalue pair is why the orbit *spirals* out of a wing before
-switching. Each point carries its own linearisation:
+switching. Indexing gives you the point; the linearisation of every point comes
+back as one array:
 
 ```python
 fps = ts.analysis.fixed_points(lor)
-fps[0].eigenvalues     # the Jacobian spectrum at that point
-fps[0].stable          # False
+fps[0]                 # the first equilibrium, as a (dim,) array
+fps.eigenvalues[0]     # the Jacobian spectrum at that point
+fps.is_stable[0]       # False
 ```
 
 **Regions are plain bounds** — one `(lo, hi)` pair per state component, and never

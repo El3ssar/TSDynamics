@@ -115,6 +115,10 @@ _DEMO_WINDOW: dict[str, Any] = {"xlim": (0.0, 8.0), "ylim": (0.0, 6.0)}
 
 @plot_transform(
     name="nullclines",
+    # It evaluates the vector field at points no trajectory visits, through an
+    # analysis that requires a continuous SYSTEM (measured: a bare callable is
+    # refused by the estimator itself).
+    subjects=("flow",),
     source="model",
     kind=PlotKind.PHASE_PORTRAIT_2D,
     frame=FrameSpace.STATE2,
@@ -248,6 +252,9 @@ def _field_of_callable(
 
 @plot_transform(
     name="vector_field",
+    # It evaluates the vector field at points no trajectory visits: a continuous
+    # system, or a bare right-hand side f(u, t) with no system around it.
+    subjects=("flow", "function"),
     aliases=("direction_field",),
     source="model",
     kind=PlotKind.VECTOR_FIELD,
@@ -363,6 +370,10 @@ def vector_field(
 
 @plot_transform(
     name="flow_speed",
+    # It evaluates the vector field at points no trajectory visits, through an
+    # analysis that requires a continuous SYSTEM (measured: a bare callable is
+    # refused by the estimator itself).
+    subjects=("flow",),
     source="model",
     kind=PlotKind.PHASE_PORTRAIT_2D,
     frame=FrameSpace.STATE2,
@@ -440,6 +451,10 @@ def flow_speed(
 
 @plot_transform(
     name="streamlines",
+    # It evaluates the vector field at points no trajectory visits, through an
+    # analysis that requires a continuous SYSTEM (measured: a bare callable is
+    # refused by the estimator itself).
+    subjects=("flow",),
     source="model",
     kind=PlotKind.PHASE_PORTRAIT_2D,
     frame=FrameSpace.STATE2,
@@ -549,6 +564,10 @@ def _demo_trace_determinant() -> tuple[Any, dict[str, Any]]:
 
 @plot_transform(
     name="trace_determinant",
+    # It evaluates the vector field at points no trajectory visits, through an
+    # analysis that requires a continuous SYSTEM (measured: a bare callable is
+    # refused by the estimator itself).
+    subjects=("flow",),
     source="model",
     kind=PlotKind.DIAGNOSTIC_CURVE,
     frame=FrameSpace.PARAM2,

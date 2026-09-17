@@ -82,6 +82,21 @@ WHY: dict[tuple[str, str], tuple[str, str | None] | tuple[str, str | None, str]]
         "so moving t0 would silently reinterpret the past.",
         "{cls}().run(final_time=100.0, dt=0.1)",
     ),
+    # --- the engine ---------------------------------------------------------
+    # ``backend`` IS a ``run`` keyword on every family; these rows answer it at
+    # ``reinit``, where only the two families with a resumable engine handle
+    # (ODE, DDE) can honour it.  Accepting it and doing nothing is the
+    # silent-wrong-answer defect this module exists to prevent.
+    ("backend", "map"): (
+        "backend chooses the engine that RUNS a trajectory; a map's step() drives "
+        "the pure-Python _step kernel, so a live stepper has no engine to choose.",
+        "{cls}().run(steps=1000, backend='interp')",
+    ),
+    ("backend", "sde"): (
+        "backend chooses the engine that RUNS a path; step() draws its own Wiener "
+        "increment in Python, so a live SDE stepper has no engine to choose.",
+        "{cls}().run(final_time=10.0, dt=0.01, backend='interp')",
+    ),
     # --- the initial condition --------------------------------------------
     ("history", "ode"): (
         "history is a *delay* keyword: a delay system's initial condition is a "

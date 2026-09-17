@@ -16,6 +16,8 @@ Five defects are reproduced-and-fixed here, every one measured on the v5 tree:
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import numpy as np
 import pytest
 
@@ -85,7 +87,7 @@ def test_a_wrapped_system_does_not_die_on_params():
     # PoincareMap(wrapped).params used to raise a raw AttributeError from
     # derived/_base.py, *after* the march had already succeeded.
     inner = ts.WrappedSystem(
-        lambda u, dt: u + dt * np.array([-u[1], u[0]]), dim=2, family="ode", initial=[1.0, 0.0]
+        lambda u, dt: u + dt * np.array([-u[1], u[0]]), dim=2, family="ode", ic=[1.0, 0.0]
     )
     pmap = PoincareMap(inner, ("y0", 0.0))
     assert dict(pmap.params) == {}
@@ -138,11 +140,19 @@ class TestEnsembleIsOneNoun:
         assert batch.final.shape == (2, 3)
         assert np.allclose(batch.final[0], batch[0].y[-1])
 
-    def test_the_batch_is_still_a_list_of_trajectories(self):
+    def test_the_batch_is_a_read_only_sequence_of_trajectories(self):
+        """It indexes and iterates like the list it used to be — and cannot be mutated.
+
+        A batch is a *result*.  Ten list-mutation verbs on a result's tab surface
+        were ten ways to make ``.final`` disagree with the trajectories it came
+        from, so ``TrajectoryBatch`` is a ``Sequence`` now, not a ``list``.
+        """
         band = ts.systems.Lorenz().ensemble([[1.0, 1.0, 1.0]])
         batch = band.run(final_time=1.0, dt=0.5)
-        assert isinstance(batch, list)
+        assert isinstance(batch, Sequence)
         assert isinstance(batch[0], ts.Trajectory)
+        assert [type(t) for t in batch] == [ts.Trajectory]
+        assert not hasattr(batch, "append")
 
     def test_an_sde_batch_seeds_each_member_by_index(self):
         # The engine's parallel-equals-serial contract: member i depends only on
@@ -165,7 +175,7 @@ class TestProjectAndTangentLeftTheObjectButNotTheLibrary:
         with pytest.raises(AttributeError) as err:
             ts.systems.Lorenz().project(0, 2)
         text = str(err.value)
-        assert 'traj[["x", "z"]]' in text
+        assert 'traj["x", "z"]' in text
         assert "ts.derived.ProjectedSystem" in text
 
     def test_the_trajectory_slice_genuinely_replaces_project(self):

@@ -486,20 +486,34 @@ def test_the_four_registries_all_answer_find() -> None:
 
 
 def test_renderers_introspection_is_honest_before_the_first_render() -> None:
-    """Measured before v6: ``names()`` answered ``[]`` until something had drawn."""
+    """Measured before v6: ``names()`` answered ``[]`` until something had drawn.
+
+    ``names()`` is now **sorted**, like the three sibling registries — a listing
+    is a listing, and the unsorted order leaked into every "installed backends
+    are …" message.  The *preference* it used to encode is a dispatch fact, so it
+    is asserted where it lives: a no-backend ``render()`` draws on matplotlib,
+    and ``find()`` (where order is the answer) still reports preference order.
+    """
     import subprocess
     import sys
 
     code = (
+        "import matplotlib; matplotlib.use('Agg');"
         "import tsdynamics as ts;"
         "print(','.join(ts.viz.renderers.names()));"
-        "print(','.join(ts.viz.renderers.find(writes='.svg')))"
+        "print(','.join(ts.viz.renderers.find(writes='.svg')));"
+        "import numpy as np;"
+        "p = ts.plot(np.sin(np.linspace(0, 6, 40)));"
+        "print(type(p.render()).__module__.split('.')[0])"
     )
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
     assert out.returncode == 0, out.stderr
-    listed, svg = out.stdout.strip().splitlines()
-    assert listed.split(",")[0] == "matplotlib", listed
+    listed, svg, drew_with = out.stdout.strip().splitlines()
+    names = listed.split(",")
+    assert names == sorted(names), listed
+    assert "matplotlib" in names, listed
     assert svg == "matplotlib", svg
+    assert drew_with == "matplotlib", drew_with
 
 
 def test_writes_is_split_into_static_and_animated_because_savefig_disagrees() -> None:
@@ -514,7 +528,10 @@ def test_writes_is_split_into_static_and_animated_because_savefig_disagrees() ->
     caps = ts.viz.renderers.get("matplotlib")
     assert caps.can_save(".png") and not caps.can_save(".png", animated=True)
     assert caps.can_save(".mp4", animated=True) and not caps.can_save(".mp4")
-    assert caps.can_save(".gif") and caps.can_save(".gif", animated=True)
+    # ``.gif`` is a MOVIE container, so it is declared animated-only — even
+    # though ``savefig`` accepts it and fills it with a single frame.  See
+    # ``test_a_gif_of_a_still_is_refused_like_an_mp4``.
+    assert caps.can_save(".gif", animated=True) and not caps.can_save(".gif")
     assert ".webp" in caps.writes_static, "declared and, before v6, unreachable"
     assert ".pgf" in caps.writes_static, "works, and was simply never declared"
     assert caps.writes == caps.writes_static | caps.writes_animated
@@ -535,7 +552,6 @@ def test_writes_is_split_into_static_and_animated_because_savefig_disagrees() ->
         ".tif",
         ".tiff",
         ".webp",
-        ".gif",
     ],
 )
 def test_every_extension_matplotlib_declares_statically_can_actually_be_written(
@@ -597,3 +613,94 @@ def ts_viz_renderers_find(ext: str) -> list[str]:
     import tsdynamics as ts
 
     return ts.viz.renderers.find(writes=ext)
+
+
+# ---------------------------------------------------------------------------
+# v6 — one vocabulary, honest verbs
+# ---------------------------------------------------------------------------
+
+
+def test_a_gif_of_a_still_is_refused_like_an_mp4(tmp_path) -> None:
+    """Both are movie containers, so both must answer the same question the same way.
+
+    Measured before: ``ts.plot(traj).save("x.gif")`` wrote an 18 923-byte file
+    containing **one frame** — a still, in a movie container, that looked like a
+    working animation — while its sibling ``.mp4`` raised by name.  ``.gif`` left
+    matplotlib's ``writes_static`` declaration; an *animated* plot still writes
+    one through ``writes_animated``.
+    """
+    pytest.importorskip("matplotlib")
+    import numpy as np
+
+    t = np.linspace(0.0, 1.0, 8)
+    spec = PlotSpec(kind=PlotKind.TIME_SERIES, layers=[Layer(PlotKind.LINE, {"x": t, "y": t})])
+    with pytest.raises(Exception, match="movie format and this Plot is not animated"):
+        spec.save(str(tmp_path / "still.gif"))
+    # ... and the animated form of the very same plot writes one.
+    spec.animate(n_frames=3, fps=4)
+    assert Path(spec.save(str(tmp_path / "movie.gif"))).stat().st_size > 0
+
+
+def test_the_mpl_alias_resolves_at_every_door(tmp_path) -> None:
+    """One alias table: ``render``, ``save`` and ``renderers.get`` must agree.
+
+    Measured before: ``p.render(backend="mpl")`` worked while
+    ``p.save(path, backend="mpl")`` answered *"no backend named 'mpl' is
+    registered"* and ``ts.viz.renderers.get("mpl")`` *"unknown rendering backend
+    'mpl'"* — one spelling accepted at one door out of three.
+    """
+    pytest.importorskip("matplotlib")
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    import tsdynamics as ts
+
+    t = np.linspace(0.0, 1.0, 8)
+    spec = PlotSpec(kind=PlotKind.TIME_SERIES, layers=[Layer(PlotKind.LINE, {"x": t, "y": t})])
+    assert ts.viz.renderers.get("mpl").name == "matplotlib"
+    assert type(spec.render(backend="mpl")).__module__.split(".")[0] == "matplotlib"
+    assert Path(spec.save(str(tmp_path / "z.png"), backend="mpl")).stat().st_size > 0
+    plt.close("all")
+
+
+def test_the_four_registries_answer_the_same_four_verbs() -> None:
+    """``register`` / ``names`` / ``find`` / ``get`` — learn one, know all four.
+
+    Measured before v6, the promise was false in four dimensions at once:
+    ``transforms`` was not callable while the other three were; ``transforms``
+    and ``renderers`` returned unsorted listings; ``find("free text")`` raised
+    ``TypeError`` on **four** of five; and ``find`` returned names from three and
+    objects from ``themes`` / ``styles``.
+    """
+    import tsdynamics as ts
+
+    for name in ("transforms", "primitives", "renderers", "themes", "styles"):
+        reg = getattr(ts.viz, name)
+        assert callable(reg), f"ts.viz.{name}() must list the names"
+        listing = reg.names()
+        assert listing == sorted(listing), f"ts.viz.{name}.names() must be sorted"
+        assert reg() == listing, f"ts.viz.{name}() must equal .names()"
+        by_text = reg.find("e")  # the positional free-text query, on all five
+        assert isinstance(by_text, list)
+        assert all(isinstance(item, str) for item in by_text), (
+            f"ts.viz.{name}.find() must return names; get(name) is how you reach a record"
+        )
+        assert set(by_text) <= set(reg.names(aliases=True) if name == "styles" else listing)
+        for entry in listing[:2]:
+            assert reg.get(entry) is not None
+        assert callable(reg.register), f"ts.viz.{name}.register must exist"
+
+
+def test_the_style_vocabulary_is_closed_and_says_so() -> None:
+    """``styles`` answers the listing verbs, and **refuses** ``register`` by name.
+
+    It is the one table of the five that is a *contract* rather than an
+    extension point: every key declares which backends honor it, and one nobody
+    draws would be a keyword that silently does nothing.  A refusal that names
+    the two things that ARE extensible is better than a missing attribute.
+    """
+    import tsdynamics as ts
+    from tsdynamics.errors import InvalidParameterError
+
+    with pytest.raises(InvalidParameterError, match="style vocabulary is closed"):
+        ts.viz.styles.register("glow")

@@ -17,13 +17,14 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, ClassVar
 
 import numpy as np
 
 from tsdynamics.errors import InvalidParameterError, remedy
 
 from .._result import AnalysisResult
+from .._result_base import _unknown_result_attribute
 from .._result_json import _sig
 from ._common import _as_points
 from .matrix import DEFAULT_RECURRENCE_RATE
@@ -66,6 +67,10 @@ class WindowedRQA(AnalysisResult):
         Stride between consecutive windows in samples.
     """
 
+    #: Served through this class's own ``__getattr__``, so ``dir()`` cannot see
+    #: them; declared here so a wrong guess can still be corrected to one.
+    _extra_attribute_names: ClassVar[tuple[str, ...]] = _MEASURES
+
     centers: np.ndarray = field(default_factory=lambda: np.empty(0), compare=False)
     results: tuple[RQAResult, ...] = field(default=(), repr=False, compare=False)
     window: int = 0
@@ -74,14 +79,52 @@ class WindowedRQA(AnalysisResult):
     def __len__(self) -> int:  # noqa: D105
         return len(self.results)
 
-    def __iter__(self) -> Iterator[RQAResult]:  # noqa: D105
-        return iter(self.results)
+    def __iter__(self) -> Iterator[np.ndarray]:
+        """Iterate the per-window measure ROWS — numbers, not wrappers."""
+        return iter(self.table())
 
     def __getitem__(self, key: Any) -> Any:
-        """Return the window at position ``key`` (or a list, for a slice)."""
-        if isinstance(key, slice):
-            return list(self.results[key])
-        return self.results[key]
+        """Return window ``key``'s measure row, shape ``(9,)`` (:attr:`measures` names it).
+
+        Numbers, not a wrapper (contract §4.2 rule 6): ``w[0]`` used to hand back
+        an :class:`~tsdynamics.analysis.results.RQAResult`, so ``np.asarray(w)``
+        was a ``(n_windows,)`` array of *objects* that arithmetics into a
+        ``TypeError``.  The per-window readouts are still there, by name, at
+        :attr:`details`.
+        """
+        return self.table()[key]
+
+    def __array__(self, dtype: Any = None, copy: bool | None = None) -> np.ndarray:
+        """Return the ``(n_windows, 9)`` table — one row per window, one column per measure."""
+        arr = self.table()
+        return arr.astype(dtype, copy=bool(copy)) if dtype is not None else arr
+
+    @property
+    def details(self) -> tuple[RQAResult, ...]:
+        """The per-window readouts, in order — the objects ``[]`` no longer hands back.
+
+        ``w.details[3]`` is window 3's full
+        :class:`~tsdynamics.analysis.results.RQAResult`, repr, verdict and all.
+        """
+        return self.results
+
+    @property
+    def measures(self) -> tuple[str, ...]:
+        """Names of the columns of :meth:`table` / ``np.asarray(self)`` / ``self[i]``."""
+        return _MEASURES
+
+    def table(self) -> np.ndarray:
+        """Return every measure over every window as one ``(n_windows, 9)`` array.
+
+        Columns are :attr:`measures`, in that order.
+
+        Returns
+        -------
+        numpy.ndarray
+        """
+        return np.array(
+            [[float(getattr(r, name)) for name in _MEASURES] for r in self.results], dtype=float
+        ).reshape(len(self.results), len(_MEASURES))
 
     def measure(self, name: str) -> np.ndarray:
         """Return one RQA measure as an array over windows.
@@ -133,7 +176,12 @@ class WindowedRQA(AnalysisResult):
         # untouched and unknown names (incl. copy/pickle dunders) raise plainly.
         if name in _MEASURES:
             return self.measure(name)
-        raise AttributeError(name)
+        if name.startswith("_"):
+            raise AttributeError(name)
+        # A wrong guess must name THIS class and the nearest measure: this was the
+        # only one of the 32 results whose ``AttributeError`` was a bare
+        # ``AttributeError("determinsm")``, naming nothing and suggesting nothing.
+        raise _unknown_result_attribute(self, name)
 
     def _answer(self) -> str:
         """Return how many windows were measured, and their geometry."""

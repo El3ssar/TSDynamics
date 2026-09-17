@@ -89,10 +89,21 @@ def test_dde_constant_history_accepted() -> None:
 
 @pytest.mark.slow
 def test_dde_ic_used_when_no_history() -> None:
-    """With no history, ``constant_past(ic)`` is used and the IC drives integration."""
+    """With no history, ``constant_past(ic)`` is used and the IC drives integration.
+
+    It drives it *without latching*: v6 stopped ``run(ic=)`` mutating
+    ``self.ic``, so a later bare ``run()`` cannot silently start somewhere the
+    caller never asked for.  This asserted the latch, which made it a test of
+    the defect rather than of the docstring above it.
+    """
     import tsdynamics as ts
 
     mg = ts.systems.MackeyGlass()
     traj = mg.run(final_time=3.0, dt=0.5, ic=[1.5])
     assert np.all(np.isfinite(traj.y))
-    np.testing.assert_array_almost_equal(mg.ic, [1.5])
+    np.testing.assert_array_almost_equal(traj.y[0], [1.5])
+    # a different IC is a different past, so it is genuinely a different run
+    other = mg.run(final_time=3.0, dt=0.5, ic=[0.7])
+    np.testing.assert_array_almost_equal(other.y[0], [0.7])
+    assert not np.allclose(traj.y, other.y)
+    assert mg.ic is None  # ...and neither call latched

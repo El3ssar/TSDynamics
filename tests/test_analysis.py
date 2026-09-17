@@ -102,20 +102,22 @@ class TestFixedPoints:
         a, b = 1.4, 0.3
         disc = np.sqrt((1 - b) ** 2 + 4 * a)
         expected_x = sorted([(-(1 - b) + disc) / (2 * a), (-(1 - b) - disc) / (2 * a)])
-        found_x = sorted(fp.x[0] for fp in fps)
+        found_x = sorted(fp[0] for fp in fps)
         np.testing.assert_allclose(found_x, expected_x, rtol=1e-8)
         # classic Hénon fixed points are both unstable (saddles)
-        assert all(not fp.stable for fp in fps)
+        assert not any(fps.stable)
         # y* = b x*
+        # v6 D1: indexing/iterating a result set yields NUMBERS, so ``fp`` is
+        # already the ``(dim,)`` point; the record is at ``fps.details[i]``.
         for fp in fps:
-            assert fp.x[1] == pytest.approx(b * fp.x[0], rel=1e-8)
+            assert fp[1] == pytest.approx(b * fp[0], rel=1e-8)
 
     def test_logistic_fixed_points(self) -> None:
         m = ts.systems.Logistic(params={"r": 2.5})
         fps = ts.analysis.fixed_points(m, region=[(-0.5, 1.5)], seed=0)
-        xs = sorted(fp.x[0] for fp in fps)
+        xs = sorted(fp[0] for fp in fps)
         np.testing.assert_allclose(xs, [0.0, 1 - 1 / 2.5], atol=1e-9)
-        stable = {round(fp.x[0], 6): fp.stable for fp in fps}
+        stable = {round(fp.x[0], 6): fp.stable for fp in fps.details}
         assert stable[0.0] is False
         assert stable[round(1 - 1 / 2.5, 6)] is True
 
@@ -128,13 +130,14 @@ class TestFixedPoints:
 class TestMaxLyapunov:
     def test_logistic_r4_ln2(self) -> None:
         m = ts.systems.Logistic(params={"r": 4.0})
-        lam = ts.analysis.max_lyapunov(m, ic=[0.3], n=600, steps_per=3, seed=1)
+        # v6: on a map ``n`` counts ITERATIONS, the same unit lyapunov_spectrum
+        # counts in — it used to count rescaling *cycles* of ``steps_per`` each,
+        # so the two doors disagreed for one nominal n.
+        lam = ts.analysis.max_lyapunov(m, ic=[0.3], n=1800, seed=1)
         assert lam == pytest.approx(np.log(2), abs=0.1)
 
     def test_henon(self) -> None:
-        lam = ts.analysis.max_lyapunov(
-            ts.systems.Henon(), ic=[0.1, 0.1], n=600, steps_per=3, seed=1
-        )
+        lam = ts.analysis.max_lyapunov(ts.systems.Henon(), ic=[0.1, 0.1], n=1800, seed=1)
         assert lam == pytest.approx(0.42, abs=0.12)
 
     def test_dde_raises(self) -> None:
@@ -155,7 +158,7 @@ def test_max_lyapunov_lorenz() -> None:
         dt=0.05,
         n=600,
         steps_per=4,
-        transient=1000,
+        transient=50.0,  # v6: TIME UNITS for a flow (was 1000 protocol steps = 50 t)
         seed=2,
     )
     assert lam == pytest.approx(0.906, abs=0.2)
@@ -190,7 +193,7 @@ def test_lorenz_kaplan_yorke_from_spectrum() -> None:
         dt=0.1,
         transient=50.0,
         final_time=300.0,
-        method="dop853",
+        solver="dop853",  # v6: solver= is the kernel; method= is an estimator
         rtol=1e-7,
         atol=1e-10,
     )

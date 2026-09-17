@@ -688,7 +688,7 @@ def test_ts_viz_styles_lists_the_vocabulary_and_who_honors_it() -> None:
 
     # ``honored_by`` is a declaration the honoring-contract gate already proves
     # true; here it just has to be *reachable*.
-    threejs = {k.name for k in table.find(honored_by="threejs")}
+    threejs = set(table.find(honored_by="threejs"))
     assert "color" in threejs and "cmap" not in threejs
     assert set(table.names(aliases=True)) > set(table.names())
 
@@ -763,7 +763,9 @@ def test_themes_is_a_registry_and_register_takes_plain_keywords() -> None:
     with pytest.raises(InvalidParameterError, match="must be a Theme"):
         ts.viz.themes.register("bad", {"palette": ("#000",)})  # type: ignore[arg-type]
 
-    assert ts.viz.themes.find(dpi=600) == [paper]
+    # ``find`` returns NAMES on every registry (``get`` is how you reach a record).
+    assert ts.viz.themes.find(dpi=600) == ["paper"]
+    assert ts.viz.themes.get("paper") == paper
     assert repr(ts.viz.themes).startswith("ts.viz.themes:")
 
 

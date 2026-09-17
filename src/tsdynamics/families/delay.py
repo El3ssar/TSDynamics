@@ -8,7 +8,12 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import numpy as np
 
-from tsdynamics.errors import ConvergenceError, InvalidInputError, InvalidParameterError
+from tsdynamics.errors import (
+    ConvergenceError,
+    InvalidInputError,
+    InvalidParameterError,
+    remedy,
+)
 from tsdynamics.utils.tolerances import (
     DDE_ATOL,
     DDE_LYAPUNOV_ATOL,
@@ -137,7 +142,12 @@ class DelaySystem(SystemBase, ABC):
     _past_ic: np.ndarray | None = None
     _state_now: np.ndarray | None = None
     _t_now: float = 0.0
-    _default_step_dt: ClassVar[float] = 0.1
+    _step_backend: str | None = None
+    #: Bare ``step()`` advance, in time units.  The same number the other two
+    #: continuous families use: it was ``0.1`` here, which made ``step()`` mean
+    #: a different amount of dynamics on a DDE than on an ODE for no
+    #: mathematical reason (the method of steps bounds nothing at 0.1).
+    _default_step_dt: ClassVar[float] = 0.01
 
     # ------------------------------------------------------------------ #
     # Subclass interface
@@ -278,6 +288,7 @@ class DelaySystem(SystemBase, ABC):
         params: dict[str, Any] | None = None,
         rtol: float | None = None,
         atol: float | None = None,
+        backend: str | None = None,
         **unknown: Any,
     ) -> None:
         """
@@ -285,21 +296,51 @@ class DelaySystem(SystemBase, ABC):
 
         DDE state is a history *function*; the protocol restart uses a
         constant past (the same convention as ``lyapunov_spectrum``).  For a
-        custom history, use :meth:`integrate` with ``history=`` and continue
-        from ``traj.y[-1]``.
+        custom history, call :meth:`run` with ``history=`` and continue from
+        ``traj.y[-1]``.
 
         Stepping is forward-only and re-integrates from the constant past on the
         Rust DDE engine each call (the method of steps has no stateful one-step
-        restart), so it is correct but ``O(steps²)`` — use :meth:`integrate` for
-        a full trajectory.
+        restart), so it is correct but ``O(steps²)`` — use :meth:`run` for a full
+        trajectory.
+
+        Parameters
+        ----------
+        u : array-like, optional
+            The **constant past** to restart from — ``dim`` numbers, held for
+            every ``s ≤ 0``.
+        t : float, optional
+            Must be ``0.0``: a delay system's clock is pinned to its history
+            window ``[-tau_max, 0]``.
+        params : dict, optional
+            Parameter overrides applied to this system **in place**.
+        rtol, atol : float, optional
+            Tolerances for the per-step march.  Default
+            :data:`~tsdynamics.utils.tolerances.DDE_RTOL` / ``DDE_ATOL``.
+        backend : {"jit", "interp"}, optional
+            Which evaluator drives the per-step march — the same word
+            :meth:`run` takes, accepted here for the same reason
+            :meth:`ContinuousSystem.reinit` accepts it: a stepping loop must be
+            able to choose its engine.  ``"reference"`` is refused (there is no
+            pure-Python delay integrator).
         """
         reject_unknown_run_keywords(
             self,
             unknown,
             family="dde",
-            accepted=("t", "params", "rtol", "atol"),
+            accepted=("t", "params", "rtol", "atol", "backend"),
             verb="reinit",
         )
+        if backend is not None:
+            from tsdynamics.engine.run import resolve_backend
+
+            if resolve_backend(backend) == "reference":
+                raise InvalidParameterError(
+                    f"{type(self).__name__}.reinit(backend='reference'): there is no "
+                    "pure-Python delay integrator, so a DDE has no reference path."
+                    + remedy(f"{type(self).__name__}().reinit(backend='interp')")
+                )
+            self._step_backend = backend
         if params:
             for k, v in params.items():
                 self.params[k] = v
@@ -319,7 +360,14 @@ class DelaySystem(SystemBase, ABC):
         self._t_now = 0.0
 
     def step(self, n_or_dt: float | None = None) -> np.ndarray:
-        """Advance by ``dt`` (default 0.1, forward-only) and return the new state."""
+        """Advance by ``n_or_dt`` time units and return the new state (forward-only).
+
+        ``n_or_dt`` is a **time increment** here, as on every continuous family;
+        omitting it advances by ``_default_step_dt`` (``0.01``, the same number
+        :class:`~tsdynamics.families.ContinuousSystem` and
+        :class:`~tsdynamics.families.StochasticSystem` use — it was ``0.1``, a
+        difference no mathematics asked for).  A map counts iterations instead.
+        """
         if self._past_ic is None:
             self.reinit()
         dt = float(n_or_dt) if n_or_dt is not None else self._default_step_dt
@@ -330,6 +378,7 @@ class DelaySystem(SystemBase, ABC):
             ic=self._past_ic,
             rtol=self._step_rtol if self._step_rtol is not None else self._default_rtol,
             atol=self._step_atol if self._step_atol is not None else self._default_atol,
+            backend=self._step_backend,
         )
         state = np.asarray(traj.y[-1], dtype=float)
         if not np.isfinite(state).all():
@@ -383,15 +432,28 @@ class DelaySystem(SystemBase, ABC):
         Parameters
         ----------
         final_time : float
-            Integration end time. Default 100.0.
-        dt : float
-            Output sampling interval.
+            End of the integration window, **in time units** — the horizon word
+            for a flow.  Default 100.0.
+        dt : float, optional
+            Output sampling interval, **in time units**.  ``None`` (the default)
+            means this family's ``_default_dt``, which ``system.info`` prints
+            under ``defaults``.  The method of steps lands on every sample, so
+            ``dt`` also bounds the internal step here (see ``rtol``/``atol``).
         ic : array-like, optional
-            Used for constant past when ``history`` is ``None``.
-            Falls back to ``self.ic``, then random.
+            The **constant** past, used when ``history`` is ``None`` — ``dim``
+            numbers, one per state component, held for every ``s ≤ 0``.  Falls
+            back to ``self.ic``, then a random draw.
         history : callable, optional
-            ``h(s) → sequence`` of length ``dim`` for ``s ≤ 0``.
-            If ``None``, a constant past equal to ``ic`` is used.
+            The past, as a function of the **lag**: ``h(s)`` is called with
+            ``s ≤ 0`` (``s = 0`` is the start of the run, ``s = -tau`` one
+            delay before it) and must return ``dim`` numbers — the state at that
+            moment of the pre-history.  It is never called with ``s > 0``.
+            ``None`` (the default) uses a constant past equal to ``ic``::
+
+                mg.run(final_time=500.0, history=lambda s: [1.0 + 0.1 * np.sin(0.2 * s)])
+
+            A constant past sitting exactly on a fixed point has no dynamics to
+            grow, which is why the Lyapunov exponents of such a run are ~0.
         rtol, atol : float
             Integration tolerances.  Default
             :data:`~tsdynamics.utils.tolerances.DDE_RTOL` /
@@ -428,13 +490,14 @@ class DelaySystem(SystemBase, ABC):
             an ODE-only feature: the one-point heuristic reads only the
             instantaneous Jacobian and would ignore the delay terms that shape a
             DDE's spectrum (it could even select an implicit kernel the
-            method-of-steps engine cannot drive), so pass another explicit
-            ``method=`` directly if you need one.
+            method-of-steps engine cannot drive), so name another explicit
+            kernel with ``solver=`` if you need one.
         seed : int, optional
             Seed for the **random initial-condition draw** (the constant past when
             ``history`` is ``None``) — the same meaning ``seed=`` has on every
-            other family's trajectory producer and on the constructor
-            (:meth:`SystemBase.ic_generator`).  Inert unless a draw actually
+            other family's trajectory producer and on the constructor.  (An SDE
+            has a second source of randomness, so there ``seed=`` seeds the
+            noise path as well as the draw.)  Inert unless a draw actually
             happens: an explicit ``ic``, an already-resolved ``self.ic`` and a
             class-level ``default_ic`` all take priority.  The resolved seed is
             recorded on ``traj.meta["ic_seed"]``.
@@ -444,8 +507,8 @@ class DelaySystem(SystemBase, ABC):
             Leading stretch of the run to discard, in **time units** (the same
             unit as ``final_time``).  The window is extended to
             ``transient + final_time`` and everything before ``transient``
-            dropped.  Spelled identically on every family and every
-            trajectory-producing verb.
+            dropped.  One word on every family, in that family's **own horizon
+            unit**: time here, **iterations** on a map.
 
             .. versionadded:: 6.0
 
@@ -590,7 +653,7 @@ class DelaySystem(SystemBase, ABC):
 
             .. versionchanged:: 6.0
                Default moved from ``"interp"`` to ``"jit"`` (see
-               :meth:`integrate`).
+               :meth:`run`).
 
         Notes
         -----

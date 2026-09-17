@@ -73,7 +73,7 @@ def test_trajectory_surface_from_data_layer() -> None:
 
     # named + integer component access
     np.testing.assert_array_equal(traj["y"], y[:, 1])
-    np.testing.assert_array_equal(traj[["x", "z"]], y[:, [0, 2]])
+    np.testing.assert_array_equal(traj["x", "z"], y[:, [0, 2]])
     np.testing.assert_array_equal(traj.component("z"), traj.component(2))
 
     # transient trimming preserves meta

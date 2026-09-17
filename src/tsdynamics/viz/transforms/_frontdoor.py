@@ -41,7 +41,13 @@ from typing import Any, cast
 
 from ..compose import _plot_spec_of, unwrap_container
 from ..compose import plot as compose_plot
-from ..spec import FIGURE_KEYS, Plot, apply_figure_keywords, split_figure_keywords
+from ..spec import (
+    FIGURE_KEYS,
+    Plot,
+    apply_figure_keywords,
+    reject_on_keyword,
+    split_figure_keywords,
+)
 from ._registry import TransformCall, build_spec, get
 
 __all__ = ["plot"]
@@ -364,10 +370,29 @@ def _admits(selector: str | TransformCall, subject: Any) -> bool:
     return bool(get(_selector_name(selector)).accepts_subject(subject))
 
 
+#: How each declared subject word reads in a sentence.  A transform says what it
+#: takes at its registration site; this turns that declaration into the phrase the
+#: refusal prints, so the message cannot drift from the check.
+_SUBJECT_PHRASES: dict[str, str] = {
+    "system": "a system (it runs the equations)",
+    "flow": "a continuous system (it evaluates the vector field)",
+    "map": "a discrete map, or a trajectory of one",
+    "trajectory": "a trajectory",
+    "array": "an array of samples",
+}
+
+
 def _needs(selector: str | TransformCall) -> str:
-    """Return a short phrase naming what a transform must be handed."""
+    """Return a short phrase naming what a transform must be handed.
+
+    Built from the transform's **declared** ``subjects``, so ``ts.plot(traj,
+    "cobweb")`` now says *"a discrete map, or a trajectory of one"* instead of
+    the source-derived "a trajectory / array / system" — which was the phrase
+    that made the refusal unactionable, since a trajectory is one of those.
+    """
     record = get(_selector_name(selector))
-    return "a dynamical system" if record.source == "model" else "a trajectory / array / system"
+    words = [_SUBJECT_PHRASES.get(s, f"a {s}") for s in record.subjects]
+    return " or ".join(dict.fromkeys(words))
 
 
 def plot(
@@ -379,7 +404,7 @@ def plot(
     share_y: bool | None = None,
     share_color: bool | None = None,
     primitive: str | None = None,
-    on: str | None = None,
+    force: bool = False,
     animate: Any = False,
     fps: float | None = None,
     ax: Any = None,
@@ -415,7 +440,7 @@ def plot(
         declared row, so an invalid pair raises (naming the valid set) rather
         than quietly drawing something else.  A ``T(..., primitive=...)`` wins
         over this for its own transform.
-    on : {"force"}, optional
+    force : bool, default False
         Overlay a deliberate frame mismatch with a warning instead of raising.
     animate : bool or dict or Animation, optional
         Animate the figure (a comet on a curve, a movie of a field).
@@ -466,6 +491,7 @@ def plot(
     """
     from tsdynamics.errors import InvalidParameterError
 
+    reject_on_keyword(kw, "ts.plot()", "ts.plot(a, b, force=True)")
     # A lone ``("name", {options})`` pair is a transform call, not a container of
     # plottables to unwrap — so the message is about the missing subject rather
     # than about an unplottable string.
@@ -490,7 +516,7 @@ def plot(
             share_x=share_x,
             share_y=share_y,
             share_color=share_color,
-            on=on,
+            force=force,
             animate=animate,
             fps=fps,
             **kw,
@@ -524,7 +550,7 @@ def plot(
         share_x=share_x,
         share_y=share_y,
         share_color=share_color,
-        on=on,
+        force=force,
     )
     apply_figure_keywords(result, figure)
     return _finish(result, ax)

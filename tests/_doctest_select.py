@@ -462,7 +462,20 @@ def run_page_fences(page_rel: str) -> None:
     bound (the way a reader runs a tutorial sequentially).  Raises the original
     exception (with the page/block location chained) on the first failing block,
     which pytest renders as the test failure.
+
+    **matplotlib is pinned to ``Agg`` first**, because a docs gate whose verdict
+    depends on the developer's ambient backend is not a gate.  Measured: with
+    ``show()`` warning on a windowless backend (v6), the viz pages passed on a
+    workstation resolving ``qtagg`` and failed under CI's ``Agg`` — the same
+    tree, green locally and red on the runner.  ``Agg`` is what CI has, so it is
+    what the gate asserts against everywhere.
     """
+    try:  # pragma: no cover - matplotlib is optional
+        import matplotlib
+
+        matplotlib.use("Agg", force=True)
+    except ImportError:
+        pass
     path = DOCS_DIR / page_rel
     text = path.read_text(encoding="utf-8")
     ns = doctest_namespace()

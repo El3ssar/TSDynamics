@@ -16,7 +16,7 @@ from tsdynamics.errors import ConvergenceError, invalid_value
 from tsdynamics.families import Trajectory
 
 from . import _crossings
-from ._base import DerivedSystem
+from ._base import DerivedSystem, _reject_wrapper_keywords
 
 __all__ = ["PoincareMap", "PoincareSection", "auto_plane"]
 
@@ -571,10 +571,12 @@ class PoincareMap(DerivedSystem):
         super().__init__(system)
         #: Whether :attr:`plane` was chosen by :func:`auto_plane` rather than named.
         self.plane_auto = plane is None
-        #: The plane **as the user typed it**, kept beside the resolved
-        #: ``(index, offset)``.  Without it two sections on different planes repr
-        #: identically, because only the resolved form survived.
-        self.plane_given = plane
+        # The plane **as the user typed it**, kept beside the resolved
+        # ``(index, offset)`` for the repr and for ``_rebuild``.  Private: two
+        # public attributes for one concept, one of them the internal encoding,
+        # is exactly the double spelling v6 exists to remove — ``plane`` is the
+        # canonical (resolved) reading and ``repr(pmap)`` renders it in words.
+        self._plane_given = plane
         plane, direction = _resolve_section_plane(system, plane, direction)
         normal, offset = self._parse_plane(system.dim, plane)
         self.plane = plane
@@ -639,7 +641,7 @@ class PoincareMap(DerivedSystem):
         # was arrived at — otherwise a swept auto section would report itself as
         # deliberate from the second value onwards.
         rebuilt.plane_auto = self.plane_auto
-        rebuilt.plane_given = self.plane_given
+        rebuilt._plane_given = self._plane_given
         return rebuilt
 
     # --- section geometry ---
@@ -779,7 +781,7 @@ class PoincareMap(DerivedSystem):
         same fixed-step march (``method="rk4"`` at this map's ``dt``) from the
         same initial condition, the crossings of
         ``inner.run(events=pmap.as_events(), ...)`` match
-        :meth:`trajectory` to the engine's refinement accuracy.
+        :meth:`run` to the engine's refinement accuracy.
 
         Examples
         --------
@@ -788,6 +790,13 @@ class PoincareMap(DerivedSystem):
         ...                     events=pmap.as_events())
         >>> sol.meta["y_events"][0][:5].shape      # the same crossing states
         (5, 3)
+
+        Notes
+        -----
+        You never have to build an ``Event`` yourself: every ``events=`` door
+        also accepts a plain plane tuple (``("y", 0.0, "up")``) or a bare
+        ``g(y, t)`` callable, which is why the type is not exported.  This is the
+        one place the library hands one back.
         """
         from tsdynamics.engine.run import Event
 
@@ -861,7 +870,7 @@ class PoincareMap(DerivedSystem):
         ic: Any | None = None,
         transient: int = 0,
         backend: str | None = None,
-        **kwargs: Any,
+        **unknown: Any,
     ) -> PoincareSection:
         """
         Collect crossings as a :class:`PoincareSection` — **from a fresh start**.
@@ -883,9 +892,15 @@ class PoincareMap(DerivedSystem):
         Parameters
         ----------
         steps : int
-            Number of crossings to collect.
+            Number of crossings to collect — the horizon word, counted in
+            **crossings** (a Poincaré map's iterate *is* a crossing).
+        ic : array-like, optional
+            Start state for the inner flow — ``system.dim`` numbers.
         transient : int
-            Number of leading crossings to discard.
+            Leading stretch to discard, in this view's own horizon unit:
+            **crossings**.  (The free function
+            :func:`~tsdynamics.analysis.poincare_section` spells the same idea
+            ``skip_crossings=``.)
         backend : {"jit", "interp", "reference"}, optional
             Engine evaluator for the fast path; defaults to the inner system's
             ``_default_backend`` (``"jit"`` for every concrete family since v6).
@@ -920,7 +935,8 @@ class PoincareMap(DerivedSystem):
         # ``run`` is a fresh run on every family and every wrapper.  Before v6
         # this started from the inner flow's LIVE cursor, so ``pmap.run(5)``
         # twice returned different data; ``step()`` is the verb that continues.
-        self.reinit(ic, **kwargs)
+        _reject_wrapper_keywords(self, unknown, accepted=("steps", "ic", "transient", "backend"))
+        self.reinit(ic)
 
         if _crossings.engine_eligible(self.system, backend):
             from tsdynamics.engine.run import EngineNotAvailableError
