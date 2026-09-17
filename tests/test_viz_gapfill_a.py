@@ -216,7 +216,9 @@ def test_producer_delay_embedding_from_series():
     assert lyr.data["x"].shape[0] == x.shape[0] - 5
     np.testing.assert_allclose(lyr.data["x"], x[:-5])
     np.testing.assert_allclose(lyr.data["y"], x[5:])
-    assert spec.x.label == "m(t)" and spec.y.label == "m(t - 5)"
+    # A bare array has no time axis, so the lag is stated in the unit it IS —
+    # samples.  ``m(t - 5)`` read as a time on an axis whose t is a time.
+    assert spec.x.label == "m(t)" and spec.y.label == "m(t - 5 samples)"
     _roundtrips(spec)
 
 

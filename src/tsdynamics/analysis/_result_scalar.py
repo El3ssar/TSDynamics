@@ -248,9 +248,29 @@ class ScalarResult(_NumericOps, AnalysisResult):
         return _UNITS.get(analysis, "")
 
     def _answer(self) -> str:
-        """Return ``= <value> <unit>`` — the number, in the reader's units."""
+        """Return ``= <value> ± <quantum> <unit>`` — the number, honestly precise.
+
+        Six significant figures is right for a number the estimator actually
+        resolved to six.  An estimator that *quantises* its answer — a
+        grid-derived distance, say — records the quantum on
+        ``meta["quantization"]``, and then the readout carries it: measured, the
+        minimal-fatal-shock ``resilience`` printed ``0.615385`` for a distance
+        that is exactly six grid cells and is biased ~8% high, alongside a
+        sibling in the same module printing ``49.4% ± 0.5%``.  Six digits on a
+        safety margin is an invitation to quote it.
+        """
         unit = self._unit()
-        return f"= {_sig(float(self), 6)}" + (f" {unit}" if unit else "")
+        quantum = self.meta.get("quantization") if self.meta else None
+        if quantum is None:
+            return f"= {_sig(float(self), 6)}" + (f" {unit}" if unit else "")
+        return f"= {_sig(float(self), 3)} ± {_sig(float(quantum), 2)}" + (
+            f" {unit}" if unit else ""
+        )
+
+    def _details(self) -> tuple[str, ...]:
+        """Return the line that says where a quantised answer's ± comes from."""
+        reason = self.meta.get("quantization_reason") if self.meta else None
+        return (f"({reason})",) if reason else ()
 
     def _interpretation(self) -> str | None:
         r"""Name the dynamics when the number is a Lyapunov exponent.

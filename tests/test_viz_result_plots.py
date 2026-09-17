@@ -192,17 +192,24 @@ def test_fixed_points_label_axes_with_the_systems_variables() -> None:
     import tsdynamics as ts
 
     spec = ts.analysis.fixed_points(ts.systems.Lorenz()).__plot_spec__()
-    assert spec.x.label == "$x$"
-    assert spec.y.label == "$y$"
+    # PLAIN, matching the spelling a Trajectory uses for the identical name — a
+    # basin image and an orbit are routinely tiled into one figure, and "$x$"
+    # beside "x" is two typographies for one coordinate.
+    assert spec.x.label == "x"
+    assert spec.y.label == "y"
 
 
 def test_axis_labels_fall_back_to_indices_without_variables() -> None:
     from tsdynamics.analysis import _plotbuilder as pb
 
+    # Only the INDEXED FALLBACK is mathtext: "x_0" genuinely wants a subscript
+    # and nothing plain-labelled ever produces it.  A declared name is emitted
+    # as written -- and mathtext would not have helped the one family it looks
+    # like it serves, since "$theta$" renders as an upright word, not a theta.
     assert pb.axis_labels({}, (0, 2)) == ["$x_{0}$", "$x_{2}$"]
-    assert pb.axis_labels({"variables": ("theta", "omega")}, (0, 1)) == ["$theta$", "$omega$"]
+    assert pb.axis_labels({"variables": ("theta", "omega")}, (0, 1)) == ["theta", "omega"]
     # A short ``variables`` tuple must not index out of range.
-    assert pb.axis_labels({"variables": ("u",)}, (0, 1)) == ["$u$", "$x_{1}$"]
+    assert pb.axis_labels({"variables": ("u",)}, (0, 1)) == ["u", "$x_{1}$"]
 
 
 def test_3d_specs_draw_their_annotations() -> None:
@@ -259,9 +266,10 @@ def test_basin_colorbar_is_a_categorical_legend() -> None:
     labels = spec.meta["category_labels"]
     assert all(isinstance(v, str) for v in labels.values())
     assert any(v.startswith("attractor") for v in labels.values())
-    # The system knows its coordinates are (x, v) — the plot must say so.
-    assert spec.x.label == "$x$"
-    assert spec.y.label == "$v$"
+    # The system knows its coordinates are (x, v) — the plot must say so, in
+    # the same plain spelling a Trajectory of the same system uses.
+    assert spec.x.label == "x"
+    assert spec.y.label == "v"
 
     fig = spec.render(backend="matplotlib")
     ticklabels = [t.get_text() for t in fig.axes[-1].get_yticklabels()]

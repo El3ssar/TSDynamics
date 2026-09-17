@@ -222,8 +222,32 @@ class TestFind:
     def test_a_miss_says_what_to_type_instead(self):
         out = repr(ts.analysis.find("wavelet"))
         assert "nothing matches 'wavelet'" in out
-        assert "ts.analysis.find()" in out
+        assert "ts.analysis.__doc__" in out and "ts.analysis.find(subject)" in out
+        assert "lyapunov" in out  # the areas to browse
         assert ts.analysis.find("wavelet") == []
+
+    def test_a_miss_on_a_removed_capability_says_it_was_removed(self):
+        """A word from the deleted time-series layer must not read as "cannot do that".
+
+        ``find("surrogate")`` answered *nothing matches*, which a reader takes as
+        a statement about the library's ability rather than about its scope — and
+        goes off to reimplement an FT surrogate test by hand.
+        """
+        out = repr(ts.analysis.find("surrogate"))
+        assert "REMOVED" in out and "surrogate-data tests" in out
+        assert "ts.analysis.lyapunov_from_data(traj)" in out
+
+    def test_find_understands_the_words_a_reader_brings(self):
+        """``find`` is advertised as plain English, so it answers plain English.
+
+        Measured before: ``find("robust")`` and ``find("safety margin")`` both
+        returned nothing, while ``resilience``'s own summary line reads
+        "Minimal-fatal-shock resilience".
+        """
+        for question in ("robust", "safety margin", "will it tip over"):
+            names = {f.__name__ for f in ts.analysis.find(question)}
+            assert names, question
+            assert names & {"resilience", "tipping_points"}, (question, names)
 
     def test_find_returns_the_callables(self):
         hits = ts.analysis.find("multistability")
@@ -250,10 +274,18 @@ class TestFind:
         assert len(ts.analysis.find(ts.systems.Lorenz)) == 21
         assert len(ts.analysis.find(ts.systems.Henon)) == 14
 
-    def test_a_trajectory_gets_23_and_a_bare_array_the_same(self):
+    def test_a_trajectory_gets_24_and_a_bare_array_the_same(self):
+        """24 since ``zero_one_test`` was registered for data as well as systems.
+
+        Its own summary line says it runs "on a system **or a measured
+        observable**", it works on a bare ndarray, and it was registered
+        system-only — so the library's best discovery route hid the one analysis
+        that answers the question a data-first user arrives with.
+        """
         traj = ts.systems.Lorenz().run(final_time=2.0, dt=0.05)
-        assert len(ts.analysis.find(traj)) == 23
-        assert len(ts.analysis.find(np.zeros((50, 3)))) == 23
+        assert len(ts.analysis.find(traj)) == 24
+        assert len(ts.analysis.find(np.zeros((50, 3)))) == 24
+        assert "zero_one_test" in {f.__name__ for f in ts.analysis.find(np.zeros((50, 3)))}
 
     def test_a_result_gets_the_analyses_that_read_it(self):
         spectrum = ts.analysis.lyapunov_spectrum(ts.systems.Lorenz(), final_time=10.0)

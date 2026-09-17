@@ -67,6 +67,7 @@ import numpy as np
 from tsdynamics.errors import InvalidInputError, InvalidParameterError, remedy
 
 from ._common import reject_system
+from ._result_json import _sig
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from tsdynamics.families import ContinuousSystem
@@ -478,6 +479,38 @@ class ScalarField:
     labels: tuple[str, str]
     meta: dict[str, Any] = field(default_factory=dict)
 
+    def __repr__(self) -> str:
+        """Render the ANSWER, like every other result in the library.
+
+        Seven of the fifty registered analyses return one of these, and it
+        carried the default dataclass repr — so printing it dumped two
+        coordinate arrays and the whole value matrix into the terminal, in a
+        library where every other result is a crafted one-line readout.
+        """
+        ny, nx = (int(n) for n in np.asarray(self.values).shape[:2])
+        xs = np.asarray(self.xs, dtype=float)
+        ys = np.asarray(self.ys, dtype=float)
+        span = ""
+        if xs.size and ys.size:
+            span = (
+                f"  over {self.labels[0]} ∈ [{_sig(xs.min(), 3)}, {_sig(xs.max(), 3)}], "
+                f"{self.labels[1]} ∈ [{_sig(ys.min(), 3)}, {_sig(ys.max(), 3)}]"
+            )
+        v = np.asarray(self.values, dtype=float)
+        blank = float(np.mean(~np.isfinite(v))) * 100.0 if v.size else 0.0
+        finite = v[np.isfinite(v)]
+        reading = (
+            f"{_sig(float(finite.min()), 3)} … {_sig(float(finite.max()), 3)}"
+            if finite.size
+            else "all NaN"
+        )
+        head = f"ScalarField  {self.label}  ·  {ny}×{nx} lattice{span}"
+        return f"{head}\n    {reading}   ·   {blank:.0f}% not defined (NaN)"
+
+    def __str__(self) -> str:
+        """Return the repr — ``print(field)`` and the REPL agree."""
+        return repr(self)
+
 
 @dataclass(frozen=True)
 class TraceDeterminant:
@@ -518,8 +551,72 @@ class TraceDeterminant:
 # ---------------------------------------------------------------------------
 
 
+#: The six field analyses that sample a rectangular WINDOW, and therefore accept
+#: ``region=`` — the one state-space-box grammar every other door in
+#: ``ts.analysis`` already speaks.
+def window_from_region(
+    region: Any,
+    plane: Sequence[int | str],
+    system: Any,
+    xlim: tuple[float, float] | None,
+    ylim: tuple[float, float] | None,
+    grid: Any,
+) -> tuple[tuple[float, float] | None, tuple[float, float] | None, Any]:
+    """Translate ``region=`` into this module's ``xlim`` / ``ylim`` / ``grid``.
+
+    ``ts.analysis`` had **two** grammars for "this box of state space": the
+    region doors (``basins`` / ``fixed_points`` / ``attractors`` /
+    ``basin_fractions`` / ``expansion_entropy``) read one ``(lo, hi[, n])`` pair
+    per state component, and the eight field analyses read ``plane=`` +
+    ``xlim=`` + ``ylim=`` + ``grid=``.  Crossing them produced the one error in
+    the library that taught nothing — a bare ``TypeError: takes 1 positional
+    argument but 2 were given`` — on the only door that breaks its own grammar.
+
+    The translation is exact: a region carries the same information, indexed by
+    state component, so the two plane axes select their pairs out of it.
+
+    Raises
+    ------
+    InvalidParameterError
+        If ``region`` is given together with the window it would set, or if it
+        does not carry a pair for each plane axis.
+    """
+    if region is None:
+        return xlim, ylim, grid
+    if xlim is not None or ylim is not None:
+        raise InvalidParameterError(
+            "region= already says where to sample, so xlim=/ylim= would be a second "
+            "answer to the same question. Pass one or the other."
+            + remedy(
+                "ts.analysis.ftle_field(system, region=[(-2.0, 2.0, 60), (-2.0, 2.0, 60)])",
+                "ts.analysis.ftle_field(system, xlim=(-2.0, 2.0), ylim=(-2.0, 2.0), grid=60)",
+            )
+        )
+    from tsdynamics.data import as_region
+
+    box = as_region(region, dim=getattr(system, "dim", None))
+    lo = np.atleast_1d(np.asarray(getattr(box, "lo", ()), dtype=float))
+    hi = np.atleast_1d(np.asarray(getattr(box, "hi", ()), dtype=float))
+    counts = getattr(box, "shape", None)
+    i, j, _ = resolve_plane(system, plane)
+    ax = [i, j]
+    if max(ax) >= lo.size:
+        raise InvalidParameterError(
+            f"region= carries {lo.size} bound(s) and the plane {tuple(plane)!r} needs "
+            f"component {max(ax)}: pass one (lo, hi[, n]) pair per state component."
+            + remedy("ts.analysis.ftle_field(system, region=[(-2.0, 2.0), (-2.0, 2.0)])")
+        )
+    window_x = (float(lo[ax[0]]), float(hi[ax[0]]))
+    window_y = (float(lo[ax[1]]), float(hi[ax[1]]))
+    if counts is not None:
+        nx, ny = (int(counts[a]) for a in ax)
+        grid = nx if nx == ny else (nx, ny)
+    return window_x, window_y, grid
+
+
 def flow_field(
     system: Any,
+    region: Any | None = None,
     *,
     plane: Sequence[int | str] = (0, 1),
     at: Any | None = None,
@@ -545,6 +642,21 @@ def flow_field(
         The two coordinates spanning the slice.
     at : array-like, optional
         The state the off-plane coordinates are frozen at.
+    region : sequence of (lo, hi[, n]), optional
+        Where to sample, in the ONE state-space-box grammar every ``region=``
+        door in the library reads: one ``(lo, hi)`` bound — or one
+        ``(lo, hi, n)`` triple — **per state component**, of which the two
+        ``plane`` axes are used.  It is the **second positional** argument, so
+        ``ts.analysis.flow_field(system, [(-2, 2, 60), (-2, 2, 60)])`` reads exactly
+        like ``ts.analysis.basins(system, ...)``.
+
+        Two grammars for "this box of state space" is one too many: crossing them
+        used to produce a bare ``TypeError: takes 1 positional argument but 2
+        were given``, the one error in ``ts.analysis`` that taught nothing.
+        Equivalent to ``xlim=`` / ``ylim=`` / the lattice size; passing both
+        raises.
+
+        .. versionadded:: 6.0
     xlim, ylim : tuple of float, optional
         The window.  ``None`` auto-chooses via :func:`window_for` and records
         how.
@@ -556,6 +668,7 @@ def flow_field(
     FlowField
     """
     _require_flow(system, "flow_field")
+    xlim, ylim, grid = window_from_region(region, plane, system, xlim, ylim, grid)
     i, j, labels = resolve_plane(system, plane)
     base = _base_state(system, at)
     xlim, ylim, meta = window_for(system, plane=plane, at=at, xlim=xlim, ylim=ylim)
@@ -573,6 +686,7 @@ def flow_field(
 
 def nullclines(
     system: Any,
+    region: Any | None = None,
     *,
     plane: Sequence[int | str] = (0, 1),
     at: Any | None = None,
@@ -600,6 +714,21 @@ def nullclines(
         The two coordinates spanning the slice.
     at : array-like, optional
         The state the off-plane coordinates are frozen at.
+    region : sequence of (lo, hi[, n]), optional
+        Where to sample, in the ONE state-space-box grammar every ``region=``
+        door in the library reads: one ``(lo, hi)`` bound — or one
+        ``(lo, hi, n)`` triple — **per state component**, of which the two
+        ``plane`` axes are used.  It is the **second positional** argument, so
+        ``ts.analysis.nullclines(system, [(-2, 2, 60), (-2, 2, 60)])`` reads exactly
+        like ``ts.analysis.basins(system, ...)``.
+
+        Two grammars for "this box of state space" is one too many: crossing them
+        used to produce a bare ``TypeError: takes 1 positional argument but 2
+        were given``, the one error in ``ts.analysis`` that taught nothing.
+        Equivalent to ``xlim=`` / ``ylim=`` / the lattice size; passing both
+        raises.
+
+        .. versionadded:: 6.0
     xlim, ylim : tuple of float, optional
         The window (auto-chosen and recorded when omitted).
     grid : int or tuple of int, optional
@@ -627,6 +756,7 @@ def nullclines(
     from contourpy import contour_generator
 
     _require_flow(system, "nullclines")
+    xlim, ylim, grid = window_from_region(region, plane, system, xlim, ylim, grid)
     i, j, labels = resolve_plane(system, plane)
     base = _base_state(system, at)
     xlim, ylim, _ = window_for(system, plane=plane, at=at, xlim=xlim, ylim=ylim)
@@ -676,6 +806,7 @@ def nullclines(
 
 def streamlines(
     system: Any,
+    region: Any | None = None,
     *,
     plane: Sequence[int | str] = (0, 1),
     at: Any | None = None,
@@ -704,6 +835,21 @@ def streamlines(
     Parameters
     ----------
     system : ContinuousSystem
+    region : sequence of (lo, hi[, n]), optional
+        Where to sample, in the ONE state-space-box grammar every ``region=``
+        door in the library reads: one ``(lo, hi)`` bound — or one
+        ``(lo, hi, n)`` triple — **per state component**, of which the two
+        ``plane`` axes are used.  It is the **second positional** argument, so
+        ``ts.analysis.streamlines(system, [(-2, 2, 60), (-2, 2, 60)])`` reads exactly
+        like ``ts.analysis.basins(system, ...)``.
+
+        Two grammars for "this box of state space" is one too many: crossing them
+        used to produce a bare ``TypeError: takes 1 positional argument but 2
+        were given``, the one error in ``ts.analysis`` that taught nothing.
+        Equivalent to ``xlim=`` / ``ylim=`` / the lattice size; passing both
+        raises.
+
+        .. versionadded:: 6.0
     plane, at, xlim, ylim
         The slice and window (see :func:`flow_field`).
     seeds : int or tuple of int, optional
@@ -739,6 +885,9 @@ def streamlines(
     near a separatrix, where an interpolated field and the real one part company.
     """
     _require_flow(system, "streamlines")
+    # ``seeds`` is this function's lattice size (there is no ``grid=`` here), so
+    # a region's per-axis counts land on it.
+    xlim, ylim, seeds = window_from_region(region, plane, system, xlim, ylim, seeds)
     i, j, _ = resolve_plane(system, plane)
     base = _base_state(system, at)
     xlim, ylim, _ = window_for(system, plane=plane, at=at, xlim=xlim, ylim=ylim)
@@ -1080,6 +1229,7 @@ def _slice_ics(base: np.ndarray, i: int, j: int, xs: np.ndarray, ys: np.ndarray)
 
 def ftle_field(
     system: Any,
+    region: Any | None = None,
     *,
     plane: Sequence[int | str] = (0, 1),
     at: Any | None = None,
@@ -1113,6 +1263,21 @@ def ftle_field(
     Parameters
     ----------
     system : ContinuousSystem
+    region : sequence of (lo, hi[, n]), optional
+        Where to sample, in the ONE state-space-box grammar every ``region=``
+        door in the library reads: one ``(lo, hi)`` bound — or one
+        ``(lo, hi, n)`` triple — **per state component**, of which the two
+        ``plane`` axes are used.  It is the **second positional** argument, so
+        ``ts.analysis.ftle_field(system, [(-2, 2, 60), (-2, 2, 60)])`` reads exactly
+        like ``ts.analysis.basins(system, ...)``.
+
+        Two grammars for "this box of state space" is one too many: crossing them
+        used to produce a bare ``TypeError: takes 1 positional argument but 2
+        were given``, the one error in ``ts.analysis`` that taught nothing.
+        Equivalent to ``xlim=`` / ``ylim=`` / the lattice size; passing both
+        raises.
+
+        .. versionadded:: 6.0
     plane, at, xlim, ylim
         The slice and window (see :func:`flow_field`).
     grid : int or tuple of int, optional
@@ -1147,6 +1312,7 @@ def ftle_field(
     from tsdynamics.engine import run as _run
 
     _require_flow(system, "ftle_field")
+    xlim, ylim, grid = window_from_region(region, plane, system, xlim, ylim, grid)
     i, j, labels = resolve_plane(system, plane)
     base = _base_state(system, at)
     xlim, ylim, meta = window_for(system, plane=plane, at=at, xlim=xlim, ylim=ylim)
@@ -1312,6 +1478,7 @@ def _march_first_time(
 
 def escape_time_field(
     system: Any,
+    region: Any | None = None,
     *,
     plane: Sequence[int | str] = (0, 1),
     at: Any | None = None,
@@ -1333,6 +1500,21 @@ def escape_time_field(
     Parameters
     ----------
     system : ContinuousSystem
+    region : sequence of (lo, hi[, n]), optional
+        Where to sample, in the ONE state-space-box grammar every ``region=``
+        door in the library reads: one ``(lo, hi)`` bound — or one
+        ``(lo, hi, n)`` triple — **per state component**, of which the two
+        ``plane`` axes are used.  It is the **second positional** argument, so
+        ``ts.analysis.escape_time_field(system, [(-2, 2, 60), (-2, 2, 60)])`` reads exactly
+        like ``ts.analysis.basins(system, ...)``.
+
+        Two grammars for "this box of state space" is one too many: crossing them
+        used to produce a bare ``TypeError: takes 1 positional argument but 2
+        were given``, the one error in ``ts.analysis`` that taught nothing.
+        Equivalent to ``xlim=`` / ``ylim=`` / the lattice size; passing both
+        raises.
+
+        .. versionadded:: 6.0
     plane, at, xlim, ylim
         The slice and window (see :func:`flow_field`).
     grid : int or tuple of int, optional
@@ -1358,6 +1540,7 @@ def escape_time_field(
     ScalarField
     """
     _require_flow(system, "escape_time_field")
+    xlim, ylim, grid = window_from_region(region, plane, system, xlim, ylim, grid)
     i, j, labels = resolve_plane(system, plane)
     base = _base_state(system, at)
     xlim, ylim, meta = window_for(system, plane=plane, at=at, xlim=xlim, ylim=ylim)
@@ -1415,6 +1598,7 @@ def _escape_predicate(
 
 def transient_time_field(
     system: Any,
+    region: Any | None = None,
     *,
     plane: Sequence[int | str] = (0, 1),
     at: Any | None = None,
@@ -1441,6 +1625,21 @@ def transient_time_field(
     Parameters
     ----------
     system : ContinuousSystem
+    region : sequence of (lo, hi[, n]), optional
+        Where to sample, in the ONE state-space-box grammar every ``region=``
+        door in the library reads: one ``(lo, hi)`` bound — or one
+        ``(lo, hi, n)`` triple — **per state component**, of which the two
+        ``plane`` axes are used.  It is the **second positional** argument, so
+        ``ts.analysis.transient_time_field(system, [(-2, 2, 60), (-2, 2, 60)])`` reads exactly
+        like ``ts.analysis.basins(system, ...)``.
+
+        Two grammars for "this box of state space" is one too many: crossing them
+        used to produce a bare ``TypeError: takes 1 positional argument but 2
+        were given``, the one error in ``ts.analysis`` that taught nothing.
+        Equivalent to ``xlim=`` / ``ylim=`` / the lattice size; passing both
+        raises.
+
+        .. versionadded:: 6.0
     plane, at, xlim, ylim, grid, final_time, chunks
         As in :func:`escape_time_field`.
     tol : float, optional
@@ -1461,6 +1660,7 @@ def transient_time_field(
     ScalarField
     """
     _require_flow(system, "transient_time_field")
+    xlim, ylim, grid = window_from_region(region, plane, system, xlim, ylim, grid)
     i, j, labels = resolve_plane(system, plane)
     base = _base_state(system, at)
     xlim, ylim, meta = window_for(system, plane=plane, at=at, xlim=xlim, ylim=ylim)

@@ -144,7 +144,11 @@ class TestMapStepping:
 
         h2 = ts.systems.Henon()
         traj = h2.run(steps=5, ic=ic)
-        np.testing.assert_allclose(np.array(stepped), traj.y, rtol=1e-12)
+        # ``run`` carries the initial condition as row 0 (like a flow), and
+        # ``step`` hands back the state AFTER each call — so the stepped states
+        # are rows 1..5.
+        np.testing.assert_array_equal(traj.y[0], ic)
+        np.testing.assert_allclose(np.array(stepped), traj.y[1:], rtol=1e-12)
 
     def test_batch_step_equals_single_steps(self) -> None:
         ic = np.array([0.1, 0.2])
@@ -179,7 +183,10 @@ class TestMapStepping:
     def test_trajectory_with_transient(self) -> None:
         h = ts.systems.Henon()
         traj = h.run(steps=100, transient=50, ic=[0.1, 0.1])
-        assert traj.n_steps == 100
+        # 100 iterates plus the state they start from, the same ``N + 1`` a flow
+        # returns for ``final_time / dt == N``.
+        assert traj.n_steps == 101
+        assert traj.t[0] == 50 and traj.t[-1] == 150
 
 
 # ---------------------------------------------------------------------------

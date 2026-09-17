@@ -165,7 +165,9 @@ class TestAbsentNamesTeach:
 class TestRunIsTheOneVerb:
     def test_every_family_answers_run(self):
         assert ts.systems.Lorenz().run(final_time=1.0, dt=0.1).y.shape == (11, 3)
-        assert ts.systems.Henon().run(steps=50).y.shape == (50, 2)
+        # ``steps + 1`` rows: the state it started from, then one per iteration
+        # — the same ``N + 1`` a flow returns for ``final_time / dt == N``.
+        assert ts.systems.Henon().run(steps=50).y.shape == (51, 2)
         assert ts.systems.OrnsteinUhlenbeck().run(final_time=1.0, dt=0.1, seed=0).y.shape == (11, 1)
         traj = ts.systems.MackeyGlass().run(final_time=10.0, dt=0.5)
         assert traj.y.shape[0] == 21

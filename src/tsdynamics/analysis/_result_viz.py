@@ -205,6 +205,7 @@ def _split_plot_kwargs(
             f"    Spec keywords for this result: {accepted}\n"
             f"    Style keywords: {', '.join(sorted(style_names_))}\n"
             f"    Figure keywords: {', '.join(sorted(figure_names))}\n"
+            f"    Legend keywords: labels\n"
             f"    Backend keywords (at render()): {', '.join(sorted(renderer_names))}"
         )
     return spec_kw, style_kw, figure_kw, backend_kw
@@ -401,6 +402,13 @@ class _PlotAccessor:
             raise VisualizationNotInstalled(
                 f"{type(self._result).__name__} has no __plot_spec__() yet, so it cannot be plotted."
             )
+        # ``labels=`` names the curve, at every plotting door.  Peeled here rather
+        # than in the four-way split because it is applied to the built spec, not
+        # handed to any of the four; a result whose own ``__plot_spec__`` declares
+        # the word keeps it (that precedence is the split's, and it holds here).
+        labels = None
+        if "labels" in tweaks and "labels" not in _spec_keywords(to_spec):
+            labels = tweaks.pop("labels")
         spec_kw, style_kw, figure_kw, backend_kw = _split_plot_kwargs(
             to_spec, tweaks, type(self._result).__name__
         )
@@ -412,6 +420,10 @@ class _PlotAccessor:
             spec.style(**style_kw)
         if figure_kw:
             spec.tweak(**figure_kw)
+        if labels is not None:
+            from tsdynamics.viz.compose import apply_labels
+
+            apply_labels([spec], labels)
         # ``plot`` builds.  A caller who named a backend or passed a renderer
         # option is asking for that drawing to happen, so it still happens — but
         # what comes back is the spec, which is what every other ``.plot()`` in

@@ -55,6 +55,31 @@ _FINAL_STATE_SENSITIVE_ALPHA = 0.8
 #: measurement — a straight line through two points scores ``R² = 1``.
 _MIN_UNCERTAINTY_RADII = 4
 
+#: How much the LOCAL slope of ``log f`` vs ``log eps`` may decay across the
+#: probed window and still be read as one power law: ``last / first`` must be at
+#: least this.
+#:
+#: This is the gate that stops the verdict being a property of the grid rather
+#: than of the system.  Measured on an unforced double-well oscillator — whose
+#: boundary is a saddle's stable manifold, provably **smooth**, D0 = 1 — over
+#: grids of 30/40/60/80/100 cells per side::
+#:
+#:     n     alpha   R^2      last/first local slope   verdict before   after
+#:     30    0.676   0.9726   0.32                     FRACTAL (wrong)  withheld
+#:     40    0.789   0.9926   0.48                     FRACTAL (wrong)  withheld
+#:     60    0.883   0.9980   0.84                     smooth           smooth
+#:     80    0.909   0.9975   0.76                     smooth           smooth
+#:     100   0.941   0.9989   0.85                     smooth           smooth
+#:
+#: Note ``R^2 = 0.9926`` on the 40-cell run that answered "fractal boundary":
+#: :math:`R^2` measures how straight the fitted line is, **not** whether the
+#: underlying relation is a power law, so it cannot see the systematic decay.
+#: The local slope can, and 0.6 separates the two regimes with margin on both
+#: sides (0.48 | 0.76).  An engineer reading "fractal boundary" concludes the
+#: safety margin is meaningless and stops, so the cost of a false positive here
+#: is a project, not a re-run.
+_SLOPE_STABLE_RATIO = 0.6
+
 
 def _resolve_attractor_id(result: BasinsResult, attractor_id: int | None) -> int:
     """Pick which attractor to measure, or say which ones there are.
@@ -154,12 +179,26 @@ class BasinEntropy(AnalysisResult):
         """
         return "fractal boundary (Sbb > ln 2)" if self.fractal_boundary else None
 
+    def _printed_names(self) -> dict[str, str]:
+        """Map ``Sb`` / ``Sbb`` — what the repr typesets — to ``sb`` / ``sbb``."""
+        return {"Sb": "sb", "Sbb": "sbb"}
+
     def _details(self) -> tuple[str, ...]:
         """Return the box partition the entropies were computed over."""
         return (
             f"({self.n_boundary_boxes}/{self.n_boxes} boxes on the boundary, "
             f"box size {self.box_size}, log base {_sig(self.log_base, 4)})",
         )
+
+    def _derived(self) -> dict[str, Any]:
+        """Export the answers under the NAMES THE REPR PRINTS, as well as the fields.
+
+        The repr says ``Sb`` and ``Sbb``, the fields are ``sb`` and ``sbb``, and
+        ``to_dict()["Sbb"]`` was a ``KeyError`` for a word the library had just
+        shown the reader.  Everywhere else in this library a wrong guess is
+        translated; a name printed at the user is not even a guess.
+        """
+        return {"Sb": float(self.sb), "Sbb": float(self.sbb)}
 
 
 @dataclass(frozen=True)
@@ -267,6 +306,46 @@ class UncertaintyExponent(AnalysisResult):
         return int(np.asarray(self.epsilons).size) >= _MIN_UNCERTAINTY_RADII
 
     @property
+    def slope_drift(self) -> float:
+        r"""Ratio of the **last** local slope to the **first**, across the window.
+
+        A power law has one slope everywhere, so this is ``1`` for a converged
+        measurement and falls towards ``0`` as the uncertain fraction saturates
+        against its ceiling of 1.  It is the diagnostic :math:`R^2` cannot be:
+        :math:`R^2` says how straight the fitted line is, not whether the
+        relation is a power law at all (measured, ``R² = 0.9926`` on a fit whose
+        local slope had already halved).
+
+        Returns
+        -------
+        float
+            ``nan`` when there are fewer than three usable radii, or when a local
+            slope is non-positive (the fraction did not grow with the radius).
+        """
+        eps = np.asarray(self.epsilons, dtype=float)
+        frac = np.asarray(self.f, dtype=float)
+        keep = (eps > 0.0) & (frac > 0.0)
+        eps, frac = eps[keep], frac[keep]
+        if eps.size < 3:
+            return float("nan")
+        slopes = np.diff(np.log(frac)) / np.diff(np.log(eps))
+        if slopes.size < 2 or slopes[0] <= 0.0 or slopes[-1] <= 0.0:
+            return float("nan")
+        return float(slopes[-1] / slopes[0])
+
+    @property
+    def resolved(self) -> bool:
+        r"""Whether the power law is converged enough for :math:`\alpha` to be read.
+
+        ``False`` when the local slope decays by more than
+        :data:`_SLOPE_STABLE_RATIO` across the probed radii — the uncertain
+        fraction has saturated, so the fitted :math:`\alpha` is a **lower bound**
+        set by the grid rather than a measurement of the boundary.
+        """
+        drift = self.slope_drift
+        return bool(np.isfinite(drift) and drift >= _SLOPE_STABLE_RATIO)
+
+    @property
     def final_state_sensitive(self) -> bool | None:
         r"""Whether :math:`\alpha \ll 1` — a fractal basin boundary.
 
@@ -278,7 +357,7 @@ class UncertaintyExponent(AnalysisResult):
         -------
         bool or None
         """
-        if not self.applicable:
+        if not self.applicable or not self.resolved:
             return None
         if not np.isfinite(self.r_squared) or self.r_squared < _FIT_ACCEPTABLE_R2:
             return None
@@ -297,20 +376,56 @@ class UncertaintyExponent(AnalysisResult):
         n = int(np.asarray(self.epsilons).size)
         if not self.applicable:
             return f"not applicable — {n} radii is too few to read a power law"
+        if not self.resolved:
+            # The verdict used to be a property of the GRID, not of the system:
+            # the same smooth boundary read "fractal" at 40 cells a side and
+            # "smooth" at 60, with nothing saying it had changed its mind.
+            return (
+                f"inconclusive at this resolution — α ≥ {_sig(self.alpha, 3)} is a "
+                "LOWER bound (the uncertain fraction has saturated); refine the grid"
+            )
         verdict = self.final_state_sensitive
         if verdict is None:
             return "no clean power law (R² below the acceptance level)"
         return "final-state sensitive (fractal boundary)" if verdict else "smooth boundary (α ≈ 1)"
 
     def _derived(self) -> dict[str, Any]:
-        """Export the applicability flag and the verdict the repr reports."""
-        return {"applicable": self.applicable, "final_state_sensitive": self.final_state_sensitive}
+        """Export the applicability flags and the verdict the repr reports.
+
+        The repr prints ``D0``; ``boundary_dimension`` is the field it comes
+        from, so both spellings are exported — a reader who saw ``D0`` in the
+        repr should not get a ``KeyError`` for typing it back.
+        """
+        return {
+            "applicable": self.applicable,
+            "final_state_sensitive": self.final_state_sensitive,
+            "resolved": self.resolved,
+            "slope_drift": self.slope_drift,
+        }
+
+    def _printed_names(self) -> dict[str, str]:
+        """Map ``D0`` — what the repr typesets — to ``boundary_dimension``."""
+        return {"D0": "boundary_dimension"}
 
     def _details(self) -> tuple[str, ...]:
-        """Return the fit quality and the range of uncertainty radii."""
+        """Return the fit quality, the radius range, and the refinement line."""
         eps = np.asarray(self.epsilons, dtype=float)
         span = f", ε ∈ [{_sig(eps.min(), 3)}, {_sig(eps.max(), 3)}]" if eps.size else ""
-        return (f"(R² = {_sig(self.r_squared, 5)}{span})",)
+        drift = self.slope_drift
+        wobble = f", local slope × {_sig(drift, 2)} across the window" if np.isfinite(drift) else ""
+        lines = [f"(R² = {_sig(self.r_squared, 5)}{span}{wobble})"]
+        if self.applicable and not self.resolved:
+            grid = self.meta.get("grid_shape") if self.meta else None
+            finer = (
+                " × ".join(str(2 * int(n)) for n in grid)
+                if isinstance(grid, (tuple, list)) and grid
+                else "a finer grid"
+            )
+            lines.append(
+                f"re-image at {finer} and compare — α drifts upward until the "
+                "uncertain fraction is well below 1"
+            )
+        return tuple(lines)
 
 
 @dataclass(frozen=True)
@@ -633,7 +748,13 @@ def uncertainty_exponent(
         epsilons=epsilons,
         f=fractions,
         r_squared=float(r2),
-        meta={"analysis": "uncertainty_exponent", "state_dimension": int(dim)},
+        meta={
+            "analysis": "uncertainty_exponent",
+            "state_dimension": int(dim),
+            # What the verdict's resolution hedge names when it asks for a
+            # finer image — the user should never have to work out "2n" itself.
+            "grid_shape": tuple(int(n) for n in labels.shape),
+        },
     )
 
 
@@ -902,9 +1023,26 @@ def resilience(result: BasinsResult, attractor_id: int | None = None) -> ScalarR
     if not np.isfinite(value):  # empty / off-basin cloud → fall back to the centre
         dist, _ = _edt_at(np.atleast_2d(att.center))
         value = float(dist[0])
+    # The answer is a distance read off a CELL GRID, so it is quantised: it is
+    # always an exact number of cells, and (because the grid edge and the
+    # attractor's own cell both round outward) it is biased slightly high —
+    # measured against a direct 72-direction bisection on a two-well oscillator,
+    # +7.8% at 40x40, +6.4% at 80x80, +1.4% at 160x160.  Erring high is the
+    # dangerous direction for a safety margin, so the readout carries the
+    # resolution instead of six significant figures.
+    quantum = float(np.max(spacing))
+    grid_words = " × ".join(str(int(n)) for n in np.asarray(grid.shape)[free])
     return ScalarResult(
         value=value,
-        meta={"analysis": "resilience", "attractor_id": int(attractor_id)},
+        meta={
+            "analysis": "resilience",
+            "attractor_id": int(attractor_id),
+            "quantization": quantum,
+            "quantization_reason": (
+                f"{value / quantum:.0f} cells on a {grid_words} grid — "
+                "refine the grid to tighten, and read it as an upper bound"
+            ),
+        },
     )
 
 

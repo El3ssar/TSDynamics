@@ -1122,7 +1122,17 @@ def ensemble(
 
 
 def _provenance(problem: Problem, **extra: Any) -> dict[str, Any]:
-    """Build the provenance dict attached to an engine-produced Trajectory."""
+    """Build the provenance dict attached to an engine-produced Trajectory.
+
+    The numerical kernel is recorded under **``solver``**, the word the caller
+    typed (``run(solver="dop853")``), with ``method`` kept alongside as the
+    engine-internal spelling.  One concept had three spellings — ``solver=`` at
+    the door, ``meta["method"]`` in the record, ``_default_method`` on the class
+    — which is exactly the drift C3 exists to prevent, and the one a reader hits
+    when they go looking in ``meta`` for what they just passed.
+    """
+    if "method" in extra:
+        extra.setdefault("solver", extra["method"])
     system = problem.system
     if system is not None and hasattr(system, "_provenance"):
         prov = system._provenance(family=problem.family, engine="rust", **extra)

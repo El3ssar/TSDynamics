@@ -301,10 +301,29 @@ def _require_rows(rows: int, max_dim: int, tau: int) -> None:
         )
 
 
+#: The delay the dimension estimators use when the caller names none.
+#:
+#: ``None`` means "ask :func:`~tsdynamics.analysis.optimal_delay`", which is the
+#: library's own answer to the same question one function over.  It used to be a
+#: hard ``1``, so two adjacent doors disagreed by default on the same data —
+#: ``optimal_delay(x)`` said 16 and ``embedding_dimension(x)`` reconstructed at
+#: 1 — and on an oversampled series a lag-1 reconstruction is a thin diagonal
+#: line, the classic way to over-report the dimension.  The resolved value is
+#: printed by the result's repr (``(cao, τ=16 samples, …)``), so the choice is
+#: never made silently.
+def _resolve_delay(series: Any, delay: int | None, components: Any) -> int:
+    """Return ``delay``, estimating it from the data when it is ``None``."""
+    if delay is not None:
+        return int(delay)
+    from .delay import optimal_delay
+
+    return int(optimal_delay(series, components=components))
+
+
 def cao_dimension(
     data: Any,
     *,
-    delay: int = 1,
+    delay: int | None = None,
     max_dim: int = 10,
     threshold: float = 0.9,
     theiler: int = 0,
@@ -376,7 +395,7 @@ def cao_dimension(
     True
     """
     x = _as_series(data, component=components, analysis="cao_dimension")
-    tau, max_dim = int(delay), int(max_dim)
+    tau, max_dim = _resolve_delay(x, delay, None), int(max_dim)
     if tau < 1:
         raise ValueError("delay must be >= 1.")
     if max_dim < 2:
@@ -423,7 +442,7 @@ def cao_dimension(
 def false_nearest_neighbors(
     data: Any,
     *,
-    delay: int = 1,
+    delay: int | None = None,
     max_dim: int = 10,
     rtol: float = 15.0,
     atol: float = 2.0,
@@ -495,7 +514,7 @@ def false_nearest_neighbors(
     True
     """
     x = _as_series(data, component=components, analysis="false_nearest_neighbors")
-    tau, max_dim = int(delay), int(max_dim)
+    tau, max_dim = _resolve_delay(x, delay, None), int(max_dim)
     if tau < 1:
         raise ValueError("delay must be >= 1.")
     if max_dim < 1:
@@ -543,7 +562,7 @@ def embedding_dimension(
     data: Any,
     *,
     method: str = "cao",
-    delay: int = 1,
+    delay: int | None = None,
     max_dim: int = 10,
     components: int | str | None = None,
     **kwargs: Any,
@@ -567,8 +586,16 @@ def embedding_dimension(
         The scalar series (or a selected ``components``).
     method : {"cao", "fnn"}, default "cao"
         ``"cao"`` → :func:`cao_dimension`; ``"fnn"`` → :func:`false_nearest_neighbors`.
-    delay : int, default 1
-        Embedding delay in samples.
+    delay : int, optional
+        Embedding delay in samples.  ``None`` (the default) estimates it with
+        :func:`~tsdynamics.analysis.optimal_delay`, so this door and that one
+        agree about the same data; the resolved value is in the repr and in
+        ``result.meta["delay"]``.
+
+        .. versionchanged:: 6.0
+            Was a hard ``1``.  Two adjacent estimators disagreeing by default is
+            a trap on an oversampled series, where a lag-1 reconstruction is a
+            thin diagonal line.
     max_dim : int, default 10
         Largest dimension evaluated.
     components : int or str, optional

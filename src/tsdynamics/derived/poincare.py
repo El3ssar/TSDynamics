@@ -478,6 +478,12 @@ class PoincareSection(Trajectory):
             f"PoincareSection  {self.n_steps} crossings of {self._plane_words()}"
             f"   ·  {self.dim}-D states{subject}"
         )
+        escaped = self.unbounded
+        if escaped is not None:
+            # A section of an escaping orbit is 300 meaningless points that read
+            # exactly like 300 honest ones.  Say so on the line that carries the
+            # count, not only on the trajectory it was cut from.
+            head += f"\n    {escaped} — these crossings are not a section of an attractor"
         if self.meta.get("plane_auto"):
             head += "\n    plane chosen automatically — name one to pin it: "
             head += "system.poincare('y', 0.0)"

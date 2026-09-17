@@ -130,7 +130,7 @@ def test_reference_backend_is_unsupported_for_dde():
 def test_unknown_method_raises():
     # The solver registry resolves the method first, so an unknown name is
     # rejected there (with the available-methods listing) before the engine.
-    with pytest.raises(ValueError, match="unknown solver method"):
+    with pytest.raises(ValueError, match="unknown solver"):
         _LinearDDE().run(backend="interp", solver="no-such", final_time=1.0, dt=0.1, ic=[1.0])
 
 

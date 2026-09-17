@@ -81,7 +81,7 @@ def axis_labels(
     *,
     fallback: str = "x",
 ) -> list[str]:
-    """Resolve state-space axis labels for ``indices`` from a result's ``meta``.
+    r"""Resolve state-space axis labels for ``indices`` from a result's ``meta``.
 
     A system that declares ``variables`` knows its coordinates are ``x`` / ``y`` /
     ``z`` (or ``theta`` / ``omega``, or ``S`` / ``I`` / ``R``); a result plot that
@@ -89,6 +89,17 @@ def axis_labels(
     relabel the figure by hand.  This helper reads the ``variables`` tuple a
     result records in its provenance and falls back to the indexed spelling
     (``$x_0$``) only when the system genuinely declares no names.
+
+    **A declared name is emitted plain, and that is deliberate.**  A
+    :class:`~tsdynamics.data.Trajectory` labels its axes ``x`` / ``v``, so
+    wrapping the identical name as ``$x$`` here put two typographies in one
+    figure the moment a basin image and an orbit were tiled by
+    :func:`tsdynamics.viz.grid` — which is exactly how these results are used.
+    The wrapping also does not do what it looks like it does: mathtext renders
+    ``$theta$`` as an upright word, not as :math:`\theta`, so the one family of
+    names it was supposed to serve is the one it serves worst.  Only the
+    **indexed fallback** keeps mathtext, because ``x_0`` genuinely wants a
+    subscript and no plain-labelled sibling ever produces it.
 
     Parameters
     ----------
@@ -113,7 +124,7 @@ def axis_labels(
     out: list[str] = []
     for i in indices:
         if names is not None and 0 <= i < len(names) and names[i]:
-            out.append(f"${names[i]}$")
+            out.append(str(names[i]))
         else:
             out.append(f"${fallback}_{{{i}}}$")
     return out

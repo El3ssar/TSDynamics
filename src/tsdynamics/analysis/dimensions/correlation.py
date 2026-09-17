@@ -354,6 +354,9 @@ def correlation_dimension(
             "kind": "correlation",
             "q": 2.0,
             "theiler": w,
+            # One coordinate means "points on a line" — the estimator answers
+            # D ~ 1 whatever the attractor is, so the result says so.
+            "n_components": int(points.shape[1]),
         },
     )
 

@@ -95,6 +95,7 @@ from ._core import (
     _apply_theme_color_cycle,
     _apply_theme_to_figure,
     _resolve_theme,
+    apply_title,
     figure_geometry,
     new_figure,
 )
@@ -994,13 +995,18 @@ def _curve_driver(
     series_like = kind in (PlotKind.TIME_SERIES, PlotKind.SPACETIME)
 
     # With a windowed trail, draw the full curve once, faintly — the static,
-    # context "attractor backdrop" the comet sweeps over (matches the plotly look).
-    if anim.trail_kind is not None and not series_like:
-        if three_d:
-            assert z is not None
-            ax.plot(x, y, z, color=color, lw=1.0, alpha=0.18)
-        else:
-            ax.plot(x, y, color=color, lw=1.0, alpha=0.18)
+    # context "attractor backdrop" the comet sweeps over (matches the plotly
+    # look).  Switchable since v6 (``.trail(backdrop=False)``): it shows the
+    # ending in frame 1, which is exactly wrong for a talk that reveals an
+    # attractor, and it used to have no knob and no mention in ``.trail``'s help.
+    if anim.trail_kind is not None and not series_like and anim.backdrop:
+        alpha = float(anim.backdrop_alpha)
+        if alpha > 0.0:
+            if three_d:
+                assert z is not None
+                ax.plot(x, y, z, color=color, lw=1.0, alpha=alpha)
+            else:
+                ax.plot(x, y, color=color, lw=1.0, alpha=alpha)
 
     # Fading-comet (glowing-tail) trail is opt-in via ``.trail(fade=True)``.
     if anim.trail_fade and not series_like:
@@ -1311,16 +1317,45 @@ def _apply_fixed_limits(ax: Any, spec: PlotSpec, *, three_d: bool) -> None:
             ax.set_zlim(*zr)
 
 
+def _apply_suptitle(fig: Any, spec: PlotSpec, theme: Any) -> None:
+    """Set a composite's figure title **in the theme's ink** (the still path does).
+
+    ``fig.suptitle(spec.title)`` alone drew near-black text on a dark movie while
+    the same spec's ``.png`` drew it light: a composite's title is figure-level,
+    so ``_apply_theme_to_figure`` (which colours the *axes* title) never saw it.
+    """
+    if not spec.title:
+        return
+    kw: dict[str, Any] = {}
+    if theme is not None and theme.foreground is not None:
+        kw["color"] = theme.foreground
+    if theme is not None and theme.font_family is not None:
+        kw["fontfamily"] = theme.font_family
+    fig.suptitle(spec.title, **kw)
+
+
 def _apply_static_labels(ax: Any, spec: PlotSpec, *, three_d: bool) -> None:
-    """Apply axis labels, title, aspect (the non-data framing)."""
+    """Apply axis labels, title, aspect (the non-data framing).
+
+    The title goes through the shared :func:`~._core.apply_title`, so an animated
+    frame is themed exactly like the still of the same spec.
+    """
     if spec.x.label:
         ax.set_xlabel(spec.x.label)
     if spec.y.label:
         ax.set_ylabel(spec.y.label)
     if three_d and spec.z is not None and spec.z.label:
         ax.set_zlabel(spec.z.label)
-    if spec.title:
-        ax.set_title(spec.title)
+    theme = _resolve_theme(spec)
+    apply_title(ax, spec, theme)
+    if three_d:
+        # ``mplot3d`` draws its own pane quads, which keep matplotlib's light
+        # default whatever the figure facecolor is.  The still renderer themes
+        # them; the animator did not, so a dark 3-D movie had **grey panes**
+        # where its own ``.png`` had dark navy ones.
+        from ._threed import _apply_3d_panes
+
+        _apply_3d_panes(ax, theme)
     if not three_d and spec.aspect == "equal":
         ax.set_aspect("equal", adjustable="box")
     if spec._axes_hidden():
@@ -1415,8 +1450,7 @@ def _render_composite_animation(
         three_d = _threed.is_three_d(effective)
         ax = fig.add_subplot(rows, cols, i + 1, projection="3d" if three_d else None)
         updaters.append(_build_panel_animation(fig, ax, effective, three_d=three_d))
-    if spec.title:
-        fig.suptitle(spec.title)
+    _apply_suptitle(fig, spec, composite_theme)
 
     n_steps = max((u.n_steps for u in updaters), default=2)
 
@@ -1580,8 +1614,7 @@ def _render_frames_movie(spec: PlotSpec, *, figsize: tuple[float, float] | None)
             ax.set_ylim(*ranges["y"])
         if three_d and "z" in ranges:
             ax.set_zlim(*ranges["z"])
-        if spec.title:
-            fig.suptitle(spec.title)
+        _apply_suptitle(fig, spec, _resolve_theme(spec))
         return []
 
     # Draw the LAST frame eagerly.  A still save of an animation writes the

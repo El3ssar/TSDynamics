@@ -109,9 +109,20 @@ def test_fixed_mass_uniform(uniform_sets, name, expected):
     assert abs(float(d) - expected) < 0.15, f"{name}: D = {float(d):.3f}, expected {expected}"
 
 
+#: A genuinely 1-D point set is the one input a dimension estimator cannot tell
+#: from a scalar time series, so it WARNS (``UnembeddedSeriesWarning``) and comes
+#: back ``trusted=False``: the wrong answer for a measured series is D ~ 1 with a
+#: perfect fit, and that is worth a false alarm on the rarer honest case.  Tests
+#: that deliberately measure a set on a line say so here.
+def _on_a_line(call):
+    """Run ``call`` expecting the single-coordinate warning, and return its result."""
+    with pytest.warns(dim.UnembeddedSeriesWarning, match="SINGLE coordinate"):
+        return call()
+
+
 def test_cantor_box_counting():
     expected = np.log(2) / np.log(3)  # 0.6309
-    d = dim.box_counting_dimension(_cantor_points(), n_scales=22)
+    d = _on_a_line(lambda: dim.box_counting_dimension(_cantor_points(), n_scales=22))
     assert abs(float(d) - expected) < 0.05, f"Cantor D0 = {float(d):.4f}, expected {expected:.4f}"
 
 
@@ -175,8 +186,31 @@ def test_accepts_trajectory_array_and_series_equivalently():
 
 def test_one_dimensional_series_is_a_column(uniform_sets):
     series = uniform_sets["line"][:, 0]  # 1-D
-    d = dim.correlation_dimension(series)
+    d = _on_a_line(lambda: dim.correlation_dimension(series))
     assert abs(float(d) - 1.0) < 0.12
+
+
+def test_a_scalar_series_is_warned_about_and_reported_untrusted():
+    """A fractal dimension of ONE coordinate answers ~1 whatever produced it.
+
+    The single most natural mistake for a data-first user, and the one the
+    estimator answers most convincingly: measured on 18 000 samples of Lorenz
+    *x*, ``correlation_dimension`` returned ``0.99742 +- 0.000151, R2 = 1`` where
+    the truth is 2.06 — while its neighbour ``lyapunov_from_data`` auto-embeds
+    the same input and says so.  Two siblings in one documented group must not
+    make opposite assumptions in silence.
+    """
+    lor = ts.systems.Lorenz()
+    traj = lor.run(final_time=120.0, dt=0.01, transient=20.0, ic=[1.0, 1.0, 1.0])
+    x = np.asarray(traj["x"])
+    result = _on_a_line(lambda: dim.correlation_dimension(x))
+    assert result.unembedded is True
+    assert result.trusted is False
+    assert "ONE coordinate" in repr(result)
+    # ...and the remedy the message hands back gives the right answer.
+    embedded = dim.correlation_dimension(ts.analysis.embed(x))
+    assert embedded.trusted is True
+    assert 1.8 < float(embedded) < 2.4
 
 
 # ── DimensionResult API ─────────────────────────────────────────────────────────
@@ -376,7 +410,9 @@ def _henon_points(n=20000, transient=1000, a=1.4, b=0.3):
 )
 def test_box_counting_matches_known_dimension(name, points_fn, expected, atol):
     """D_0 of sets whose dimension is known exactly or from the literature."""
-    d = dim.box_counting_dimension(points_fn())
+    points = points_fn()
+    call = lambda: dim.box_counting_dimension(points)  # noqa: E731
+    d = _on_a_line(call) if np.asarray(points).reshape(len(points), -1).shape[1] == 1 else call()
     assert abs(float(d) - expected) < atol, f"{name}: D0 = {float(d):.4f}, expected {expected:.4f}"
 
 
@@ -396,7 +432,8 @@ def test_box_counting_recovers_a_uniform_cube(d_topo, atol):
     """
     rng = np.random.default_rng(11)
     pts = rng.uniform(0.0, 1.0, (30000, d_topo))
-    d = dim.box_counting_dimension(pts)
+    call = lambda: dim.box_counting_dimension(pts)  # noqa: E731
+    d = _on_a_line(call) if d_topo == 1 else call()
     assert abs(float(d) - d_topo) < atol, f"{d_topo}-cube: D0 = {float(d):.4f}"
 
 
@@ -732,5 +769,5 @@ class TestTheScalingWindowKeywordIsCalledFlatness:
             getattr(ts.analysis, name)(np.zeros((50, 2)), tol=1.2)
         text = str(excinfo.value)
         assert "_core_kwargs" not in text
-        assert f"{name}() has no 'tol' keyword in v6" in text
+        assert f"{name}() has no 'tol' keyword" in text
         assert f"ts.analysis.{name}(data, flatness=1.2)" in text

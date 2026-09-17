@@ -28,12 +28,24 @@ from __future__ import annotations
 import warnings
 
 import numpy as np
+import pytest
 from _strategies import henon_series, seeds
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
 import tsdynamics as ts
 from tsdynamics.analysis.dimensions.generalized import NonMonotoneSpectrumWarning
+
+#: These tests measure point sets that really do live on a LINE (a Cantor set, a
+#: 1-cube), which is exactly the input
+#: :class:`~tsdynamics.analysis.dimensions.UnembeddedSeriesWarning` warns about:
+#: a single-coordinate point set cannot be told apart from a scalar time series,
+#: and for a *series* the answer D ~ 1 is wrong.  They mean the 1-D reading, so
+#: they say so once here rather than wrapping every call.
+pytestmark = pytest.mark.filterwarnings(
+    "ignore::tsdynamics.analysis.dimensions._common.UnembeddedSeriesWarning"
+)
+
 
 # Tolerances are sized empirically (see commit message / brief): finite-N edge
 # effects bias the correlation dimension of a unit cube *downward*, so the bands

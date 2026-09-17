@@ -20,6 +20,8 @@ finer navigation; they are off the listing, like every other internal submodule.
 
 from __future__ import annotations
 
+import re
+from collections.abc import Sequence
 from typing import Any
 
 from . import continuous, discrete
@@ -95,6 +97,100 @@ def get(name: str) -> type:
     )
 
 
+class SystemList(list):  # type: ignore[type-arg]
+    """The list :func:`find` returns — the system **classes**, tabulated in its repr.
+
+    Holds the classes, so ``find("lorenz")[0]()`` builds one and
+    ``[c.__name__ for c in find(family="dde")]`` gives the names.  Received,
+    never constructed.
+
+    It exists because the same verb should answer the same way at every
+    registry: ``ts.analysis.find`` prints a grouped, captioned table and this one
+    printed ``[<class 'tsdynamics.systems.continuous.chaotic_attractors.Chua'>,
+    ...]`` — the module path of a private file, three times the width of the
+    answer, carrying none of what a reader is choosing between.
+    """
+
+    __slots__ = ("_header",)
+
+    def __init__(self, classes: Sequence[type], header: str) -> None:
+        super().__init__(classes)
+        self._header = header
+
+    def __repr__(self) -> str:  # noqa: D105
+        from tsdynamics import registry
+
+        if not self:
+            return self._header
+        entries = {e.cls: e for e in registry.all_systems()}
+        lines = [self._header]
+        for family in ("ode", "dde", "map", "sde"):
+            rows = [c for c in self if getattr(entries.get(c), "family", None) == family]
+            if not rows:
+                continue
+            lines.append("")
+            lines.append(f"  {_FAMILY_WORD[family]}   ({len(rows)})")
+            for cls in rows[:_MAX_LISTED]:
+                entry = entries[cls]
+                where = f"dim {entry.dim}" if entry.dim else "dim varies"
+                cite = _short_reference(entry.reference)
+                lines.append(f"    ts.systems.{cls.__name__:<22s} {where:<11s} {cite}")
+            if len(rows) > _MAX_LISTED:
+                lines.append(f"    ... and {len(rows) - _MAX_LISTED} more")
+        unknown = [c for c in self if c not in entries]
+        for cls in unknown[:_MAX_LISTED]:
+            lines.append(f"    {cls.__name__}")
+        return "\n".join(lines)
+
+
+#: How each family word is spelled in the :class:`SystemList` table.
+_FAMILY_WORD = {
+    "ode": "flows (ODE)",
+    "dde": "delay systems (DDE)",
+    "map": "maps",
+    "sde": "stochastic systems (SDE)",
+}
+
+#: Rows shown per family before the table truncates.
+_MAX_LISTED = 12
+
+
+#: ``Author, Author & Author (1984)`` — everything up to and including the year.
+#: Splitting on the first comma instead renders "Yalçın, Suykens & Vandewalle
+#: (2005), ..." as the single word "Yalçın", which is not a citation.
+_CITATION_HEAD = re.compile(r"^(.*?\(\d{4}[a-z]?\))")
+
+
+def _short_reference(reference: str | None) -> str:
+    """Render a catalogue citation down to ``Author(s) (year)``."""
+    if not reference:
+        return ""
+    text = " ".join(str(reference).split())
+    match = _CITATION_HEAD.match(text)
+    head = match.group(1) if match else text.split(",")[0].strip()
+    return head if len(head) <= 44 else head[:41] + "..."
+
+
+def _find_header(what: str, family: str | None, dim: int | None, n: int) -> str:
+    """Render the one line above the table: how many, and what was asked for."""
+    asked = []
+    if what:
+        asked.append(repr(str(what)))
+    if family is not None:
+        asked.append(f"family={family!r}")
+    if dim is not None:
+        asked.append(f"dim={dim}")
+    query = " · ".join(asked)
+    if not n:
+        return (
+            f"no catalogue system matches {query or 'that'}."
+            f"\n    ts.systems.names()                 # all {len(__all__) - 3}"
+            f'\n    ts.systems.find(family="map")      # by family'
+        )
+    plural = "" if n == 1 else "s"
+    return f"{n} system{plural} match {query}" if query else f"{n} system{plural}"
+
+
 def find(
     what: str = "",
     /,
@@ -121,8 +217,11 @@ def find(
 
     Returns
     -------
-    list of type
-        The matching **classes**, sorted by name — call one to build it.
+    SystemList
+        A plain ``list`` of the matching **classes**, sorted by name — call one
+        to build it.  Its *repr* is the grouped catalogue table (family, state
+        dimension, and the literature the model comes from), so the same verb
+        answers as legibly here as it does on ``ts.analysis``.
 
     Examples
     --------
@@ -147,7 +246,8 @@ def find(
         )
         if all(word in haystack for word in words):
             out.append(entry.cls)
-    return sorted(out, key=lambda c: c.__name__)
+    ordered = sorted(out, key=lambda c: c.__name__)
+    return SystemList(ordered, _find_header(what, family, dim, len(ordered)))
 
 
 def __dir__() -> list[str]:

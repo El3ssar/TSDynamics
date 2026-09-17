@@ -59,7 +59,7 @@ import numpy as np
 
 from tsdynamics.errors import InvalidParameterError
 
-from ...producers import autostyle_enabled, autostyle_line
+from ...producers import autostyle_enabled, autostyle_line, autostyle_marker
 from ...spec import Annotation, Axis, Colorbar, Layer, PlotKind, PlotSpec
 from ...style import Theme, normalize_style
 from .. import normalize_kind
@@ -603,6 +603,48 @@ def _draw_colored_line(
     return lc
 
 
+#: A marker cloud denser than this fraction of the figure's pixels cannot be
+#: read: the markers overlap, and what you see is the *envelope*, not the data.
+_SATURATION_FRACTION = 0.25
+
+
+def _warn_if_recurrence_cannot_fit(ax: Axes, spec: PlotSpec, n_points: int) -> None:
+    """Say so when a recurrence plot has more points than the figure has pixels.
+
+    Measured: a 1501x1501 matrix at a **verified 5% density** draws 112 060
+    markers into ~137 000 device pixels and renders as a near-solid black block —
+    destroying exactly the diagonal-line structure DET / L_max / ENTR measure.
+    The recurrence plot *is* the deliverable in RQA work, so silently handing
+    back a picture that misrepresents a matrix whose density the caller has
+    already checked is a wrong answer, not a cosmetic one.
+
+    Restricted to :data:`~tsdynamics.viz.spec.PlotKind.RECURRENCE_PLOT`
+    deliberately: an orbit diagram is *meant* to saturate (its black bands are
+    the chaotic bands), so the same warning there would be noise.
+    """
+    import warnings
+
+    if normalize_kind(spec.kind) is not PlotKind.RECURRENCE_PLOT:
+        return
+    fig = ax.get_figure(root=True)
+    if fig is None:  # pragma: no cover - an axes always has a figure here
+        return
+    width, height = fig.get_size_inches()
+    pixels = float(width) * float(height) * float(fig.dpi) ** 2
+    if n_points < _SATURATION_FRACTION * pixels:
+        return
+    from ..caps import VisualizationDegraded
+
+    warnings.warn(
+        f"this recurrence plot draws {n_points:,} markers into about {int(pixels):,} device "
+        "pixels, so they overlap and the diagonal structure is lost. Draw it as an image "
+        "(ts.plot(traj, 'recurrence')), raise the resolution (p.size(w, h) / dpi= at save), "
+        "or shorten/decimate the series.",
+        VisualizationDegraded,
+        stacklevel=3,
+    )
+
+
 def _draw_scatter(
     ax: Axes, layer: Layer, spec: PlotSpec, preset: _KindPreset, theme: Theme
 ) -> ScalarMappable | None:
@@ -613,6 +655,7 @@ def _draw_scatter(
     x = _channel(layer, "x")
     if x is None:
         x = np.arange(y.size, dtype=float)
+    _warn_if_recurrence_cannot_fit(ax, spec, int(np.size(y)))
     c = _channel(layer, "c")
     size = _channel(layer, "size")
     canon = normalize_style(layer.style, warn=False)
@@ -632,8 +675,17 @@ def _draw_scatter(
     # the diameter so a canonical markersize matches a Line2D marker of that size.
     elif "markersize" in canon:
         kw["s"] = float(canon["markersize"]) ** 2
-    elif theme.marker_size is not None:
-        kw["s"] = float(theme.marker_size) ** 2
+    else:
+        # Density-aware, exactly as the LINE path is: the theme's constant marker
+        # is right for a hundred points and renders a hundred thousand as one
+        # solid blob.  An explicit ``markersize``/``size`` never reaches here.
+        auto = autostyle_marker(
+            int(np.size(y)),
+            marker_size=theme.marker_size,
+            enabled=autostyle_enabled(spec),
+        )
+        if auto is not None:
+            kw["s"] = float(auto) ** 2
     if c is not None:
         kw["c"] = c
         kw["cmap"] = _resolve_cmap(spec, layer, preset)
@@ -875,14 +927,23 @@ def _draw_area(
     kw: dict[str, Any] = {"alpha": float(fill_alpha)}
     if "color" in canon:
         kw["color"] = canon["color"]
-    if layer.label is not None:
+    # A band and the line through it are ONE series, so exactly one of the two
+    # artists carries the legend label.  Both did, and matplotlib legends every
+    # labelled artist: measured, a 2-attractor continuation produced FOUR
+    # entries reading "attractor 1 · attractor 1 · attractor 2 · attractor 2",
+    # which says there are four things when there are two.  The LINE takes it
+    # when there is one — its swatch is the solid colour, where the band's is
+    # the same colour at alpha 0.3 and reads as a different series.
+    centre = y if (y is not None and "lo" in layer.data) else None
+    if layer.label is not None and centre is None:
         kw["label"] = layer.label
     if show_fill:
         ax.fill_between(x, lo, hi, **kw)
-    if y is not None and "lo" in layer.data:
-        # A central line through a fan/band, when a distinct ``y`` is supplied.
-        line_kw = {k: v for k, v in kw.items() if k in ("color", "label")}
-        ax.plot(x, y, **line_kw)
+    if centre is not None:
+        line_kw: dict[str, Any] = {k: v for k, v in kw.items() if k == "color"}
+        if layer.label is not None:
+            line_kw["label"] = layer.label
+        ax.plot(x, centre, **line_kw)
     return None
 
 
@@ -1068,25 +1129,128 @@ def _apply_axis(ax: Axes, axis: Axis, which: Literal["x", "y"], theme: Theme) ->
             ax.spines["right"].set_edgecolor(ink)
 
 
+def apply_title(ax: Axes, spec: PlotSpec, theme: Theme) -> None:
+    """Set the axes title **in the theme's ink, size and family**.
+
+    Shared with the animation renderer rather than re-derived there, because the
+    copy that path grew was a plain ``ax.set_title(spec.title)``: the theme's
+    foreground reached a title only through :func:`_apply_theme_to_figure`, which
+    colours it *if it already exists*, and the animator sets it afterwards.  So
+    one spec rendered ``#e6e6e6`` as a ``.png`` and near-black as the same
+    frame of a ``.gif`` — a talk slide and a paper figure that do not match.
+    """
+    if not spec.title:
+        return
+    title_kw: dict[str, Any] = {}
+    if theme.foreground is not None:
+        title_kw["color"] = theme.foreground
+    eff_title_size = theme.title_size if theme.title_size is not None else theme.font_size
+    if eff_title_size is not None:
+        title_kw["fontsize"] = float(eff_title_size)
+    if theme.font_family is not None:
+        title_kw["fontfamily"] = theme.font_family
+    ax.set_title(spec.title, **title_kw)
+
+
 def _apply_axes(ax: Axes, spec: PlotSpec, preset: _KindPreset, theme: Theme) -> None:
     """Apply both axes, the title, and the aspect ratio to ``ax``."""
     _apply_axis(ax, spec.x, "x", theme)
     _apply_axis(ax, spec.y, "y", theme)
-    if spec.title:
-        title_kw: dict[str, Any] = {}
-        if theme.foreground is not None:
-            title_kw["color"] = theme.foreground
-        eff_title_size = theme.title_size if theme.title_size is not None else theme.font_size
-        if eff_title_size is not None:
-            title_kw["fontsize"] = float(eff_title_size)
-        if theme.font_family is not None:
-            title_kw["fontfamily"] = theme.font_family
-        ax.set_title(spec.title, **title_kw)
+    apply_title(ax, spec, theme)
     aspect = spec.aspect if spec.aspect != "auto" else preset.aspect
     if aspect == "equal":
         ax.set_aspect("equal", adjustable="box")
     if spec._axes_hidden():
         ax.set_axis_off()
+
+
+def _aspect_matched_cax(ax: Axes, location: str | None) -> Axes | None:
+    """Return a colorbar axes **tied to an aspect-locked axes' drawn box**, or ``None``.
+
+    Measured on a basin image over ``x in [-3, 3]``, ``y in [-0.6, 0.6]``: the
+    colorbar came out roughly **three times the height of the picture**, with
+    the picture squashed into the middle third — the figure looked broken, and
+    it is one of the library's headline outputs.  ``Figure.colorbar(..., ax=ax)``
+    sizes the bar from the axes' *rectangle*, but an equal-aspect image with
+    ``adjustable="box"`` draws inside a smaller box than its rectangle, and the
+    rectangle itself is re-laid-out afterwards — so no single-pass ``shrink=``
+    can be exact.  ``axes_grid1``'s divider positions the bar through the parent's
+    own locator, which is evaluated *after* ``apply_aspect``, so the two heights
+    agree by construction (measured: 93.1 px vs 93.1 px).
+
+    The bar is an **inset in axes coordinates**, which are the drawn box after
+    ``apply_aspect`` by definition — so it tracks the picture under constrained
+    layout too (``axes_grid1``'s divider does not).
+
+    Returns ``None`` — leaving matplotlib's own sizing, with the
+    :func:`_aspect_shrink` correction — for a 3-D axes, a free-aspect axes, a
+    top/bottom bar (whose tick labels need layout space an inset cannot reserve),
+    and, deliberately, **whenever the mismatch is small**: confining the change
+    to the figures that were visibly broken leaves every currently-fine figure
+    byte-identical.
+    """
+    if getattr(ax, "name", "") == "3d" or ax.get_adjustable() != "box":
+        return None
+    if str(location or "right") not in ("right", "left"):
+        return None
+    try:
+        float(ax.get_aspect())
+    except (TypeError, ValueError):  # "auto" — nothing to match
+        return None
+    if _aspect_shrink(ax, location) > _ASPECT_MISMATCH_FLOOR:
+        return None
+    x0 = 1.03 if str(location or "right") == "right" else -0.10
+    return ax.inset_axes((x0, 0.0, 0.04, 1.0), transform=ax.transAxes)
+
+
+#: How far the drawn box may fall short of its cell before the colorbar is
+#: re-anchored to the picture.  Above it the two are close enough that
+#: matplotlib's own placement reads correctly, and moving it would rewrite
+#: figures that were never wrong.
+_ASPECT_MISMATCH_FLOOR = 0.75
+
+
+def _aspect_shrink(ax: Axes, location: str | None) -> float:
+    """Return the colorbar ``shrink`` that matches an aspect-locked axes' drawn box.
+
+    ``fig.colorbar(..., ax=ax)`` sizes the bar from the axes' *rectangle*, but an
+    equal-aspect image with ``adjustable="box"`` draws inside a **smaller** box
+    than its rectangle.  Measured on a basin image over ``x in [-3, 3]``,
+    ``y in [-0.6, 0.6]``: the colorbar came out roughly **three times the height
+    of the picture**, with the picture squashed into the middle third — the
+    figure looked broken, and it is one of the library's headline outputs.
+
+    Returns 1.0 (matplotlib's own default, so nothing moves) whenever the axes is
+    free to fill its rectangle.
+    """
+    if ax.get_adjustable() != "box":
+        return 1.0
+    try:
+        ratio = float(ax.get_aspect())
+    except (TypeError, ValueError):  # "auto"
+        return 1.0
+    figure = ax.get_figure(root=True)
+    if figure is None:  # pragma: no cover - an axes always has a figure here
+        return 1.0
+    fig_w, fig_h = figure.get_size_inches()
+    # ``original=True`` is load-bearing: ``Figure.colorbar(..., ax=ax)`` sizes the
+    # bar from the axes' ORIGINAL rectangle, and the active position may or may
+    # not have been shrunk by ``apply_aspect`` yet depending on whether anything
+    # has drawn.  Reading the same rectangle the colorbar does makes the ratio
+    # correct either way.
+    box = ax.get_position(original=True)
+    rect_w, rect_h = float(box.width) * float(fig_w), float(box.height) * float(fig_h)
+    x0, x1 = ax.get_xlim()
+    y0, y1 = ax.get_ylim()
+    data_w, data_h = abs(float(x1) - float(x0)), abs(float(y1) - float(y0)) * ratio
+    if not (data_w > 0.0 and data_h > 0.0 and rect_w > 0.0 and rect_h > 0.0):
+        return 1.0
+    along_x = str(location) in ("top", "bottom")
+    if along_x:
+        drawn = min(rect_w, rect_h * data_w / data_h)
+        return float(np.clip(drawn / rect_w, 0.05, 1.0))
+    drawn = min(rect_h, rect_w * data_h / data_w)
+    return float(np.clip(drawn / rect_h, 0.05, 1.0))
 
 
 def _apply_colorbar(
@@ -1112,7 +1276,16 @@ def _apply_colorbar(
     """
     if mappable is None or colorbar is None or not colorbar.show:
         return
-    cb = fig.colorbar(mappable, ax=ax, location=colorbar.location)
+    cax = _aspect_matched_cax(ax, colorbar.location)
+    if cax is not None:
+        cb = fig.colorbar(mappable, cax=cax, location=colorbar.location)
+    else:
+        cb = fig.colorbar(
+            mappable,
+            ax=ax,
+            location=colorbar.location,
+            shrink=_aspect_shrink(ax, colorbar.location),
+        )
     if colorbar.label:
         label_kw: dict[str, Any] = {}
         if colorbar.label_size is not None:
@@ -1430,7 +1603,9 @@ def _write(result: Figure | FuncAnimation, path: str | Path) -> Path:
     return out
 
 
-def _draw_2d_panel(fig: Figure, ax: Axes, spec: PlotSpec, theme: Theme | None = None) -> None:
+def _draw_2d_panel(
+    fig: Figure, ax: Axes, spec: PlotSpec, theme: Theme | None = None, *, colorbar: bool = True
+) -> ScalarMappable | None:
     """Draw one 2-D spec's layers + axes/colorbar/legend/annotations onto ``ax``.
 
     The single-panel body of :func:`render`, factored out so the composite
@@ -1443,6 +1618,17 @@ def _draw_2d_panel(fig: Figure, ax: Axes, spec: PlotSpec, theme: Theme | None = 
     ``theme`` lets the composite renderer pass an *inherited* theme (its own) for a
     panel that has none, **without mutating the panel spec** — when ``None`` the
     panel's own resolved theme is used.
+
+    ``colorbar=False`` skips step 3's colorbar and returns the mappable instead,
+    so a ``share_color=True`` composite can attach **one** bar spanning every
+    panel at the figure edge rather than inside whichever panel happened to keep
+    it (which, on a 2x2, landed the "figure-level" bar between panels 1 and 2 of
+    the top row).
+
+    Returns
+    -------
+    ScalarMappable or None
+        The colour-mapped artist this panel drew, if any.
     """
     theme = theme if theme is not None else _resolve_theme(spec)
     preset = _preset_for(normalize_kind(spec.kind))
@@ -1464,9 +1650,56 @@ def _draw_2d_panel(fig: Figure, ax: Axes, spec: PlotSpec, theme: Theme | None = 
     # Step 3: apply axes (grid, labels, ticks, tickformat, …), colorbar, legend, annotations
     _apply_theme_grid(ax, spec, theme)
     _apply_axes(ax, spec, preset, theme)
-    _apply_colorbar(fig, ax, mappable, spec.colorbar, spec.meta)
+    if colorbar:
+        _apply_colorbar(fig, ax, mappable, spec.colorbar, spec.meta)
     _apply_legend(ax, spec, theme)
     _apply_annotations(ax, spec.annotations)
+    return mappable
+
+
+def _apply_shared_colorbar(
+    fig: Figure, axes: list[Axes], mappable: ScalarMappable, colorbar: Colorbar
+) -> None:
+    """Attach **one** colorbar spanning every panel, at the figure edge.
+
+    ``share_color=True`` unifies the colour range in the IR
+    (:func:`~tsdynamics.viz.compose._unify_colour`) and leaves the
+    :class:`~tsdynamics.viz.spec.Colorbar` on the first colour-bearing panel,
+    which a per-panel renderer draws *inside that panel* — so the "one
+    figure-level colorbar" of a 2x2 landed between panels 1 and 2 of the top
+    row, which is not a layout anyone would put in a paper.  Handing ``ax=`` the
+    whole axes list makes matplotlib steal space from all of them and put the bar
+    on the figure's edge, which is what the keyword promises.
+    """
+    if not colorbar.show:
+        return
+    bar = fig.colorbar(mappable, ax=axes, location=colorbar.location or "right")
+    if colorbar.label:
+        bar.set_label(colorbar.label)
+    if colorbar.ticks is not None:
+        bar.set_ticks(list(colorbar.ticks))
+
+
+def _hide_inner_tick_labels(axes: list[Axes], *, share_x: bool, share_y: bool) -> None:
+    """Strip the redundant inner tick labels of a shared-axis grid.
+
+    ``sharex=``/``sharey=`` link the *limits*; matplotlib only hides the inner
+    labels when you go through ``plt.subplots(...)``, which this renderer does
+    not (it builds axes one at a time so a 3-D panel can sit beside a 2-D one).
+    So ``share_x=True`` produced a stack with the x tick labels repeated under
+    every panel — and removing that repetition is the main reason to ask for
+    shared axes in a paper figure.
+    """
+    for ax in axes:
+        spec = getattr(ax, "get_subplotspec", lambda: None)()
+        if spec is None or getattr(ax, "name", "") == "3d":
+            continue
+        if share_x and not spec.is_last_row():
+            ax.tick_params(labelbottom=False)
+            ax.set_xlabel("")
+        if share_y and not spec.is_first_col():
+            ax.tick_params(labelleft=False)
+            ax.set_ylabel("")
 
 
 def _composite_grid(layout: Any, n: int) -> tuple[int, int]:
@@ -1531,7 +1764,11 @@ def _render_composite(spec: PlotSpec, *, figsize: tuple[float, float] | None) ->
 
     share_x = bool(getattr(layout, "share_x", False))
     share_y = bool(getattr(layout, "share_y", False))
+    share_color = bool(getattr(layout, "share_color", False))
     anchor: Axes | None = None
+    flat: list[Axes] = []
+    shared_mappable: ScalarMappable | None = None
+    shared_colorbar: Colorbar | None = None
     for i, panel in enumerate(panels):
         # Resolve the effective theme LOCALLY (panel theme > composite theme).
         # Do NOT write it back onto the panel spec — rendering must never mutate
@@ -1546,12 +1783,19 @@ def _render_composite(spec: PlotSpec, *, figsize: tuple[float, float] | None) ->
             if share_y:
                 sub_kw["sharey"] = anchor
         ax = fig.add_subplot(rows, cols, i + 1, projection=("3d" if threed else None), **sub_kw)
+        flat.append(ax)
         if threed:
             _threed._draw_3d_panel(fig, ax, panel, effective_theme)
         else:
-            _draw_2d_panel(fig, ax, panel, effective_theme)
+            produced = _draw_2d_panel(fig, ax, panel, effective_theme, colorbar=not share_color)
+            if share_color and panel.colorbar is not None and produced is not None:
+                shared_mappable = shared_mappable or produced
+                shared_colorbar = shared_colorbar or panel.colorbar
             if anchor is None:
                 anchor = ax
+    if share_color and shared_mappable is not None and shared_colorbar is not None:
+        _apply_shared_colorbar(fig, flat, shared_mappable, shared_colorbar)
+    _hide_inner_tick_labels(flat, share_x=share_x, share_y=share_y)
     if spec.title:
         title_kw: dict[str, Any] = {}
         if composite_theme.foreground is not None:

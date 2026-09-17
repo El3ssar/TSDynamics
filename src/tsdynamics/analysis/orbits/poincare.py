@@ -8,6 +8,7 @@ import numpy as np
 
 from tsdynamics.derived import PoincareMap
 from tsdynamics.derived.poincare import PoincareSection, _resolve_section_plane
+from tsdynamics.errors import remedy
 from tsdynamics.families import Trajectory
 
 __all__ = ["PoincareSection", "poincare_section"]
@@ -30,7 +31,10 @@ def _seeded_ic(system: Any, ic: Any | None, seed: int | None) -> np.ndarray | No
         return None
     if getattr(system, "ic", None) is not None:
         return None
-    if getattr(type(system), "_default_ic", None) is not None:
+    # Instance first, then the class: a variable-dimension system sizes its own
+    # default in ``__init__`` (``MultiChua``), so the class attribute is ``None``
+    # there while the instance has a real one.
+    if getattr(system, "_default_ic", None) is not None:
         return None
     return cast(np.ndarray, np.random.default_rng(seed).random(system.dim))
 
@@ -42,6 +46,7 @@ def poincare_section(
     direction: int | str = +1,
     crossings: int = 1000,
     skip_crossings: int = 0,
+    ic: Any | None = None,
     dt: float = 0.01,
     max_time: float = 1e4,
     seed: int | None = 0,
@@ -108,6 +113,19 @@ def poincare_section(
         Number of leading crossings to discard before recording.  (A *section*
         transient is a count of crossings, deliberately distinct from the
         time/step ``transient`` of other analyses.)
+    ic : array-like, optional
+        Where to start the section run — ``dim`` numbers, one per state
+        component (system mode).  Falls back to ``system.ic``, the declared
+        default, then the seeded random draw.
+
+        .. versionadded:: 6.0
+            Every sibling that runs a system took ``ic=`` — ``orbit_diagram``,
+            ``lyapunov_spectrum``, ``max_lyapunov``, ``zero_one_test`` — and this
+            one refused it with a bare ``TypeError``, leaving ``seed=`` as the
+            only control over where the orbit starts.  On a system with a finite
+            basin that is not a control at all: 3 of the first 4 seeds can land
+            off-attractor.
+
     dt : float, default 0.01
         Crossing-**detection** step, in **time units** (system mode).  The march
         is fixed-step ``rk4`` at this step, so ``dt`` bounds how finely a crossing
@@ -142,11 +160,22 @@ def poincare_section(
     """
     _reject_axes_pair(system, plane)
     if isinstance(system, Trajectory):
+        if ic is not None:
+            from tsdynamics.errors import InvalidParameterError
+
+            raise InvalidParameterError(
+                "ic= chooses where to START a run, and a Trajectory has already been "
+                "run — its section is cut from the samples it holds."
+                + remedy(
+                    "ts.analysis.poincare_section(system, plane, ic=[1.0, 1.0, 1.0])",
+                    "ts.analysis.poincare_section(traj[100:], plane)   # ...or cut later data",
+                )
+            )
         return _section_from_data(system, plane, direction)
-    seeded = _seeded_ic(system, None, seed)
-    if seeded is not None:
+    start = _seeded_ic(system, ic, seed) if ic is None else np.asarray(ic, dtype=float)
+    if start is not None:
         system = system.copy()
-        system.reinit(seeded)
+        system.reinit(start)
     pmap = PoincareMap(system, plane, direction=direction, dt=dt, max_time=max_time)
     return pmap.run(crossings, transient=skip_crossings)
 

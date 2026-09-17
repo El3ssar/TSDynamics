@@ -154,11 +154,24 @@ def _content_fields(item: Any) -> tuple[str, ...] | None:
     return tuple(display()) if callable(display) else None
 
 
-def _spread(name: str, value: Any) -> dict[str, Any]:
+#: Fields whose components are STATE components, and therefore carry the
+#: system's declared variable names.  A Lyapunov spectrum's ``values`` and a
+#: fixed point's ``eigenvalues`` are indexed by *mode*, not by variable, so they
+#: stay numbered; a point, a centre, a state is indexed by variable.
+_STATE_VALUED_FIELDS = frozenset({"center", "centre", "point", "points", "state", "x"})
+
+
+def _spread(name: str, value: Any, labels: tuple[str, ...] | None = None) -> dict[str, Any]:
     """Expand a vector display field into one column per component.
 
     Returns ``{}`` for anything that is not a short 1-D numeric sequence, so a
     nested structure is dropped rather than rendered as a repr string.
+
+    ``labels`` names the components when the field is a **state** vector and the
+    producing system declared names, so a pendulum's fixed point tabulates as
+    ``x_theta`` / ``x_omega`` rather than ``x0`` / ``x1``.  The names already
+    reached ``traj["theta"]``, ``system.info`` and every plot axis; this is the
+    one place they used to be dropped.
     """
     try:
         arr = np.asarray(value)
@@ -168,10 +181,37 @@ def _spread(name: str, value: Any) -> dict[str, Any]:
         return {}
     if not np.issubdtype(arr.dtype, np.number):
         return {}
+    if labels is not None and len(labels) == arr.size:
+        return {f"{name}_{labels[i]}": _jsonify(v) for i, v in enumerate(arr.tolist())}
     return {f"{name}{i}": _jsonify(v) for i, v in enumerate(arr.tolist())}
 
 
-def _row_for(item: Any) -> dict[str, Any]:
+#: Above this many entries an array is a **raw distribution**, not a value, and
+#: ``to_dict()`` summarises it instead of inlining it.  Measured: printing one
+#: ``RQAResult.to_dict()`` produced 236 KB, almost all of it the
+#: ``diagonal_lengths`` histogram — on the call that is the natural way to put a
+#: result in a report.  ``to_dict(full=True)`` inlines everything.
+_BULK_ARRAY_ELEMENTS = 256
+
+
+def _jsonify_bounded(value: Any, name: str) -> Any:
+    """JSON-coerce ``value``, summarising a bulk array rather than inlining it.
+
+    The key is always present — a summarised field yields
+    ``{"shape": [...], "dtype": "...", "omitted": "pass full=True"}`` — so no
+    consumer gains a ``KeyError``, only a smaller payload.
+    """
+    arr = value if isinstance(value, np.ndarray) else None
+    if arr is None or arr.size <= _BULK_ARRAY_ELEMENTS:
+        return _jsonify(value)
+    return {
+        "shape": [int(n) for n in arr.shape],
+        "dtype": str(arr.dtype),
+        "omitted": f"{arr.size} values — pass to_dict(full=True) for {name!r}",
+    }
+
+
+def _row_for(item: Any, *, variables: Any = None) -> dict[str, Any]:
     """Return one tidy DataFrame row for ``item`` — scalars kept, vectors spread.
 
     The row is the item's **content**: its dataclass fields, plus the derived
@@ -186,12 +226,18 @@ def _row_for(item: Any) -> dict[str, Any]:
     if names is None:
         return {"value": _jsonify(item)}
     row: dict[str, Any] = {}
+    meta = getattr(item, "meta", None)
+    declared = variables
+    if declared is None and isinstance(meta, Mapping):
+        declared = meta.get("variables")
+    state_labels = tuple(str(v) for v in declared) if declared else None
 
     def _put(name: str, value: Any) -> None:
         if _is_frame_scalar(value):
             row[name] = _jsonify(value)
         else:
-            row.update(_spread(name, value))
+            labels = state_labels if name in _STATE_VALUED_FIELDS else None
+            row.update(_spread(name, value, labels))
 
     for name in names:
         try:

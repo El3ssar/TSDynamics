@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 
@@ -141,6 +141,36 @@ def _as_per_channel(value: int | Sequence[int], n_channels: int, name: str) -> l
     return vals
 
 
+def _as_count(value: Any, name: str) -> Any:
+    """Coerce a single integer-like ``dimension`` / ``delay`` — results included.
+
+    ``operator.index`` is the protocol for "this is an integer": it accepts an
+    ``int``, a numpy integer, and any result that defines ``__index__`` — which
+    is what makes ``embed(x, dimension=embedding_dimension(x))``, the idiom the
+    docstrings teach, work for *both* keywords instead of only one.  A genuine
+    per-channel sequence has no ``__index__`` and is handed straight back for
+    the multivariate path (or for that path's own refusal) to deal with.
+    """
+    import operator
+
+    try:
+        return operator.index(value)
+    except TypeError:
+        pass
+    try:  # a scaling result that is a float in an int's clothing (FNN's m)
+        as_float = float(value)
+    except (TypeError, ValueError):
+        return value
+    if float(as_float).is_integer():
+        return int(as_float)
+    raise invalid_value(
+        name,
+        value,
+        rule="must be a whole number of samples (or, for multivariate input, one per channel)",
+        hint=f"round it, or pass a per-channel sequence, e.g. {name}=[3, 3].",
+    )
+
+
 def embed(
     data: Any,
     dimension: int | Sequence[int] | None = None,
@@ -243,11 +273,21 @@ def embed(
         series = _as_series(data, component=components, analysis="embed")
         if delay is None or dimension is None:
             dimension, delay = _estimate_parameters(series, dimension, delay)
-        if not isinstance(dimension, (int, np.integer)):
-            raise ValueError("a per-channel `dimension` sequence needs a multivariate input.")
-        if not isinstance(delay, (int, np.integer)):
-            raise ValueError("a per-channel `delay` sequence needs a multivariate input.")
-        embedded = _embed_single(series, int(dimension), int(delay))
+        # ``operator.index`` FIRST: chaining is the documented idiom
+        # (``embed(x, dimension=embedding_dimension(x), delay=optimal_delay(x))``)
+        # and a ``CountResult`` is an ``int`` subclass that ``isinstance(..., int)``
+        # accepts — but a bare ``ScalingResult`` is not, so ``dimension=fnn_result``
+        # was refused with a message about "a per-channel sequence" and
+        # "multivariate input", two concepts the caller never mentioned, while
+        # ``delay=`` (whose result IS an int subclass) sailed through.  The
+        # asymmetry was invisible until it bit.
+        dimension = _as_count(dimension, "dimension")
+        delay = _as_count(delay, "delay")
+        for label, value in (("dimension", dimension), ("delay", delay)):
+            if not isinstance(value, (int, np.integer)):
+                raise ValueError(f"a per-channel `{label}` sequence needs a multivariate input.")
+        m_int, tau_int = int(cast(int, dimension)), int(cast(int, delay))
+        embedded = _embed_single(series, m_int, tau_int)
         return Embedding(values=embedded, meta={**_embed_meta(dimension, delay), **auto})
 
     if dimension is None or delay is None:

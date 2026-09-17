@@ -85,9 +85,14 @@ def test_numeric_result_formats_as_its_number(name, expected):
 
 
 def test_empty_format_spec_is_the_headline():
-    """``f"{result}"`` is ``str(result)`` — the headline (contract §4.2 rule 12)."""
+    """``f"{result}"`` is the headline; ``print(result)`` is the whole answer.
+
+    An f-string embeds a result inside a sentence, so it gets the one-line form;
+    ``print`` / the REPL display it, so they get everything.
+    """
     result = RESULTS["ScalarResult"]
-    assert f"{result}" == str(result) == repr(result).splitlines()[0]
+    assert f"{result}" == result.headline == repr(result).splitlines()[0]
+    assert str(result) == repr(result)
 
 
 def test_count_result_prints_as_its_integer():
@@ -106,7 +111,7 @@ def test_count_result_prints_as_its_integer():
 def test_a_non_numeric_result_formats_its_headline_rather_than_raising():
     """``f"{result:>60}"`` aligns the headline instead of erroring."""
     result = RESULTS["RQAResult"]
-    assert f"{result:>200}".strip() == str(result)
+    assert f"{result:>200}".strip() == result.headline
 
 
 # ---------------------------------------------------------------------------

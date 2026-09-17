@@ -98,7 +98,18 @@ def _resolve_method_for(method: str, problem: Problem) -> Any:
 
     if solvers.normalize(method) == "auto":
         return _recommend_method(problem)
-    return solvers.resolve(method)
+    # Resolve **within the problem's family**, so an ODE is never offered the
+    # SDE-only kernels (``euler_maruyama`` / ``milstein``) in its "available"
+    # listing — measured, ``solver="LSODA"`` on a flow listed both.
+    #
+    # Only the ODE is scoped.  A MAP has no solver kernel at all
+    # (``available_for("map") == []``) and discards the resolution; an SDE is
+    # refused a few lines on by a message about the *seam*; and a DDE's own
+    # family refuses an implicit kernel with the reason (no delayed Jacobian),
+    # which is more useful than a capability listing.  Scoping any of the three
+    # here would replace a good message with a worse one.
+    family = problem.family if isinstance(problem, ODEProblem) else None
+    return solvers.resolve(method, family=family)
 
 
 def _resolve_method_and_prepare(

@@ -108,9 +108,10 @@ class ReturnMap(AnalysisResult):
         """
         from .. import _plotbuilder as pb
 
+        xlabel, ylabel, legend_label = self._axis_labels()
         cur = np.asarray(self.current, dtype=float)
         suc = np.asarray(self.successor, dtype=float)
-        layers = [pb.scatter(cur, suc, label=r"$v_{n+1}$ vs $v_n$")]
+        layers = [pb.scatter(cur, suc, label=legend_label)]
         if cur.size:
             layers.append(pb.diagonal(cur, suc))
         return pb.spec(
@@ -118,9 +119,9 @@ class ReturnMap(AnalysisResult):
             "return_map",
             layers=layers,
             aspect="equal",
-            xlabel=r"$v_n$",
-            ylabel=r"$v_{n+1}$",
-            title=f"{self.kind} return map",
+            xlabel=xlabel,
+            ylabel=ylabel,
+            title=f"{self.kind} return map of {self._observable_label()}",
             meta=self.meta,
         )
 
@@ -147,9 +148,10 @@ class ReturnMap(AnalysisResult):
         """
         from .. import _plotbuilder as pb
 
+        xlabel, ylabel, legend_label = self._axis_labels()
         cur = np.asarray(self.current, dtype=float)
         suc = np.asarray(self.successor, dtype=float)
-        layers = [pb.scatter(cur, suc, label=r"$v_{n+1}$ vs $v_n$")]
+        layers = [pb.scatter(cur, suc, label=legend_label)]
         if cur.size:
             layers.append(pb.diagonal(cur, suc))
             stair_x, stair_y = _cobweb_path(cur, suc)
@@ -161,9 +163,9 @@ class ReturnMap(AnalysisResult):
             "cobweb",
             layers=layers,
             aspect="equal",
-            xlabel=r"$v_n$",
-            ylabel=r"$v_{n+1}$",
-            title=f"{self.kind} cobweb",
+            xlabel=xlabel,
+            ylabel=ylabel,
+            title=f"{self.kind} cobweb of {self._observable_label()}",
             legend=len(layers) > 1,
             meta=self.meta,
         )
@@ -176,6 +178,25 @@ class ReturnMap(AnalysisResult):
             if 0 <= int(self.observable) < len(names):
                 return str(names[int(self.observable)])
         return f"component {int(self.observable)}"
+
+    def _axis_labels(self) -> tuple[str, str, str]:
+        r"""Return ``(x, y, legend)`` labels naming the observable this map is OF.
+
+        The axes read :math:`v_n` / :math:`v_{n+1}` for every input, so
+        ``return_map(traj, components="z")`` — the Lorenz z-maxima cusp, the
+        textbook example — drew a figure captioned about a ``v`` that appears
+        nowhere in the system.  The repr already names the channel (``"85 returns
+        of z"``), so the picture and the sentence beside it disagreed about what
+        was measured.  Here the subscripts are genuinely mathematical, so the
+        name is set in mathtext rather than plain (the rule
+        :func:`tsdynamics.analysis._plotbuilder.axis_labels` follows for a label
+        that *is* a name).
+        """
+        v = self._observable_label()
+        # "component 2" is a sentence, not a symbol; subscripting it reads badly,
+        # so the indexed fallback keeps the generic symbol it always had.
+        sym = v if " " not in v else "v"
+        return f"${sym}_n$", f"${sym}_{{n+1}}$", f"${sym}_{{n+1}}$ vs ${sym}_n$"
 
     def _answer(self) -> str:
         """Return how many returns were collected, of which observable."""

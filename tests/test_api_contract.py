@@ -155,6 +155,12 @@ TRAJECTORY_SURFACE: tuple[str, ...] = (
     "system",
     "t",
     "to_frame",
+    # v6 round 7: a run that blows up WITHOUT reaching the engine's 1e150 guard
+    # used to come back as an ordinary finite trajectory, and every answer taken
+    # from it looked exactly like an honest one.  This is the flag that tells
+    # the two apart, and the repr prints it — a property that earns its slot by
+    # being the difference between a result and a wrong number.
+    "unbounded",
     "variables",
     "y",
 )
@@ -748,7 +754,24 @@ REGION_CALLS: dict[str, Callable[[], Any]] = {
     "expansion_entropy": lambda: ts.analysis.expansion_entropy(
         _henon(), region=[(-1.0, 1.0), (-1.0, 1.0)], n_samples=60, n=6, seed=0
     ),
+    # The six windowed FIELD analyses read the same region grammar since v6
+    # round 7 — and read it POSITIONALLY, so the call is spelled exactly like
+    # ``basins(system, region)``.  Before that, ``ts.analysis`` had two grammars
+    # for "this box of state space" and crossing them gave a bare
+    # ``TypeError: takes 1 positional argument but 2 were given``.
+    "escape_time_field": lambda: ts.analysis.escape_time_field(
+        _vdp(), [(-2.0, 2.0, 8), (-2.0, 2.0, 8)], final_time=1.0
+    ),
     "fixed_points": lambda: ts.analysis.fixed_points(_henon(), region=_REGION, seed=0),
+    "flow_field": lambda: ts.analysis.flow_field(_vdp(), [(-2.0, 2.0, 8), (-2.0, 2.0, 8)]),
+    "ftle_field": lambda: ts.analysis.ftle_field(
+        _vdp(), [(-2.0, 2.0, 8), (-2.0, 2.0, 8)], final_time=1.0
+    ),
+    "nullclines": lambda: ts.analysis.nullclines(_vdp(), [(-2.0, 2.0, 15), (-2.0, 2.0, 15)]),
+    "streamlines": lambda: ts.analysis.streamlines(_vdp(), [(-2.0, 2.0, 4), (-2.0, 2.0, 4)]),
+    "transient_time_field": lambda: ts.analysis.transient_time_field(
+        _vdp(), [(-2.0, 2.0, 8), (-2.0, 2.0, 8)], final_time=1.0
+    ),
     "periodic_orbits": lambda: ts.analysis.periodic_orbits(
         _henon(), period=1, region=_REGION, seed=0
     ),
@@ -825,7 +848,12 @@ def test_every_region_door_opens_for_plain_tuples(door: str) -> None:
     demotion of ``Box``/``Ball``/``Grid`` rests on it).  A door that insisted on
     the type would put those three names back on the top level.
     """
-    result = REGION_CALLS[door]()
+    import warnings
+
+    with warnings.catch_warnings():
+        if door in _NUMERICALLY_NOISY_DOORS:
+            warnings.simplefilter("ignore", RuntimeWarning)
+        result = REGION_CALLS[door]()
     assert result is not None
 
 
@@ -956,8 +984,13 @@ def test_every_result_repr_states_the_answer(name: str) -> None:
 
 
 @pytest.mark.parametrize("name", _result_names())
-def test_every_result_str_is_the_headline(name: str) -> None:
-    """§4.2 r12 — ``str(result)`` is the repr's first line, so ``print`` answers too.
+def test_every_result_prints_its_whole_answer(name: str) -> None:
+    """§4.2 r12 — ``print(result)`` answers as fully as the REPL does.
+
+    ``str`` was the headline alone, so ``print`` dropped the supporting lines —
+    the attractor locations, the fit window, the caveat — on every result that
+    has them, and scripts are written with ``print``.  ``result.headline`` is the
+    one-line form, and it is what an f-string embeds.
 
     ``CountResult`` is the one stated exception: its ``__str__`` is
     ``repr(int(self))``, because ``int.__str__ is object.__str__`` makes assigning
@@ -969,7 +1002,8 @@ def test_every_result_str_is_the_headline(name: str) -> None:
         assert str(result) == repr(int(result))
         assert repr(result).splitlines()[0] != str(result)
         return
-    assert str(result) == repr(result).splitlines()[0]
+    assert str(result) == repr(result)
+    assert result.headline == repr(result).splitlines()[0]
 
 
 @pytest.mark.parametrize("name", _result_names())

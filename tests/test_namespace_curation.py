@@ -292,7 +292,7 @@ def test_private_and_dunder_probes_stay_cheap_and_quiet():
 #: of the mistake.
 _LADDER = [
     # case 3 — an exact hit in a public home: the commonest v5 spelling of all
-    ("Lorenz", MovedInV6, ["ts.systems.Lorenz()", "moved in v6"]),
+    ("Lorenz", MovedInV6, ["ts.systems.Lorenz()", "moved: the top level"]),
     ("correlation_dimension", MovedInV6, ["ts.analysis.correlation_dimension"]),
     ("orbit_diagram", MovedInV6, ["ts.analysis.orbit_diagram"]),
     ("PoincareMap", MovedInV6, ["ts.derived.PoincareMap"]),
@@ -306,7 +306,7 @@ _LADDER = [
     (
         "bifurcation_diagram",
         MovedInV6,
-        ["ts.analysis.orbit_diagram(system,", "renamed in v6"],
+        ["ts.analysis.orbit_diagram(system,", "was renamed"],
     ),
     ("basins_of_attraction", MovedInV6, ["ts.analysis.basins(system, region)"]),
     ("find_attractors", MovedInV6, ["ts.analysis.attractors(system, region)"]),
@@ -314,9 +314,9 @@ _LADDER = [
     (
         "permutation_entropy",
         MovedInV6,
-        ["removed in v6", "phase-space", "ts.analysis.rqa(traj)", 'ts.analysis.find("recurrence")'],
+        ["was removed", "phase-space", "ts.analysis.rqa(traj)", 'ts.analysis.find("recurrence")'],
     ),
-    ("surrogate_test", MovedInV6, ["removed in v6", "ts.analysis.embed(data, dimension, delay)"]),
+    ("surrogate_test", MovedInV6, ["was removed", "ts.analysis.embed(data, dimension, delay)"]),
     # case 4 — a near miss, ranked
     ("Lorentz", AttributeError, ["Did you mean:", "ts.systems.Lorenz()"]),
     ("correlation_dimensio", AttributeError, ["ts.analysis.correlation_dimension"]),
@@ -324,7 +324,7 @@ _LADDER = [
     ("integrate", AttributeError, ["ts.systems.<TAB>", "ts.analysis.find('integrate')"]),
     ("zzzz_not_a_name", AttributeError, ["Tab-complete a registry, or search:"]),
     # ...and the rename that landed with the plotting layer
-    ("PlotSpec", MovedInV6, ["ts.viz.Plot", "renamed in v6"]),
+    ("PlotSpec", MovedInV6, ["ts.viz.Plot", "was renamed"]),
 ]
 
 

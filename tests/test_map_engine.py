@@ -126,7 +126,10 @@ def test_map_short_trajectory_matches_step(map_entry) -> None:
     interp = cls().run(steps=steps, ic=ic, backend="interp")
     ref = cls().run(steps=steps, ic=ic, backend="reference")
 
-    assert ref.y.shape == interp.y.shape == (steps, cls().dim)
+    # ``steps + 1``: a map run returns its INITIAL CONDITION followed by the
+    # ``steps`` iterates, exactly as a flow returns ``t0`` followed by its
+    # samples — so ``y[k]`` is the state at ``t[k]`` on both families.
+    assert ref.y.shape == interp.y.shape == (steps + 1, cls().dim)
     np.testing.assert_array_equal(ref.t, interp.t)
     np.testing.assert_allclose(
         ref.y, interp.y, rtol=1e-6, atol=1e-8, err_msg=f"{map_entry.name} trajectory drift"

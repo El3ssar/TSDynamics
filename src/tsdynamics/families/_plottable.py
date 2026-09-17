@@ -155,6 +155,7 @@ class SystemPlottable:
         # the wrong vocabulary entirely.
         style_kw = _take(style_names())
         theme = kwargs.pop("theme", None)
+        labels = kwargs.pop("labels", None)
         tweak_kw = _take(_INLINE_TWEAKS.keys() | _COLORIZE_TWEAKS)
         # Whatever is left is an integration keyword; ``__plot_spec__`` hands it to
         # the family's ``run``, which is the one place that knows the valid
@@ -164,6 +165,10 @@ class SystemPlottable:
             spec.theme(theme)
         if style_kw:
             spec.style(**style_kw)
+        if labels is not None:
+            from tsdynamics.viz.compose import apply_labels
+
+            apply_labels([spec], labels)
         return spec.tweak(**tweak_kw)
 
     #: ``subject.plot`` is BOTH the verb and the namespace (§6.7): ``plot()``

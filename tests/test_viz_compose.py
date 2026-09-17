@@ -25,6 +25,7 @@ import tsdynamics as ts
 import tsdynamics.viz as viz
 from tsdynamics.data import Trajectory
 from tsdynamics.errors import InvalidInputError, InvalidParameterError
+from tsdynamics.viz.render.caps import VisualizationDegraded
 from tsdynamics.viz.spec import PlotKind, PlotSpec
 
 # ---------------------------------------------------------------------------
@@ -940,7 +941,11 @@ def test_share_color_unifies_the_scale_and_draws_one_bar():
         ts.plot(vdp.with_params(mu=mu), "flow_speed", grid=20, title=f"mu={mu}")
         for mu in (0.5, 1.0, 2.0)
     ]
-    shared = viz.plot(*panels, layout="row", share_color=True)
+    # ``|f|`` over a mu sweep spans decades, so unifying it on a LINEAR scale is
+    # honest and hazardous at once: it is now said out loud (see
+    # ``test_share_color_says_so_when_one_linear_scale_flattens_the_panels``).
+    with pytest.warns(VisualizationDegraded, match="LINEAR colour scale"):
+        shared = viz.plot(*panels, layout="row", share_color=True)
     assert len({p.clim for p in shared.panels}) == 1
     assert sum(p.colorbar is not None for p in shared.panels) == 1
     fig = shared.fig

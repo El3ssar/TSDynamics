@@ -53,6 +53,7 @@ __all__ = [
     "PART_KEYS",
     "T",
     "TransformCall",
+    "TransformList",
     "allow",
     "build_spec",
     "compatibility",
@@ -552,8 +553,9 @@ def find(
 
     Returns
     -------
-    list of str
-        The matching names, sorted.
+    TransformList
+        The matching names, sorted — a plain ``list[str]`` that **prints as a
+        grouped table** with each transform's one-line summary.
     """
     text = (what or "").lower()
     space = FrameSpace(frame) if frame is not None else None
@@ -572,7 +574,52 @@ def find(
         if available is not None and record.available is not available:
             continue
         out.append(record.name)
-    return sorted(out)
+    return TransformList(sorted(out), subject=subject)
+
+
+class TransformList(list):  # type: ignore[type-arg]
+    """The answer :func:`find` gives — a ``list[str]`` that prints as a table.
+
+    ``ts.analysis.find(...)`` answers the same question with a grouped,
+    captioned, actionable table; the plotting registry answered it with
+    ``['autocorrelation', 'cao', 'delay_embedding', …]`` — 21 bare strings, no
+    summaries, no grouping, and nothing saying what to type next.  One verb, one
+    question, one quality of answer.
+
+    It is still a ``list``: ``sorted(...)``, ``in``, ``[0]`` and ``== [...]`` all
+    behave exactly as before, so nothing that consumed the old return value
+    changes.
+    """
+
+    __slots__ = ("_subject",)
+
+    def __init__(self, names: Any = (), *, subject: Any = None) -> None:
+        super().__init__(names)
+        self._subject = subject
+
+    def __repr__(self) -> str:  # noqa: D105
+        if not self:
+            return (
+                "no plot transform matches. ts.viz.transforms.names() lists all of them, "
+                "and print(ts.viz.compatibility()) prints the whole matrix."
+            )
+        held = "" if self._subject is None else f" for a {type(self._subject).__name__}"
+        width = max(len(n) for n in self)
+        lines = [f'{len(self)} plot transform(s){held}  —  ts.plot(subject, "<name>")', ""]
+        for source, header in (
+            ("data", "FROM DATA — a trajectory, an array, or a system (it runs one)"),
+            ("model", "FROM A MODEL — needs the system: evaluates the RHS somewhere new"),
+        ):
+            rows = [get(n) for n in self if get(n).source == source]
+            if not rows:
+                continue
+            lines += [header, "-" * len(header)]
+            for record in rows:
+                flag = "" if record.available else f"  [unavailable: needs {record.requires}]"
+                lines.append(f"  {record.name.ljust(width)}  {record.doc}{flag}")
+            lines.append("")
+        lines.append("print(ts.viz.compatibility()) — how each one can be drawn")
+        return "\n".join(lines)
 
 
 def allow(transform: str, *primitives: str) -> PlotTransform:
@@ -1465,10 +1512,11 @@ class CompatibilityMatrix(dict):  # type: ignore[type-arg]
 def compatibility(name: str | None = None) -> Any:
     """Return the declared compatibility matrix — the whole thing, or one row.
 
-    ``compatibility()`` is a printable, DataFrame-able mapping of every
-    transform to its valid primitives; ``compatibility("phase_portrait")`` is
-    that one row.  Reading marks: ``*`` marks the default primitive, ``!`` marks a
-    primitive that is exclusive to that row.
+    The table **is** the repr, so a REPL shows it on the bare call and a script
+    needs ``print(ts.viz.compatibility())``.  It is a ``dict`` subclass, so it is
+    also programmable (``m["phase_portrait"]``, ``pandas.DataFrame(m.rows())``);
+    ``compatibility("phase_portrait")`` is that one row.  Reading marks: ``*``
+    marks the default primitive, ``!`` marks a primitive exclusive to that row.
 
     A transform whose optional dependency is missing is **listed, flagged
     unavailable** — omitting it would read as "that plot does not exist", which

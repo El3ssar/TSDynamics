@@ -47,7 +47,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 import numpy as np
 
-from tsdynamics.analysis._result_json import _fmt, _jsonify, _row_for
+from tsdynamics.analysis._result_json import _fmt, _jsonify, _jsonify_bounded, _row_for
 from tsdynamics.analysis._result_viz import VisualizationNotInstalled, _PlotAccessor
 from tsdynamics.utils.plot_namespace import plot_seam_error
 
@@ -107,6 +107,20 @@ def _unknown_result_attribute(result: Any, name: str) -> AttributeError:
     cls = type(result)
     if name == "to_plot_spec":
         return plot_seam_error(cls.__name__, "result")
+    # An analysis is a FREE FUNCTION whose first argument is its subject (ruling
+    # A2), and a result is a subject like any other.  A guess at a *registered*
+    # analysis is therefore not a typo — it is the right verb reached by the
+    # wrong grammar — so the message hands back the line that runs on the very
+    # object in hand instead of offering the nearest field name.
+    from tsdynamics import registry
+
+    if name in registry.analyses:
+        return AttributeError(
+            f"{cls.__name__!r} object has no attribute {name!r}: analyses are free "
+            f"functions, and the subject is the first argument."
+            f"\n    ts.analysis.{name}(result)"
+            f"\n    ts.analysis.find(result)   # everything that takes this result"
+        )
     carried = sorted(
         {n for n in dir(cls) if not n.startswith("_") and not callable(getattr(cls, n, None))}
         | {n for n in getattr(result, "_repr_fields", ()) if not n.startswith("_")}
@@ -169,18 +183,21 @@ class AnalysisResult:
             cls.__repr__ = inherited_repr  # type: ignore[method-assign]
 
     def __getattr__(self, name: str) -> Any:
-        """Teach the one retired plot name; leave every other miss verbatim.
+        """Teach the retired plot name and every analysis reached as a method.
 
-        Only ``to_plot_spec`` is intercepted (v6 moved the seam to the dunder
-        ``__plot_spec__``).  Anything else re-raises the message CPython would
-        have produced, so this hook adds no new behaviour to a wrong guess —
+        ``to_plot_spec`` moved to the dunder ``__plot_spec__`` in v6, and an
+        *analysis* is a free function whose first argument is its subject (ruling
+        A2) — so both are taught by name rather than left as a bare miss.  A
+        dunder or ``_``-prefixed probe short-circuits so protocol lookups import
+        nothing.  Anything else re-raises what CPython would have said;
         :class:`~tsdynamics.analysis._result_array.ArrayResult` keeps its own,
-        richer ``__getattr__``, which routes the same name through
-        :func:`_unknown_result_attribute`.
+        richer ``__getattr__`` over the same builder.
         """
         if name == "to_plot_spec":
             raise plot_seam_error(type(self).__name__, "result")
-        raise AttributeError(f"{type(self).__name__!r} object has no attribute {name!r}")
+        if name.startswith("_"):
+            raise AttributeError(name)
+        raise _unknown_result_attribute(self, name)
 
     # -- provenance -------------------------------------------------------
 
@@ -337,7 +354,7 @@ class AnalysisResult:
         for the list form would make ``print(fixed_point)`` drop the system it
         belongs to.
         """
-        return self.headline()
+        return self.headline
 
     def _system_label(self) -> str | None:
         """Return the originating system's name from ``meta``, if recorded."""
@@ -346,11 +363,17 @@ class AnalysisResult:
 
     # -- the renderers, all derived from the hooks above ------------------
 
+    @property
     def headline(self) -> str:
-        """Return the single line that carries the answer.
+        """The single line that carries the answer.
+
+        A **property**, not a method: ``print(result.headline)`` used to render
+        ``<bound method AnalysisResult.headline of …>``, which is the one place
+        in the result surface where reading a public name gave you plumbing
+        instead of the answer.
 
         ``<Name>  <answer>   <verdict>   (<subject>)``, with the empty slots
-        omitted.  This is the repr's first line and the whole of ``str(self)``.
+        omitted — the repr's first line.
 
         Returns
         -------
@@ -372,14 +395,24 @@ class AnalysisResult:
         return line
 
     def __repr__(self) -> str:  # noqa: D105
-        lines = [self.headline()]
+        lines = [self.headline]
         lines += [_INDENT + text for text in self._details()[:_MAX_DETAILS]]
         lines += [_INDENT + text for text in self._item_lines()]
         return "\n".join(lines)
 
     def __str__(self) -> str:
-        """Return the headline — the answer without the supporting lines."""
-        return self.headline()
+        """Return the whole repr — ``print(result)`` and the REPL agree.
+
+        ``str`` used to be the headline alone, so half of every result's answer
+        was reachable only from a REPL echo: ``print(attractors)`` gave the
+        count and dropped the lines saying *where* they are, and scripts are
+        written with ``print``.  A result whose repr **is** the answer cannot
+        have two answers.
+
+        (``CountResult`` still renders as its number — it *is* an ``int``, and
+        ``f"{n}"`` has to be one.)
+        """
+        return repr(self)
 
     def _as_number(self) -> float | None:
         """Return the number this result stands for, or ``None`` if it is not one.
@@ -527,10 +560,11 @@ class AnalysisResult:
 
         ``f"{result:.3f}"`` used to raise ``TypeError`` on every numeric result,
         which made a result a *worse* drop-in for the number it replaced than the
-        bare float it wrapped.  An empty spec defers to :meth:`__str__` (so
-        ``f"{result}"`` prints the headline); a non-empty one formats the number
-        when the result is one, and otherwise formats the headline text (so
-        ``f"{result:>40}"`` still aligns a non-numeric result).
+        bare float it wrapped.  An empty spec gives the **headline** — an
+        f-string is an *embedding* context, where the multi-line block
+        :meth:`__str__` renders for ``print`` is never what was wanted — and a
+        non-empty one formats the number when the result is one, otherwise the
+        headline text (so ``f"{result:>40}"`` still aligns a non-numeric result).
 
         A **numeric** presentation code on a non-numeric result raises
         ``TypeError`` naming this class: it used to fall through to
@@ -539,7 +573,7 @@ class AnalysisResult:
         never typed.
         """
         if not spec:
-            return str(self)
+            return self.headline
         number = self._as_number()
         if number is None:
             if spec[-1] in _NUMERIC_FORMAT_CODES:
@@ -549,7 +583,7 @@ class AnalysisResult:
                     f'f"{{result:{spec}}}" needs a number; {type(self).__name__} is not one.'
                     f'\n    Format {pick}, or use f"{{result}}" for the headline.'
                 )
-            return format(str(self), spec)
+            return format(self.headline, spec)
         return format(number, spec)
 
     def _repr_html_(self) -> str:
@@ -563,6 +597,17 @@ class AnalysisResult:
         return f"<pre style='white-space:pre;margin:0'>{html.escape(repr(self))}</pre>"
 
     # -- export -----------------------------------------------------------
+
+    def _printed_names(self) -> dict[str, str]:
+        """Return ``{label the repr prints: attribute that holds it}``.
+
+        Only for labels whose spelling differs from the field's — the literature
+        abbreviations (``DET`` / ``L_max``), the typeset symbols (``Sbb``,
+        ``D0``).  Those are the *right* names to print, and the repr is the only
+        place many readers ever see them, so :meth:`to_dict` answers to them too.
+        Empty for every result whose repr uses its field names.
+        """
+        return {}
 
     def _derived(self) -> dict[str, Any]:
         """Return the named quantities the repr reports that are **not** fields.
@@ -604,15 +649,35 @@ class AnalysisResult:
             Also emit the **derived** quantities the repr reports but that are
             properties rather than fields (see :meth:`_derived`) — a Lyapunov
             spectrum's ``kaplan_yorke``, a recurrence matrix's
-            ``recurrence_rate``, a Wada test's ``applicable`` / ``W``.  The
-            default view is exactly the declared fields, so ``full`` only ever
-            *adds* keys.
+            ``recurrence_rate``, a Wada test's ``applicable`` / ``W`` — and the
+            **raw distributions** the default view summarises.
+
+            The default view holds every declared field, with any array above
+            :data:`_BULK_ARRAY_ELEMENTS` entries replaced by a small
+            ``{"shape", "dtype", "omitted"}`` descriptor: ``to_dict()`` is the
+            natural call for putting a result in a report, and one
+            ``RQAResult`` printed **236 KB** because it carried its
+            ``diagonal_lengths`` histogram verbatim.  The key is still there, so
+            nothing raises ``KeyError``; ``full=True`` restores the numbers.
 
         Returns
         -------
         dict
         """
-        data = {f.name: _jsonify(getattr(self, f.name)) for f in fields(self)}
+        data: dict[str, Any] = {}
+        for f in fields(self):
+            value = getattr(self, f.name)
+            data[f.name] = _jsonify(value) if full else _jsonify_bounded(value, f.name)
+        # ``verdict`` is the ANSWER, not a derived extra: a reader who saw it in
+        # the repr and typed ``to_dict()["verdict"]`` got a ``KeyError`` for a
+        # word the library had just printed at them.  Same for every label the
+        # repr renders under a name the fields do not use (``Sbb`` for ``sbb``,
+        # ``D0`` for ``boundary_dimension``, ``L_max`` for
+        # ``max_diagonal_length``): three ``KeyError``s, all from names the
+        # library had just shown the reader.
+        data.setdefault("verdict", self.verdict)
+        for label, attribute in self._printed_names().items():
+            data.setdefault(label, _jsonify(getattr(self, attribute)))
         if full:
             data.update({k: _jsonify(v) for k, v in self._full_extras().items()})
         return data

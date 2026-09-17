@@ -347,7 +347,15 @@ def _run_map(problem: MapProblem, steps: int, backend: str) -> tuple[np.ndarray,
             f"{_name(problem)}: map diverged or produced a non-finite state before "
             f"reaching {steps} iterations."
         )
-    return np.arange(problem.n0, problem.n0 + steps), y
+    # PREPEND the initial condition, so ``y[k]`` is the state at ``t[k] = n0 + k``
+    # on a map exactly as it is on a flow.  The engine returns the ``steps``
+    # iterates AFTER the start, and returning only those made ``t[0] = 0`` label
+    # ``x_1``: measured, ``Logistic(r=2.8).run(steps=4, ic=[0.1]).y[0]`` was
+    # ``0.252 = f(0.1)`` while ``Lorenz().run(ic=[1, 2, 3]).y[0]`` was ``[1, 2, 3]``
+    # — so every cobweb started one iterate late and ``traj["x"][n]`` was
+    # ``x_{n+1}`` for the family whose users are being graded on indexing.
+    start = np.asarray(problem.ic, dtype=np.float64).reshape(1, -1)
+    return np.arange(problem.n0, problem.n0 + steps + 1), np.vstack([start, y])
 
 
 # ---------------------------------------------------------------------------

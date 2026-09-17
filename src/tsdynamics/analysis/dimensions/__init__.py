@@ -28,7 +28,7 @@ so they are discoverable by name alongside out-of-tree analysis plugins.
 from __future__ import annotations
 
 from .._discovery import register as _register
-from ._common import DimensionResult
+from ._common import DimensionResult, UnembeddedSeriesWarning
 from ._scaling import ScalingFit, fit_scaling_region, local_slopes
 from .correlation import correlation_dimension, correlation_sum
 from .fixedmass import fixed_mass_dimension
@@ -49,6 +49,7 @@ from .generalized import (
 
 __all__ = [
     "DimensionResult",
+    "UnembeddedSeriesWarning",
     "ScalingFit",
     "box_counting_dimension",
     "correlation_dimension",

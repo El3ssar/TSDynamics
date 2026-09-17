@@ -243,7 +243,7 @@ def test_resolve_returns_kernel_and_spec():
 
 
 def test_unknown_method_raises_listing_available():
-    with pytest.raises(ValueError, match=r"unknown solver method 'banana'"):
+    with pytest.raises(ValueError, match=r"unknown solver 'banana'"):
         solvers.resolve("banana")
     # the message lists what is available
     try:

@@ -19,6 +19,16 @@ import sys
 
 import pytest
 
+#: ``benchmarks/analysis_bench.py`` times ``correlation_dimension`` on a scalar
+#: Lorenz series — a single-coordinate point set, which the estimator now warns
+#: about (see ``UnembeddedSeriesWarning``).  The benchmark is measuring *cost*,
+#: not answering a question, so the warning is noise here.  (Embedding the
+#: benchmark's input first would change what it times; that is a benchmarks/
+#: decision, not a test one.)
+pytestmark = pytest.mark.filterwarnings(
+    "ignore::tsdynamics.analysis.dimensions._common.UnembeddedSeriesWarning"
+)
+
 _BENCH_PATH = pathlib.Path(__file__).resolve().parents[1] / "benchmarks" / "analysis_bench.py"
 
 

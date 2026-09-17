@@ -56,7 +56,11 @@ _register(
 )
 _register(
     zero_one_test,
-    subjects=("system",),
+    # A SYSTEM **or** measured data: its own summary line says so, it works on a
+    # bare ndarray, and it was registered system-only — so ``find(my_array)``, the
+    # library's best discovery route, hid the one analysis that answers the
+    # question a data-first user arrives with.
+    subjects=("system", "trajectory", "array"),
     area="chaos",
     returns=ZeroOneResult,
     keywords="chaotic chaos regular gottwald melbourne binary",

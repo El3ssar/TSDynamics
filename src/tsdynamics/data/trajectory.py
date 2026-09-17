@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Any, Literal, NamedTuple, cast
 import numpy as np
 
 from tsdynamics.errors import InvalidInputError
+from tsdynamics.utils.escape import Unbounded, detect_unbounded
 from tsdynamics.utils.plot_namespace import plot_namespace as _plot_namespace
 from tsdynamics.utils.plot_namespace import plot_seam_error as _plot_seam_error
 
@@ -216,6 +217,34 @@ class Neighbors:
         )
 
 
+def _validated_variables(names: Sequence[str], dim: int) -> tuple[str, ...]:
+    """Return ``names`` as a tuple, or raise naming the mismatch.
+
+    One name per state component, each distinct — the contract a system's
+    ``variables`` ClassVar carries, enforced at the *data* constructor so a
+    measured-data user gets the library's usual taught refusal instead of a
+    silently ignored keyword.
+    """
+    if isinstance(names, str):
+        names = (names,)
+    resolved = tuple(str(n) for n in names)
+    if len(resolved) != dim:
+        raise InvalidInputError(
+            f"variables names every state component exactly once: this trajectory is "
+            f"{dim}-dimensional and {len(resolved)} name"
+            f"{'' if len(resolved) == 1 else 's'} were given ({list(resolved)}). Pass "
+            f"{dim} name{'' if dim == 1 else 's'}, e.g. "
+            f"variables={tuple(f'v{i}' for i in range(dim))!r}."
+        )
+    if len(set(resolved)) != len(resolved):
+        dupes = sorted({n for n in resolved if resolved.count(n) > 1})
+        raise InvalidInputError(
+            f"variables must be distinct — {dupes} appears more than once, so "
+            f"traj[{dupes[0]!r}] could not say which component it means."
+        )
+    return resolved
+
+
 def _reject_unbuildable_kind(kind: str, route: str) -> None:
     """Raise unless ``route`` names a view this front door can build from a trajectory.
 
@@ -299,7 +328,7 @@ class Trajectory:
     ...     pass
     """
 
-    __slots__ = ("t", "y", "system", "meta", "_kdtree")
+    __slots__ = ("t", "y", "system", "meta", "_kdtree", "_unbounded", "_unbounded_checked")
 
     def __init__(
         self,
@@ -307,6 +336,8 @@ class Trajectory:
         y: np.ndarray,
         system: Any = None,
         meta: dict[str, Any] | None = None,
+        *,
+        variables: Sequence[str] | None = None,
     ) -> None:
         """Build a trajectory from time and state arrays.
 
@@ -328,15 +359,73 @@ class Trajectory:
 
         meta : dict, optional
             Provenance (system name, params, solver, ``dt``, tolerances, ic).
+        variables : sequence of str, optional
+            One name per state component — what :meth:`component`, ``traj["x"]``,
+            :meth:`to_frame`'s columns and every plot axis label use.  This is
+            the door **measured** data comes in by, which has no system to read
+            declared names off::
+
+                traj = ts.Trajectory(t, x, variables=("voltage",))
+                traj["voltage"]
+
+            .. versionadded:: 6.0
+               It used to be reachable only as the undocumented
+               ``meta={"variables": (...)}``, and naming it raised a bare
+               ``TypeError`` — on the one constructor the package docstring
+               points data users at, so everything a measured signal plotted
+               was labelled ``y0``.
+
+        Raises
+        ------
+        InvalidInputError
+            If ``variables`` does not name every component exactly once.
         """
         self.t = np.asarray(t)
         y_arr = np.asarray(y)
         self.y = y_arr[:, None] if y_arr.ndim == 1 else y_arr
         self.system = system
         self.meta = dict(meta) if meta else {}
+        if variables is not None:
+            self.meta["variables"] = _validated_variables(variables, int(self.y.shape[1]))
         self._kdtree: cKDTree | None = None
+        self._unbounded: Unbounded | None = None
+        self._unbounded_checked = False
 
     # --- derived facts about the sampling ---
+
+    @property
+    def unbounded(self) -> Unbounded | None:
+        """What this orbit escaped to, or ``None`` if it stayed bounded.
+
+        A run that blows up *without* reaching the engine's hard ``1e150`` guard
+        comes back as an ordinary, finite, entirely meaningless trajectory —
+        measured, ``Chua().run(ic=[500, 0, 0])`` returns ``max|y| = 1.6e9``, no
+        exception, ``isnan`` all ``False``.  Every downstream answer taken from
+        it then looks exactly like an honest one.  This is the flag that tells
+        the two apart: it is the line the repr prints, and what
+        :class:`~tsdynamics.derived.poincare.PoincareSection` carries through.
+
+        Computed on first read and cached, so a trajectory nobody asks about
+        pays nothing.
+
+        Returns
+        -------
+        Unbounded or None
+            ``None`` when the orbit is bounded.  Otherwise the record whose
+            ``str`` is the warning line — see
+            :class:`tsdynamics.utils.escape.Unbounded`.
+
+        Examples
+        --------
+        >>> import tsdynamics as ts
+        >>> lor = ts.systems.Lorenz()
+        >>> lor.run(final_time=5.0, ic=[1.0, 1.0, 1.0]).unbounded is None
+        True
+        """
+        if not self._unbounded_checked:
+            self._unbounded = detect_unbounded(self.y)
+            self._unbounded_checked = True
+        return self._unbounded
 
     @property
     def shape(self) -> tuple[int, int]:
@@ -425,7 +514,7 @@ class Trajectory:
             members = _DELETED_TRAJECTORY_ACCESSORS[name]
             raise AttributeError(
                 f"'Trajectory' object has no attribute {name!r}: the .lyap / .chaos "
-                f"/ .dims / .recurrence namespaces are gone in v6 — every member is "
+                f"/ .dims / .recurrence namespaces are gone — every member is "
                 f"a free function.\n"
                 + "\n".join(f"    ts.analysis.{fn}(traj)" for fn in members)
                 + "\n    "
@@ -1375,6 +1464,7 @@ class Trajectory:
            ``traj.plot().save(...)`` raised ``'Figure' object has no attribute
            'save'``.  Use ``.render(backend, **backend_kw)`` for a figure.
         """
+        from tsdynamics.viz.compose import apply_labels
         from tsdynamics.viz.spec import reject_positional_transform
         from tsdynamics.viz.style import style_names
 
@@ -1383,11 +1473,14 @@ class Trajectory:
         names = style_names()
         style = {k: kwargs.pop(k) for k in list(kwargs) if k in names}
         theme = kwargs.pop("theme", None)
+        labels = kwargs.pop("labels", None)
         spec = self.__plot_spec__(**spec_kw)
         if theme is not None:
             spec.theme(theme)
         if style:
             spec.style(**style)
+        if labels is not None:
+            apply_labels([spec], labels)
         return spec.tweak(**kwargs)
 
     #: ``subject.plot`` is BOTH the verb and the namespace (§6.7): ``plot()``
@@ -1583,6 +1676,8 @@ class Trajectory:
         self.system = state["system"]
         self.meta = state["meta"]
         self._kdtree = None
+        self._unbounded = None
+        self._unbounded_checked = False
 
     def __repr__(self) -> str:
         """Render what you hold, and the one line that says what to do next.
@@ -1596,9 +1691,12 @@ class Trajectory:
             who = f" of {type(self.system).__name__}"
         names = self.variables
         cols = f", var: {', '.join(names)}" if names and len(names) <= 4 else ""
+        escaped = self.unbounded
+        warning = f"\n    {escaped}" if escaped is not None else ""
         return (
             f"Trajectory{who}  (n: {len(self)}, dim: {self.dim}{cols})"
             f"   t ∈ [{self.t[0]:.4g}, {self.t[-1]:.4g}]"
+            f"{warning}"
             f"\n    measure it:  ts.analysis.find(traj)   ·   draw it:  ts.plot(traj)"
         )
 

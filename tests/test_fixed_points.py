@@ -847,7 +847,7 @@ class TestFixedPointPlotSpec:
         assert ys(default) != ys(by_name)
         # On (x, z) the two C± equilibria share z = rho - 1 = 27.
         assert ys(by_name)[-2:] == pytest.approx([27.0, 27.0], abs=1e-6)
-        assert by_name.x.label == "$x$" and by_name.y.label == "$z$"
+        assert by_name.x.label == "x" and by_name.y.label == "z"
 
     def test_an_unknown_or_malformed_projection_is_refused(self) -> None:
         """A bad ``components=`` raises rather than drawing the wrong plane."""

@@ -382,14 +382,17 @@ _GOLDEN_PRODUCERS: dict[str, dict] = {
         "frame": "state3(x, y, z)",
         "layers": [("line3d", None, "phase_portrait", ["x", "y", "z"])],
     },
+    # v6: the axes name the CHANNEL that was embedded (``components="y"`` here)
+    # instead of the ``label="x"`` default, and the lag is in the trajectory's own
+    # time units instead of being a sample count typeset as a time.
     "delay_embedding": {
         "kind": "phase_portrait_2d",
         "ndim": 2,
         "aspect": "equal",
-        "axes": [("x(t)", None), ("x(t - 5)", None), None],
+        "axes": [("y(t)", None), ("y(t - 0.420168)", None), None],
         "colorbar": None,
         "legend": False,
-        "frame": "state2(x(t), x(t - 5))",
+        "frame": "state2(y(t), y(t - 0.420168))",
         "layers": [("line", None, "delay_embedding", ["x", "y"])],
     },
     "vector_field": {

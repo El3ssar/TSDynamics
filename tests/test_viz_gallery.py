@@ -235,8 +235,9 @@ def test_a_shared_option_reaches_only_the_transform_whose_signature_takes_it():
     )
     assert len(spec.panels) == 2
     # ``delay`` shaped the embedding (its y axis is the delayed coordinate) and
-    # was NOT handed to phase_portrait, which has no such parameter.
-    assert "t - 7" in spec.panels[1].y.label
+    # was NOT handed to phase_portrait, which has no such parameter.  The label
+    # states the lag in the trajectory's own time units — 7 samples at dt=0.05.
+    assert spec.panels[1].y.label == "x(t - 0.35)"
     # ``color_by`` gave the portrait a colour channel; the embedding is untouched.
     assert spec.panels[0].has_color_channel
 

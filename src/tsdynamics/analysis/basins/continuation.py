@@ -26,7 +26,7 @@ from ...errors import InvalidInputError, remedy
 from .._common import is_data, reject_system
 from .._discovery import wrong_subject
 from .._result import AnalysisResult, CollectionResult
-from .._result_json import _pct, _sig
+from .._result_json import _pct, _sig, _spread, _state
 from ._common import DIVERGED_COLOR, PALETTE, _palette_indices, coerce_region
 from .attractors import Attractor, _reject_unsupported
 from .basins import basin_fractions
@@ -121,9 +121,11 @@ class ContinuationResult(AnalysisResult):
             ),
             0,
         )
-        out = np.full((n, len(ids)), np.nan, dtype=float) if dim == 0 else None
-        if out is not None:
-            return out.reshape(n, len(ids), 0)
+        if dim == 0:
+            # No attractor record carries a centre (a toy / synthetic result):
+            # the answer is an EMPTY last axis, not a reshape of an (n, ids)
+            # block, which raises "cannot reshape array of size 12 into (4, 3, 0)".
+            return np.empty((n, len(ids), 0), dtype=float)
         arr = np.full((n, len(ids), dim), np.nan, dtype=float)
         index = {gid: j for j, gid in enumerate(ids)}
         for k, per_value in enumerate(self.attractors[:n]):
@@ -134,10 +136,6 @@ class ContinuationResult(AnalysisResult):
                 center = np.asarray(att.center, dtype=float).ravel()
                 arr[k, j, : center.size] = center[:dim]
         return arr
-
-    def tipping_points(self, *, threshold: float = 0.0) -> CollectionResult:
-        """Tipping events along this continuation (see :func:`tipping_points`)."""
-        return tipping_points(self, threshold=threshold)
 
     def __plot_spec__(self, kind: str | None = None) -> Any:
         r"""Describe the continuation as a backend-agnostic :class:`PlotSpec`.
@@ -193,13 +191,18 @@ class ContinuationResult(AnalysisResult):
                 )
             )
 
-        annotations = [
-            pb.vline(
-                float(event["value"]),
-                text=f"{event['kind']} (attractor {event['attractor']})",
+        # Draw the line in the MIDDLE of the bracketing interval, not on the
+        # first sample at which the basin is already gone: there the curve has
+        # visibly been at zero since the previous sample, so the mark read as
+        # arriving late and pointed at the wrong gap.  The event is somewhere in
+        # (lo, hi]; the midpoint is the only point in it that claims nothing.
+        annotations = []
+        for event in tipping_points(self):
+            bracket = event.get("bracket")
+            at = 0.5 * (bracket[0] + bracket[1]) if bracket else float(event["value"])
+            annotations.append(
+                pb.vline(float(at), text=f"{event['kind']} (attractor {event['attractor']})")
             )
-            for event in self.tipping_points()
-        ]
         meta = dict(self.meta) if self.meta else {}
         meta.update(palette=PALETTE, diverged_color=DIVERGED_COLOR, palette_index=swatch)
         return pb.spec(
@@ -216,6 +219,46 @@ class ContinuationResult(AnalysisResult):
             meta=meta,
         )
 
+    def to_frame(self) -> Any:
+        """Return a tidy frame: one row per ``(value, attractor)``, with the share.
+
+        The base :meth:`~tsdynamics.analysis.results.AnalysisResult.to_frame`
+        builds ONE row of the declared fields, and a continuation's answer — the
+        basin fractions — lives in a ``dict[int, ndarray]``, which a table cell
+        cannot hold, so it was dropped: measured, the frame came back
+        ``(1, 13)`` with the parameter values spread across columns and **no
+        fractions at all**.  A frame that silently omits the payload is worse
+        than no frame.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Columns ``<param>`` · ``attractor`` · ``fraction`` · ``diverged``,
+            plus one ``center_<var>`` column per state component.
+        """
+        pd = self._require_pandas()
+        values = np.asarray(self.values, dtype=float)
+        centers = self.centers
+        names = self.meta.get("variables") if self.meta else None
+        diverged = np.asarray(self.diverged, dtype=float)
+        rows: list[dict[str, Any]] = []
+        for j, gid in enumerate(self.ids):
+            band = np.asarray(self.fractions[gid], dtype=float)
+            for k, value in enumerate(values):
+                row: dict[str, Any] = {
+                    self.param or "parameter": float(value),
+                    "attractor": int(gid),
+                    "fraction": float(band[k]) if k < band.size else float("nan"),
+                    "diverged": float(diverged[k]) if k < diverged.size else float("nan"),
+                }
+                if centers.size and centers.shape[2]:
+                    labels = tuple(str(v) for v in names) if names else None
+                    row.update(_spread("center", centers[k, j], labels))
+                rows.append(row)
+        frame = pd.DataFrame(rows)
+        frame.attrs["meta"] = dict(self.meta) if self.meta else {}
+        return frame
+
     def _answer(self) -> str:
         """Return the swept range and how many attractors were tracked through it."""
         v = np.asarray(self.values, dtype=float)
@@ -225,13 +268,23 @@ class ContinuationResult(AnalysisResult):
         return f"{span} · {v.size} values · {tracked}"
 
     def _details(self) -> tuple[str, ...]:
-        """Return each tracked attractor's first and last basin share."""
+        """Return each tracked attractor's first and last basin share.
+
+        An attractor that is **absent** at an end of the sweep has ``nan`` there,
+        and ``nan%`` reads as a failed measurement rather than as the
+        annihilation it is — which is the headline event of a continuation.  It
+        is named instead.
+        """
+
+        def share(value: float) -> str:
+            return "gone" if not np.isfinite(value) else _pct(value)
+
         lines = []
         for k in sorted(self.fractions):
             f = np.asarray(self.fractions[k], dtype=float)
             if not f.size:
                 continue
-            lines.append(f"#{k}: {_pct(f[0])} → {_pct(f[-1])}")
+            lines.append(f"#{k}: {share(f[0])} → {share(f[-1])}")
         if not lines:
             return ()
         head = " · ".join(lines[:_MAX_TRACKED_IN_REPR])
@@ -415,6 +468,40 @@ def _match(
     return mapping, next_global
 
 
+class _TippingEvent(dict):  # type: ignore[type-arg]
+    """One tipping event — a plain ``dict`` that *reads* like a sentence.
+
+    The events are documented as plain mappings and stay exactly that
+    (``event["value"]`` works, ``json.dumps`` works, ``isinstance(e, dict)`` is
+    ``True``); only the rendering changes.  A collection of five raw dicts
+    printed in a repr is a data dump, and the one thing a reader needs off it —
+    *which* state disappeared — was an integer id that is assigned in sweep
+    order, so the same physical well is ``#1`` walking the parameter one way and
+    ``#2`` walking it back.
+    """
+
+    __slots__ = ()
+
+    def __str__(self) -> str:
+        """Render ``F ∈ (0.38, 0.385]  attractor #1 disappears  (the state at x ≈ …)``."""
+        verb = "disappears" if self["kind"] == "disappear" else "appears"
+        where = np.asarray(self.get("where", ()), dtype=float)
+        place = f"  ·  the state at {_state(where)}" if where.size else ""
+        bracket = self.get("bracket")
+        # Say the bracket, not a bare number: the sweep proves the event happens
+        # between two sampled values and proves nothing finer, so printing one of
+        # them to five figures claims a precision the grid does not have.
+        if bracket is not None:
+            lo, hi = bracket
+            head = f"({_sig(lo, 5)}, {_sig(hi, 5)}]"
+        else:  # pragma: no cover - every event records its bracket
+            head = _sig(self["value"], 5)
+        return (
+            f"{head}:  attractor #{self['attractor']} {verb}"
+            f"  ({_pct(self['before'])} → {_pct(self['after'])}){place}"
+        )
+
+
 def tipping_points(result: ContinuationResult, *, threshold: float = 0.0) -> CollectionResult:
     r"""
     Read tipping events off a continuation.
@@ -470,14 +557,35 @@ def tipping_points(result: ContinuationResult, *, threshold: float = 0.0) -> Col
                 kind = "appear"
             else:
                 continue
+            # WHERE the attractor was, not only its integer label: ids are
+            # assigned in sweep order, so the same physical well is ``#1``
+            # sweeping from one end and ``#2`` from the other.  A location is
+            # the same state whichever direction you walked.
+            centers = result.centers
+            j = result.ids.index(int(gid))
+            where = np.asarray(centers[i - 1, j], dtype=float) if centers.size else np.empty(0)
+            if not np.all(np.isfinite(where)):
+                where = np.asarray(centers[i, j], dtype=float) if centers.size else np.empty(0)
             events.append(
-                {
-                    "value": float(vals[i]),
-                    "attractor": int(gid),
-                    "kind": kind,
-                    "before": before,
-                    "after": after,
-                }
+                _TippingEvent(
+                    {
+                        "value": float(vals[i]),
+                        # The sweep brackets the event; it does not locate it.
+                        # ``value`` is the first sampled parameter at which the
+                        # basin is already gone, so the true fold lies in the
+                        # half-open interval between the two samples that
+                        # straddle it — and a reader who is handed one number
+                        # with five significant figures has no way to know the
+                        # grid was that coarse.  Recorded so the repr can say it
+                        # and a caller can refine into it.
+                        "bracket": (float(vals[i - 1]), float(vals[i])),
+                        "attractor": int(gid),
+                        "kind": kind,
+                        "before": before,
+                        "after": after,
+                        "where": where,
+                    }
+                )
             )
     events.sort(key=lambda e: (e["value"], e["attractor"]))
     return CollectionResult(

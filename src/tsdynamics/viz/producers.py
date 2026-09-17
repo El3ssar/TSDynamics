@@ -18,7 +18,7 @@ New code should prefer the transform surface, which is strictly larger::
 
     ts.plot(traj, "phase_portrait")                    # the same picture
     ts.plot(traj, "phase_portrait", primitive="density")   # and a swap
-    ts.viz.compatibility("phase_portrait")             # what else it can be
+    print(ts.viz.compatibility("phase_portrait"))      # what else it can be
 
 What stays here rather than moving: the **density-aware line resolution** law
 (:func:`autostyle_line` / :func:`autostyle_enabled`), which is a *renderer*
@@ -146,6 +146,39 @@ def autostyle_line(
     decades = float(np.log10(float(n) / AUTOSTYLE_PIVOT))
     alpha = float(np.clip(1.0 - AUTOSTYLE_ALPHA_PER_DECADE * decades, AUTOSTYLE_MIN_ALPHA, 1.0))
     return width, alpha
+
+
+#: Floor on the derived marker diameter (pt).  Below ~0.6 pt an Agg marker stops
+#: covering a whole device pixel at typical dpi and the cloud fades out.
+AUTOSTYLE_MIN_MARKERSIZE: float = 0.6
+
+
+def autostyle_marker(n: int, *, marker_size: float | None, enabled: bool = True) -> float | None:
+    """Resolve a marker **diameter** (pt) for a cloud of ``n`` points.
+
+    The scatter twin of :func:`autostyle_line`, and it exists for the same
+    measured reason.  A recurrence plot is the archetype: at 5% density a
+    1501x1501 matrix is 112 060 points, and at the theme's constant marker size
+    they overlap ~26x, so the whole lower-left block rendered as a **solid black
+    square** — the recurrence plot *is* the deliverable in RQA work, and the
+    picture destroyed exactly the diagonal structure DET and L_max measure.  The
+    identical data at ~1 pt reads as a textbook sparse plot.
+
+    Same two contractual properties as the line law, for the same reasons:
+
+    1. **Non-regression** — for ``n <= AUTOSTYLE_PIVOT`` the answer is exactly
+       ``marker_size``, so no existing figure moves.
+    2. **Monotonicity** — non-increasing in ``n``, never outside
+       ``[AUTOSTYLE_MIN_MARKERSIZE, marker_size]``.
+
+    Applied only where the caller supplied nothing: an explicit
+    ``markersize=`` / a per-point ``size`` channel always wins.
+    """
+    if not enabled or marker_size is None or n <= AUTOSTYLE_PIVOT:
+        return marker_size
+    ratio = AUTOSTYLE_PIVOT / float(n)
+    m0 = float(marker_size)
+    return float(np.clip(m0 * ratio**AUTOSTYLE_EXPONENT, AUTOSTYLE_MIN_MARKERSIZE, m0))
 
 
 def autostyle_enabled(spec: Any) -> bool:

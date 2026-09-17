@@ -372,9 +372,15 @@ class AttractorSet(AnalysisResult):
         return f"{found} · {share} of {self.seeds} seeds diverged"
 
     def _item_lines(self) -> tuple[str, ...]:
-        """Return one line per located attractor, truncated like a collection."""
+        """Return one line per located attractor, truncated like a collection.
+
+        Labelled ``details[i]`` — the accessor that hands back the record the
+        line describes.  ``aset[i]`` is the representative *point* (contract
+        §4.2 rule 6), so a bare ``[i]`` invited ``aset[0].center`` and an
+        ``AttributeError`` on an ``ndarray``.
+        """
         ordered = [self.attractors[k] for k in self.ids]
-        shown = [f"[{i}] {a._as_item()}" for i, a in enumerate(ordered[:_MAX_ITEMS])]
+        shown = [f"details[{i}] {a._as_item()}" for i, a in enumerate(ordered[:_MAX_ITEMS])]
         if len(ordered) > _MAX_ITEMS:
             shown.append(f"... [{len(ordered)} total]")
         return tuple(shown)

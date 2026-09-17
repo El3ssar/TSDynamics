@@ -10,6 +10,7 @@ lives in :mod:`._scaling`.
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
@@ -22,7 +23,8 @@ from .._result_json import _sig
 from .._result_scaling import _MIN_MEANINGFUL_R2_FIT
 from ._scaling import local_slopes
 
-__all__ = ["DimensionResult"]
+__all__ = ["DimensionResult", "UnembeddedSeriesWarning"]
+
 
 #: Fewest points any dimension estimator will read a scaling region from.
 #: Below this there is no scaling region to read — the estimators do not fail,
@@ -38,6 +40,52 @@ MIN_DIMENSION_POINTS = 32
 #: as a problem with the Minkowski exponent ``p`` — a keyword the caller did not
 #: pass.  The same overflow scale the engine's divergence guard uses.
 _PAIRWISE_OVERFLOW_SCALE = 1e150
+
+
+class UnembeddedSeriesWarning(UserWarning):
+    r"""A fractal dimension was asked of a **single coordinate**.
+
+    A fractal dimension is a property of a point set in *phase space*, and a
+    scalar time series is not one: the samples lie on a line, so every estimator
+    dutifully answers :math:`D \approx 1` with a perfect straight-line fit.
+    Measured on 18 000 samples of Lorenz ``x``, ``correlation_dimension``
+    returned ``0.99742 ± 0.000151, R² = 1`` where the truth is ``2.06`` — a
+    wrong answer wearing every mark of a right one.
+
+    Its sibling :func:`~tsdynamics.analysis.lyapunov_from_data` *embeds* a 1-D
+    input and says so, so two neighbours in the same documented group used to
+    make opposite assumptions in silence.  They no longer do: this warns, and
+    the result comes back :attr:`DimensionResult.trusted` ``= False`` with the
+    reason in its repr.
+    """
+
+
+def _warn_unembedded(points: np.ndarray, analysis: str | None) -> None:
+    """Warn when a dimension is asked of one coordinate, and say how to fix it.
+
+    Silent below :data:`MIN_DIMENSION_POINTS`: the caller is about to be told,
+    by :func:`require_min_points`, that there are not enough points for *any*
+    scaling region — a sharper diagnosis of the same call, and two messages
+    about one mistake is one too many.
+    """
+    if points.ndim != 2 or points.shape[1] != 1:
+        return
+    if points.shape[0] < MIN_DIMENSION_POINTS:
+        return
+    name = analysis or "correlation_dimension"
+    warnings.warn(
+        f"{name} was given a SINGLE coordinate ({points.shape[0]} samples of one "
+        "component), and a fractal dimension is a property of a point set in phase "
+        "space. Points on a line have dimension 1, so this will answer D ~ 1 with an "
+        "excellent fit whatever the underlying attractor is.\n"
+        "    If this is a measured scalar series, reconstruct the phase space first "
+        "(Takens) — the delay and dimension are estimated for you:\n"
+        f"        ts.analysis.{name}(ts.analysis.embed(data))\n"
+        "    If these really are points on a line, D ~ 1 is the right answer and "
+        "result.trusted can be ignored.",
+        UnembeddedSeriesWarning,
+        stacklevel=3,
+    )
 
 
 def require_min_points(points: np.ndarray, *, analysis: str, reason: str) -> None:
@@ -155,6 +203,7 @@ def _as_points(data: Any, *, analysis: str | None = None) -> np.ndarray:
                 lead="Either of these:",
             )
         )
+    _warn_unembedded(arr, analysis)
     return np.ascontiguousarray(arr)
 
 
@@ -478,8 +527,17 @@ class DimensionResult(ScalingResult):
         ``min_window=`` keyword — reported ``D_corr = 1.8183 ± 0``, ``R² = 1``
         and ``trusted = True``.
         """
-        if self.trusted and not self._fit_is_believable():
+        if self.trusted and (self.unembedded or not self._fit_is_believable()):
             object.__setattr__(self, "trusted", False)
+
+    @property
+    def unembedded(self) -> bool:
+        """Whether this dimension was measured on a **single coordinate**.
+
+        See :class:`UnembeddedSeriesWarning`: the estimate is then ~1 by
+        construction, so it is reported untrusted and the repr says why.
+        """
+        return bool(self.meta.get("n_components") == 1) if self.meta else False
 
     @property
     def dimension(self) -> float:
@@ -602,7 +660,15 @@ class DimensionResult(ScalingResult):
         elif np.isfinite(r2):
             bits.append(f"R² = {_sig(r2, 5)}")
         lines = [f"({', '.join(bits)})"]
-        if not self.trusted:
+        if self.unembedded:
+            # The single most natural mistake for a data-first user, and the one
+            # the estimator answers most convincingly: a scalar series lies on a
+            # line, so every estimator reports D ~ 1 with a perfect fit.
+            lines.append(
+                "⚠ measured on ONE coordinate — points on a line have dimension 1 "
+                "whatever produced them; embed first: ts.analysis.embed(data)"
+            )
+        elif not self.trusted:
             # Two ways to lose trust, and the reader needs to know which: the
             # shared fit-quality floor (too few points / not straight), or this
             # estimator's own Rényi monotonicity check.

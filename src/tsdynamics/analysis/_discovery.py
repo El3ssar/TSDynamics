@@ -150,6 +150,38 @@ def summarise(doc: str | None) -> str:
 
 # ── the search ───────────────────────────────────────────────────────────────
 
+#: Words a user brings that the registry's own vocabulary never uses, mapped to
+#: the terms it does.  ``find`` is advertised as "ask in your own words", and an
+#: engineer's words are not a dynamicist's: measured, ``find("robust")`` and
+#: ``find("safety margin")`` both returned nothing while ``resilience``'s own
+#: summary line reads *"Minimal-fatal-shock resilience"*, and ``find("will it
+#: tip over")`` returned ``correlation_sum`` and ``dimension_spectrum``.
+#:
+#: Each row is a word a reader plausibly types -> the words the registry knows.
+#: Kept deliberately small and literal: this is a thesaurus, not a ranker.
+SYNONYMS: dict[str, tuple[str, ...]] = {
+    "annihilate": ("tipping_points",),
+    "attractor": ("attractors", "basins"),
+    "bifurcate": ("orbit_diagram", "continuation"),
+    "bifurcation": ("orbit_diagram", "continuation"),
+    "collapse": ("tipping_points", "resilience"),
+    "disturbance": ("resilience", "basin_fractions"),
+    "fold": ("tipping_points", "continuation"),
+    "fragile": ("resilience",),
+    "margin": ("resilience",),
+    "perturbation": ("resilience", "basin_fractions"),
+    "predictable": ("uncertainty_exponent", "basin_entropy"),
+    "robust": ("resilience", "basin_fractions"),
+    "robustness": ("resilience", "basin_fractions"),
+    "safety": ("resilience",),
+    "shock": ("resilience",),
+    "stability": ("fixed_points", "basin_fractions", "resilience"),
+    "survive": ("resilience",),
+    "tip": ("tipping_points", "resilience"),
+    "tipping": ("tipping_points",),
+    "unpredictable": ("uncertainty_exponent", "basin_entropy"),
+}
+
 _SPLIT = re.compile(r"[^0-9a-z]+")
 #: Terms shorter than this cannot match: without the floor, "is" in "is this
 #: chaotic?" matches ``set_dIStance`` and the answer is noise.
@@ -187,11 +219,20 @@ def score(entry: Any, term: str) -> float:
 
 
 def search(entries: Sequence[Any], query: str) -> list[Any]:
-    """Rank ``entries`` against a free-text ``query``, cutting at the relevance cliff."""
+    """Rank ``entries`` against a free-text ``query``, cutting at the relevance cliff.
+
+    A term the registry's vocabulary does not use is first looked up in
+    :data:`SYNONYMS`, so a question asked in the reader's words still lands.
+    """
     terms = _terms(query)
     if not terms:
         return list(entries)
-    scored = [(sum(score(e, t) for t in terms), e.name, e) for e in entries]
+    named = {e.name for e in entries}
+    wanted = {n for t in terms for n in SYNONYMS.get(t, ()) if n in named}
+    scored = [
+        (sum(score(e, t) for t in terms) + (4.0 if e.name in wanted else 0.0), e.name, e)
+        for e in entries
+    ]
     scored = [row for row in scored if row[0] > 0.0]
     if not scored:
         return []
@@ -199,6 +240,37 @@ def search(entries: Sequence[Any], query: str) -> list[Any]:
     kept = [row for row in scored if row[0] >= 0.5 * top]
     kept.sort(key=lambda row: (-row[0], row[1]))
     return [row[2] for row in kept]
+
+
+def nothing_matched(query: str, total: int) -> str:
+    """Explain an empty :func:`~tsdynamics.analysis.find`, instead of shrugging.
+
+    Two kinds of miss, and they need opposite answers.  A word from the layer v6
+    **removed** (surrogates, entropy estimators, the signal-transform toolbox)
+    must say so, or "nothing matches" reads as *this library cannot do that* and
+    a reader goes off to reimplement an FT surrogate test by hand.  Anything else
+    gets the areas to browse — a bare ``[]`` is the one repr in the library that
+    answers a question with silence.
+    """
+    from tsdynamics._redirects import OUT_OF_SCOPE_SEARCH_TERMS, SCOPE_SURGERY_REMEDY
+
+    for term in _terms(query):
+        what = OUT_OF_SCOPE_SEARCH_TERMS.get(term)
+        if what is None:
+            continue
+        lines = "\n".join(f"    {line}" for line in SCOPE_SURGERY_REMEDY)
+        return (
+            f"nothing matches {query!r} — {what} were REMOVED from this library. TSDynamics is a "
+            f"dynamical systems library: phase-space methods stay, generic series "
+            f"statistics go, and that layer moved to a companion time-series package."
+            f"\nWhat stayed:\n{lines}"
+        )
+    return (
+        f"nothing matches {query!r}.  The {total} analyses are grouped by what you hold:"
+        f"\n    print(ts.analysis.__doc__)        # the map"
+        f"\n    ts.analysis.find(subject)         # what can I measure on THIS?"
+        f"\n    areas: {', '.join(AREAS)}"
+    )
 
 
 def subject_tokens(what: Any) -> tuple[str, ...] | None:
@@ -252,11 +324,28 @@ def _result_token_of_class(cls: type) -> tuple[str, ...] | None:
 # ── the rendered listings ────────────────────────────────────────────────────
 
 
+def groups_of(subjects: Sequence[str]) -> tuple[str, ...]:
+    """Return **every** group an analysis with these subjects belongs to.
+
+    :func:`group_of` picks one — it answers "where does this belong *first*" —
+    and a few analyses honestly belong in two: ``zero_one_test`` runs a system
+    *or* a measured observable, and its own summary line says so.  Listing it
+    once meant the grouped map disagreed with ``find(subject)``, which is the
+    thing the map exists to advertise.
+    """
+    found = tuple(
+        token
+        for token, tokens in (("system", SYSTEM_TOKENS), ("data", DATA_TOKENS))
+        if tokens.intersection(subjects)
+    )
+    return found or ("result",)
+
+
 def grouped_map(entries: Sequence[Any], *, indent: str = "  ") -> str:
     """Render entries grouped by what you have to hold, then by area."""
     lines: list[str] = []
     for token, heading, call in GROUPS:
-        rows = [e for e in entries if group_of(e.metadata.get("subjects", ())) == token]
+        rows = [e for e in entries if token in groups_of(e.metadata.get("subjects", ()))]
         if not rows:
             continue
         lines.append(f"{indent}{heading}   ({len(rows)})")

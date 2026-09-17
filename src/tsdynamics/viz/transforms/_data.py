@@ -625,7 +625,7 @@ def delay_embedding(
     _reject_missing_delay(delay, delay_time, tau)
     x = _scalar_series(series, components)
     lag = _resolve_delay(series, x.shape[0], delay, delay_time, tau)
-    labels = (f"{label}(t)", f"{label}(t - {lag})")
+    labels = _delay_labels(series, components, label, lag)
     return Geometry(
         "delay_embedding",
         make_frame(FrameSpace.STATE2, labels),
@@ -634,6 +634,40 @@ def delay_embedding(
         title=_title(series),
         meta=_meta(series),
     )
+
+
+def _delay_labels(series: Any, components: Any, label: str, lag: int) -> tuple[str, str]:
+    """Name the delay axes after the **channel**, and say the lag is in samples.
+
+    Two small lies fixed at once.  The axes read ``x(t)`` / ``x(t - 16)`` for
+    every input — the default ``label="x"``, even when the trajectory declares
+    ``variables=("voltage",)`` or the caller selected ``components="z"``, so a
+    reconstruction of one channel was captioned as another.  And ``t - 16`` was
+    typeset as a *time* on an axis whose ``t`` is a time, while the lag is a
+    count of **samples**: when the subject knows its ``dt`` the label now states
+    the real delay (``voltage(t - 0.16)``), and when it does not — a bare array
+    has no time axis — it says the unit out loud (``x(t - 16 samples)``).
+
+    ``label=`` still wins when the caller gives it — it is the explicit override.
+    """
+    name = label
+    if label == "x":  # the default: prefer what the data actually calls itself
+        names = None
+        if getattr(series, "y", None) is not None and getattr(series, "t", None) is not None:
+            _, y, names, _ = _split_traj(series)
+            name = _label(_component_index(components, names, y.shape[1]), names)
+        elif isinstance(components, str):
+            name = components
+    dt = getattr(series, "dt", None)
+    if dt is None:
+        meta = getattr(series, "meta", None)
+        dt = meta.get("dt") if isinstance(meta, dict) else None
+    try:
+        span = float(dt) * lag if dt is not None else None
+    except (TypeError, ValueError):  # pragma: no cover - a non-numeric meta dt
+        span = None
+    lag_text = f"{lag} samples" if span is None else f"{span:g}"
+    return (f"{name}(t)", f"{name}(t - {lag_text})")
 
 
 #: The one runnable pair every delay error quotes, so the reader never has to
@@ -928,6 +962,7 @@ def cobweb(
     *,
     components: int | str = 0,
     label: str = "x",
+    domain: tuple[float, float] | None = None,
 ) -> Geometry:
     """Compute the staircase geometry of a 1-D map orbit.
 
@@ -943,6 +978,19 @@ def cobweb(
         Component to read when ``series`` is a Trajectory.
     label : str, optional
         Axis-label base; the axes read ``x_n`` / ``x_(n+1)``.
+    domain : (float, float), optional
+        The interval to draw ``f`` and the axes over — **the map's own domain**,
+        which is the picture a cobweb is for::
+
+            ts.plot(logistic_orbit, "cobweb", domain=(0, 1))
+
+        Default ``None`` = the span the orbit actually visited.  That default is
+        deliberate (a wider frame than the data would break the limit union a
+        composite takes) but it is the wrong *picture* for a converging orbit:
+        the whole point is that the staircase's corners land on the hump, and an
+        orbit settling onto a fixed point never visits it, so the hump ends up
+        off-screen.  A 1-D map has no domain the library can read off it, so this
+        is a keyword rather than a guess.
 
     Returns
     -------
@@ -977,8 +1025,18 @@ def cobweb(
         stair_y[2 * n + 1] = x[n + 1]
         stair_x[2 * n + 2] = x[n + 1]
         stair_y[2 * n + 2] = x[n + 1]
-    lo = float(min(x.min(), stair_y.min()))
-    hi = float(max(x.max(), stair_y.max()))
+    if domain is not None:
+        lo, hi = (float(domain[0]), float(domain[1]))
+        if not (hi > lo):
+            from tsdynamics.errors import InvalidParameterError
+
+            raise InvalidParameterError(
+                f"cobweb domain= is the interval to draw f over, so it needs lo < hi; "
+                f"got {domain!r}. For the logistic map:  domain=(0, 1)"
+            )
+    else:
+        lo = float(min(x.min(), stair_y.min()))
+        hi = float(max(x.max(), stair_y.max()))
     diag = np.array([lo, hi], dtype=float)
     labels = (f"{label}_n", f"{label}_(n+1)")
     parts = [Part({"x": diag, "y": diag}, label="y = x")]
@@ -991,6 +1049,7 @@ def cobweb(
         make_frame(FrameSpace.STATE2, labels),
         parts,
         axis_labels=labels,
+        axis_limits=() if domain is None else ((lo, hi), (lo, hi)),
         title=_title(series),
         meta=_meta(series),
     )

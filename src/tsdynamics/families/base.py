@@ -9,7 +9,7 @@ import sites keep resolving ``Trajectory`` to the one canonical object.
 from __future__ import annotations
 
 import math
-from collections.abc import Iterator, MutableMapping
+from collections.abc import Iterator, Mapping, MutableMapping
 from typing import Any, ClassVar, cast
 
 import numpy as np
@@ -263,6 +263,156 @@ def resolve_transient(transient: Any, *, discrete: bool) -> float:
     return value
 
 
+#: The subclass contract, keyed by the abstract method a family is missing.
+#: Each entry is ``(what the family IS, the skeleton to write)``.  The raw
+#: ``TypeError: Can't instantiate abstract class ... without an implementation
+#: for abstract methods '_diffusion', '_drift'`` names the methods and nothing
+#: else — no signature, no order, no hint that the author's ``_equations`` is the
+#: drift under a different name — and it lands on the one step of a migration
+#: where the user has the least to go on.
+_SUBCLASS_CONTRACT: dict[Any, tuple[str, tuple[str, ...]]] = {
+    frozenset({"_equations"}): (
+        "an ODE is a vector field: one symbolic expression per state component",
+        (
+            "class MySystem(ts.ContinuousSystem):",
+            '    params = {"a": 1.0}',
+            "    dim = 2",
+            '    variables = ("x", "y")',
+            "",
+            "    @staticmethod",
+            "    def _equations(y, t, *, a):",
+            "        return [y(1), -a * y(0)]      # y is an ACCESSOR: y(0), not y[0]",
+        ),
+    ),
+    frozenset({"_drift", "_diffusion"}): (
+        "an SDE is a DRIFT plus a DIFFUSION — dX_k = f_k dt + g_k dW_k — so it "
+        "needs both halves; if you wrote ``_equations``, that is the drift",
+        (
+            "class MySDE(ts.StochasticSystem):",
+            '    params = {"theta": 1.0, "sigma": 0.3}',
+            "    dim = 1",
+            '    variables = ("x",)',
+            "",
+            "    @staticmethod",
+            "    def _drift(y, t, *, theta, sigma):",
+            "        return [-theta * y(0)]",
+            "",
+            "    @staticmethod",
+            "    def _diffusion(y, t, *, theta, sigma):",
+            "        return [sigma]                # one coefficient per component",
+        ),
+    ),
+    # A DDE's kernel is named ``_equations`` too, but the accessor takes a SECOND
+    # argument — the delayed time — which is the whole point of the family, so it
+    # gets its own skeleton rather than the flow's.
+    "DelaySystem": (
+        "a DDE is a vector field that reads its own PAST: the state accessor "
+        "takes a second argument, the time to read it at",
+        (
+            "class MyDDE(ts.DelaySystem):",
+            '    params = {"beta": 2.0, "tau": 2.0}',
+            "    dim = 1",
+            '    variables = ("x",)',
+            '    delays = ("tau",)',
+            "",
+            "    @staticmethod",
+            "    def _equations(y, t, *, beta, tau):",
+            "        return [beta * y(0, t - tau) - y(0)]     # y(i, t - tau) is the past",
+        ),
+    ),
+    frozenset({"_step"}): (
+        "a map is its next-state rule; the state arrives as a plain VECTOR here "
+        "(this is the one place the families differ from a flow's accessor)",
+        (
+            "class MyMap(ts.DiscreteMap):",
+            '    params = {"a": 1.4, "b": 0.3}',
+            "    dim = 2",
+            '    variables = ("x", "y")',
+            "",
+            "    @staticmethod",
+            "    def _step(X, a, b):",
+            "        x, y = X[0], X[1]",
+            "        return np.array([1 - a * x**2 + y, b * x])",
+        ),
+    ),
+}
+
+
+def _subclass_contract_error(cls: type, missing: frozenset[str]) -> TypeError:
+    """Build the "you are missing the kernel" error, with the skeleton to write."""
+    base = next(
+        (b.__name__ for b in cls.__mro__ if b.__module__.startswith("tsdynamics.families")),
+        "SystemBase",
+    )
+    named = ", ".join(repr(n) for n in sorted(missing))
+    entry = _SUBCLASS_CONTRACT.get(base) or _SUBCLASS_CONTRACT.get(frozenset(missing))
+    head = (
+        f"{cls.__name__} cannot be instantiated: it does not define {named}, "
+        f"the kernel that says what the dynamics ARE."
+    )
+    if entry is None:
+        return TypeError(f"{head}\n    help(ts.{base})   # the subclass contract")
+    why, skeleton = entry
+    body = "\n".join(f"    {line}" if line else "" for line in skeleton)
+    return TypeError(f"{head}  In this family {why}.\n\n{body}\n\n    help(ts.{base})")
+
+
+def _reject_state_as_params(cls_name: str, params: Any, declared: Mapping[str, Any]) -> None:
+    """Refuse a **state vector** handed to the constructor's ``params`` slot.
+
+    ``Lorenz([1.0, 1.0, 1.0])`` is the single most likely first line from anyone
+    arriving with a ``u0``-first habit (DynamicalSystems.jl, ``solve_ivp``), and
+    it used to surface as a raw ``TypeError: object is not iterable`` from
+    ``dict(params)`` five frames inside ``families/base.py`` — the worst error in
+    the library, at the step where a migrating user has the least help.
+
+    A system is built from its **parameters**, and the state is chosen per run.
+    """
+    if params is None or isinstance(params, Mapping):
+        return
+    from tsdynamics.errors import InvalidInputError
+
+    shown = np.array2string(np.asarray(params, dtype=object), separator=", ")
+    lines = [f"{cls_name}().run(ic={shown})"]
+    # Name a parameter this class really declares: a remedy line the library
+    # prints has to RUN (the errgate rule), and ``sigma`` is not universal.
+    first = next(iter(declared), None)
+    if first is not None:
+        lines.append(
+            f"{cls_name}({first}={declared[first]!r}).run(ic={shown})   # ...with a parameter changed"
+        )
+    lines.append(f"{cls_name}(ic={shown})   # ...or latch the start on the system")
+    raise InvalidInputError(
+        f"{cls_name}(...) takes PARAMETERS, not a state: the first argument is the "
+        f"parameter mapping, and {shown} looks like an initial condition. A system "
+        f"is its equations plus its parameters; where it starts is chosen per run." + remedy(*lines)
+    )
+
+
+def orbit_peak(stepper: Any) -> float | None:
+    """Return ``|state|`` where a Lyapunov estimator's orbit **landed**, or ``None``.
+
+    An escaping orbit still produces a full, finite, entirely meaningless
+    spectrum — measured, an escaped Chua run reported
+    ``λ = [0.3057, 0.3054, -6.068]`` and the repr hedged only about the *horizon*.
+    The estimator has the landed base state in its hand (the engine fast path
+    re-seats it into the tangent system), so recording its magnitude costs one
+    max-norm and lets :class:`~tsdynamics.analysis.lyapunov.LyapunovSpectrum`
+    refuse a verdict the orbit cannot support.
+
+    Returns ``None`` when the state is unreadable, so a family that cannot
+    answer simply says nothing rather than inventing a number.
+    """
+    try:
+        state = np.asarray(stepper.state(), dtype=float)
+    except Exception:  # pragma: no cover - a stepper that cannot report its state
+        return None
+    if state.size == 0:
+        return None
+    peak = float(np.max(np.abs(state)))
+    return peak if np.isfinite(peak) else float("inf")
+
+
 def as_lyapunov_result(system: Any, exponents: Any, **meta_kw: Any) -> Any:
     """Wrap a raw exponent array as a :class:`LyapunovSpectrum` result.
 
@@ -311,11 +461,11 @@ _INTERNAL_ALIASES: dict[str, str] = {
 #: *is* the migration guide — there is no shim to find later.
 _MOVED_IN_V6: dict[str, tuple[str, tuple[str, ...]]] = {
     "integrate": (
-        "run is the one trajectory verb in v6",
+        "run is the one trajectory verb",
         ("system.run(final_time=100.0, dt=0.01)",),
     ),
-    "iterate": ("run is the one trajectory verb in v6", ("system.run(steps=1000)",)),
-    "trajectory": ("run is the one trajectory verb in v6", ("system.run(final_time=100.0)",)),
+    "iterate": ("run is the one trajectory verb", ("system.run(steps=1000)",)),
+    "trajectory": ("run is the one trajectory verb", ("system.run(final_time=100.0)",)),
     "copies": (
         "ensemble returns the lazy wrapper now — one verb, one object",
         ("band = system.ensemble(states)", "band.step(0.01)"),
@@ -463,7 +613,7 @@ def _absent_name_error(system: Any, name: str) -> AttributeError:
         remedy_lines.append(_discovery.find_line(held))
         return AttributeError(
             f"{head}: the .lyap / .chaos / .dims / .recurrence namespaces are gone "
-            f"in v6 — every member is a free function." + remedy(*remedy_lines)
+            f"— every member is a free function." + remedy(*remedy_lines)
         )
 
     try:
@@ -811,6 +961,20 @@ class SystemBase(DeriveMixin, SystemPlottable):
 
             register_class(cls)
 
+    def __new__(cls, *args: Any, **kwargs: Any) -> Any:
+        """Refuse an abstract family subclass by **teaching the contract**.
+
+        CPython's own message — ``Can't instantiate abstract class MySDE without
+        an implementation for abstract methods '_diffusion', '_drift'`` — names
+        the methods and stops.  It is the first thing a user writing their own
+        system sees go wrong, and it is the one refusal in the library that used
+        to hand back nothing runnable.
+        """
+        missing: frozenset[str] = getattr(cls, "__abstractmethods__", frozenset())
+        if missing:
+            raise _subclass_contract_error(cls, frozenset(missing))
+        return super().__new__(cls)
+
     def __init__(
         self,
         params: dict[str, Any] | None = None,
@@ -871,6 +1035,7 @@ class SystemBase(DeriveMixin, SystemPlottable):
         # override channels (``params=`` and free keywords) are merged here, and
         # both are validated against the *declared* parameter names.
         defaults = dict(type(self).params)
+        _reject_state_as_params(type(self).__name__, params, defaults)
         overrides: dict[str, Any] = dict(params) if params else {}
         if param_kwargs:
             duplicated = sorted(set(param_kwargs) & set(overrides))
@@ -1122,7 +1287,7 @@ class SystemBase(DeriveMixin, SystemPlottable):
         recorded *values* are still shared, which is what a shallow copy means),
         so mutating a copy can never reach back into the original.
         """
-        clone = type(self).__new__(type(self))
+        clone: SystemBase = type(self).__new__(type(self))
         clone.__dict__.update(self._clone_state())
         return clone
 
@@ -1130,7 +1295,7 @@ class SystemBase(DeriveMixin, SystemPlottable):
         """Return a fully independent deep copy (``copy.deepcopy(system)``)."""
         import copy as _copy
 
-        clone = type(self).__new__(type(self))
+        clone: SystemBase = type(self).__new__(type(self))
         memo[id(self)] = clone
         clone.__dict__.update(_copy.deepcopy(self._clone_state(), memo))
         return clone
@@ -1359,8 +1524,8 @@ class SystemBase(DeriveMixin, SystemPlottable):
         elif self.ic is not None:
             arr = self._coerce_ic(self.ic, "system.ic")
             explicit = bool(self.__dict__.get("_ic_explicit", False))
-        elif type(self)._default_ic is not None:
-            arr = self._coerce_ic(type(self)._default_ic, "_default_ic")
+        elif self._resolved_default_ic() is not None:
+            arr = self._coerce_ic(self._resolved_default_ic(), "_default_ic")
             # A class-declared default is not a *user* choice: a system whose
             # declared default lands off-basin keeps the random-IC retry.
             explicit = False
@@ -1371,6 +1536,19 @@ class SystemBase(DeriveMixin, SystemPlottable):
             object.__setattr__(self, "ic", arr.copy())
             object.__setattr__(self, "_ic_explicit", explicit)
         return arr
+
+    def _resolved_default_ic(self) -> Any:
+        """Return this system's declared default IC — **instance first**.
+
+        A variable-dimension system (``MultiChua(n_circuits=5)``) cannot declare
+        a fixed-length default on the class: the one written for the default ring
+        is the wrong length for every other, and ``run()`` then refuses with
+        "needs 15 numbers - got 9".  Such a system sizes ``self._default_ic`` in
+        its own ``__init__``, exactly as it already sizes ``self._field_shape``,
+        and this is the read that lets it.
+        """
+        own = self.__dict__.get("_default_ic")
+        return own if own is not None else type(self)._default_ic
 
     def _ic_rollback(self) -> Any:
         """Return a context manager restoring ``ic`` if the block raises.
@@ -1448,6 +1626,12 @@ class SystemBase(DeriveMixin, SystemPlottable):
         prov: dict[str, Any] = {
             "system": type(self).__name__,
             "params": cast(ParamSet, self.params).as_dict(),
+            # The component names, carried so that everything downstream of a run
+            # can use the names the author DECLARED.  They already reached
+            # ``traj["x"]``, ``system.info`` and the plot axes; they did not reach
+            # ``result.to_frame()``, which tabulated a fixed point of a pendulum
+            # as ``x0``/``x1`` for a class declaring ``("theta", "omega")``.
+            "variables": tuple(self.variables),
             "tsdynamics": __version__,
         }
         # The initial-condition seed, whenever one exists (the user passed

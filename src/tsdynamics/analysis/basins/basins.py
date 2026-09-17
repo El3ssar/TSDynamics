@@ -32,7 +32,7 @@ import numpy as np
 from ...data import Ball, Box, Grid, grid_points, sampler
 from ...errors import InvalidInputError, remedy
 from .._result import AnalysisResult
-from .._result_json import _pct, _sig
+from .._result_json import _pct, _sig, _spread
 from ._common import (
     DIVERGED_COLOR,
     PALETTE,
@@ -392,6 +392,45 @@ class BasinFractions(AnalysisResult):
     def ids(self) -> list[int]:
         """Sorted attractor ids — the order ``[]``, iteration and ``np.asarray`` use."""
         return sorted(self.fractions)
+
+    def to_frame(self) -> Any:
+        """Return a tidy frame: one row per attractor, with its share and error.
+
+        The base :meth:`~tsdynamics.analysis.results.AnalysisResult.to_frame`
+        builds ONE row of the declared fields, and the answer here lives in a
+        ``dict[int, float]``, which a table cell cannot hold — so it was dropped:
+        measured, the frame came back ``(1, 3)`` of ``diverged``/``n``/
+        ``dominant`` with **no fractions**.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Columns ``attractor`` · ``fraction`` · ``stderr`` · ``n`` ·
+            ``diverged``, plus one ``center_<var>`` column per state component.
+        """
+        pd = self._require_pandas()
+        errors = self.standard_error
+        names = self.meta.get("variables") if self.meta else None
+        labels = tuple(str(v) for v in names) if names else None
+        rows: list[dict[str, Any]] = []
+        for gid in self.ids:
+            row: dict[str, Any] = {
+                "attractor": int(gid),
+                "fraction": float(self.fractions[gid]),
+                "stderr": float(errors[gid]),
+                "n": int(self.n),
+                "diverged": float(self.diverged),
+            }
+            try:
+                center = np.asarray(self.attractors.by_id(int(gid)).center, dtype=float)
+            except (KeyError, ValueError, AttributeError):
+                center = np.empty(0)
+            if center.size:
+                row.update(_spread("center", center, labels))
+            rows.append(row)
+        frame = pd.DataFrame(rows)
+        frame.attrs["meta"] = dict(self.meta) if self.meta else {}
+        return frame
 
     def __plot_spec__(self, kind: str | None = None) -> Any:
         r"""Describe the basin fractions as a backend-agnostic :class:`PlotSpec`.

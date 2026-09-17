@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from ..errors import InvalidParameterError
 from . import SolverSpec, all_specs, get
 
 if TYPE_CHECKING:  # avoid importing the families package at solver-import time
@@ -293,11 +294,11 @@ def resolve(method: str, *, family: str | None = None) -> Resolution:
 
     specs = all_specs()
     if canonical not in specs:
-        raise ValueError(_unknown_method_message(method, norm, family))
+        raise InvalidParameterError(_unknown_method_message(method, norm, family))
 
     spec = get(canonical)
     if family is not None and not _spec_supports(spec, family):
-        raise ValueError(
+        raise InvalidParameterError(
             f"solver {canonical!r} does not support the {family!r} family "
             f"(it supports {sorted(spec.caps.supports)}); "
             f"available for {family!r}: {available_for(family)}"
@@ -306,14 +307,32 @@ def resolve(method: str, *, family: str | None = None) -> Resolution:
 
 
 def _unknown_method_message(method: str, norm: str, family: str | None) -> str:
-    """Build the 'unknown method' error, with a stiff hint where it helps."""
-    scope = f" for family {family!r}" if family is not None else ""
-    msg = f"unknown solver method {method!r}; available{scope}: {available_for(family)}"
+    """Build the 'unknown method' error: nearest match first, then the listing.
+
+    An alphabetical dump of every registered kernel is the least useful shape
+    this message can take — measured, ``solver="LSODA"`` printed 26 names
+    beginning ``ab3, ab4, abm4`` and including ``euler_maruyama`` / ``milstein``,
+    which are **SDE** kernels an ODE can never use.  The fix has three parts:
+    filter the listing to the family that asked, lead with the nearest spelling,
+    and keep the stiff hint that names the real replacement.
+    """
+    import difflib
+
+    names = available_for(family)
+    scope = f" for a {family} problem" if family is not None else ""
+    stiff = STIFF_METHOD.get(family or "ode", "bdf")
     if norm in _STIFF_SCIPY_NAMES:
-        msg += (
-            f". ({method!r} is a SciPy/v2 stiff method with no engine kernel; "
-            f"use {STIFF_METHOD.get('ode', 'rosenbrock')!r} or 'trbdf2' for stiff problems.)"
-        )
+        near = [stiff, "trbdf2"]
+        why = f" — {method!r} is a SciPy/v2 stiff method with no engine kernel"
+    else:
+        near = difflib.get_close_matches(norm, names, n=3, cutoff=0.5)
+        why = ""
+    msg = f"unknown solver {method!r}{why}."
+    if near:
+        msg += " Did you mean: " + ", ".join(repr(n) for n in near) + "?"
+    msg += f"\n    Available{scope}: {names}"
+    if norm in _STIFF_SCIPY_NAMES:
+        msg += f"\n    For a stiff problem, {stiff!r} is the variable-order BDF."
     return msg
 
 

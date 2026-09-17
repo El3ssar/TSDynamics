@@ -216,7 +216,7 @@ def test_the_map_ic_error_hands_back_a_line_that_runs() -> None:
         ts.systems.Henon().run(steps=10, ic=[0.1])
     line = str(err.value).splitlines()[-1].strip()
     assert line.startswith("Henon().run(steps=")
-    assert ts.systems.Henon().run(steps=1000, ic=[1.0, 1.0]).shape == (1000, 2)
+    assert ts.systems.Henon().run(steps=1000, ic=[1.0, 1.0]).shape == (1001, 2)
 
 
 def test_a_wrapper_answers_for_its_own_keywords() -> None:

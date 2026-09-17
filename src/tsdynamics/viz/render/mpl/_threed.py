@@ -35,6 +35,10 @@ from ._core import (
     _apply_colorbar,
     _apply_theme_color_cycle,
     _apply_theme_to_figure,
+    _KindPreset,
+    _make_norm,
+    _resolve_cmap,
+    _resolve_norm,
     _resolve_theme,
     figure_geometry,
     new_figure,
@@ -68,9 +72,31 @@ def _f(arr: Any) -> np.ndarray:
     return np.asarray(arr, dtype=float)
 
 
-def _cmap(spec: PlotSpec) -> str | None:
-    """Return the colormap a colour-mapped 3-D layer uses, if the spec sets one."""
-    return spec.colorbar.cmap if spec.colorbar is not None else None
+#: The 3-D marks carry no per-kind colour preset — a 3-D spec's colour comes from
+#: the layer, the spec's colorbar, or the backend default, in that order.
+_NO_PRESET = _KindPreset()
+
+
+def _cmap(spec: PlotSpec, layer: Any = None) -> str | None:
+    """Return the colormap this 3-D layer uses — **layer style first**.
+
+    Shares :func:`~._core._resolve_cmap` with the 2-D renderer rather than
+    re-deriving the precedence, because the copy that used to live here read
+    only ``spec.colorbar.cmap``: ``ts.plot(traj, color_by="time",
+    cmap="plasma")`` wrote ``cmap`` onto the *layer* (where the front door puts
+    every style key) and the 3-D path never looked there, so the picture came
+    out viridis with **no warning** — a declared style key, silently dropped, on
+    the 106-of-142 catalogue systems that are 3-D.  The identical call in 2-D
+    honored it, which is what made the drop invisible.
+    """
+    if layer is None:
+        return spec.colorbar.cmap if spec.colorbar is not None else None
+    return _resolve_cmap(spec, layer, _NO_PRESET)
+
+
+def _norm(spec: PlotSpec) -> Any:
+    """Return the matplotlib colour norm for this spec (``clim`` folded in)."""
+    return _make_norm(_resolve_norm(spec, _NO_PRESET), spec.clim)
 
 
 def _3d_style(
@@ -147,10 +173,10 @@ def _draw_line3d(ax: Any, layer: Any, spec: PlotSpec, theme: Any) -> Any:
 
         points = np.column_stack([x, y, z]).reshape(-1, 1, 3)
         segments = np.concatenate([points[:-1], points[1:]], axis=1)
-        lc = Line3DCollection(segments, cmap=_cmap(spec), label=layer.label)
+        lc = Line3DCollection(
+            segments, cmap=_cmap(spec, layer), norm=_norm(spec), label=layer.label
+        )
         lc.set_array(_f(c)[:-1])
-        if spec.clim is not None:
-            lc.set_clim(*spec.clim)
         if "lw" in kw:
             lc.set_linewidth(kw["lw"])
         if "alpha" in kw:
@@ -209,10 +235,9 @@ def _draw_scatter3d(ax: Any, layer: Any, spec: PlotSpec, theme: Any) -> Any:
         scatter_kw["s"] = float(kw["ms"]) ** 2
     if c is not None:
         scatter_kw["c"] = _f(c)
-        scatter_kw["cmap"] = _cmap(spec)
+        scatter_kw["cmap"] = _cmap(spec, layer)
+        scatter_kw["norm"] = _norm(spec)
     sc = ax.scatter(x, y, z, label=layer.label, **scatter_kw)
-    if c is not None and spec.clim is not None:
-        sc.set_clim(*spec.clim)
     return sc if c is not None else None
 
 
@@ -223,9 +248,7 @@ def _draw_surface3d(ax: Any, layer: Any, spec: PlotSpec, theme: Any) -> Any:
         xx, yy = np.meshgrid(x, y)
     else:
         xx, yy = x, y
-    surf = ax.plot_surface(xx, yy, z, cmap=_cmap(spec) or "viridis")
-    if spec.clim is not None:
-        surf.set_clim(*spec.clim)
+    surf = ax.plot_surface(xx, yy, z, cmap=_cmap(spec, layer) or "viridis", norm=_norm(spec))
     return surf
 
 

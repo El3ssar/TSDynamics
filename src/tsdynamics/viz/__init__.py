@@ -20,7 +20,7 @@ The whole surface, in one screen
     ts.viz.renderers.find(writes=".svg")         # ...and by whom
     ts.viz.themes.use("publication")             # ...in what look
     ts.viz.styles                                # the style vocabulary, printed
-    ts.viz.compatibility()                       # the declared transform x primitive matrix
+    print(ts.viz.compatibility())                # the declared transform x primitive matrix
 
 One name per picture
 --------------------

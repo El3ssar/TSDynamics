@@ -59,7 +59,7 @@ import warnings
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self, cast, get_args
 
 import numpy as np
 
@@ -504,6 +504,35 @@ def _as_pair(value: Any) -> tuple[float, float] | None:
     return (float(lo), float(hi))
 
 
+class _TitleText(str):
+    """The plot title — a plain ``str`` that **teaches** when you call it.
+
+    Every neighbour of ``title`` in ``dir(p)`` is a fluent verb (``size``,
+    ``camera``, ``style``, ``font``, ``theme``, ``background``, ``recolor``,
+    ``palette``, ``gridlines``, ``limits``, ``ticks``), so ``p.title("Lorenz")``
+    is the guess two beta testers made within five minutes — and it answered
+    with ``TypeError: 'str' object is not callable``, the one message in this
+    library that names nothing and suggests nothing.
+
+    There is deliberately **no second spelling**: calling it does not set the
+    title, it says where the title is set.  ``p.title`` compares, formats,
+    slices and serializes as the string it is.
+    """
+
+    __slots__ = ()
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        """Raise the message ``TypeError: 'str' object is not callable`` should have been."""
+        from tsdynamics.errors import InvalidInputError
+
+        wanted = args[0] if args else kwargs.get("title", "…")
+        raise InvalidInputError(
+            "Plot.title is the current title (a string), not a verb. Set it with\n"
+            f"    p.relabel(title={wanted!r})\n"
+            f"or at the door:  ts.plot(subject, title={wanted!r})"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Axis
 # ---------------------------------------------------------------------------
@@ -772,6 +801,39 @@ class Colorbar:
             label_size=d.get("label_size"),
         )
 
+    @classmethod
+    def coerce(cls, value: Any, current: Colorbar | None = None) -> Colorbar | None:
+        """Coerce what a caller **types** at ``colorbar=`` into a :class:`Colorbar`.
+
+        The twin of :meth:`Legend.coerce`, and the same defect: ``ts.plot(traj,
+        color_by="time", colorbar="right")`` was accepted and died in the
+        renderer with ``AttributeError: 'str' object has no attribute 'cmap'``.
+        A placement string sets :attr:`location`, a mapping sets fields,
+        ``True``/``False`` turn one on/off.
+
+        ``current`` is the colorbar already on the plot: a caller who says
+        ``colorbar="left"`` means *move the one I have*, not *throw away its
+        label and colormap*, so its other fields are kept.
+        """
+        from dataclasses import replace
+
+        if value is None or isinstance(value, Colorbar):
+            return value
+        base = current if current is not None else cls()
+        if isinstance(value, bool):
+            return replace(base) if value else None
+        if isinstance(value, Mapping):
+            return cls.from_dict({**base.to_dict(), **dict(value)})
+        if isinstance(value, str):
+            return replace(base, location=_check_location(value, get_args(_CbarLoc), "colorbar"))
+        from tsdynamics.errors import InvalidParameterError
+
+        raise InvalidParameterError(
+            f"colorbar= takes True/False, a placement string ({', '.join(get_args(_CbarLoc))}), "
+            f"or a mapping of Colorbar fields — not {type(value).__name__}. "
+            "Example:  ts.plot(traj, color_by='time', colorbar='left')"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Legend
@@ -833,6 +895,60 @@ class Legend:
             ncol=int(d.get("ncol", 1)),
             frame=bool(d.get("frame", True)),
         )
+
+    @classmethod
+    def coerce(cls, value: Any) -> Legend | None:
+        """Coerce what a caller **types** at ``legend=`` into a :class:`Legend`.
+
+        ``ts.plot(traj, legend="upper left")`` is the spelling every plotting
+        library trains you to write, and until v6 it was *accepted* and then died
+        inside the matplotlib renderer with ``AttributeError: 'str' object has no
+        attribute 'show'`` — one of two figure keywords (of seventeen) that did
+        not take plain Python.  Corollary C1 says fix the door, not the caller:
+        a placement string becomes ``Legend(location=...)``, a mapping becomes
+        ``Legend(**m)``, ``True``/``False`` turn one on/off, exactly as
+        :meth:`Annotation.from_mapping` already does for annotations.
+
+        Returns ``None`` for "no legend" (``False``), which is what
+        :attr:`Plot.legend` stores.
+        """
+        if value is None or isinstance(value, Legend):
+            return value
+        if isinstance(value, bool):
+            return cls() if value else None
+        if isinstance(value, Mapping):
+            return cls.from_dict(value)
+        if isinstance(value, str):
+            return cls(location=_check_location(value, get_args(_LegendLoc), "legend"))
+        from tsdynamics.errors import InvalidParameterError
+
+        raise InvalidParameterError(
+            f"legend= takes True/False, a placement string ({', '.join(get_args(_LegendLoc))}), "
+            f"or a mapping of Legend fields — not {type(value).__name__}. "
+            "Example:  ts.plot(traj, legend='upper left')"
+        )
+
+
+def _check_location(value: str, allowed: tuple[str, ...], what: str) -> Any:
+    """Validate a placement word **at the door**, naming the accepted set.
+
+    A placement that only a renderer would reject is a keyword that looks
+    accepted and produces a traceback hundreds of lines later; validating here
+    means the message names the word, the vocabulary, and nothing else.
+    """
+    word = value.strip().lower()
+    if word in allowed:
+        return word
+    import difflib
+
+    from tsdynamics.errors import InvalidParameterError
+
+    near = difflib.get_close_matches(word, allowed, n=1, cutoff=0.6)
+    hint = f" Did you mean {near[0]!r}?" if near else ""
+    raise InvalidParameterError(
+        f"{what}={value!r} is not a placement this library knows.{hint}\n"
+        f"    Accepted: {', '.join(allowed)}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1022,6 +1138,15 @@ class Animation:
     trail_kind: Literal["time", "steps"] | None = None
     trail_length: float | None = None
     trail_fade: bool = False
+    #: Draw the whole curve once, faintly, under a windowed comet — the static
+    #: "attractor backdrop" the comet sweeps over.  On by default (it is what
+    #: makes a short trail legible against an unfamiliar attractor), but it shows
+    #: the ending in frame 1, so a reveal animation for a talk turns it OFF.  It
+    #: had no switch at all: it was undocumented, absent from ``.trail``'s help,
+    #: and none of the other knobs reached it.
+    backdrop: bool = True
+    #: Opacity of that backdrop.  ``0`` is the same as ``backdrop=False``.
+    backdrop_alpha: float = 0.18
     head: bool = True
     head_size: float = 6.0
     head_color: str | None = None
@@ -1042,6 +1167,8 @@ class Animation:
             "trail_kind": self.trail_kind,
             "trail_length": None if self.trail_length is None else float(self.trail_length),
             "trail_fade": bool(self.trail_fade),
+            "backdrop": bool(self.backdrop),
+            "backdrop_alpha": float(self.backdrop_alpha),
             "head": bool(self.head),
             "head_size": float(self.head_size),
             "head_color": self.head_color,
@@ -1142,6 +1269,8 @@ class Animation:
             trail_kind=d.get("trail_kind"),
             trail_length=None if tl is None else float(tl),
             trail_fade=bool(d.get("trail_fade", False)),
+            backdrop=bool(d.get("backdrop", True)),
+            backdrop_alpha=float(d.get("backdrop_alpha", 0.18)),
             head=bool(d.get("head", True)),
             head_size=float(d.get("head_size", 6.0)),
             head_color=d.get("head_color"),
@@ -1229,6 +1358,31 @@ class Layer:
         """Normalize ``kind`` to :class:`PlotKind` and coerce data to arrays."""
         self.kind = PlotKind(self.kind)
         self.data = {k: np.asarray(v) for k, v in self.data.items()}
+
+    def __repr__(self) -> str:
+        """Describe the layer — ``Layer(line, 'x', n=201, style={})``.
+
+        **Introspecting a plot is the first thing anyone does when a picture
+        looks wrong**, and the generated dataclass repr made that impossible:
+        ``p.layers`` on a 200-point trajectory printed ~9 000 characters of raw
+        floats, so the one step that would have explained the picture filled the
+        screen instead.  A layer is a *mark over channels*; its shape, not its
+        samples, is what identifies it.  The arrays are one dot away
+        (``layer.data["x"]``) and untouched.
+        """
+        shape: str
+        lengths = {arr.shape for arr in self.data.values()}
+        if len(lengths) == 1 and len(next(iter(lengths))) == 1:
+            shape = f"n={next(iter(lengths))[0]}"
+        else:
+            shape = ", ".join(f"{k}{'x'.join(map(str, v.shape))}" for k, v in self.data.items())
+        channels = ", ".join(repr(k) for k in self.data)
+        label = f", label={self.label!r}" if self.label is not None else ""
+        transform = f", transform={self.transform!r}" if self.transform is not None else ""
+        return (
+            f"Layer({self.kind.value}, [{channels}], {shape}{label}"
+            f", style={self.style!r}{transform})"
+        )
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-friendly mapping (arrays become nested lists)."""
@@ -1466,6 +1620,14 @@ class Plot:
         """
         self.kind = PlotKind(self.kind)
         self.clim = _as_pair(self.clim)
+        self.title = _TitleText(self.title)
+        # A directly-constructed ``Plot(legend="upper left", colorbar="left")``
+        # is the same plain-Python spelling ``colorize`` accepts, so it is
+        # normalised here too — the coercion belongs to the *type*, not to one
+        # door into it, or a hand-built spec would still reach a renderer holding
+        # a ``str`` where a ``Legend`` is expected.
+        self.legend = Legend.coerce(self.legend)
+        self.colorbar = Colorbar.coerce(self.colorbar)
         # Rendering state, deliberately NOT dataclass fields: it must not
         # serialize, must not take part in ``==`` / ``replace()``, and must not
         # survive a round trip through ``to_dict``.
@@ -1817,7 +1979,7 @@ class Plot:
         if z is not None and self.z is not None:
             self.z.label = z
         if title is not None:
-            self.title = title
+            self.title = _TitleText(title)
         return self
 
     @_mutates
@@ -2406,8 +2568,8 @@ class Plot:
         cmap: str | None = None,
         norm: _Norm | None = None,
         discrete: bool | None = None,
-        colorbar: Colorbar | bool | None = None,
-        legend: Legend | bool | None = None,
+        colorbar: Colorbar | bool | str | Mapping[str, Any] | None = None,
+        legend: Legend | bool | str | Mapping[str, Any] | None = None,
     ) -> Plot:
         """Set the color range, colorbar, and/or legend (only the args you pass).
 
@@ -2430,25 +2592,37 @@ class Plot:
         discrete : bool, optional
             Whether the color channel is categorical (one swatch per label — a
             basin / attractor index image) rather than a continuous ramp.
-        colorbar : Colorbar or bool, optional
-            A :class:`Colorbar` to attach, or ``True`` to attach a default one /
-            ``False`` to drop it.  Omitting it leaves :attr:`colorbar`
-            unchanged.
-        legend : Legend or bool, optional
-            A :class:`Legend` to attach, or ``True`` to attach a default one /
-            ``False`` to drop it.  Omitting it leaves :attr:`legend` unchanged.
+        colorbar : Colorbar, bool, str, or mapping, optional
+            Where/whether to draw the colour legend.  ``True``/``False`` turn one
+            on/off, a **placement string** (``"right"``, ``"left"``, ``"top"``,
+            ``"bottom"``) moves the one you have, a **mapping** sets any
+            :class:`Colorbar` field, and a :class:`Colorbar` is passed through.
+            Omitting it leaves :attr:`colorbar` unchanged.
+        legend : Legend, bool, str, or mapping, optional
+            Where/whether to draw the legend.  ``True``/``False`` turn one
+            on/off, a **placement string** (``"upper left"``, ``"best"``, …)
+            places it, a **mapping** sets any :class:`Legend` field, and a
+            :class:`Legend` is passed through.  Omitting it leaves
+            :attr:`legend` unchanged.
 
         Returns
         -------
         Plot
             ``self``, for chaining.
+
+        Raises
+        ------
+        tsdynamics.errors.InvalidParameterError
+            If a placement word is not one this library knows — named **here**,
+            at the door, rather than as an ``AttributeError`` from inside a
+            renderer several hundred frames later.
         """
         if clim is not None:
             self.clim = _as_pair(clim)
         if colorbar is not None:
-            self.colorbar = Colorbar() if colorbar is True else (colorbar or None)
+            self.colorbar = Colorbar.coerce(colorbar, self.colorbar)
         if legend is not None:
-            self.legend = Legend() if legend is True else (legend or None)
+            self.legend = Legend.coerce(legend)
         if cmap is not None or norm is not None or discrete is not None:
             if self.colorbar is None:
                 self.colorbar = Colorbar()
@@ -2528,6 +2702,8 @@ class Plot:
         length: tuple[Literal["time", "steps"], float] | None = _UNSET,
         *,
         fade: bool | None = None,
+        backdrop: bool | None = None,
+        backdrop_alpha: float | None = None,
     ) -> Plot:
         """Set the comet tail behind the animation's moving head.
 
@@ -2539,11 +2715,27 @@ class Plot:
             Omitting the argument leaves the current trail unchanged.
         fade : bool, optional
             Fade the tail opacity from head to tail.
+        backdrop : bool, optional
+            Whether to draw the **whole curve**, faintly, under the comet.  It is
+            on by default because it makes a short trail legible on an
+            unfamiliar attractor — but it is also the whole answer shown in
+            frame 1, so a reveal animation for a talk wants ``backdrop=False``.
+            Only a *windowed* trail has one (a persistent trail is its own
+            backdrop).
+        backdrop_alpha : float, optional
+            Opacity of that faint full curve.  Default ``0.18``; ``0`` is the
+            same as ``backdrop=False``.
 
         Returns
         -------
         Plot
             ``self``, for chaining.
+
+        Examples
+        --------
+        A comet that reveals the attractor as it goes, with no spoiler::
+
+            ts.plot(traj, animate=True).trail(("time", 4), backdrop=False)
         """
         a = self._ensure_animation()
         if length is not _UNSET:
@@ -2554,6 +2746,10 @@ class Plot:
                 a.trail_kind, a.trail_length = kind, float(value)
         if fade is not None:
             a.trail_fade = bool(fade)
+        if backdrop is not None:
+            a.backdrop = bool(backdrop)
+        if backdrop_alpha is not None:
+            a.backdrop_alpha = float(backdrop_alpha)
         return self
 
     @_mutates
@@ -3429,6 +3625,28 @@ class Plot:
         """
         if name.startswith("__") and name.endswith("__"):
             raise AttributeError(name)
+        # ``__getattr__`` runs when normal lookup *failed*, and a property whose
+        # body raises ``AttributeError`` fails exactly the same way as one that
+        # does not exist.  ``p.ax`` on a plot whose render dies with
+        # ``AttributeError: 'str' object has no attribute 'show'`` therefore came
+        # back as **"'Plot' object has no attribute 'ax'"** — the escape hatch
+        # accusing itself of not existing, which is the most expensive kind of
+        # wrong message: it points away from the real fault.  A name the class
+        # really defines is re-raised with what actually went wrong.
+        for klass in type(self).__mro__:
+            descriptor = klass.__dict__.get(name)
+            if descriptor is None or not hasattr(descriptor, "__get__"):
+                continue
+            try:
+                return descriptor.__get__(self, type(self))
+            except AttributeError as exc:
+                from tsdynamics.errors import BackendError
+
+                raise BackendError(
+                    f"Plot.{name} exists; reading it raised {type(exc).__name__}: {exc}. "
+                    "That is a failure *inside* this Plot, not a missing attribute — "
+                    "the traceback below it is the real one."
+                ) from exc
         moved = _PLOT_MOVED.get(name)
         if moved is not None:
             raise AttributeError(f"Plot has no {name!r}. {moved}")
@@ -3488,7 +3706,10 @@ class Plot:
             "clim": list(self.clim) if self.clim is not None else None,
             "colorbar": self.colorbar.to_dict() if self.colorbar is not None else None,
             "legend": self.legend.to_dict() if self.legend is not None else None,
-            "title": self.title,
+            # ``str(...)`` — not the ``_TitleText`` subclass ``title`` is stored
+            # as, so the JSON envelope carries a plain string and a round trip is
+            # type-identical to what it always was.
+            "title": str(self.title),
             "ndim": self.ndim,
             "aspect": self.aspect,
             "annotations": [a.to_dict() for a in self.annotations],
@@ -3781,6 +4002,40 @@ _COMPOSITION_KEYWORDS: frozenset[str] = frozenset(
     }
 )
 
+#: Words **every** plotting door accepts — the composition door and the three
+#: subject doors (``traj.plot`` / ``system.plot`` / ``result.plot``) alike.  They
+#: are listed separately from :data:`_COMPOSITION_KEYWORDS` because that set
+#: drives the *"this word belongs somewhere else"* sentence, and a word accepted
+#: right here belongs nowhere else.  They stay in the suggestion pool, which is
+#: the whole reason ``label=`` is answered with ``labels=`` and not ``zlabel=``.
+_UNIVERSAL_PLOT_KEYWORDS: frozenset[str] = frozenset({"labels"})
+
+
+def nearest_keyword(bad: str, pool: Sequence[str]) -> str | None:
+    """Return the keyword ``bad`` most likely meant, or ``None``.
+
+    :func:`difflib.get_close_matches` breaks ties by *string* order, which
+    encodes nothing — measured, ``label=`` and ``zlabel=`` / ``labels=`` score
+    identically (0.909 each) and ``zlabel`` won on the ``z``, so the caller who
+    wanted legend entries was pointed at an **axis name**.  A candidate that
+    merely *extends* what was typed (``label`` → ``labels``) is a near-certainty,
+    so it outranks an equal-scoring one that does not.
+
+    ``bad`` itself is never offered.  A word can be refused by one door while
+    living in the shared pool because another door takes it — measured, that
+    produced ``labels= — did you mean labels=?``, which reads as a typo in the
+    library rather than an answer.  A door that cannot use a word must say where
+    it works, never hand it back.
+    """
+    import difflib
+
+    candidates = [c for c in pool if c != bad]
+    close = difflib.get_close_matches(bad, candidates, n=5, cutoff=0.6)
+    if not close:
+        return None
+    extends = [c for c in close if c.startswith(bad)]
+    return extends[0] if extends else close[0]
+
 
 def _unknown_plot_keyword_message(unknown: Sequence[str]) -> str:
     """Build the one message every plotting door gives for a word it cannot use.
@@ -3796,17 +4051,13 @@ def _unknown_plot_keyword_message(unknown: Sequence[str]) -> str:
        given a second failure instead of an answer.  A ``render`` line appears
        only when the backend genuinely accepts that word.
     """
-    import difflib
-
     from .style import style_names
 
     styles = sorted(style_names())
     figure = sorted(FIGURE_KEYS)
-    pool = sorted(set(styles) | set(figure) | _COMPOSITION_KEYWORDS)
-    close = {bad: difflib.get_close_matches(bad, pool, n=1, cutoff=0.6) for bad in unknown}
-    hints = "".join(
-        f"\n    {bad}= — did you mean {near[0]}=?" for bad, near in close.items() if near
-    )
+    pool = sorted(set(styles) | set(figure) | _COMPOSITION_KEYWORDS | _UNIVERSAL_PLOT_KEYWORDS)
+    close = {bad: nearest_keyword(bad, pool) for bad in unknown}
+    hints = "".join(f"\n    {bad}= — did you mean {near}=?" for bad, near in close.items() if near)
     composition = sorted(set(unknown) & _COMPOSITION_KEYWORDS)
     if composition:
         hints += (
@@ -3824,6 +4075,7 @@ def _unknown_plot_keyword_message(unknown: Sequence[str]) -> str:
         f"plot() got unexpected keyword(s) {listed}.{hints}\n"
         f"    Style keywords: {', '.join(styles)}\n"
         f"    Figure keywords: {', '.join(figure)}\n"
+        f"    Legend keywords: {', '.join(sorted(_UNIVERSAL_PLOT_KEYWORDS))}\n"
         f"    Composition keywords (at ts.plot / viz.plot): "
         f"{', '.join(sorted(_COMPOSITION_KEYWORDS))}"
     )

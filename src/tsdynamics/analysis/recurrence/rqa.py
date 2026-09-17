@@ -52,6 +52,7 @@ import numpy as np
 
 from .._common import reject_system
 from .._result import AnalysisResult
+from .._result_base import _unknown_result_attribute
 from .._result_json import _sig
 from ._common import _diagonal_run_lengths, _longest_run_on_diagonal, _vertical_run_lengths
 from .matrix import RecurrenceMatrix, recurrence_matrix
@@ -149,6 +150,52 @@ class RQAResult(AnalysisResult):
         ("LAM", "laminarity"),
         ("ENTR", "diagonal_entropy"),
     )
+
+    #: The literature abbreviations the repr prints, mapped to the attributes
+    #: that hold them.  The abbreviations are *right* — they are what every RQA
+    #: paper calls these quantities — but the repr showing ``L_max`` while only
+    #: ``max_diagonal_length`` resolves is a name the library taught and then
+    #: refused, in a library where nearly every other wrong guess is translated.
+    _ABBREVIATIONS: ClassVar[dict[str, str]] = {
+        "DET": "determinism",
+        "DIV": "divergence",
+        "ENTR": "diagonal_entropy",
+        "L": "avg_diagonal_length",
+        "L_MAX": "max_diagonal_length",
+        "LAM": "laminarity",
+        "RR": "recurrence_rate",
+        "TT": "trapping_time",
+        "V_MAX": "max_vertical_length",
+    }
+
+    #: What ``dir()`` and the wrong-guess message advertise beyond the fields.
+    _extra_attribute_names: ClassVar[tuple[str, ...]] = tuple(_ABBREVIATIONS)
+
+    def _printed_names(self) -> dict[str, str]:
+        """Map the literature abbreviations the repr prints to the attributes."""
+        return {
+            "DET": "determinism",
+            "ENTR": "diagonal_entropy",
+            "LAM": "laminarity",
+            "L_max": "max_diagonal_length",
+            "RR": "recurrence_rate",
+        }
+
+    def __getattr__(self, name: str) -> Any:
+        """Serve the literature abbreviation the repr prints (``q.L_max``).
+
+        Case-insensitively, because the repr writes ``L_max`` and the papers
+        write ``Lmax`` and ``LMAX``.  Anything else falls through to the shared
+        wrong-guess message.
+        """
+        if name.startswith("_"):
+            raise AttributeError(name)
+        attribute = type(self)._ABBREVIATIONS.get(name.replace("_", "").upper()) or type(
+            self
+        )._ABBREVIATIONS.get(name.upper())
+        if attribute is not None:
+            return getattr(self, attribute)
+        raise _unknown_result_attribute(self, name)
 
     def __plot_spec__(self, kind: str | None = None) -> Any:
         """Describe the scalar RQA measures as a :class:`PlotSpec` bar readout.

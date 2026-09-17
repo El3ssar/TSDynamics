@@ -16,7 +16,7 @@ from tsdynamics.errors import InvalidParameterError
 from tsdynamics.utils.tolerances import DEFAULT_ATOL, DEFAULT_RTOL
 
 from ._kwargs import reject_unknown_run_keywords
-from .base import SystemBase, Trajectory, as_lyapunov_result, resolve_transient
+from .base import SystemBase, Trajectory, as_lyapunov_result, orbit_peak, resolve_transient
 
 #: ``ContinuousSystem.run``'s keywords, in signature order.  Printed verbatim by
 #: the unknown-keyword message, so the two can never drift apart.
@@ -329,7 +329,11 @@ class ContinuousSystem(SystemBase, ABC):
             _structural_params = frozenset({"N"})
 
     _default_method : str
-        Default integrator name (default ``"RK45"``).
+        The numerical kernel this system integrates with when the caller names
+        none — the class-level counterpart of ``run(solver=...)``.  Default
+        ``"rk45"``; declare ``"bdf"`` on a reliably stiff system.  Spellings are
+        normalised, so ``"RK45"`` and ``"dopri5"`` resolve to the same kernel,
+        and ``system.info`` prints the resolved name.
 
     Examples
     --------
@@ -340,7 +344,11 @@ class ContinuousSystem(SystemBase, ABC):
     >>> traj2 = lor.run(final_time=100)
     """
 
-    _default_method: ClassVar[str] = "RK45"
+    #: The default numerical kernel, in the registry's own spelling.  It was
+    #: ``"RK45"``, which resolves to the same kernel but is a *fourth* spelling
+    #: of one concept next to ``solver=`` at the door, ``meta["solver"]`` in the
+    #: record and ``info`` printing ``solver=rk45``.
+    _default_method: ClassVar[str] = "rk45"
 
     #: The default runtime backend (see :attr:`SystemBase._default_backend`).
     #: ``"jit"`` — the Cranelift JIT, with the process-wide compiled-evaluator
@@ -1398,7 +1406,8 @@ class ContinuousSystem(SystemBase, ABC):
 
         _reject_unknown_lyapunov_keywords(integrator_kwargs)
         k = k if k is not None else self.dim
-        exponents = TangentSystem(self, k=k, backend=backend)._lyapunov_spectrum(
+        tangent = TangentSystem(self, k=k, backend=backend)
+        exponents = tangent._lyapunov_spectrum(
             final_time=final_time,
             dt=dt,
             ic=ic,
@@ -1416,4 +1425,5 @@ class ContinuousSystem(SystemBase, ABC):
             transient=transient,
             method=method,
             backend=backend,
+            orbit_peak=orbit_peak(tangent),
         )

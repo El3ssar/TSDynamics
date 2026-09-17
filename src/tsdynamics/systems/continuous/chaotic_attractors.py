@@ -601,6 +601,13 @@ class Chua(ContinuousSystem):
     variables = ("x", "y", "z")
     reference = "Matsumoto (1984), IEEE Trans. Circuits Syst. 31, 1055-1058"
     doi = "10.1109/tcs.1984.1085459"
+    # The double-scroll attractor has a FINITE basin, so the random-IC fallback
+    # escapes: measured, 9 of 20 draws from U[0,1]^3 leave the basin and reach
+    # ~1e9 by T=100 -- and the run comes back finite, so the very first line a
+    # new user types returned garbage about a quarter of the time, differently
+    # in every process.  This is the classic small off-origin start (the one this
+    # class's own ``known_lyapunov`` already pins), which lands on the attractor.
+    default_ic = [0.1, 0.0, 0.0]
     # Classic double-scroll Chua circuit (α=15.6, β=28, m0=-8/7, m1=-5/7). The
     # piecewise-linear nonlinearity makes the *exact* leading exponent sensitive
     # to the breakpoint handling, so only the robust sign structure is asserted:
@@ -690,6 +697,16 @@ class MultiChua(ContinuousSystem):
         if n_circuits is not None:
             p["n_circuits"] = int(n_circuits)
         super().__init__(dim=3 * int(p["n_circuits"]), params=p, ic=ic)
+        # A finite basin: the random-IC fallback escapes on 4 of 6 draws from
+        # U[0,1]^9 at T=150, and the run comes back FINITE, so a bare ``run()``
+        # returned a meaningless orbit most of the time, differently per
+        # process.  A small off-origin kick on the first circuit lands on the
+        # attractor.  It is sized HERE rather than declared on the class because
+        # ``n_circuits`` sets the dimension — the same reason ``_field_shape``
+        # is an instance attribute on the spatially-extended systems.
+        default = [0.0] * int(3 * int(p["n_circuits"]))
+        default[0] = 0.1
+        object.__setattr__(self, "_default_ic", default)
 
     @staticmethod
     def _equations(Y, t, *, alpha, beta, m0, m1, kappa, n_circuits):
@@ -1131,6 +1148,11 @@ class SprottF(ContinuousSystem):
     params = {"a": 0.5}
     dim = 3
     variables = ("x", "y", "z")
+    # A finite basin: the random-IC fallback escapes (measured over draws from
+    # U[0,1]^dim at T=150), and the run comes back finite, so a bare .run()
+    # returned a meaningless orbit some of the time, differently per process.
+    # This small off-origin start lands on the attractor.
+    default_ic = [0.1, 0.0, 0.0]
     reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
     doi = "10.1103/physreve.50.r647"
 
@@ -1167,6 +1189,11 @@ class SprottG(ContinuousSystem):
     params = {"a": 0.4}
     dim = 3
     variables = ("x", "y", "z")
+    # A finite basin: the random-IC fallback escapes (measured over draws from
+    # U[0,1]^dim at T=150), and the run comes back finite, so a bare .run()
+    # returned a meaningless orbit some of the time, differently per process.
+    # This small off-origin start lands on the attractor.
+    default_ic = [0.1, 0.0, 0.0]
     reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
     doi = "10.1103/physreve.50.r647"
 
@@ -1203,6 +1230,11 @@ class SprottH(ContinuousSystem):
     params = {"a": 0.5}
     dim = 3
     variables = ("x", "y", "z")
+    # A finite basin: the random-IC fallback escapes (measured over draws from
+    # U[0,1]^dim at T=150), and the run comes back finite, so a bare .run()
+    # returned a meaningless orbit some of the time, differently per process.
+    # This small off-origin start lands on the attractor.
+    default_ic = [0.1, 0.0, 0.0]
     reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
     doi = "10.1103/physreve.50.r647"
 
@@ -1343,6 +1375,11 @@ class SprottL(ContinuousSystem):
     params = {"a": 0.9, "b": 3.9}
     dim = 3
     variables = ("x", "y", "z")
+    # A finite basin: the random-IC fallback escapes (measured over draws from
+    # U[0,1]^dim at T=150), and the run comes back finite, so a bare .run()
+    # returned a meaningless orbit some of the time, differently per process.
+    # This small off-origin start lands on the attractor.
+    default_ic = [0.1, 0.0, 0.0]
     reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
     doi = "10.1103/physreve.50.r647"
     _default_method = "bdf"  # explicit default solver fails; use an implicit one
@@ -1485,6 +1522,11 @@ class SprottP(ContinuousSystem):
     params = {"a": 2.7}
     dim = 3
     variables = ("x", "y", "z")
+    # A finite basin: the random-IC fallback escapes (measured over draws from
+    # U[0,1]^dim at T=150), and the run comes back finite, so a bare .run()
+    # returned a meaningless orbit some of the time, differently per process.
+    # This small off-origin start lands on the attractor.
+    default_ic = [0.1, 0.0, 0.0]
     reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
     doi = "10.1103/physreve.50.r647"
     _default_method = "bdf"  # explicit default solver fails; use an implicit one
@@ -1662,6 +1704,11 @@ class SprottJerk(ContinuousSystem):
     params = {"mu": 2.017}
     dim = 3
     variables = ("x", "y", "z")
+    # A finite basin: the random-IC fallback escapes (measured over draws from
+    # U[0,1]^dim at T=150), and the run comes back finite, so a bare .run()
+    # returned a meaningless orbit some of the time, differently per process.
+    # This small off-origin start lands on the attractor.
+    default_ic = [0.4, 0.0, 0.0]
     reference = "Sprott (1997), Phys. Lett. A 228, 271-274"
     doi = "10.1016/s0375-9601(97)00088-1"
     _default_method = "bdf"  # explicit default solver fails; use an implicit one

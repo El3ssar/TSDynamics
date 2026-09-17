@@ -381,7 +381,7 @@ def test_a_data_transform_accepts_a_bare_array_a_trajectory_and_a_system(lorenz)
 
 def test_a_discrete_system_subject_is_iterated_not_integrated():
     geom = geometry(ts.systems.Logistic(r=3.9), "autocorrelation", steps=400, max_delay=10)
-    assert geom.meta["integrated_for_plot"]["n_samples"] == 400
+    assert geom.meta["integrated_for_plot"]["n_samples"] == 401  # the start + 400 iterates
     assert geom.meta["sample_spacing"] == 1.0
 
 

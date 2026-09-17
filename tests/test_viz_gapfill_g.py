@@ -23,6 +23,7 @@ design — every result is built synthetically.
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from tsdynamics.analysis.basins.attractors import Attractor, AttractorSet
 from tsdynamics.analysis.basins.basins import BasinFractions, BasinsResult
@@ -162,10 +163,15 @@ def test_continuation_is_stacked_bands_with_tipping_vlines() -> None:
     # the bands tile [0, 1] at each value (cumulative fractions sum to 1 here).
     top = spec.layers[-1].data["hi"]
     np.testing.assert_allclose(top, 1.0)
-    # the annihilation of attractor 1 at the final value is a vertical tipping line.
+    # The annihilation of attractor 1 is a vertical tipping line, drawn in the
+    # MIDDLE of the two samples that straddle it (0.75 -> 1.0, so 0.875).  It used
+    # to sit on 1.0, the first sample at which the basin is already gone — where
+    # the curve has visibly been at zero since the previous sample, so the mark
+    # read as arriving late and pointed at the wrong gap.  The sweep brackets the
+    # event and locates it no better; the midpoint is the point that says that.
     vlines = [a for a in spec.annotations if a.kind == "vline"]
     assert vlines, "expected a tipping vline where a basin annihilates"
-    assert any(a.x == 1.0 and "disappear" in a.text for a in vlines)
+    assert any(a.x == pytest.approx(0.875) and "disappear" in a.text for a in vlines)
     _roundtrips(spec)
 
 

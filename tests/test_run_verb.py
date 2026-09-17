@@ -27,7 +27,7 @@ def test_run_map_returns_trajectory() -> None:
     """``Henon().run(steps=...)`` returns a Trajectory (map dispatch on is_discrete)."""
     traj = ts.systems.Henon().run(steps=500)
     assert isinstance(traj, Trajectory)
-    assert traj.y.shape == (500, 2)
+    assert traj.y.shape == (501, 2)  # the start, then 500 iterates
 
 
 def test_run_dispatches_on_is_discrete() -> None:

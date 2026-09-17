@@ -325,10 +325,43 @@ def orbit_diagram(
         "orbit_diagram",
         make_frame(FrameSpace.PARAM1, (param,)),
         channels={"x": xs[finite], "y": ys[finite]},
-        axis_labels=(param, f"x{components}"),
+        axis_labels=(param, _observable_label(subject, components)),
         style={"markersize": 0.5, "alpha": 0.5},
         meta={"param": param, "points_per_value": int(points), "transient": int(transient)},
     )
+
+
+def _observable_label(subject: Any, components: Any) -> str:
+    """Name the quantity on a cascade's y axis — the **observable**, not the slice.
+
+    Measured: a bifurcation diagram of a flow labelled its y axis
+    ``Poincaré section (1, 0.0)`` — the plane *spec*, which is where the points
+    were sampled, not what is plotted — and the label was **identical** for
+    ``components=0`` and ``components="z"``, so two different pictures carried
+    the same wrong caption.  A declared ``variables`` name is used whenever the
+    system has one, and the section is a qualifier after it: ``z at y = 0``.
+    """
+    inner = getattr(subject, "system", subject)
+    names = getattr(inner, "variables", None) or getattr(subject, "variables", None)
+    if isinstance(components, str):
+        name = components
+    elif isinstance(names, (tuple, list)) and 0 <= int(components) < len(names):
+        name = str(names[int(components)])
+    else:
+        name = f"x{components}"
+    plane = getattr(subject, "plane", None)
+    if isinstance(plane, tuple) and len(plane) == 2:
+        axis, offset = plane
+        axis_name = (
+            str(names[int(axis)])
+            if isinstance(names, (tuple, list)) and isinstance(axis, (int, np.integer))
+            else str(axis)
+        )
+        return f"{name} at {axis_name} = {float(offset):g}"
+    period = getattr(subject, "period", None)
+    if period is not None:
+        return f"{name} every T = {float(period):g}"
+    return name
 
 
 # ---------------------------------------------------------------------------

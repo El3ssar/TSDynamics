@@ -41,6 +41,7 @@ IR — so ``import tsdynamics`` stays plot-free (``tsdynamics.viz`` itself is la
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from typing import Any
 
 from ._frames import check_overlay, force_requested, role_of
@@ -81,6 +82,7 @@ def plot(
     share_x: bool | None = None,
     share_y: bool | None = None,
     share_color: bool | None = None,
+    labels: Sequence[str | None] | str | None = None,
     **build_kw: Any,
 ) -> Plot:
     """Compose one or more things into a single (possibly multi-panel) spec.
@@ -141,6 +143,20 @@ def plot(
         Draw **one** figure-level colorbar rather than one per panel — the right
         presentation for a row of basin images across a parameter, where the
         per-panel colorbars repeat the same scale.  Default ``False``.
+    labels : sequence of str, optional
+        **Name the curves.**  One entry per thing, in argument order
+        (``None`` leaves that one's automatic label alone)::
+
+            ts.plot(a, b, labels=["mu = 1", "mu = 3"])
+
+        Comparing two parameter values is the commonest figure in dynamics and
+        it had **no spelling**: ``label=`` / ``labels=`` / ``legend_labels=``
+        were all refused (two of them suggesting ``zlabel=``, an axis name), and
+        the only route that worked was mutating ``p.layers[i].label`` — reaching
+        into the IR.  A named thing is exempt from the automatic ``(1)`` / ``(2)``
+        disambiguation, because you already said what it is.
+
+        .. versionadded:: 6.0
     **build_kw
         Forwarded to each non-spec thing's ``__plot_spec__`` (``components`` /
         ``kind`` / the per-kind options), so ``plot(a, b, components="x")``
@@ -191,6 +207,9 @@ def plot(
         # agree.  Only the sole-subject case copies — ``ts.viz.grid(a, b).panels``
         # genuinely *are* ``a`` and ``b``, which is what makes a grid inspectable.
         specs = [_fresh_copy(specs[0])]
+
+    if labels is not None:
+        apply_labels(specs, labels)
 
     mode = layout.mode if isinstance(layout, Layout) else layout
     if isinstance(layout, Layout):
@@ -474,11 +493,16 @@ def _overlay(specs: list[PlotSpec], *, force: bool | str | None = False) -> Plot
         # A spec that is *itself* an overlay already carries per-source labels
         # (and its own source list).  Re-tagging them would double-prefix every
         # legend entry, which is what made an incremental ``.add()`` chain
-        # disagree with the equivalent one-shot ``plot(...)`` call.
+        # disagree with the equivalent one-shot ``plot(...)`` call.  A spec the
+        # caller *named* (``labels=``) is exempt for the same reason: they said
+        # what it is, so the source tag has nothing left to add.
         done = list(specs[i].meta.get("composed", ()))
+        named = LABEL_META_KEY in specs[i].meta
         for layer in specs[i].layers:
             layers.append(
-                _copy_layer(layer) if done else _relabel_for_overlay(layer, tags[i], multi=multi)
+                _copy_layer(layer)
+                if (done or named)
+                else _relabel_for_overlay(layer, tags[i], multi=multi)
             )
         annotations.extend(replace(a) for a in specs[i].annotations)
         composed.extend(done or [tags[i]])
@@ -566,6 +590,63 @@ def _copy_layer(layer: Layer, *, label: str | None = None) -> Layer:
         style=dict(layer.style),
         transform=layer.transform,
     )
+
+
+def label_count_message(wanted: int, given: int) -> str:
+    """Build the one message both plotting doors give for a mismatched ``labels=``.
+
+    ``ts.plot`` counts SUBJECTS (a subject can draw several specs, so the spec
+    count is not a number a caller can predict) and ``viz.plot`` counts things;
+    they are the same number for the same call, and one concept gets one
+    sentence.
+    """
+    return (
+        f"labels= names one curve per thing plotted: {wanted} were plotted and "
+        f"{given} label(s) were given. Pass one per thing (None to leave one automatic), "
+        "e.g. ts.plot(a, b, labels=['reference', 'perturbed'])."
+    )
+
+
+#: Written onto a spec's ``meta`` by :func:`apply_labels`.  Two readers depend on
+#: it: :func:`_source_tags` (so the legend prefix *is* the caller's word) and
+#: :func:`_overlay` (so the layers are not re-tagged on top of it).
+LABEL_META_KEY = "label"
+
+
+def apply_labels(specs: list[PlotSpec], labels: Any) -> None:
+    r"""Name each spec's curves from ``labels``, positionally, **in place**.
+
+    One entry per spec, in argument order; ``None`` leaves that spec's automatic
+    label alone.  A spec contributing several curves (a multi-component time
+    series) gets the name as a **prefix**, so ``labels=["run A"]`` legends
+    ``run A: x`` / ``run A: y`` rather than naming two different curves the same
+    thing.
+
+    Raises
+    ------
+    tsdynamics.errors.InvalidParameterError
+        If the count does not match — with both counts named, because a silently
+        short sequence would label the wrong curves.
+    """
+    from tsdynamics.errors import InvalidParameterError
+
+    from .spec import Legend
+
+    names: list[Any] = [labels] if isinstance(labels, str) else list(labels)
+    if len(names) != len(specs):
+        raise InvalidParameterError(label_count_message(len(specs), len(names)))
+    for spec, name in zip(specs, names, strict=True):
+        if name is None:
+            continue
+        text = str(name)
+        spec.meta[LABEL_META_KEY] = text
+        if len(spec.layers) == 1:
+            spec.layers[0].label = text
+        else:
+            for layer in spec.layers:
+                layer.label = f"{text}: {layer.label}" if layer.label else text
+        if spec.layers and spec.legend is None:
+            spec.legend = Legend()
 
 
 def _relabel_for_overlay(layer: Layer, tag: str, *, multi: bool) -> Layer:
@@ -664,13 +745,16 @@ def _warn_on_stacked_images(layers: list[Layer]) -> None:
 def _source_tags(specs: list[PlotSpec]) -> list[str]:
     """Return a unique, human-readable tag per source spec.
 
-    Preference order: the spec's own title, then — for a spec built by one plot
-    transform — that transform's name, then a positional fallback.  The middle
-    rung matters: overlaying a direction field, its nullclines and an orbit used
-    to legend the nullclines as ``"series 2: v' = 0"``, where ``"nullclines:
-    v' = 0"`` says the same thing and is true.
+    Preference order: the caller's own ``labels=`` word, then the spec's title,
+    then — for a spec built by one plot transform — that transform's name, then a
+    positional fallback.  The middle rung matters: overlaying a direction field,
+    its nullclines and an orbit used to legend the nullclines as ``"series 2:
+    v' = 0"``, where ``"nullclines: v' = 0"`` says the same thing and is true.
     """
-    titles = [s.title or _transform_tag(s) or f"series {i + 1}" for i, s in enumerate(specs)]
+    titles = [
+        str(s.meta.get(LABEL_META_KEY) or "") or s.title or _transform_tag(s) or f"series {i + 1}"
+        for i, s in enumerate(specs)
+    ]
     counts: dict[str, int] = {}
     tags: list[str] = []
     for title in titles:
@@ -762,10 +846,47 @@ def _unify_colour(panels: list[PlotSpec]) -> None:
     ranges = [p.clim for p in coloured if p.clim is not None]
     if ranges:
         union = (min(lo for lo, _ in ranges), max(hi for _, hi in ranges))
+        _warn_if_unified_range_flattens(coloured, union)
         for panel in coloured:
             panel.clim = union
     for panel in coloured[1:]:
         panel.colorbar = None
+
+
+#: How many decades a unified LINEAR colour range may span before the panels at
+#: the low end of it stop being readable.  Two is generous: at 100x, the quietest
+#: panel's whole dynamic range is the bottom 1% of the bar.
+_UNIFY_DECADES = 2.0
+
+
+def _warn_if_unified_range_flattens(coloured: list[PlotSpec], union: tuple[float, float]) -> None:
+    """Warn when ``share_color=True`` would flatten most panels into one colour.
+
+    Honest and hazardous at once: unifying a **linear** ``|f|`` scale across a
+    100x spread is *correct* — and it made three of four panels of a measured
+    comparison figure solid black, i.e. the unification destroyed the very
+    comparison it was asked for.  A log norm is the fix and the caller has to
+    choose it, so this says so rather than choosing for them.
+    """
+    import warnings
+
+    from .render.caps import VisualizationDegraded
+
+    lo, hi = union
+    if lo <= 0.0 or hi <= 0.0 or hi / lo < 10.0**_UNIFY_DECADES:
+        return
+    if any(p.colorbar is not None and p.colorbar.norm in ("log", "symlog") for p in coloured):
+        return
+    import math
+
+    warnings.warn(
+        f"share_color=True put {len(coloured)} panels on one LINEAR colour scale spanning "
+        f"{math.log10(hi / lo):.1f} decades ({lo:.3g} to {hi:.3g}), so the quiet panels will "
+        "read as one flat colour. Put the colour on a log scale to keep them comparable: "
+        "p.colorize(norm='log')  (or give each transform log=True where it offers it).",
+        VisualizationDegraded,
+        stacklevel=4,
+    )
 
 
 def _composite(specs: list[PlotSpec], mode: str, layout_kw: dict[str, Any]) -> PlotSpec:

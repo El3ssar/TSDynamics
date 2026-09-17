@@ -59,6 +59,16 @@ class OrbitDiagram(AnalysisResult):
     values: np.ndarray = field(default_factory=lambda: np.empty(0), compare=False)  # (V,)
     points: list[np.ndarray] = field(default_factory=list, compare=False)  # per value (n, k)
     components: tuple[int, ...] = ()
+    #: Per value: did the flow settle on an **equilibrium** rather than an orbit?
+    #:
+    #: This is the one thing a bifurcation diagram of a flow could not say.  A
+    #: fixed point and a period-1 limit cycle both record ONE branch, so the
+    #: readout called both "period 1" — measured on Chua over alpha in [6, 11],
+    #: four fifths of the sweep is the equilibrium branch and the summary read
+    #: ``periods seen: 1``, which is indistinguishable from a broken sweep.  The
+    #: peak-map path already detects it (the trajectory tail stops moving); it
+    #: simply had nowhere to put the answer.
+    equilibria: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=bool), compare=False)
 
     def __iter__(self) -> Iterator[tuple[Any, np.ndarray]]:
         return iter(zip(self.values, self.points, strict=True))
@@ -149,7 +159,12 @@ class OrbitDiagram(AnalysisResult):
         return out
 
     def bifurcation_points(
-        self, *, component: int = 0, max_period: int = 16, rtol: float = 0.01
+        self,
+        *,
+        component: int = 0,
+        max_period: int = 16,
+        rtol: float = 0.01,
+        labelled: bool = False,
     ) -> np.ndarray:
         """
         Parameter values where the detected period changes.
@@ -167,12 +182,40 @@ class OrbitDiagram(AnalysisResult):
             Periods above this are treated as aperiodic when detecting changes.
         rtol : float, default 0.01
             Relative gap separating branches in :meth:`periods`.
+        labelled : bool, default False
+            Return a structured array carrying the **period on each side** of
+            every transition, so a genuine period-doubling can be told from a
+            band split inside the chaotic regime.
+
+            Measured on the logistic map, the plain array holds 20 values of
+            which the first (``r = 3.000``) is the period-doubling and the other
+            19 are branch splittings inside the chaotic band — successive gaps
+            give ratios like 11.7, nothing near Feigenbaum's 4.669 — with nothing
+            to say which is which.  With ``labelled=True`` the rows carry
+            ``value`` / ``before`` / ``after`` / ``kind``, and
+            ``rows["kind"] == "period-doubling"`` selects the cascade.
+
+            .. versionadded:: 6.0
 
         Returns
         -------
-        numpy.ndarray of float
-            Estimated bifurcation parameter values, in sweep order.  Their
-            resolution is the spacing of ``values``.
+        numpy.ndarray
+            ``labelled=False`` (the default): the estimated bifurcation parameter
+            values, in sweep order, resolved to the spacing of ``values``.
+            ``labelled=True``: a structured array with fields ``value`` (float),
+            ``before`` / ``after`` (int periods, ``0`` = aperiodic) and ``kind``
+            (``"period-doubling"`` / ``"period-halving"`` / ``"onset of chaos"``
+            / ``"band split"`` / ``"periodic window"`` / ``"period change"``).
+
+        Examples
+        --------
+        >>> import numpy as np, tsdynamics as ts
+        >>> od = ts.analysis.orbit_diagram(
+        ...     ts.systems.Logistic(), "r", np.linspace(2.8, 3.6, 120)
+        ... )
+        >>> rows = od.bifurcation_points(labelled=True)
+        >>> float(rows["value"][rows["kind"] == "period-doubling"][0])  # doctest: +SKIP
+        3.0033613445378155
 
         References
         ----------
@@ -180,7 +223,50 @@ class OrbitDiagram(AnalysisResult):
         nonlinear transformations. *Journal of Statistical Physics*, 19, 25--52.
         """
         p = self.periods(component=component, max_period=max_period, rtol=rtol)
-        return self._bifurcation_points_from_periods(p)
+        if not labelled:
+            return self._bifurcation_points_from_periods(p)
+        return self._labelled_bifurcations(p)
+
+    #: The transition kinds :meth:`bifurcation_points` names, longest field first
+    #: so the structured array's ``U`` width is right.
+    _BIFURCATION_KINDS = (
+        "period-doubling",
+        "period-halving",
+        "onset of chaos",
+        "periodic window",
+        "band split",
+        "period change",
+    )
+
+    def _labelled_bifurcations(self, periods: np.ndarray) -> np.ndarray:
+        """Build the structured array :meth:`bifurcation_points` returns when labelled."""
+        changed = (periods[:-1] != periods[1:]) & (periods[:-1] != -1) & (periods[1:] != -1)
+        (i,) = np.nonzero(changed)
+        values = 0.5 * (np.asarray(self.values)[i] + np.asarray(self.values)[i + 1])
+        before = periods[i].astype(int)
+        after = periods[i + 1].astype(int)
+        width = max(len(k) for k in self._BIFURCATION_KINDS)
+        rows = np.empty(
+            i.size, dtype=[("value", float), ("before", int), ("after", int), ("kind", f"U{width}")]
+        )
+        rows["value"] = values
+        rows["before"] = before
+        rows["after"] = after
+        for j, (b, a) in enumerate(zip(before, after, strict=True)):
+            if b > 0 and a == 2 * b:
+                kind = "period-doubling"
+            elif a > 0 and b == 2 * a:
+                kind = "period-halving"
+            elif b > 0 and a <= 0:
+                kind = "onset of chaos"
+            elif b <= 0 and a > 0:
+                kind = "periodic window"
+            elif b <= 0 and a <= 0:
+                kind = "band split"
+            else:
+                kind = "period change"
+            rows["kind"][j] = kind
+        return rows
 
     def _bifurcation_points_from_periods(self, periods: np.ndarray) -> np.ndarray:
         """Midpoints between consecutive values whose ``periods`` differ (no reseed).
@@ -245,14 +331,20 @@ class OrbitDiagram(AnalysisResult):
                 annotations.append(pb.vline(float(onset), text=label))
         # Name the discrete view on the figure itself: a section always has to be
         # chosen, and a diagram that does not say which one it used is not
-        # reproducible from the picture.
+        # reproducible from the picture.  It belongs in the TITLE, though — the y
+        # axis is a picture of the OBSERVABLE, and labelling it "Poincaré section
+        # (1, 0.0)" named the slicing plane instead, identically for every choice
+        # of ``components=``.  The section stays one line up, where it says how
+        # the diagram was read without claiming to say what was measured.
         section = self.meta.get("section")
+        observable = self.meta.get("observable")
+        ylabel = str(observable) if observable else "asymptotic state"
         return pb.spec(
             kind,
             "orbit_diagram",
             layers=[pb.scatter(x, y, style={"markersize": 1.0})],
             xlabel=self.param,
-            ylabel=str(section) if section else "asymptotic state",
+            ylabel=ylabel,
             title=f"bifurcation diagram — {section}" if section else "bifurcation diagram",
             annotations=annotations,
             meta=self.meta,
@@ -273,6 +365,18 @@ class OrbitDiagram(AnalysisResult):
         span = f"{self.param} ∈ [{_sig(v[0], 4)}, {_sig(v[-1], 4)}] · " if v.size else ""
         return f"{span}{len(self.values)} values × {per} points"
 
+    def _where(self) -> str:
+        """Render the parameter span the equilibrium branch covers, when contiguous."""
+        settled = np.asarray(self.equilibria, dtype=bool)
+        v = np.asarray(self.values, dtype=float)
+        if settled.size != v.size or not settled.any():
+            return ""
+        idx = np.flatnonzero(settled)
+        contiguous = int(idx[-1] - idx[0] + 1) == idx.size
+        if not contiguous:
+            return ""
+        return f" ({self.param} ∈ [{_sig(v[idx[0]], 4)}, {_sig(v[idx[-1]], 4)}])"
+
     def _details(self) -> tuple[str, ...]:
         """Return what the cascade did: the periods seen and where they changed.
 
@@ -291,6 +395,15 @@ class OrbitDiagram(AnalysisResult):
         except Exception:  # pragma: no cover - a repr must never raise
             return ()
         lines = []
+        settled = np.asarray(self.equilibria, dtype=bool)
+        if settled.size == periods.size and settled.any():
+            # Name the fixed-point branch.  "periods seen: 1" over a sweep that
+            # is four fifths equilibrium is the one place this library said
+            # something ambiguous about the PHYSICS, and it reads exactly like a
+            # broken sweep: a reader who cannot do the Routh-Hurwitz by hand
+            # files a bug and goes back to writing the loop themselves.
+            lines.append(f"settled on an EQUILIBRIUM at {int(settled.sum())} values{self._where()}")
+            periods = periods[~settled]
         seen = sorted({int(p) for p in periods if p > 0})
         aperiodic = int((periods <= 0).sum())
         if seen:
@@ -547,12 +660,21 @@ def _is_stationary(y: np.ndarray) -> bool:
     that is a vanishing fraction of the transient it came in on.  The ``1.0``
     floor keeps a run that never moved at all (started *at* the equilibrium) on
     the stationary side.
+
+    The spread is **per component, over time** (``ptp`` down the time axis, then
+    the widest component).  It used to be
+    ``max(tail, axis=0).max() - min(tail, axis=0).min()``, which is the range
+    ACROSS components — so a system resting at ``(1.5, 0, -1.5)`` measured a
+    "spread" of 3.0 and was never called stationary.  Nothing detected an
+    equilibrium at all: measured on Chua over alpha in [6, 11], the entire
+    fixed-point branch was recorded as the peaks of the decaying spiral
+    approaching it and summarised as ``periods seen: 1``.
     """
     if y.shape[0] < 10:
         return False
     tail = y[-max(2, y.shape[0] // 10) :]
-    spread = float(np.max(tail, axis=0).max() - np.min(tail, axis=0).min())
-    scale = max(float(np.max(y, axis=0).max() - np.min(y, axis=0).min()), 1.0)
+    spread = float(np.ptp(tail, axis=0).max())
+    scale = max(float(np.ptp(y, axis=0).max()), 1.0)
     return bool(np.isfinite(spread) and spread <= _STATIONARY_RTOL * scale)
 
 
@@ -625,8 +747,8 @@ def _record_via_peaks(
     dt: float,
     final_time: float,
     max_time: float,
-) -> tuple[np.ndarray, np.ndarray, float]:
-    """Record one parameter value of a **flow** as successive maxima (the peak map).
+) -> tuple[np.ndarray, np.ndarray, float, bool]:
+    """Record one column, plus whether the flow SETTLED — the peak map of a flow.
 
     Integrates, collects ``transient + n`` maxima of the first recorded component
     and returns the last ``n`` of them.  The horizon doubles (up to ``max_time``)
@@ -656,12 +778,19 @@ def _record_via_peaks(
         y = np.asarray(traj.y, dtype=float)
         if _is_stationary(y):
             # Settled on an equilibrium: the asymptotic set is the single state.
-            return y[-1][idx][None, :], y[-1], horizon
+            # The FLAG is the point — a fixed point and a period-1 limit cycle
+            # both record one branch, and only this path can tell them apart.
+            return y[-1][idx][None, :], y[-1], horizon, True
         rec = _peak_records(y, idx[0], idx)
         if rec.shape[0] >= need:
-            return rec[transient:need], y[-1], horizon
+            return rec[transient:need], y[-1], horizon, False
         if horizon >= max_time:
-            return _short_column(rec, transient, n, idx, max_time, y.shape[1]), y[-1], horizon
+            return (
+                _short_column(rec, transient, n, idx, max_time, y.shape[1]),
+                y[-1],
+                horizon,
+                False,
+            )
         # Grow the horizon by the *measured* peak rate rather than blindly
         # doubling: one short pilot run tells us how much time a peak costs, so
         # the second attempt already lands (and the horizon that worked is
@@ -764,8 +893,11 @@ def orbit_diagram(
     :class:`~tsdynamics.derived.PoincareMap` /
     :class:`~tsdynamics.derived.StroboscopicMap` is used as given.
 
-    ``orbit_diagram`` is the same function under its other name (the map-centric
-    spelling); both are exported, and both accept everything described here.
+    ``orbit_diagram`` is the **one** spelling: ``bifurcation_diagram`` was the
+    same object under a second name and is gone (a shared implementation can name
+    only one of its spellings in a message, so half of all callers were answered
+    about a function they had never typed).  The *picture* is still called a
+    bifurcation diagram — ``PlotKind.BIFURCATION_DIAGRAM`` is untouched.
 
     ODE parameter changes reuse the cached lowered tape (control parameters), so
     flow sweeps stay cheap; DDE sweeps re-lower per value (their structure depends
@@ -973,6 +1105,12 @@ def orbit_diagram(
             "transient": transient,
             "carry_state": carry_state,
             "components": tuple(idx),
+            # The NAME of the recorded observable, not merely its index: it is
+            # what the figure's y axis is a picture of.  Without it the axis was
+            # labelled with the *section description* — identical for
+            # ``components=0`` and ``components='z'``, so the one label that had
+            # to distinguish them could not.
+            "observable": label,
             # The discrete view this diagram was read through — recorded so an
             # auto-chosen section is never a silent choice (it is also printed
             # under the figure's title by ``__plot_spec__``).
@@ -1032,6 +1170,7 @@ def orbit_diagram(
 
     # The per-value protocol path: flow wrappers, the raw-flow peak map, and the
     # engine-sweep fallback.
+    equilibria: list[bool] = []
     for v in values_arr:
         current = view.with_params(**{param: v})
         start = state if (carry_state and state is not None) else ic
@@ -1040,9 +1179,10 @@ def orbit_diagram(
                 # A raw flow: read it as the successive-maxima (peak) map.  The
                 # horizon that satisfied the previous value seeds the next one, so
                 # only the first value pays for discovering it.
-                rec, last, horizon = _record_via_peaks(
+                rec, last, horizon, settled = _record_via_peaks(
                     current, start, transient, n, idx, dt=dt, final_time=horizon, max_time=max_time
                 )
+                equilibria.append(settled)
             else:
                 # Flow wrappers (PoincareMap / StroboscopicMap) and the
                 # engine-sweep fallback (a non-lowerable map / wheel-free env)
@@ -1050,6 +1190,9 @@ def orbit_diagram(
                 # path on a lowerable map.
                 record = _record_via_trajectory if use_trajectory else _record_via_step
                 rec, last = record(current, start, transient, n, idx)
+                # A discrete view cannot reach an equilibrium silently: a flow
+                # that settles stops crossing its section, which raises below.
+                equilibria.append(False)
         except RuntimeError as exc:
             # One divergent value must not discard the whole sweep: record an
             # empty point set and restart the next value from `ic`.
@@ -1060,6 +1203,8 @@ def orbit_diagram(
                 stacklevel=2,
             )
             points.append(np.empty((0, len(idx))))
+            if len(equilibria) < len(points):
+                equilibria.append(False)
             state = None
             continue
         points.append(rec)
@@ -1067,7 +1212,12 @@ def orbit_diagram(
             state = last
 
     return OrbitDiagram(
-        param=param, values=values_arr, points=points, components=tuple(idx), meta=_meta()
+        param=param,
+        values=values_arr,
+        points=points,
+        components=tuple(idx),
+        equilibria=np.asarray(equilibria, dtype=bool),
+        meta=_meta(),
     )
 
 

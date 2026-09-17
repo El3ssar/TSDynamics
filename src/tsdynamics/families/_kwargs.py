@@ -117,15 +117,15 @@ WHY: dict[tuple[str, str], tuple[str, str | None] | tuple[str, str | None, str]]
         "{cls}().run(steps=1000)",
     ),
     ("method", "ode"): (
-        "method= selects an *estimator* in v6; the numerical kernel is solver=.",
+        "method= selects an *estimator*; the numerical kernel is solver=.",
         '{cls}().run(final_time=100.0, solver="dop853")',
     ),
     ("method", "dde"): (
-        "method= selects an *estimator* in v6; the numerical kernel is solver=.",
+        "method= selects an *estimator*; the numerical kernel is solver=.",
         '{cls}().run(final_time=100.0, solver="rk45")',
     ),
     ("method", "sde"): (
-        "method= selects an *estimator* in v6; the numerical kernel is solver=.",
+        "method= selects an *estimator*; the numerical kernel is solver=.",
         '{cls}().run(final_time=10.0, solver="milstein")',
     ),
     ("method", "map"): (

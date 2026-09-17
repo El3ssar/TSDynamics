@@ -505,7 +505,12 @@ def _spectrum_core(
             fit_region=(int(where[fit.lo]), int(where[fit.hi])),
             intercept=fit.intercept,
             q=float(q),
-            meta={"analysis": analysis, "kind": "generalized", "q": float(q)},
+            meta={
+                "analysis": analysis,
+                "kind": "generalized",
+                "q": float(q),
+                "n_components": int(points.shape[1]),
+            },
         )
     return out
 
@@ -726,7 +731,7 @@ def _spectrum_for_wrapper(
     """
     if "tol" in kwargs:
         raise InvalidParameterError(
-            f"{analysis}() has no 'tol' keyword in v6: it was renamed 'flatness', because it is "
+            f"{analysis}() has no 'tol' keyword: it was renamed 'flatness', because it is "
             "the flatness of the fitted scaling region, not a solver tolerance like rtol/atol.\n"
             f"    ts.analysis.{analysis}(data, flatness={kwargs['tol']!r})"
         )

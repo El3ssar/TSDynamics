@@ -17,7 +17,14 @@ from tsdynamics.errors import (
 )
 
 from ._kwargs import reject_unknown_run_keywords
-from .base import Absent, SystemBase, Trajectory, as_lyapunov_result, resolve_transient
+from .base import (
+    Absent,
+    SystemBase,
+    Trajectory,
+    as_lyapunov_result,
+    orbit_peak,
+    resolve_transient,
+)
 
 #: ``DiscreteMap.run``'s keywords, in signature order.
 _MAP_RUN_KEYWORDS = ("steps", "ic", "transient", "backend", "seed", "max_retries")
@@ -483,10 +490,12 @@ class DiscreteMap(SystemBase, ABC):
         Parameters
         ----------
         steps : int
-            How many iterations to return — the horizon word for a map, counted
+            How many iterations to **run** — the horizon word for a map, counted
             in **iterations**.  (A flow measures its horizon in time and takes
             ``final_time``; a map has no clock, so ``final_time`` is refused by
-            name.)  Default 1000.
+            name.)  Default 1000.  The trajectory holds ``steps + 1`` rows: the
+            state it started from, then one per iteration — the same ``N + 1`` a
+            flow returns for ``final_time / dt == N``.
         ic : array-like, optional
             Initial state — ``dim`` numbers, one per state component.  Falls
             back to ``self.ic``, then a random draw.  **Passing it here does not
@@ -543,7 +552,18 @@ class DiscreteMap(SystemBase, ABC):
         Returns
         -------
         Trajectory
-            ``t`` is ``arange(steps)`` (integer step indices, not float times).
+            ``steps + 1`` rows — **the initial condition first**, then one per
+            iteration — with ``t = arange(steps + 1)`` (integer step indices, not
+            float times), so ``y[k]`` is the state at ``t[k] = k``.
+
+            .. versionchanged:: 6.0
+                The initial condition used to be dropped, so ``t[0] = 0`` labelled
+                :math:`x_1` and ``traj["x"][n]`` was :math:`x_{n+1}` — measured,
+                ``Logistic(r=2.8).run(steps=4, ic=[0.1]).y[0]`` was ``0.252``
+                (:math:`f(0.1)`) while ``Lorenz().run(ic=[1, 2, 3]).y[0]`` was
+                ``[1, 2, 3]``.  Every cobweb therefore started one iterate late,
+                and the two families disagreed about what a trajectory's first
+                row means.  They agree now.
 
         Raises
         ------
@@ -739,9 +759,13 @@ class DiscreteMap(SystemBase, ABC):
 
         n = self._resolve_iteration_count(n, kwargs, where="lyapunov_spectrum", default=5000)
         k = k or self.dim
-        exponents = TangentSystem(self, k=k, backend=backend)._lyapunov_spectrum(
-            n=n, ic=ic, reortho_interval=reortho_interval
-        )
+        tangent = TangentSystem(self, k=k, backend=backend)
+        exponents = tangent._lyapunov_spectrum(n=n, ic=ic, reortho_interval=reortho_interval)
         return as_lyapunov_result(
-            self, exponents, n=n, reortho_interval=reortho_interval, backend=backend
+            self,
+            exponents,
+            n=n,
+            reortho_interval=reortho_interval,
+            backend=backend,
+            orbit_peak=orbit_peak(tangent),
         )

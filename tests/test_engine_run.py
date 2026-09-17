@@ -172,8 +172,10 @@ def test_reference_map_iterate_matches_step_exactly() -> None:
     traj = run.integrate(h, final_time=5, ic=[0.1, 0.1], backend="reference")
     step = _unwrap_static(type(h)._step)
     expected = np.asarray(step(np.array([0.1, 0.1]), *h.params.as_tuple()), dtype=float)
-    np.testing.assert_allclose(traj.y[0], expected, rtol=1e-12, atol=1e-14)
-    assert traj.y.shape == (5, 2)
+    # ``y[0]`` is the START (a map run carries its initial condition, like a
+    # flow); ``y[1]`` is the first iterate.
+    np.testing.assert_allclose(traj.y[1], expected, rtol=1e-12, atol=1e-14)
+    assert traj.y.shape == (6, 2)  # the start, then 5 iterates
 
 
 def test_reference_map_diverges_loudly() -> None:
@@ -218,7 +220,7 @@ def test_reference_map_finite_orbit_iterates_without_raising() -> None:
     must not fire on a healthy run (a ``not``-inversion or over-eager check would
     break every normal map iteration)."""
     traj = run.integrate(ts.systems.Logistic(), final_time=60, ic=[0.2], backend="reference")
-    assert traj.y.shape == (60, 1)
+    assert traj.y.shape == (61, 1)  # the start, then 60 iterates
     assert np.all(np.isfinite(traj.y))
 
 
@@ -228,7 +230,7 @@ def test_map_time_axis_starts_at_n0() -> None:
 
     prob = map_problem(ts.systems.Henon(ic=[0.1, 0.1]), n0=100)
     traj = run.integrate(prob, final_time=5, backend="reference")
-    np.testing.assert_array_equal(traj.t, np.arange(100, 105))
+    np.testing.assert_array_equal(traj.t, np.arange(100, 106))
 
 
 def test_reference_rejects_dde_and_sde() -> None:
@@ -377,7 +379,7 @@ def test_ensemble_rejects_backwards_window() -> None:
 def test_ensemble_rejects_unknown_method_like_integrate() -> None:
     """An unknown/v2-only ``method`` is rejected before any per-trajectory work."""
     ics = np.array([[1.0, 1.0, 1.0]])
-    with pytest.raises(ValueError, match="unknown solver method"):
+    with pytest.raises(ValueError, match="unknown solver"):
         run.ensemble(ts.systems.Lorenz(), ics, final_time=1.0, method="LSODA", backend="reference")
 
 

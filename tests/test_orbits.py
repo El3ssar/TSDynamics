@@ -444,7 +444,7 @@ class TestBifurcationDiagramOfAFlow:
                 _ = namespace.bifurcation_diagram
             message = str(excinfo.value)
             assert "orbit_diagram" in message, f"{prefix} must name the survivor"
-            assert "renamed in v6" in message
+            assert "was renamed" in message
 
 
 class TestBifurcationDiagramRefusals:

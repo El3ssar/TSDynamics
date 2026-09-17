@@ -49,6 +49,7 @@ universe except the enumerated dead ones.
 from __future__ import annotations
 
 __all__ = [
+    "OUT_OF_SCOPE_SEARCH_TERMS",
     "REMOVED_IN_V6",
     "RENAMED_IN_V6",
     "SCOPE_SURGERY_REMEDY",
@@ -102,20 +103,51 @@ RENAMED_IN_V6: dict[str, tuple[str, str]] = {
 #: group that left.  TSDynamics is a dynamical-systems library: phase-space
 #: methods stayed, generic series statistics went to a companion package.
 REMOVED_IN_V6: dict[str, str] = {
+    "aaft": "the surrogate-data tests",
+    "approximate_entropy": "the entropy estimators",
+    "butterworth": "the signal-transform toolbox",
     "detrend": "the signal-transform toolbox",
     "dispersion_entropy": "the entropy estimators",
     "entropy": "the entropy estimators",
     "extract_features": "the signal-transform toolbox",
+    "ft_surrogate": "the surrogate-data tests",
+    "hjorth": "the signal-transform toolbox",
+    "iaaft": "the surrogate-data tests",
+    "lempel_ziv": "the entropy estimators",
     "lz76_complexity": "the entropy estimators",
     "multiscale_entropy": "the entropy estimators",
     "nonlinear_prediction_error": "the surrogate-data tests",
     "permutation_entropy": "the entropy estimators",
     "power_spectrum": "the signal-transform toolbox",
     "sample_entropy": "the entropy estimators",
+    "shuffle_surrogate": "the surrogate-data tests",
+    "spectrogram": "the signal-transform toolbox",
+    "surrogate": "the surrogate-data tests",
     "surrogate_test": "the surrogate-data tests",
     "surrogates": "the surrogate-data tests",
     "time_reversal_asymmetry": "the surrogate-data tests",
     "transforms": "the signal-transform toolbox",
+}
+
+
+#: The free-text words that mean "you are looking for something the v6 scope
+#: surgery removed".  :func:`tsdynamics.analysis.find` consults this so a search
+#: for a deleted capability is answered with the scope change rather than with
+#: "nothing matches" — which reads as "this library cannot do that", the wrong
+#: conclusion, and is what sent a reader off to reimplement an FT surrogate test
+#: by hand.
+OUT_OF_SCOPE_SEARCH_TERMS: dict[str, str] = {
+    "aaft": "the surrogate-data tests",
+    "bandpass": "the signal-transform toolbox",
+    "butterworth": "the signal-transform toolbox",
+    "detrend": "the signal-transform toolbox",
+    "entropy": "the entropy estimators",
+    "filter": "the signal-transform toolbox",
+    "iaaft": "the surrogate-data tests",
+    "psd": "the signal-transform toolbox",
+    "spectrogram": "the signal-transform toolbox",
+    "surrogate": "the surrogate-data tests",
+    "surrogates": "the surrogate-data tests",
 }
 
 

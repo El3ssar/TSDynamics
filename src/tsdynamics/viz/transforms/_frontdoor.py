@@ -45,6 +45,7 @@ from ..spec import (
     FIGURE_KEYS,
     Plot,
     apply_figure_keywords,
+    nearest_keyword,
     reject_on_keyword,
     split_figure_keywords,
 )
@@ -150,6 +151,13 @@ def _split_style(options: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any
 #: returned a static spec and ``.save("x.gif")`` wrote a one-frame gif that
 #: looked like a working animation.
 _COMPOSITION_KEYS: frozenset[str] = frozenset({"animate", "fps"})
+
+#: The words on :func:`plot`'s own signature.  Never keywords a transform sees —
+#: they are bound positionally by the door — but a near miss must be able to
+#: *suggest* them, or ``label=`` gets answered with ``zlabel=`` (an axis name).
+_DOOR_KEYWORDS: frozenset[str] = frozenset(
+    {"layout", "rows", "cols", "share_x", "share_y", "share_color", "primitive", "labels", "ax"}
+)
 
 
 def _style_names() -> frozenset[str]:
@@ -276,8 +284,6 @@ def _reject_unaccepted(
         case) rather than reaching a compute that raises (a ``T()``'s own
         options).  Only the wording of the message differs; the check does not.
     """
-    import difflib
-
     from tsdynamics.errors import InvalidParameterError
 
     accepted: set[str] = set(_style_names() | _COMPOSITION_KEYS | FIGURE_KEYS)
@@ -300,12 +306,19 @@ def _reject_unaccepted(
     )
     named = [str(s) for s in selectors]
     # Suggest against the style vocabulary too — ``colour=`` is a misspelling of
-    # the style key ``color=``, not of the transform's own ``color_by=``.
-    pool = sorted(set(listed) | set(_style_names()) | set(_COMPOSITION_KEYS) | set(FIGURE_KEYS))
-    close = {u: difflib.get_close_matches(u, pool, n=1, cutoff=0.6) for u in unused}
-    hints = "".join(
-        f"\n    {bad}= — did you mean {near[0]}=?" for bad, near in close.items() if near
+    # the style key ``color=``, not of the transform's own ``color_by=``.  And
+    # against ``plot``'s own signature, so the singular ``label=`` — what a user
+    # types before learning the plural — is answered with ``labels=`` instead of
+    # the measured ``did you mean zlabel=?``, which named an *axis*.
+    pool = sorted(
+        set(listed)
+        | set(_style_names())
+        | set(_COMPOSITION_KEYS)
+        | set(FIGURE_KEYS)
+        | _DOOR_KEYWORDS
     )
+    close = {u: nearest_keyword(u, pool) for u in unused}
+    hints = "".join(f"\n    {bad}= — did you mean {near}=?" for bad, near in close.items() if near)
     tail = ", so they would be silently ignored." if dropped else "."
     raise InvalidParameterError(
         f"{named} does not accept keyword(s) {unused}{tail}"
@@ -407,6 +420,7 @@ def plot(
     force: bool = False,
     animate: Any = False,
     fps: float | None = None,
+    labels: Any = None,
     ax: Any = None,
     **kw: Any,
 ) -> Plot:
@@ -423,12 +437,19 @@ def plot(
         :func:`~tsdynamics.viz.transforms.T` carrying that transform's own
         options.  Each named transform is applied to every subject its declared
         source admits; a subject no transform admits draws its default view.
-    layout : {"overlay", "stack", "row", "grid"}, optional
+    layout : {"overlay", "stack", "row", "grid", "frames"}, optional
         ``"overlay"`` (the default) draws everything on one set of axes; the
         others give each thing its own panel.  Overlay legality is *frame*
         compatibility — the same coordinate space, dimension and axes — so a
         basin image, its attractors, an orbit and the equilibria share one axes,
         while an ``(x, y)`` portrait refuses an ``(x, z)`` overlay.
+
+        ``"frames"`` is the parameter-sweep **movie**: the panels are consecutive
+        in *time* rather than in space, so they are played one after another
+        instead of tiled (``fps=`` is enough to start it)::
+
+            ts.plot(*[ts.plot(sys.with_params(r=r), "cobweb") for r in rs],
+                    layout="frames", fps=15).save("cascade.mp4")
     rows, cols : int, optional
         The panel grid shape for ``layout="grid"``.
     share_x, share_y : bool, optional
@@ -446,6 +467,16 @@ def plot(
         Animate the figure (a comet on a curve, a movie of a field).
     fps : float, optional
         Frames per second; implies ``animate=True``.
+    labels : sequence of str, optional
+        **Name the curves** — one entry per *subject*, in argument order, with
+        ``None`` leaving that subject's automatic label alone::
+
+            ts.plot(a, b, labels=["mu = 1", "mu = 3"])
+
+        Comparing two parameter values is the commonest figure in this field and
+        before v6 it had no spelling at all: ``label=``/``labels=`` were refused
+        (suggesting ``zlabel=``, an *axis* name), leaving ``p.layers[i].label``
+        — reaching into the IR — as the only route.
     ax : matplotlib.axes.Axes, optional
         Draw into an existing axes **now** and still return the ``Plot`` — the
         way to put a tsdynamics figure inside a layout you are building
@@ -478,9 +509,10 @@ def plot(
 
     Examples
     --------
-    Every name below is a **registered** transform — see
-    :func:`tsdynamics.viz.compatibility` for the current list, or the
-    documentation gallery, which is generated from it.
+    Every name below is a **registered** transform.  The current list is
+    ``print(ts.viz.compatibility())`` — the matrix *is* the repr, so a script
+    needs the ``print``, where a REPL does not — or the documentation gallery,
+    which is generated from the same registry.
 
     >>> ts.plot(traj)                                        # doctest: +SKIP
     >>> ts.plot(traj, "delay_embedding", delay=7)            # doctest: +SKIP
@@ -519,6 +551,7 @@ def plot(
             force=force,
             animate=animate,
             fps=fps,
+            labels=labels,
             **kw,
         )
         return _finish(result, ax)
@@ -533,15 +566,24 @@ def plot(
     # the composed spec rather than offered to a transform that has no idea what
     # to do with them.
     figure = split_figure_keywords(kw)
+    kw.update(_shared_with_transforms(figure, selectors))
     _reject_unaccepted(kw, selectors)
     if animate is not False or fps is not None:
         kw = {**kw, "animate": animate or True, "fps": fps}
+    pairs = _pair_up(subjects, selectors)
+    # The subjects no transform claimed draw their own view; build those FIRST,
+    # because a model transform's auto window is derived from them (see
+    # ``_window_over_data``).
+    drawn: dict[int, Any] = {
+        i: _default_view(subject, dict(kw)) for i, (subject, sel) in enumerate(pairs) if sel is None
+    }
+    field_kw = {**kw, **_window_over_data(drawn.values(), kw)}
     specs = [
-        _build_one(subject, sel, dict(kw), primitive)
-        if sel is not None
-        else _default_view(subject, dict(kw))
-        for subject, sel in _pair_up(subjects, selectors)
+        drawn[i] if sel is None else _build_one(subject, sel, dict(field_kw), primitive)
+        for i, (subject, sel) in enumerate(pairs)
     ]
+    if labels is not None:
+        _label_by_subject(specs, [subject for subject, _ in pairs], subjects, labels)
     result = compose_plot(
         *specs,
         layout=layout,
@@ -554,6 +596,125 @@ def plot(
     )
     apply_figure_keywords(result, figure)
     return _finish(result, ax)
+
+
+#: How much room to leave around the data when a model transform's window is
+#: derived from it.  A curve exactly tangent to the axes reads as clipped.
+_WINDOW_PAD = 0.05
+
+
+def _window_over_data(views: Any, kw: dict[str, Any]) -> dict[str, Any]:
+    """Return the ``xlim``/``ylim`` a model transform should cover, from the data.
+
+    **The window is the union over every data subject.**  Before this, a field
+    transform chose its window from the *system* alone and — as the overlay's
+    base spec — imposed it on the whole figure, so
+
+    >>> ts.plot(pendulum, *five_orbits, "vector_field")   # doctest: +SKIP
+
+    picked ``[-2, 2]²``, drew **two orbits entirely outside the axes**, and still
+    legended them: a figure asserting that a curve is somewhere it is not.  The
+    field is now computed over what is actually being drawn, which fixes the
+    clipping and the white bands at once (widening only the axes would trade one
+    for the other).
+
+    Only a default: an explicit ``xlim=``/``ylim=`` — shared or inside a
+    ``("name", {...})`` pair — still wins, and a non-finite or degenerate extent
+    falls back to the transform's own choice.
+    """
+    from ..spec import PlotKind
+
+    wanted = [axis for axis in ("xlim", "ylim") if axis not in kw]
+    if not wanted:
+        return {}
+    planar = [
+        spec
+        for spec in views
+        if spec is not None and spec.ndim == 2 and spec.kind is not PlotKind.COMPOSITE
+    ]
+    if not planar:
+        return {}
+    out: dict[str, Any] = {}
+    for axis, channel in (("xlim", "x"), ("ylim", "y")):
+        if axis not in wanted:
+            continue
+        span = _channel_span([layer.data.get(channel) for s in planar for layer in s.layers])
+        if span is not None:
+            out[axis] = span
+    return out
+
+
+def _channel_span(arrays: list[Any]) -> tuple[float, float] | None:
+    """Return the padded ``(lo, hi)`` covering every finite sample, or ``None``."""
+    import numpy as np
+
+    lo, hi = np.inf, -np.inf
+    for arr in arrays:
+        if arr is None:
+            continue
+        values = np.asarray(arr, dtype=float).ravel()
+        finite = values[np.isfinite(values)]
+        if finite.size:
+            lo, hi = min(lo, float(finite.min())), max(hi, float(finite.max()))
+    if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
+        return None
+    pad = (hi - lo) * _WINDOW_PAD
+    return (lo - pad, hi + pad)
+
+
+def _shared_with_transforms(
+    figure: dict[str, Any], selectors: list[str | TransformCall]
+) -> dict[str, Any]:
+    """Return the figure keywords a named transform **also** declares.
+
+    ``xlim=`` means *axis limits* to a figure and *the domain to evaluate the
+    field on* to ``vector_field`` / ``flow_speed`` / ``ftle`` / ``escape_time``
+    / ``nullclines`` / ``streamlines`` / ``transient_time``, and the figure used
+    to win in silence: ``ts.plot(sys, "flow_speed", ylim=(-8, 8))`` moved the
+    axes and left the field on its auto window, so three panels of a comparison
+    figure came out with white bands and **no warning** — while the very same
+    keyword at the geometry door (``ts.viz.geometry(sys, "flow_speed",
+    ylim=…)``) windowed the field correctly.  Two doors, one word, two pictures.
+
+    A caller writing one window means one thing, so the word now reaches
+    **both**: the transform computes over it and the axes are set to match.  The
+    escape hatch stays exact — a transform's *own* option wins over the shared
+    one (``_build_one`` merges ``own`` last), so
+
+    >>> ts.plot(vdp, ("flow_speed", {"xlim": (-3, 3)}), xlim=(-10, 10))  # doctest: +SKIP
+
+    computes the field over ``[-3, 3]`` and draws axes over ``[-10, 10]``.
+    """
+    if not figure:
+        return {}
+    accepted: set[str] = set()
+    for selector in selectors:
+        call = _as_call(selector)
+        name = call.name if isinstance(call, TransformCall) else str(call)
+        accepted |= _accepted_names(get(name.partition(".")[0]))
+    return {k: v for k, v in figure.items() if k in accepted}
+
+
+def _label_by_subject(
+    specs: list[Any], owners: list[Any], subjects: list[Any], labels: Any
+) -> None:
+    """Apply ``labels=`` to the specs, matched to **subjects** in argument order.
+
+    A subject can produce several specs (one per transform it was paired with),
+    so the labels are matched to what the caller typed — the subjects — and then
+    fanned out to whatever those subjects drew.  Matching specs instead would
+    make ``ts.plot(vdp, t1, t2, "vector_field", "nullclines", labels=[...])``
+    require a count no caller can predict.
+    """
+    from ..compose import apply_labels, label_count_message
+
+    names: list[Any] = [labels] if isinstance(labels, str) else list(labels)
+    if len(names) != len(subjects):
+        from tsdynamics.errors import InvalidParameterError
+
+        raise InvalidParameterError(label_count_message(len(subjects), len(names)))
+    by_subject = dict(zip(map(id, subjects), names, strict=True))
+    apply_labels(specs, [by_subject[id(owner)] for owner in owners])
 
 
 def _default_view(subject: Any, kw: dict[str, Any]) -> Any:

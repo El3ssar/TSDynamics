@@ -250,7 +250,7 @@ def reject_data(system: Any, *, analysis: str, sibling: str | None = None) -> No
     max_lyapunov() needs a system, and got measured data (ndarray): it is
     a property of the equations, not of a point set.
         ts.analysis.lyapunov_from_data(traj)
-        ts.analysis.find(traj)   # the 23 that take a trajectory
+        ts.analysis.find(traj)   # the 24 that take a trajectory
     """
     if not is_data(system):
         return

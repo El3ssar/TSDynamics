@@ -14,6 +14,7 @@ from tsdynamics.errors import (
     remedy,
 )
 from tsdynamics.families import DelaySystem
+from tsdynamics.utils.escape import escaped
 
 from .._common import reject_data, reject_system
 from .._discovery import register as _register
@@ -171,6 +172,11 @@ class LyapunovSpectrum(ArrayResult):
         e = np.asarray(self.values, dtype=float)
         if e.size == 0:
             return None
+        if self.unbounded:
+            # Exponents of an orbit that left the building are not attractor
+            # exponents: measured, an escaped Chua run reported a confident
+            # λ = [0.3057, 0.3054, -6.068] and hedged only about the horizon.
+            return "⚠ the orbit is UNBOUNDED — these are not attractor exponents"
         n_lo, n_hi = self._n_positive()
         if n_lo != n_hi:
             return (
@@ -184,6 +190,18 @@ class LyapunovSpectrum(ArrayResult):
             return word
         dky = self.kaplan_yorke
         return f"{word} · D_KY = {dky:.4g}" if np.isfinite(dky) else word
+
+    @property
+    def unbounded(self) -> bool:
+        """Whether the orbit these exponents were measured on **escaped**.
+
+        Read off ``meta["orbit_peak"]`` — the magnitude of the state the
+        estimator landed on, recorded by
+        :func:`tsdynamics.families.base.orbit_peak`.  A run that blows up
+        without reaching the engine's hard ``1e150`` guard still returns a full,
+        finite spectrum; this is what tells that apart from an answer.
+        """
+        return escaped(self.meta.get("orbit_peak") if self.meta else None)
 
     @property
     def n_positive(self) -> int:
@@ -210,7 +228,7 @@ class LyapunovSpectrum(ArrayResult):
         True
         """
         n_lo, n_hi = self._n_positive()
-        if np.asarray(self.values).size == 0 or n_lo != n_hi:
+        if np.asarray(self.values).size == 0 or n_lo != n_hi or self.unbounded:
             return None
         return n_lo >= 1
 
@@ -218,6 +236,8 @@ class LyapunovSpectrum(ArrayResult):
     def regime(self) -> str:
         """``"chaotic"`` / ``"hyperchaotic"`` / ``"regular"`` / ``"indeterminate"``."""
         n_lo, n_hi = self._n_positive()
+        if self.unbounded:
+            return "unbounded"
         if np.asarray(self.values).size == 0 or n_lo != n_hi:
             return "indeterminate"
         return "hyperchaotic" if n_lo >= 2 else "chaotic" if n_lo == 1 else "regular"
@@ -552,7 +572,7 @@ def lyapunov_spectrum(
         # obeyed the rule they had just been taught hit "unexpected keyword
         # 'solver'" and had nowhere to go.  Same sentence, same fix, both doors.
         raise InvalidParameterError(
-            "method= selects an *estimator* in v6, and lyapunov_spectrum has only one "
+            "method= selects an *estimator*, and lyapunov_spectrum has only one "
             "(Benettin QR); the numerical kernel is solver=."
             + remedy('ts.analysis.lyapunov_spectrum(system, solver="bdf")')
         )
@@ -653,7 +673,8 @@ def lyapunov_spectrum(
             fwd["rtol"] = rtol
         if atol is not None:
             fwd["atol"] = atol
-    exponents = np.asarray(method_fn(**fwd), dtype=float)
+    estimate = method_fn(**fwd)
+    exponents = np.asarray(estimate, dtype=float)
     meta = AnalysisResult.build_meta(
         system,
         analysis="lyapunov_spectrum",
@@ -661,6 +682,11 @@ def lyapunov_spectrum(
         final_time=final_time,
         n=n,
         transient=transient,
+        # Carry the family estimator's record of where the orbit LANDED, so a
+        # spectrum measured on an escaping orbit can refuse a verdict instead of
+        # hedging about the horizon.  This function rebuilds ``meta`` from
+        # scratch, so anything the family recorded has to be re-read here.
+        orbit_peak=getattr(estimate, "meta", {}).get("orbit_peak"),
     )
     return LyapunovSpectrum(values=exponents, meta=meta)
 
@@ -703,7 +729,7 @@ def _resolve_transient(transient: float | None, *, is_map: bool) -> float | None
         and int(transient) >= _TRANSIENT_AMBIGUITY_FLOOR
     ):
         raise InvalidParameterError(
-            f"transient={transient} is ambiguous: in v6 it is the dynamics discarded "
+            f"transient={transient} is ambiguous: it is the dynamics discarded "
             f"before measuring in TIME UNITS for a flow (it counted protocol steps "
             f"before), and {transient} time units is about {transient} / "
             f"dt steps — roughly 100x the old burn-in. Say which you meant:\n"

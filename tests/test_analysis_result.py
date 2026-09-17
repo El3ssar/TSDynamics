@@ -435,7 +435,10 @@ def test_meta_is_keyword_only_and_defaults_empty():
 def test_base_result_alone_has_a_clean_repr():
     b = AnalysisResult(meta={"system": "X"})
     assert repr(b).splitlines()[0] == "AnalysisResult   (X)"
-    assert b.to_dict() == {"meta": {"system": "X"}}
+    # ``verdict`` is always emitted now: it is the ANSWER, and a reader who saw
+    # it in the repr and typed ``to_dict()["verdict"]`` used to get a KeyError
+    # for a word the library had just printed at them.
+    assert b.to_dict() == {"meta": {"system": "X"}, "verdict": None}
 
 
 # ---------------------------------------------------------------------------

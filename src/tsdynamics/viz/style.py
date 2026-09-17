@@ -109,6 +109,38 @@ def _validate_positive(value: Any) -> float:
     return v
 
 
+def _validate_color(value: Any) -> Any:
+    """Check a colour **at the door**, naming the vocabulary a backend would.
+
+    Every other style key validates its value here; ``color`` did not, so
+    ``ts.plot(traj, c="time")`` — a plausible guess, since ``color_by="time"``
+    is real — was accepted, survived every tweak, and died inside ``.save()``
+    with a raw matplotlib ``ValueError``: the one untranslated backend error in
+    the whole session.
+
+    Validation is delegated to matplotlib when it is importable (it is the
+    reference renderer and owns the widest vocabulary), and skipped entirely
+    when it is not — the viz layer must stay usable with no backend installed,
+    and refusing a colour some *other* backend understands would be worse than
+    letting it through.
+    """
+    if value is None or not isinstance(value, (str, tuple, list)):
+        return value
+    try:
+        import matplotlib.colors as mcolors
+    except ImportError:  # pragma: no cover - no backend installed
+        return value
+    if mcolors.is_color_like(value):
+        return value
+    hint = ""
+    if isinstance(value, str) and value in ("time", "speed", "index", "arclength", "curvature"):
+        hint = f" (did you mean color_by={value!r}? that colours the curve BY a quantity)"
+    raise ValueError(
+        f"{value!r} is not a colour{hint}. Give a CSS name ('crimson'), a hex string "
+        "('#d81b60'), a grey level ('0.4'), or an (r, g, b[, a]) tuple of floats in [0, 1]"
+    )
+
+
 #: Canonical line-style names, plus the matplotlib short spellings we accept.
 _LINESTYLE_ALIASES: dict[str, str] = {
     "solid": "solid",
@@ -228,6 +260,7 @@ def _build_style_keys() -> dict[str, StyleKey]:
             name="color",
             aliases=("c",),
             honored_by=_ALL_BACKENDS,
+            validate=_validate_color,
             doc="line/marker/fill color (CSS name, hex, or rgb tuple)",
         ),
         StyleKey(

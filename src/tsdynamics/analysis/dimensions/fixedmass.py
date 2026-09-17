@@ -216,6 +216,9 @@ def fixed_mass_dimension(
             "kind": "fixed_mass",
             "q": None,
             "theiler": w,
+            # One coordinate means "points on a line" — the estimator answers
+            # D ~ 1 whatever the attractor is, so the result says so.
+            "n_components": int(points.shape[1]),
         },
     )
 

@@ -224,7 +224,10 @@ def test_delay_kind_builds_2d_embedding_from_delay_samples():
     )
     spec = tr.__plot_spec__(kind="delay", delay=85)
     assert spec.layers[0].data["x"].shape[0] == tr.n_steps - 85
-    assert spec.y.label.endswith("(t - 85)")
+    # The DOOR takes samples; the AXIS states a time, because its `t` is a time.
+    # This used to read "(t - 85)" — a count of samples typeset as a time offset,
+    # off by the sampling interval (85 samples x dt=0.2 = 17.0 time units).
+    assert spec.y.label.endswith("(t - 17)")
 
 
 def test_both_delay_doors_agree_on_units():
@@ -628,22 +631,30 @@ def test_dimension_spec_carries_the_loglog_curve(built_results):
     assert spec.layers[-1].kind == PlotKind.LINE
 
 
-def test_recurrence_spec_is_a_sparse_recurrence_plot(built_results):
-    # GAPFILL-F: the recurrence plot is a SPARSE (i, j) scatter of the recurrent
-    # pairs — it is NEVER densified to an (N, N) image (anti-OOM at large N).
+def test_recurrence_spec_is_a_bounded_density_image(built_results):
+    # GAPFILL-F pinned this as a SPARSE (i, j) scatter, guarding one real
+    # property — the matrix is NEVER densified to (N, N) (anti-OOM at large N).
+    # That property is kept here; the scatter is not, because it was a wrong
+    # PICTURE: one marker per recurrence saturates the canvas long before the
+    # memory runs out, destroying the diagonal structure DET / L_max measure.
+    # The field is binned to a bounded side instead, in O(#recurrences), so both
+    # the memory bound and the density survive.
+    from tsdynamics.analysis.recurrence.matrix import MAX_DISPLAY_SIDE
+
     res = built_results["RecurrenceMatrix"]
     spec = res.__plot_spec__()
     assert spec.kind == PlotKind.RECURRENCE_PLOT
     assert spec.aspect == "equal"
     layer = spec.layers[0]
-    assert layer.kind == PlotKind.SCATTER
-    nnz = res.matrix.tocoo().nnz
-    assert layer.data["x"].shape == (nnz,)
-    assert layer.data["y"].shape == (nnz,)
-    # No layer carries a dense 2-D (densified) array.
-    for lyr in spec.layers:
-        for arr in lyr.data.values():
-            assert arr.ndim == 1, "recurrence spec must not densify the matrix"
+    assert layer.kind == PlotKind.IMAGE
+    field = layer.data["c"]
+    assert field.ndim == 2
+    # Bounded whatever the record length: never an (N, N) array for large N.
+    assert max(field.shape) <= MAX_DISPLAY_SIDE
+    assert field.shape == (min(res.size, MAX_DISPLAY_SIDE),) * 2
+    # Every pixel is a local recurrence density, so the mean IS the rate (exactly
+    # here, because this fixture fits under the cap and every bin is one cell).
+    assert field.mean() == pytest.approx(float(res.recurrence_rate), rel=1e-2)
 
 
 def test_gali_spec_uses_log_y(built_results):

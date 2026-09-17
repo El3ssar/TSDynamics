@@ -19,12 +19,11 @@ Engine-free by design (synthetic sparse matrices / arrays — no ``tsdynamics._r
 
 from __future__ import annotations
 
-import sys
-
 import numpy as np
+import pytest
 from scipy import sparse
 
-from tsdynamics.analysis.recurrence.matrix import RecurrenceMatrix
+from tsdynamics.analysis.recurrence.matrix import MAX_DISPLAY_SIDE, RecurrenceMatrix
 from tsdynamics.analysis.recurrence.rqa import RQAResult
 from tsdynamics.analysis.recurrence.windowed import WindowedRQA
 from tsdynamics.viz.spec import PlotKind, PlotSpec
@@ -78,8 +77,17 @@ def _rqa_result() -> RQAResult:
 # ---------------------------------------------------------------------------
 
 
-def test_recurrence_matrix_spec_is_sparse_scatter() -> None:
-    """The recurrence plot is a sparse ``(i, j)`` SCATTER, not a dense IMAGE."""
+def test_recurrence_matrix_spec_is_a_bounded_density_image() -> None:
+    """The recurrence plot is a density IMAGE at a bounded side, never an (N, N) one.
+
+    GAPFILL-F pinned this as a marker-per-recurrence SCATTER, to guard one real
+    property: the matrix is never densified.  That property is kept — see the
+    ``toarray`` and OOM tests below — but the scatter was a wrong PICTURE.  One
+    marker per recurrence saturates the canvas long before the memory runs out:
+    measured on a 1501x1501 matrix at a verified 5% density, it inked 14.4% of
+    the canvas, 3.3x the truth and rising with the record length, destroying
+    exactly the diagonal structure DET / L_max / ENTR measure.
+    """
     n, pairs = 200, 50
     rm = RecurrenceMatrix(matrix=_sparse_recurrence(n, pairs), epsilon=0.5)
     spec = rm.__plot_spec__()
@@ -89,17 +97,11 @@ def test_recurrence_matrix_spec_is_sparse_scatter() -> None:
     assert spec.aspect == "equal"
     assert len(spec.layers) == 1
     layer = spec.layers[0]
-    assert layer.kind == PlotKind.SCATTER  # sparse points, not an IMAGE
-    assert set(layer.data) == {"x", "y"}
-    # One scatter point per stored recurrence (nnz), never N**2.
-    nnz = rm.matrix.nnz
-    assert layer.data["x"].size == nnz
-    assert layer.data["y"].size == nnz
-    assert nnz < n * n
-    # No layer carries the dense (N, N) image channel.
-    for lyr in spec.layers:
-        assert lyr.kind != PlotKind.IMAGE
-        assert "c" not in lyr.data
+    assert layer.kind == PlotKind.IMAGE
+    field = layer.data["c"]
+    # This matrix fits under the cap, so the field IS the matrix, bit-for-bit.
+    assert field.shape == (n, n)
+    assert field.sum() == rm.matrix.nnz
 
 
 def test_recurrence_matrix_spec_does_not_call_toarray(monkeypatch) -> None:
@@ -115,17 +117,20 @@ def test_recurrence_matrix_spec_does_not_call_toarray(monkeypatch) -> None:
     monkeypatch.setattr(type(rm.matrix), "todense", _boom, raising=False)
 
     spec = rm.__plot_spec__()
-    assert spec.layers[0].kind == PlotKind.SCATTER
-    # to_dict must also stay sparse (no densification on serialization).
+    assert spec.layers[0].kind == PlotKind.IMAGE
+    # The field is binned straight from the stored COO indices, so building it
+    # is O(#recurrences) and touches no dense array on the way.
     rm.__plot_spec__().to_dict()
 
 
 def test_recurrence_matrix_oom_regression_large_n() -> None:
-    """OOM guard: N=50_000 with a few thousand nnz stays ~nnz, well under budget.
+    """OOM guard: N=50_000 costs the display lattice, never N**2.
 
-    A dense ``(50_000, 50_000)`` bool image is 2.5e9 bytes; the sparse SCATTER
-    spec must instead produce coordinate arrays of length ``nnz`` (a few thousand)
-    and round-trip far under a fixed byte budget.
+    THE invariant, and the reason this test exists: a dense
+    ``(50_000, 50_000)`` bool image is 2.5e9 bytes, and no representation the
+    spec builds may scale with that.  The field is capped at
+    ``MAX_DISPLAY_SIDE`` on each axis, so the cost is fixed by how big a picture
+    can be — not by how long the recording is.
     """
     n, pairs = 50_000, 3_000
     rm = RecurrenceMatrix(matrix=_sparse_recurrence(n, pairs), epsilon=0.5)
@@ -133,23 +138,19 @@ def test_recurrence_matrix_oom_regression_large_n() -> None:
     assert nnz <= 2 * pairs  # symmetrised pair count, no densification
 
     spec = rm.__plot_spec__()
-    x = spec.layers[0].data["x"]
-    y = spec.layers[0].data["y"]
+    field = spec.layers[0].data["c"]
 
-    # Coordinate arrays are ~nnz long, nowhere near N**2.
-    assert x.size == nnz
-    assert y.size == nnz
-    assert x.size < 10 * pairs
+    # Bounded by the display cap, NOT by N.
+    assert field.shape == (MAX_DISPLAY_SIDE, MAX_DISPLAY_SIDE)
     dense_bytes = n * n  # bytes a dense bool image would need
-    budget = 1_000_000  # 1 MB — generous for ~3k float64 pairs, tiny vs dense
-    used = x.nbytes + y.nbytes
-    assert used < budget < dense_bytes
+    budget = MAX_DISPLAY_SIDE * MAX_DISPLAY_SIDE * 8
+    assert field.nbytes <= budget
+    assert budget * 100 < dense_bytes  # two orders of magnitude of headroom
 
-    # The serialized dict is bounded too (lists of ~nnz numbers, not N**2).
-    payload = spec.to_dict()
-    n_coords = len(payload["layers"][0]["data"]["x"]) + len(payload["layers"][0]["data"]["y"])
-    assert n_coords == 2 * nnz
-    assert sys.getsizeof(payload) < budget
+    # Every recurrence survives the binning: nothing is dropped on the way.
+    per_axis = np.bincount((np.arange(n) * MAX_DISPLAY_SIDE) // n, minlength=MAX_DISPLAY_SIDE)
+    recovered = float((field * np.outer(per_axis, per_axis)).sum())
+    assert recovered == pytest.approx(float(nnz), rel=1e-12)
 
 
 def test_recurrence_matrix_spec_round_trips() -> None:
@@ -159,16 +160,15 @@ def test_recurrence_matrix_spec_round_trips() -> None:
     rebuilt = PlotSpec.from_dict(spec.to_dict())
     assert rebuilt.kind == spec.kind
     assert len(rebuilt.layers) == len(spec.layers)
-    np.testing.assert_array_equal(rebuilt.layers[0].data["x"], spec.layers[0].data["x"])
-    np.testing.assert_array_equal(rebuilt.layers[0].data["y"], spec.layers[0].data["y"])
+    np.testing.assert_array_equal(rebuilt.layers[0].data["c"], spec.layers[0].data["c"])
 
 
 def test_recurrence_matrix_empty_spec() -> None:
-    """An all-zero (no recurrence) matrix yields an empty but valid scatter spec."""
+    """An all-zero (no recurrence) matrix yields an all-zero but valid field."""
     rm = RecurrenceMatrix(matrix=sparse.csr_matrix((50, 50), dtype=bool), epsilon=0.5)
     spec = rm.__plot_spec__()
-    assert spec.layers[0].kind == PlotKind.SCATTER
-    assert spec.layers[0].data["x"].size == 0
+    assert spec.layers[0].kind == PlotKind.IMAGE
+    assert not spec.layers[0].data["c"].any()
     PlotSpec.from_dict(spec.to_dict())  # still round-trips
 
 

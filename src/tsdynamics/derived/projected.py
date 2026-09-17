@@ -173,7 +173,12 @@ class ProjectedSystem(DerivedSystem):
             ``traj["x"]`` names the surviving columns.
         """
         traj = self.system.run(*args, **run_kw)
-        meta = {**traj.meta, "projected": self.components}
+        # Overwrite the INNER system's recorded names: a run records the component
+        # names it was produced with, and ``Trajectory.variables`` reads
+        # ``meta["variables"]`` before the system — so carrying the full tuple
+        # through would leave a 1-column projection with a 2-name record, which
+        # resolves to the generated ``y0`` and mislabels every column.
+        meta = {**traj.meta, "projected": self.components, "variables": self.variables}
         # Back-reference ``self`` (not the inner system): the returned ``y`` holds
         # only the projected columns, and ``self.variables`` names exactly those —
         # so ``traj["x"]`` resolves to the right column and an unknown name raises

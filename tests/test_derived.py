@@ -113,7 +113,7 @@ class TestProjected:
     def test_projected_trajectory(self) -> None:
         proj = ts.derived.ProjectedSystem(ts.systems.Henon(), [0])
         traj = proj.run(steps=50, ic=[0.1, 0.1])
-        assert traj.y.shape == (50, 1)
+        assert traj.y.shape == (51, 1)  # the start, then 50 iterates
         assert traj.meta["projected"] == (0,)
 
     def test_projected_trajectory_named_access(self) -> None:

@@ -118,16 +118,15 @@ class TestFlowEquilibriaNoRegion:
         assert len(fps) == 2
 
     @pytest.mark.parametrize("seed", [0, 1, 2, 3])
-    def test_chua_keeps_its_three_equilibria_when_the_burn_in_escapes(self, seed) -> None:
-        r"""An escaping burn-in orbit must not poison the seed box.
+    def test_chua_keeps_its_three_equilibria(self, seed) -> None:
+        r"""All three of Chua's equilibria — ``0`` and ``±(1.5, 0, -1.5)`` — are found.
 
-        ``Chua`` declares no ``default_ic``, so the burn-in starts off-attractor
-        and blows up: over 20 time units its hull reaches ``|x| ~ 3.5e3``,
-        ``|z| ~ 7.7e3``, and seeds drawn from *that* are far too diffuse to find
-        the origin saddle (3 equilibria -> 2 on half the seeds).  The escape guard
-        (:data:`~tsdynamics.analysis.fixedpoints._common.ESCAPE_RATIO`) discards
-        such an orbit, falling back to the neutral ``[-2, 2]^dim`` box, which
-        contains all three of Chua's equilibria (``0`` and ``±(1.5, 0, -1.5)``).
+        This used to be the *escaping burn-in* regression: ``Chua`` declared no
+        ``default_ic``, so the burn-in started off-attractor and blew up, and
+        seeds drawn from that hull were far too diffuse to find the origin saddle
+        (3 equilibria -> 2 on half the seeds).  Since v6 round 7 ``Chua`` starts
+        inside its basin, so the hull is the attractor's — but the escape guard
+        below still has to work, because a user system can start anywhere.
         """
         fps = fixed_points(ts.systems.Chua(), seed=seed)
         assert len(fps) == 3
@@ -136,7 +135,19 @@ class TestFlowEquilibriaNoRegion:
         """The escape guard itself: a blow-up yields no hull, a bounded run does."""
         from tsdynamics.analysis.fixedpoints import _common as _c
 
-        escaping = _c.sample_orbit_box(ts.systems.Chua(), 3, rng=np.random.default_rng(1))
+        class _UnstableFocus(ts.ContinuousSystem):
+            """A spiral source — every orbit but the fixed point runs away."""
+
+            params = {"a": 0.9}
+            dim = 2
+            variables = ("x", "y")
+            default_ic = [1.0, 0.0]
+
+            @staticmethod
+            def _equations(Y, t, *, a):
+                return [a * Y(0) - Y(1), Y(0) + a * Y(1)]
+
+        escaping = _c.sample_orbit_box(_UnstableFocus(), 2, rng=np.random.default_rng(1))
         assert escaping.size == 0
         bounded = _c.sample_orbit_box(ts.systems.Lorenz(), 3, rng=np.random.default_rng(1))
         assert bounded.shape == (_c.ORBIT_SAMPLES, 3)

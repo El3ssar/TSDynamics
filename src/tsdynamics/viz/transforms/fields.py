@@ -108,6 +108,10 @@ def _demo_orbit() -> Any:
 
 @plot_transform(
     name="ftle",
+    # The analysis door spells it ``ftle_field``; one concept must not
+    # need two words depending on which door you are at, so the analysis
+    # spelling is an ALIAS here (one record, one matrix row).
+    aliases=("ftle_field",),
     # It evaluates the vector field at points no trajectory visits, through an
     # analysis that requires a continuous SYSTEM (measured: a bare callable is
     # refused by the estimator itself).
@@ -198,6 +202,10 @@ def ftle(
 
 @plot_transform(
     name="escape_time",
+    # The analysis door spells it ``escape_time_field``; one concept must not
+    # need two words depending on which door you are at, so the analysis
+    # spelling is an ALIAS here (one record, one matrix row).
+    aliases=("escape_time_field",),
     # It evaluates the vector field at points no trajectory visits, through an
     # analysis that requires a continuous SYSTEM (measured: a bare callable is
     # refused by the estimator itself).
@@ -285,6 +293,10 @@ def escape_time(
 
 @plot_transform(
     name="transient_time",
+    # The analysis door spells it ``transient_time_field``; one concept must not
+    # need two words depending on which door you are at, so the analysis
+    # spelling is an ALIAS here (one record, one matrix row).
+    aliases=("transient_time_field",),
     # It evaluates the vector field at points no trajectory visits, through an
     # analysis that requires a continuous SYSTEM (measured: a bare callable is
     # refused by the estimator itself).

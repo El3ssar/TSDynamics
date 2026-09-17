@@ -11,8 +11,41 @@ Quick start
 You define a **system** and you get back a **trajectory**.  Everything else is a
 verb on one of those two things, or lives one dot down a named registry.
 
-The curated top level — seventeen names
----------------------------------------
+The whole library in six lines
+------------------------------
+>>> lor = ts.systems.Lorenz()                      # a system: find it, or write it
+>>> traj = lor.run(final_time=100.0, dt=0.01)      # run it  -> a Trajectory
+>>> ts.plot(traj)                                  # doctest: +SKIP
+>>> spec = ts.analysis.lyapunov_spectrum(lor)      # doctest: +SKIP
+>>> ts.analysis.find(traj)                         # doctest: +SKIP
+>>> print(lor.info)                                # doctest: +SKIP
+
+Four things to know, and nothing else is required reading:
+
+``system.info``
+    prints the equations back at you, with the parameters, the defaults and the
+    literature they come from — the fastest way to check you typed your model
+    right.
+``ts.analysis.find(x)``
+    ``x`` is what you are holding — a system, a trajectory, an array, another
+    result — or a plain-English question (``find("is this chaotic")``).
+``print(ts.analysis.__doc__)``
+    the whole quantifier catalogue, grouped by what you have to hold.
+``ts.plot(anything)``
+    one plotting verb; ``ts.viz.compatibility()`` lists what can be drawn.
+
+Writing your own system is four declarations —
+``params`` / ``dim`` / ``variables`` / one kernel; see
+``help(ts.ContinuousSystem)``, which also pre-empts the one trap (the state is
+an **accessor**: ``y(0)``, not ``y[0]``).
+
+Design notes — the curated top level, and why a name is not here
+----------------------------------------------------------------
+Everything below this line is the *rationale* for the namespace.  It is worth
+reading before you add a name to it, and not otherwise.
+
+The seventeen names
+-------------------
 ``tsdynamics.<TAB>`` shows **only what you type**:
 
 ============================== =================================================
@@ -395,14 +428,14 @@ def _moved_error(name: str) -> ImportError:
 
     if name in _RENAMED_IN_V6:
         line, why = _RENAMED_IN_V6[name]
-        body = _wrap(f"ts.{name} was renamed in v6. Same capability, one spelling:", prefix)
+        body = _wrap(f"ts.{name} was renamed. Same capability, one spelling:", prefix)
         body.append(f"    {line}")
         body.extend(_wrap(f"({why})", ""))
         return _MovedInV6("\n".join(body))
 
     if name in _REMOVED_IN_V6:
         body = _wrap(
-            f"ts.{name} was removed in v6 with {_REMOVED_IN_V6[name]}: TSDynamics is "
+            f"ts.{name} was removed along with {_REMOVED_IN_V6[name]}: TSDynamics is "
             "scoped to phase-space methods, and the generic time-series layer lives "
             "in a companion library now. What stayed:",
             prefix,
@@ -414,7 +447,7 @@ def _moved_error(name: str) -> ImportError:
     assert addresses, name  # only called after _home_of said yes
     where = "its own address" if len(addresses) == 1 else "these addresses"
     body = _wrap(
-        f"ts.{name} moved in v6: the top level is {len(__all__)} names now, and "
+        f"ts.{name} moved: the top level is {len(__all__)} names now, and "
         f"this one lives at {where}.",
         prefix,
     )
@@ -430,6 +463,22 @@ def _attribute_error(name: str) -> AttributeError:
     dead names of :func:`_moved_error` are allowed to raise.
     """
     prefix = _prefix_of(AttributeError)
+    # CASE first.  ``ts.Systems`` is one shift key away from the registry the
+    # user wants, and ``difflib`` scores case as an ordinary character
+    # difference, so the fuzzy pass answered it with three unrelated wrapper
+    # classes (``DerivedSystem`` / ``TangentSystem`` / ``WrappedSystem``) and
+    # never with ``ts.systems``.  A wrong-case name is a certainty, not a guess.
+    folded = {n.casefold(): n for n in __all__}
+    cased = folded.get(name.casefold())
+    if cased is not None and cased != name:
+        body = _wrap(
+            f"module 'tsdynamics' has no attribute {name!r} — it is spelled "
+            f"{cased!r} (case matters).",
+            prefix,
+        )
+        body.append(f"    ts.{cased}")
+        return AttributeError("\n".join(body))
+
     hits = _suggest(name)
     if hits:
         body = _wrap(f"module 'tsdynamics' has no attribute {name!r}. Did you mean:", prefix)

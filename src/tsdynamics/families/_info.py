@@ -154,14 +154,47 @@ def _render_equations(system: Any, *, limit: int = 12) -> list[str]:
             args.update(getattr(system, "_structural_vals", dict)())
             exprs = list(kernel(u, t, **args))
             arrow = "d{lhs}/dt = {rhs}"
+            # An SDE is a DRIFT plus a DIFFUSION, and the card used to print only
+            # the drift: measured, ``OrnsteinUhlenbeck.info`` rendered
+            # ``dx/dt = (mu - x)*theta`` and listed ``sigma = 0.3`` under
+            # parameters with no equation using it — so on the one family where
+            # the noise IS the model, half the model was invisible and the
+            # parameter that carries it looked unused.
+            noise = getattr(system, "_diffusion", None)
+            if noise is not None:
+                coefficients = list(noise(u, t, **args))
+                return _render_sde(names, exprs, coefficients, dim)
     except Exception:  # pragma: no cover - defensive: info must never raise
         return []
+    return [
+        arrow.format(lhs=names[i], rhs=_name_state(str(expr), names, dim))
+        for i, expr in enumerate(exprs)
+    ]
+
+
+def _name_state(text: str, names: tuple[str, ...], dim: int) -> str:
+    """Replace the engine's ``y(i)`` accessors with the declared component names."""
+    for j in range(dim - 1, -1, -1):
+        text = text.replace(f"y({j})", names[j]).replace(f"y_{j}", names[j])
+    return text
+
+
+def _render_sde(
+    names: tuple[str, ...], drift: list[Any], diffusion: list[Any], dim: int
+) -> list[str]:
+    """Render an SDE as ``dx = f dt + g dW`` — both halves, on one line each.
+
+    Itô differential form rather than ``dx/dt``, because a stochastic
+    differential equation has no derivative: writing it as one would be the
+    second thing wrong with the old card.
+    """
     lines = []
-    for i, expr in enumerate(exprs):
-        text = str(expr)
-        for j in range(dim - 1, -1, -1):
-            text = text.replace(f"y({j})", names[j]).replace(f"y_{j}", names[j])
-        lines.append(arrow.format(lhs=names[i], rhs=text))
+    for i, (f, g) in enumerate(zip(drift, diffusion, strict=False)):
+        rhs = _name_state(str(f), names, dim)
+        coeff = _name_state(str(g), names, dim)
+        noise = f"dW_{i}" if len(drift) > 1 else "dW"
+        term = f"{noise}" if coeff == "1" else f"({coeff}) {noise}"
+        lines.append(f"d{names[i]} = ({rhs}) dt + {term}")
     return lines
 
 

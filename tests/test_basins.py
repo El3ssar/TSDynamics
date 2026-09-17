@@ -478,7 +478,12 @@ def test_tipping_points_detects_appear_and_disappear():
 
 def test_continuation_result_tipping_method_matches_function():
     cont = _toy_continuation()
-    assert cont.tipping_points() == bas.tipping_points(cont)
+    # v6 round 7: the method is gone — an analysis is a free function whose first
+    # argument is its subject (ruling A2), and this one had two spellings against
+    # the library's own stated rule.  The guess is answered by name.
+    with pytest.raises(AttributeError, match=r"ts\.analysis\.tipping_points\(result\)"):
+        cont.tipping_points()
+    assert bas.tipping_points(cont)
     assert cont.ids == [1, 2, 3]
 
 

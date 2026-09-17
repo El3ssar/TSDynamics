@@ -817,6 +817,17 @@ mathematical reason and gives the line to type.
   numerical kernel, `method=` selects an *estimator* on an analysis
   (`max_lyapunov(method="kantz")`).  A `method=` at `run()` raises naming
   `solver=`.  (`n` likewise became `steps` — one concept, one spelling.)
+  **`traj.meta` records the kernel under BOTH `solver` and `method`**, the same
+  value: `meta` is provenance a user reads back, and recording only the word the
+  signature *stopped* accepting made the record disagree with the call that
+  produced it.  `_default_method` is `"rk45"`, lowercase — the canonical
+  spelling `meta` and `system.info` both print (it read `"RK45"`, so the one
+  ClassVar and the two displays gave three spellings of one kernel).
+- **A map's `run(steps=N)` returns `N + 1` rows**, the initial condition first,
+  exactly as a flow returns its `ic` at `t0`.  It used to return `N` rows
+  starting at `f(ic)`, so `t[0] = 0` labelled `x_1`, `traj["x"][n]` was
+  `x_{n+1}`, and every cobweb started one iterate late — silently, and only for
+  the family whose users are counting iterates.
 - **`dt=None`** means "the family's `_default_dt`" (0.02 for ODE/DDE/SDE), which
   is what `system.info` prints under `defaults`.
 - **`run(ic=…)` no longer mutates `self.ic`.**  Measured at HEAD: `l.ic` was
@@ -1071,14 +1082,14 @@ generator. Guessing a removed name is answered by
   `ts.analysis.results` and appear in no `__all__` (C2).
 - **`ts.analysis.__doc__` is the grouped map**, generated at import
   (`_discovery.grouped_map`): grouped by *what you are holding* — **21** analyses
-  take a system, **23** take a trajectory/array, **6** take another analysis's
+  take a system, **24** take a trajectory/array, **6** take another analysis's
   result — then by area. A flat sort cannot answer "is this chaotic?"; one of the
   five that can (`zero_one_test`) contains no word a newcomer would search for.
 - **`ts.analysis.find(what, /)`** takes ONE positional: a **string**
   (free-text over name/area/keywords/summary) or a **subject** (a system, a
   `Trajectory`, an array, a result, or any of their classes) or nothing.
   `find(lorenz)` → 21, `find(henon)` → **14** (a map has no vector field, so the
-  seven `flow`-only field analyses drop out), `find(traj)` → 23, `find()` → 50.
+  seven `flow`-only field analyses drop out), `find(traj)` → 24, `find()` → 50.
   Returns an `AnalysisList` of the **functions** whose repr is the grouped table.
   The scorer's weights are in `_discovery.score`; a **frozen `GOLD` table** in
   `tests/test_analysis_discovery.py` fails a build, not a user's REPL, when a new
@@ -1613,6 +1624,19 @@ Nothing else in the library learns a new name when one is added.
   caller was not speaking. Style is now peeled **before** the leftovers reach
   `trajectory()`, so an integration typo is still an integration typo. Gate:
   `tests/test_viz_compose.py::test_style_keywords_land_identically_at_all_three_plot_doors`.
+- **`labels=` names the curves, and it works at EVERY plotting door.**
+  `ts.plot(a, b, labels=["reference", "perturbed"])` matched positionally to the
+  subjects, and `traj.plot(labels=…)` / `system.plot(labels=…)` /
+  `result.plot(labels=…)` naming the one curve that door draws.  Comparing two
+  parameter values is the commonest figure in dynamics and it had no spelling at
+  all — `label=` / `labels=` / `legend_labels=` were each refused, two of them
+  suggesting `zlabel=`, which names an **axis**.  A word accepted at one door and
+  refused at another is the defect the shared vocabulary exists to prevent, so
+  the word is listed in `_UNIVERSAL_PLOT_KEYWORDS` (not in
+  `_COMPOSITION_KEYWORDS`, which drives the *"that word belongs elsewhere"*
+  sentence).  And **`nearest_keyword` never offers back the word that was
+  typed** — a shared suggestion pool spanning doors produced
+  `labels= — did you mean labels=?`, which reads as a bug in the library.
 - **Writing one is FOUR DECLARATIONS and nothing else (v6).**
   `@ts.viz.transforms.register(source=, frame=, kind=, primitives=)` over a
   function returning a channel mapping. Everything else is **derived**: `name`

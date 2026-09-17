@@ -78,15 +78,24 @@ def test_repr_is_prose_not_a_constructor_call(name):
 
 
 @pytest.mark.parametrize("name", NAMES)
-def test_repr_first_line_is_str(name):
-    """``str(result)`` is the headline — the repr's first line, verbatim."""
+def test_printing_a_result_shows_the_whole_answer(name):
+    """``print(result)`` shows everything the REPL shows — scripts use ``print``.
+
+    ``str`` used to be the headline alone, so half of every result's answer was
+    reachable only from a REPL echo: ``print(attractor_set)`` gave the count and
+    dropped the lines saying *where* the attractors are.  A result whose repr
+    **is** the answer cannot have two answers.  ``f"{result}"`` stays the
+    one-line form, because an f-string is an embedding context.
+    """
     result = RESULTS[name]
     if name == "CountResult":
         # The one documented exception: a count IS its integer, because
         # ``f"tau={c}"`` must print ``tau=9``.
         assert str(result) == "9"
         return
-    assert str(result) == repr(result).splitlines()[0]
+    assert str(result) == repr(result)
+    assert result.headline == repr(result).splitlines()[0]
+    assert f"{result}" == result.headline
 
 
 @pytest.mark.parametrize("name", NAMES)

@@ -236,9 +236,19 @@ class CollectionResult(AnalysisResult):
         return f"{n} {self._noun()}" + ("s" if n != 1 else "")
 
     def _item_line(self, index: int, item: Any) -> str:
-        """Return one item's line in the repr's list (``[0] …``)."""
+        """Return one item's line in the repr's list (``details[0] …``).
+
+        The label is the **accessor that hands back what the line describes**.
+        It used to be a bare ``[0]``, and three independent readers took that
+        literally and guessed twice: the line shows a fixed point's stability and
+        ``Re(λ)max``, so ``fp[0].stable`` is the obvious next keystroke — and
+        ``fp[0]`` is the bare coordinate array (contract §4.2 rule 6: indexing a
+        collection gives *numbers*).  Printing the accessor closes the gap
+        without reversing that rule: the token on the line is the expression to
+        type.
+        """
         text = item._as_item() if isinstance(item, AnalysisResult) else str(item)
-        return f"[{index}] {text}"
+        return f"details[{index}] {text}"
 
     def _item_lines(self) -> tuple[str, ...]:
         """Return the item list, truncated to :data:`_MAX_ITEMS` with a total."""
@@ -359,6 +369,13 @@ class CollectionResult(AnalysisResult):
         # dropped, three columns of booleans where the answer should be.  Since
         # v6 ``_row_for`` builds a member's row and a *singular* member's whole
         # frame, so one fixed point tabulates exactly like one row of its set.
-        frame = pd.DataFrame([_row_for(item) for item in self.items])
+        #
+        # The declared component names live on the SET's provenance (the members
+        # are per-point records and carry little of their own), so they are lent
+        # to each row — otherwise a pendulum's fixed points tabulate as
+        # ``x0``/``x1`` for a class that declares ``("theta", "omega")``.
+        names = self.meta.get("variables") if self.meta else None
+        rows = [_row_for(item, variables=names) for item in self.items]
+        frame = pd.DataFrame(rows)
         frame.attrs["meta"] = dict(self.meta) if self.meta else {}
         return frame

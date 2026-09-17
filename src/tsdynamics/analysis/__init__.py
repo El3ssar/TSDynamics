@@ -231,10 +231,7 @@ def find(what: Any = None, /) -> AnalysisList:
     if isinstance(what, str):
         hits = _discovery.search(entries, what)
         if not hits:
-            return AnalysisList(
-                (),
-                f"nothing matches {what!r}. ts.analysis.find() lists all {len(entries)}.",
-            )
+            return AnalysisList((), _discovery.nothing_matched(what, len(entries)))
         return AnalysisList(hits, f"{len(hits)} analyses match {what!r}")
     tokens = _discovery.subject_tokens(what)
     if tokens is None:
@@ -335,8 +332,29 @@ def __getattr__(name: str) -> Any:
 
         line, why = entry
         raise MovedInV6(
-            f"tsdynamics.analysis has no attribute {name!r}: it was renamed in v6 "
+            f"tsdynamics.analysis has no attribute {name!r}: it was renamed "
             f"({why}).\nSame capability, one spelling:\n    {line}"
+        )
+
+    from tsdynamics._redirects import REMOVED_IN_V6, SCOPE_SURGERY_REMEDY
+
+    what = REMOVED_IN_V6.get(name)
+    if what is not None:
+        # The scope surgery is only *communicated* if the door a user knocks on
+        # says so.  It was wired at ``ts.<name>`` and not here, so
+        # ``ts.analysis.permutation_entropy`` fell through to the near-miss
+        # scorer and came back "Did you mean expansion_entropy?" — an unrelated
+        # analysis whose only relation is the substring, and one a newcomer may
+        # well go and use.
+        from tsdynamics.errors import MovedInV6
+
+        lines = "\n".join(f"    {line}" for line in SCOPE_SURGERY_REMEDY)
+        raise MovedInV6(
+            f"tsdynamics.analysis has no attribute {name!r}: it was part of "
+            f"{what}, which this library no longer ships. TSDynamics is a DYNAMICAL SYSTEMS "
+            f"library — phase-space methods stay, generic series statistics go — "
+            f"so that layer moved to a companion time-series package.\n"
+            f"What stayed, and is probably what you want:\n{lines}"
         )
 
     if name in AREA_SUBPACKAGES:
@@ -348,11 +366,16 @@ def __getattr__(name: str) -> Any:
         # with ``TypeError: 'module' object is not callable``.
         area = _AREA_OF[name]
         members = sorted(e.name for e in _registry.analyses.all() if e.metadata.get("area") == area)
-        shown = "\n".join(f"    ts.analysis.{m}(...)" for m in members[:3])
+        # Show every member up to four, then say how many are left.  Listing
+        # three and closing with "# all 4" read as "these three ARE the four".
+        shown = "\n".join(f"    ts.analysis.{m}(...)" for m in members[:4])
+        rest = len(members) - 4
+        if rest > 0:
+            shown += f"\n    ... and {rest} more"
         raise AttributeError(
             f"{name!r} is the implementation package, not a verb. The analyses in "
             f"it are free functions:\n{shown}\n"
-            f'    ts.analysis.find("{area}")   # all {len(members)}'
+            f'    ts.analysis.find("{area}")   # the {len(members)} in this area'
         )
 
     close = _discovery.near_miss(name, _registry.analyses.names())
