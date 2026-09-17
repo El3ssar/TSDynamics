@@ -3,7 +3,7 @@
 Engine-free: every result is built synthetically (tiny dummy arrays, no
 ``tsdynamics._rust`` import) and only the :class:`~tsdynamics.viz.spec.PlotSpec`
 *shape* is asserted — the semantic kind, the layer marks, the annotations, and a
-JSON round-trip.  These are the bespoke ``to_plot_spec`` figures the ticket asks
+JSON round-trip.  These are the bespoke ``__plot_spec__`` figures the ticket asks
 for; the whole-layer contract stays guarded by ``tests/test_viz_fake_renderer.py``.
 """
 
@@ -35,7 +35,7 @@ def _roundtrips(spec: PlotSpec) -> None:
 
 def test_lyapunov_spectrum_is_bars_with_zero_line() -> None:
     """The spectrum plots one BAR per exponent, with a lambda = 0 reference line."""
-    spec = LyapunovSpectrum(values=np.array([0.91, 0.0, -14.57])).to_plot_spec()
+    spec = LyapunovSpectrum(values=np.array([0.91, 0.0, -14.57])).__plot_spec__()
     assert spec.kind is PlotKind.LYAPUNOV_SPECTRUM
     assert len(spec.layers) == 1
     bar = spec.layers[0]
@@ -52,7 +52,7 @@ def test_lyapunov_spectrum_is_bars_with_zero_line() -> None:
 
 def test_lyapunov_spectrum_kind_override() -> None:
     """A ``kind`` override is honoured (uniform signature, no new parameter)."""
-    spec = LyapunovSpectrum(values=np.array([0.1, -0.2])).to_plot_spec(kind="diagnostic_curve")
+    spec = LyapunovSpectrum(values=np.array([0.1, -0.2])).__plot_spec__(kind="diagnostic_curve")
     assert spec.kind is PlotKind.DIAGNOSTIC_CURVE
     assert spec.layers[0].kind is PlotKind.BAR
 
@@ -68,7 +68,7 @@ def test_mutual_information_diagnostic_marks_first_minimum() -> None:
     curve = np.array([1.5, 0.9, 0.6, 0.4, 0.5, 0.7])
     mi = MutualInformation(values=curve)
     assert mi.optimal_lag == 3
-    spec = mi.to_plot_spec()
+    spec = mi.__plot_spec__()
     assert spec.kind is PlotKind.DIAGNOSTIC_CURVE
     assert len(spec.layers) == 1
     assert spec.layers[0].kind is PlotKind.LINE
@@ -105,7 +105,7 @@ def test_embedding_dimension_fnn_curve_marks_selected_dim() -> None:
         method="fnn",
         delay=1,
         fnn_fraction=np.array([0.8, 0.4, 0.05, 0.04]),
-    ).to_plot_spec()
+    ).__plot_spec__()
     assert spec.kind is PlotKind.DIAGNOSTIC_CURVE
     assert len(spec.layers) == 1
     assert spec.layers[0].kind is PlotKind.LINE
@@ -123,7 +123,7 @@ def test_embedding_dimension_cao_curves_e1_e2() -> None:
         delay=2,
         afn_e1=np.array([0.7, 0.95, 0.99]),
         afn_e2=np.array([0.9, 0.92, 0.95]),
-    ).to_plot_spec()
+    ).__plot_spec__()
     assert spec.kind is PlotKind.DIAGNOSTIC_CURVE
     assert len(spec.layers) == 2
     assert all(layer.kind is PlotKind.LINE for layer in spec.layers)
@@ -140,13 +140,13 @@ def test_embedding_dimension_cao_curves_e1_e2() -> None:
 
 def test_embedding_point_cloud_is_phase_portrait() -> None:
     """A 3-D embedding is a 3-D phase portrait; a 2-D embedding a 2-D one."""
-    spec3 = Embedding(values=np.random.default_rng(0).random((20, 3))).to_plot_spec()
+    spec3 = Embedding(values=np.random.default_rng(0).random((20, 3))).__plot_spec__()
     assert spec3.kind is PlotKind.PHASE_PORTRAIT_3D
     assert spec3.ndim == 3
     assert spec3.layers[0].kind is PlotKind.LINE3D
     _roundtrips(spec3)
 
-    spec2 = Embedding(values=np.random.default_rng(1).random((20, 2))).to_plot_spec()
+    spec2 = Embedding(values=np.random.default_rng(1).random((20, 2))).__plot_spec__()
     assert spec2.kind is PlotKind.PHASE_PORTRAIT_2D
     assert spec2.ndim == 2
     assert spec2.aspect == "equal"
@@ -167,7 +167,7 @@ def test_zero_one_translation_plane_is_phase_portrait() -> None:
     # still a drop-in for K
     assert float(result) == 0.96
     assert result > 0.9
-    spec = result.to_plot_spec()
+    spec = result.__plot_spec__()
     assert spec.kind is PlotKind.PHASE_PORTRAIT_2D
     assert spec.aspect == "equal"
     assert len(spec.layers) == 1
@@ -180,7 +180,7 @@ def test_zero_one_translation_plane_is_phase_portrait() -> None:
 
 def test_zero_one_without_plane_falls_back_to_scalar_spec() -> None:
     """With no captured plane, the scalar fallback still yields a valid spec."""
-    spec = ZeroOneResult(value=0.5).to_plot_spec()
+    spec = ZeroOneResult(value=0.5).__plot_spec__()
     assert isinstance(spec, PlotSpec)
     assert isinstance(spec.kind, PlotKind)
     _roundtrips(spec)

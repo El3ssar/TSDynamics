@@ -4,13 +4,13 @@ Stream VIZ-FALLBACK-GATE (issue #274).  The visualization seam
 :class:`tsdynamics.analysis._result._PlotAccessor` exposes typed convenience
 methods — ``result.plot.scaling()``, ``.phase()``, ``.image()``, … — each of
 which forces a particular *semantic* plot kind by passing a ``kind=`` string into
-``to_plot_spec``.  That string has to be a member of the closed
+``__plot_spec__``.  That string has to be a member of the closed
 :class:`tsdynamics.viz.spec.PlotKind` vocabulary, or the very first thing a real
 renderer does (``PlotKind(kind)``) raises ``ValueError``.
 
 This module is the genuine gate: it drives **each** typed method through the seam
 with a fake renderer installed and captures the ``kind`` that reaches
-``to_plot_spec``, then asserts that ``PlotKind(kind)`` resolves.  A method that
+``__plot_spec__``, then asserts that ``PlotKind(kind)`` resolves.  A method that
 ships an invalid spelling (the historical ``"phase_portrait"`` bug) fails here.
 It is engine-free — it never imports ``tsdynamics._rust`` and constructs no
 system — so it stays in the fast tier.
@@ -37,7 +37,7 @@ def fake_renderer():
 
     The seam only attempts to render once ``registry.renderers`` is non-empty, so
     this fixture is what makes ``result.plot.<kind>()`` actually walk the
-    ``_render`` path (and thus reach ``to_plot_spec(kind=...)``) instead of
+    ``_render`` path (and thus reach ``__plot_spec__(kind=...)``) instead of
     short-circuiting on ``VisualizationNotInstalled``.  It returns the spec it was
     handed so the test can inspect it.
 
@@ -70,7 +70,7 @@ def fake_renderer():
 
 
 class _KindCapturingResult(AnalysisResult):
-    """A result whose ``to_plot_spec`` records the requested ``kind`` and validates it.
+    """A result whose ``__plot_spec__`` records the requested ``kind`` and validates it.
 
     Returns a real :class:`PlotSpec` (so the fake renderer is satisfied) and
     appends the resolved :class:`PlotKind` to :attr:`seen` — letting the test read
@@ -81,7 +81,7 @@ class _KindCapturingResult(AnalysisResult):
         object.__setattr__(self, "meta", {})
         object.__setattr__(self, "seen", [])
 
-    def to_plot_spec(self, kind: str | None = None) -> PlotSpec:  # noqa: D102
+    def __plot_spec__(self, kind: str | None = None) -> PlotSpec:  # noqa: D102
         resolved = PlotKind(kind) if kind is not None else PlotKind.DIAGNOSTIC_CURVE
         self.seen.append(resolved)
         return PlotSpec(kind=resolved)
@@ -91,7 +91,7 @@ def _typed_kind_methods() -> list[str]:
     """Names of the typed ``_PlotAccessor`` kind methods (e.g. ``scaling``, ``phase``).
 
     The public, non-dunder methods other than ``__call__`` that force a specific
-    kind: every one is supposed to route a valid ``PlotKind`` into ``to_plot_spec``.
+    kind: every one is supposed to route a valid ``PlotKind`` into ``__plot_spec__``.
     """
     skip = {"_render"}
     names = [
@@ -117,7 +117,7 @@ def test_typed_kind_method_uses_valid_plotkind(method_name, fake_renderer) -> No
     """Each typed ``.plot.<method>()`` forces a kind that is a real ``PlotKind``.
 
     Genuine gate: the kind string lives inside the method body, so we drive the
-    method end-to-end (through ``_render`` → ``to_plot_spec(kind=...)``) and assert
+    method end-to-end (through ``_render`` → ``__plot_spec__(kind=...)``) and assert
     the captured kind resolves.  An invalid spelling raises ``ValueError`` from
     ``PlotKind(kind)`` here — the test fails rather than passing on a tautology.
     """
@@ -126,8 +126,8 @@ def test_typed_kind_method_uses_valid_plotkind(method_name, fake_renderer) -> No
     method = getattr(result.plot, method_name)
     # matplotlib is the deterministic default backend; name the fake backend to
     # route the render through it (still exercises the seam end-to-end).
-    method(backend=name)  # forces kind=<this method's kind> into to_plot_spec
-    assert result.seen, f".plot.{method_name}() never reached to_plot_spec()"
+    method(backend=name)  # forces kind=<this method's kind> into __plot_spec__
+    assert result.seen, f".plot.{method_name}() never reached __plot_spec__()"
     forced = result.seen[-1]
     assert isinstance(forced, PlotKind)
     # And the fake renderer was actually handed a spec carrying that kind.

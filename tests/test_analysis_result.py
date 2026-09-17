@@ -307,7 +307,7 @@ def test_plot_works_as_first_viz_action_in_fresh_process():
 def test_plot_renders_when_a_renderer_is_registered(monkeypatch):
     """Forward-compat: once a backend registers, the seam renders the spec.
 
-    Pins the documented PlotSpec contract — ``to_plot_spec(kind=...)`` carries the
+    Pins the documented PlotSpec contract — ``__plot_spec__(kind=...)`` carries the
     semantic kind and ``render(backend, **backend_kw)`` does the drawing (``kind``
     is never forwarded to ``render``).
     """
@@ -326,7 +326,7 @@ def test_plot_renders_when_a_renderer_is_registered(monkeypatch):
     class _Plottable(AnalysisResult):
         value: float = 0.0
 
-        def to_plot_spec(self, kind=None):
+        def __plot_spec__(self, kind=None):
             return _FakeSpec(kind)
 
     # Inject a non-empty renderer registry (registry.renderers does not exist yet).
@@ -342,10 +342,10 @@ def test_plot_renders_when_a_renderer_is_registered(monkeypatch):
     assert isinstance(out, _FakeSpec)
     assert out.kind is None
     assert out.rendered == {"backend": "plotly", "kind": None, "backend_kw": {}}
-    # A typed method routes its kind into to_plot_spec; backend kwargs reach render.
+    # A typed method routes its kind into __plot_spec__; backend kwargs reach render.
     # ``figsize`` is a real backend keyword; ``ax`` used to ride through here too,
     # but no shipped backend accepts it — ``.plot()`` now rejects a keyword neither
-    # ``to_plot_spec`` nor the backend contract declares, instead of silently
+    # ``__plot_spec__`` nor the backend contract declares, instead of silently
     # dropping it into a ``**_kw`` catch-all (sanctioned v6 break).
     out2 = r.plot.scaling(backend="mpl", figsize=(4.0, 3.0))
     assert out2.kind == "scaling_fit"

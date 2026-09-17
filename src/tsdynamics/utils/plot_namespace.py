@@ -26,7 +26,41 @@ from __future__ import annotations
 
 from typing import Any
 
-__all__ = ["PlotNamespace", "plot_namespace"]
+__all__ = ["PlotNamespace", "plot_namespace", "plot_seam_error"]
+
+
+def plot_seam_error(owner: str, subject: str) -> AttributeError:
+    """Build the ``to_plot_spec`` refusal — one sentence, two runnable lines.
+
+    ``to_plot_spec`` was the third public way to say *build a plot and do not
+    draw it*, alongside ``ts.plot(x)`` (which returns the very same
+    :class:`~tsdynamics.viz.spec.Plot`, rendering nothing) and ``x.plot()``.
+    v6 keeps the machinery under the dunder ``__plot_spec__`` — the one
+    predicate ``ts.plot`` uses to recognise a subject — and retires the name.
+
+    The message is built here rather than written out three times so that a
+    :class:`~tsdynamics.data.Trajectory`, a system and all 32 analysis results
+    answer the guess identically, in their own nouns.
+
+    Parameters
+    ----------
+    owner : str
+        The class name to quote, e.g. ``"Trajectory"``.
+    subject : str
+        The expression to use in the runnable lines, e.g. ``"traj"``.
+
+    Returns
+    -------
+    AttributeError
+        Raise it; do not return it.
+    """
+    return AttributeError(
+        f"{owner!r} object has no attribute 'to_plot_spec': building a plot without "
+        f"drawing it is what ts.plot({subject}) already does.\n"
+        f"    ts.plot({subject})     # the Plot object — nothing is rendered\n"
+        f"    {subject}.plot()       # the same thing, styled at the door\n"
+        f"    (the seam itself is the dunder {subject}.__plot_spec__, not a verb you type)"
+    )
 
 
 class PlotNamespace:

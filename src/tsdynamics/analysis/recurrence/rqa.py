@@ -150,7 +150,7 @@ class RQAResult(AnalysisResult):
         ("ENTR", "diagonal_entropy"),
     )
 
-    def to_plot_spec(self, kind: str | None = None) -> Any:
+    def __plot_spec__(self, kind: str | None = None) -> Any:
         """Describe the scalar RQA measures as a :class:`PlotSpec` bar readout.
 
         Builds a ``CATEGORICAL_BAR`` whose bars are the headline structure

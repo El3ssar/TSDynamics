@@ -73,7 +73,7 @@ class Embedding(ArrayResult):
             bits.append(system)
         return ", ".join(bits) or None
 
-    def to_plot_spec(self, kind: str | None = None) -> Any:
+    def __plot_spec__(self, kind: str | None = None) -> Any:
         r"""Describe the reconstructed attractor as a backend-agnostic :class:`PlotSpec`.
 
         Builds a phase portrait of the delay-coordinate trajectory: a 3-D

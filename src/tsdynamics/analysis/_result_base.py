@@ -49,6 +49,7 @@ import numpy as np
 
 from tsdynamics.analysis._result_json import _fmt, _is_frame_scalar, _jsonify
 from tsdynamics.analysis._result_viz import VisualizationNotInstalled, _PlotAccessor
+from tsdynamics.utils.plot_namespace import plot_seam_error
 
 if TYPE_CHECKING:
     from tsdynamics.viz.spec import PlotSpec
@@ -77,6 +78,8 @@ def _unknown_result_attribute(result: Any, name: str) -> AttributeError:
     import difflib
 
     cls = type(result)
+    if name == "to_plot_spec":
+        return plot_seam_error(cls.__name__, "result")
     carried = sorted(
         {n for n in dir(cls) if not n.startswith("_") and not callable(getattr(cls, n, None))}
         | {n for n in getattr(result, "_repr_fields", ()) if not n.startswith("_")}
@@ -134,6 +137,20 @@ class AnalysisResult:
         if "__repr__" not in cls.__dict__:
             inherited_repr = cls.__repr__
             cls.__repr__ = inherited_repr  # type: ignore[method-assign]
+
+    def __getattr__(self, name: str) -> Any:
+        """Teach the one retired plot name; leave every other miss verbatim.
+
+        Only ``to_plot_spec`` is intercepted (v6 moved the seam to the dunder
+        ``__plot_spec__``).  Anything else re-raises the message CPython would
+        have produced, so this hook adds no new behaviour to a wrong guess —
+        :class:`~tsdynamics.analysis._result_array.ArrayResult` keeps its own,
+        richer ``__getattr__``, which routes the same name through
+        :func:`_unknown_result_attribute`.
+        """
+        if name == "to_plot_spec":
+            raise plot_seam_error(type(self).__name__, "result")
+        raise AttributeError(f"{type(self).__name__!r} object has no attribute {name!r}")
 
     # -- provenance -------------------------------------------------------
 
@@ -466,20 +483,20 @@ class AnalysisResult:
 
     # -- visualization seam ----------------------------------------------
 
-    def __plot_spec__(self, kind: str | None = None, **kwargs: Any) -> Any:
-        """Describe this result as a plot — the ONE seam every subject answers to.
-
-        CONTRACT §6.2 / §3.5.
-
-        ``ts.plot`` classifies a positional argument as a *subject* by asking
-        whether it carries ``__plot_spec__`` — one predicate for a system, a
-        trajectory and all 32 results.  :meth:`to_plot_spec` stays the readable
-        spelling and is what a subclass overrides.
-        """
-        return self.to_plot_spec(kind, **kwargs)
-
-    def to_plot_spec(self, kind: str | None = None) -> Any:
+    def __plot_spec__(self, kind: str | None = None) -> Any:
         r"""Describe this result as a backend-agnostic :class:`PlotSpec` (generic fallback).
+
+        **This is the internal seam, not a verb you type.**  ``ts.plot``
+        classifies a positional argument as a *subject* by asking whether it
+        carries ``__plot_spec__`` — one predicate for a system, a trajectory and
+        all 32 results.  A result subclass overrides *this* method; the two
+        spellings a user types are ``ts.plot(result)`` (hands back the
+        :class:`~tsdynamics.viz.spec.Plot`, drawing nothing) and
+        ``result.plot()``.
+
+        .. versionchanged:: 6.0
+           Was the public ``to_plot_spec``.  ``result.to_plot_spec`` now raises,
+           naming both spellings that work.
 
         Result types with a *natural* figure override this with a bespoke spec
         (a scaling fit, a recurrence image, a phase portrait, …).  This base
@@ -514,14 +531,14 @@ class AnalysisResult:
         See Also
         --------
         _overlay_on : the ``base=`` overlay convention a result with a host view
-            (fixed points over a phase portrait) uses in its own ``to_plot_spec``.
+            (fixed points over a phase portrait) uses in its own ``__plot_spec__``.
 
         Raises
         ------
         VisualizationNotInstalled
             If the result carries **no** plottable numeric field (no array and no
             scalar) — there is nothing for a generic fallback to draw, so a
-            bespoke ``to_plot_spec`` is required.  Subclasses with such a result
+            bespoke ``__plot_spec__`` is required.  Subclasses with such a result
             override this method.
         """
         from . import _plotbuilder as pb
@@ -555,8 +572,8 @@ class AnalysisResult:
         else:
             raise VisualizationNotInstalled(
                 f"{type(self).__name__} carries no plottable numeric field, so the generic "
-                "to_plot_spec() fallback has nothing to draw. A result of this kind needs a "
-                "bespoke to_plot_spec(); export it with .to_dict() meanwhile."
+                "__plot_spec__() fallback has nothing to draw. A result of this kind needs "
+                "a bespoke __plot_spec__(); export it with .to_dict() meanwhile."
             )
 
         return pb.spec(
@@ -575,7 +592,7 @@ class AnalysisResult:
         """Overlay this result's figure onto a host ``base`` spec (host drawn first).
 
         The ``base=`` overlay convention, as a method that does not perturb the
-        uniform ``to_plot_spec(self, kind=None)`` signature: build this result's
+        uniform ``__plot_spec__(self, kind=None)`` signature: build this result's
         spec and append its layers / annotations *after* the host's, so e.g.
         fixed-point markers land over a phase portrait or an attractor scatter
         over a basin image.  The merged ``base`` is mutated and returned.
@@ -588,7 +605,7 @@ class AnalysisResult:
         spliced onto a time series, producing a spec *labelled* ``time_series``
         containing a recurrence plot.  That now raises.
 
-        Every keyword other than ``on`` is forwarded to :meth:`to_plot_spec`, so
+        Every keyword other than ``on`` is forwarded to :meth:`__plot_spec__`, so
         an overlay that has to be told which plane to draw on (``components=``)
         can be, without each such result re-implementing this method.
 
@@ -597,13 +614,13 @@ class AnalysisResult:
         base : PlotSpec
             The host spec to draw under this result.
         kind : str, optional
-            Forwarded to :meth:`to_plot_spec`.
+            Forwarded to :meth:`__plot_spec__`.
         on : {"force"}, optional
             ``"force"`` overlays a deliberate frame mismatch with a one-time
             :class:`~tsdynamics.viz.render.caps.VisualizationDegraded` warning
             instead of raising.
         **build_kw
-            Forwarded to :meth:`to_plot_spec` (e.g. ``components=`` /
+            Forwarded to :meth:`__plot_spec__` (e.g. ``components=`` /
             ``annotate=`` on a fixed-point set).
 
         Returns
@@ -617,7 +634,7 @@ class AnalysisResult:
             If the host and this result draw in incompatible frames and ``on``
             is not ``"force"``.
         """
-        return self._overlay_on(self.to_plot_spec(kind=kind, **build_kw), base, on=on)
+        return self._overlay_on(self.__plot_spec__(kind=kind, **build_kw), base, on=on)
 
     @staticmethod
     def _overlay_on(spec: PlotSpec, base: PlotSpec | None, *, on: str | None = None) -> PlotSpec:
@@ -652,7 +669,7 @@ class AnalysisResult:
     ) -> tuple[list[tuple[str, np.ndarray]], list[tuple[str, float]]]:
         """Split the display fields into ``(1-D numeric arrays, numeric scalars)``.
 
-        Used by the generic :meth:`to_plot_spec` fallback.  Booleans are treated
+        Used by the generic :meth:`__plot_spec__` fallback.  Booleans are treated
         as scalars (``0`` / ``1``); non-numeric and higher-dimensional fields are
         skipped.  ``meta`` is never included (it is provenance, not plot data).
         """

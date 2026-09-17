@@ -832,9 +832,9 @@ class TestFixedPointPlotSpec:
         fps = fixed_points(ts.systems.Lorenz(), seed=0)
         assert len(fps) == 3
 
-        default = fps.to_plot_spec()
-        by_name = fps.to_plot_spec(components=("x", "z"))
-        by_index = fps.to_plot_spec(components=(0, 2))
+        default = fps.__plot_spec__()
+        by_name = fps.__plot_spec__(components=("x", "z"))
+        by_index = fps.__plot_spec__(components=(0, 2))
 
         def ys(spec):
             return sorted(float(v) for layer in spec.layers for v in layer.data["y"])
@@ -851,11 +851,11 @@ class TestFixedPointPlotSpec:
 
         fps = fixed_points(ts.systems.Lorenz(), seed=0)
         with pytest.raises(InvalidParameterError, match="unknown component"):
-            fps.to_plot_spec(components=("x", "w"))
+            fps.__plot_spec__(components=("x", "w"))
         with pytest.raises(InvalidParameterError, match="exactly two"):
-            fps.to_plot_spec(components=("x",))
+            fps.__plot_spec__(components=("x",))
         with pytest.raises(InvalidParameterError, match="out of range"):
-            fps.to_plot_spec(components=(0, 7))
+            fps.__plot_spec__(components=(0, 7))
 
     def test_each_marker_is_annotated_with_its_leading_eigenvalue(self) -> None:
         """The number that decides the classification is written next to the marker.
@@ -866,7 +866,7 @@ class TestFixedPointPlotSpec:
         of the marker it describes.
         """
         fps = fixed_points(ts.systems.Lorenz(), seed=0)
-        spec = fps.to_plot_spec()
+        spec = fps.__plot_spec__()
         texts = [a.text for a in spec.annotations if a.kind == "text"]
         assert len(texts) == 3
         assert any("11.8" in t for t in texts)
@@ -892,7 +892,7 @@ class TestFixedPointPlotSpec:
         fps = fixed_points(ts.systems.Henon(), seed=0)
         assert len(fps) == 2
         for fp in fps:
-            spec = fp.to_plot_spec()
+            spec = fp.__plot_spec__()
             (text,) = [a.text for a in spec.annotations if a.kind == "text"]
             expected = fp.eigenvalues[np.argmax(np.abs(fp.eigenvalues))]
             assert f"{float(expected.real):+.3g}" in text
@@ -909,14 +909,14 @@ class TestFixedPointPlotSpec:
         fps = fixed_points(ts.systems.Thomas(), region=ts.data.Box([-5.0] * 3, [5.0] * 3), seed=0)
         assert len(fps) > _ANNOTATE_AUTO_MAX
 
-        assert [a for a in fps.to_plot_spec().annotations if a.kind == "text"] == []
-        forced = [a for a in fps.to_plot_spec(annotate=True).annotations if a.kind == "text"]
+        assert [a for a in fps.__plot_spec__().annotations if a.kind == "text"] == []
+        forced = [a for a in fps.__plot_spec__(annotate=True).annotations if a.kind == "text"]
         assert len(forced) == len(fps)
 
         small = fixed_points(ts.systems.Rossler(), seed=0)
         assert len(small) <= _ANNOTATE_AUTO_MAX
-        assert len(small.to_plot_spec().annotations) == len(small)
-        assert small.to_plot_spec(annotate=False).annotations == []
+        assert len(small.__plot_spec__().annotations) == len(small)
+        assert small.__plot_spec__(annotate=False).annotations == []
 
     def test_overlay_on_forwards_the_projection_to_the_host_plane(self) -> None:
         """An overlay must land on the plane the host portrait was drawn for.
@@ -927,7 +927,7 @@ class TestFixedPointPlotSpec:
         """
         fps = fixed_points(ts.systems.Lorenz(), seed=0)
         traj = ts.systems.Lorenz().run(final_time=10.0, dt=0.01, ic=[1.0, 1.0, 1.0])
-        base = traj.to_plot_spec(components=("x", "z"))
+        base = traj.__plot_spec__(components=("x", "z"))
         n_host = len(base.layers)
 
         merged = fps.overlay_on(base, components=("x", "z"))

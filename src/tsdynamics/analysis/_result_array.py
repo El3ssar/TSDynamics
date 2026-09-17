@@ -195,7 +195,7 @@ class ArrayResult(np.lib.mixins.NDArrayOperatorsMixin, AnalysisResult):
         frame.attrs["meta"] = dict(self.meta) if self.meta else {}
         return frame
 
-    def to_plot_spec(self, kind: str | None = None) -> Any:
+    def __plot_spec__(self, kind: str | None = None) -> Any:
         """Describe the wrapped array as a :class:`PlotSpec` (safe generic view).
 
         A 1-D array becomes a ``DIAGNOSTIC_CURVE`` ``LINE`` against its index; a
@@ -269,5 +269,5 @@ class ArrayResult(np.lib.mixins.NDArrayOperatorsMixin, AnalysisResult):
 
         raise VisualizationNotInstalled(
             f"{title} wraps an empty or higher-than-2-D array, so the generic ArrayResult "
-            "to_plot_spec() has nothing to draw; export it with .to_dict() instead."
+            "__plot_spec__() has nothing to draw; export it with .to_dict() instead."
         )

@@ -269,9 +269,18 @@ def _on_attractor(cls, *, n_warm: int = 60, drop: int = 40, take: int = 5) -> np
     Mirrors ``test_map_engine``: the reference path only returns once the whole
     buffer is finite, so the tail slice sits on the orbit rather than in a
     transient or off-basin escape.
+
+    The seed is passed to ``run``, **not** set on the global ``numpy.random``
+    stream.  A system's random-IC draw comes from its own private ``Generator``
+    (``SystemBase._ic_generator``, seeded from OS entropy precisely so a plain
+    ``run()`` cannot disturb a caller's ``np.random.seed(0)``), so the global
+    reseed this used to do had no effect at all and the "deterministic" in the
+    line above was untrue.  Measured: ``test_map_interp_equals_jit_bit_for_bit``
+    failed on ``Bogdanov`` roughly one run in three, from a draw that escapes to
+    infinity in 12 iterates — the exact trap ``CLAUDE.md`` records for backend A/Bs
+    ("always pin ``ic=`` when timing or diffing"), on a gate that IS a diff.
     """
-    np.random.seed(0)
-    warm = cls().run(steps=n_warm, backend="reference")
+    warm = cls().run(steps=n_warm, backend="reference", seed=0)
     finite = warm.y[np.isfinite(warm.y).all(axis=1)]
     if finite.shape[0] < drop + take:
         pytest.skip(f"{cls.__name__}: too few finite warm-up states for a stable sample")

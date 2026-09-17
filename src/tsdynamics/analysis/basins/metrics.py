@@ -187,7 +187,7 @@ class UncertaintyExponent(AnalysisResult):
     f: np.ndarray = field(default_factory=lambda: np.empty(0), repr=False, compare=False)
     r_squared: float = 0.0
 
-    def to_plot_spec(self, kind: str | None = None) -> Any:
+    def __plot_spec__(self, kind: str | None = None) -> Any:
         r"""Describe the uncertainty exponent as its log--log scaling fit.
 
         The uncertainty exponent *is* a scaling estimate:

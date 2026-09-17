@@ -1,6 +1,6 @@
 """Compose specs into one figure — the ``tsdynamics.viz.plot`` front door.
 
-This is the *composition* seam.  Where :meth:`tsdynamics.data.Trajectory.to_plot_spec`
+This is the *composition* seam.  Where :meth:`tsdynamics.data.Trajectory.__plot_spec__`
 describes **one panel**, :func:`plot` arranges one or more things into a figure:
 
 - :func:`plot` takes any mix of plottables (a :class:`~tsdynamics.data.Trajectory`,
@@ -138,7 +138,7 @@ def plot(
         presentation for a row of basin images across a parameter, where the
         per-panel colorbars repeat the same scale.  Default ``False``.
     **build_kw
-        Forwarded to each non-spec thing's ``to_plot_spec`` (``components`` /
+        Forwarded to each non-spec thing's ``__plot_spec__`` (``components`` /
         ``kind`` / the per-kind options), so ``plot(a, b, components="x")``
         composes the same view of each.  Cannot be combined with an already-built
         ``PlotSpec`` argument.
@@ -218,14 +218,20 @@ def _to_spec(thing: Any, build_kw: dict[str, Any]) -> PlotSpec:
 
 
 def _plot_spec_of(thing: Any) -> Any:
-    """Return ``thing``'s spec builder — ``__plot_spec__``, else ``to_plot_spec``.
+    """Return ``thing``'s spec builder — its ``__plot_spec__``, or ``None``.
 
-    ``__plot_spec__`` is the v6 seam (a dunder, because it is a protocol and not
-    a verb a user types); ``to_plot_spec`` is what the pre-v6 objects and any
-    out-of-tree plottable still spell it.  Both are asked here, once, so nothing
-    downstream has to know which one an object has.
+    ``__plot_spec__`` is **the** seam (a dunder, because it is a protocol and not
+    a verb a user types), so *this one predicate* is how ``ts.plot`` recognises a
+    subject: a system, a trajectory, all 32 analysis results and any out-of-tree
+    plottable answer to it and to nothing else.
+
+    .. versionchanged:: 6.0
+       Also consulted ``to_plot_spec``, which was the public spelling of the same
+       thing.  One room, one door: ``ts.plot(x)`` hands back the
+       :class:`~tsdynamics.viz.spec.Plot` without drawing it, which is the whole
+       reason the readable name existed.
     """
-    return getattr(thing, "__plot_spec__", None) or getattr(thing, "to_plot_spec", None)
+    return getattr(thing, "__plot_spec__", None)
 
 
 def unwrap_container(things: tuple[Any, ...]) -> list[Any]:
@@ -348,8 +354,8 @@ def to_spec(thing: Any, build_kw: dict[str, Any]) -> PlotSpec:
     """Convert one ``thing`` to a :class:`PlotSpec` (forwarding ``build_kw``).
 
     The single coercion every composition door goes through: a finished ``Plot``
-    passes through untouched (closure), anything with ``__plot_spec__`` /
-    ``to_plot_spec`` is asked for its default view, and plain numbers are read
+    passes through untouched (closure), anything carrying ``__plot_spec__``
+    is asked for its default view, and plain numbers are read
     as an index-time trajectory at the door — a user holding an array should not
     have to construct a library type to look at it.
     """
@@ -363,8 +369,8 @@ def to_spec(thing: Any, build_kw: dict[str, Any]) -> PlotSpec:
             )
         return thing
     kw = dict(build_kw)
-    to_plot_spec = _plot_spec_of(thing)
-    if not callable(to_plot_spec):
+    plot_spec = _plot_spec_of(thing)
+    if not callable(plot_spec):
         # Measured data — a plain array, a list of numbers, a dataframe column.
         # It comes in through the same door as everything else: a user holding
         # numbers should not have to construct a Trajectory to look at them.
@@ -377,11 +383,11 @@ def to_spec(thing: Any, build_kw: dict[str, Any]) -> PlotSpec:
                 f"cannot plot a {type(thing).__name__}: it is not a Trajectory / system / "
                 f"result / PlotSpec, nor data this can read ({err})."
             ) from None
-        to_plot_spec = _plot_spec_of(coerced)
-    spec = to_plot_spec(**kw)
+        plot_spec = _plot_spec_of(coerced)
+    spec = plot_spec(**kw)
     if not isinstance(spec, PlotSpec):  # pragma: no cover - defensive
         raise InvalidInputError(
-            f"{type(thing).__name__}.to_plot_spec() returned {type(spec).__name__}, not a PlotSpec."
+            f"{type(thing).__name__}.__plot_spec__() returned {type(spec).__name__}, not a PlotSpec."
         )
     return spec
 

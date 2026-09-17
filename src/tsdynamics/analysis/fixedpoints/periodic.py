@@ -102,7 +102,7 @@ class PeriodicOrbit(AnalysisResult):
     continuous: bool = False
     residual: float = 0.0
 
-    def to_plot_spec(self, kind: str | None = None) -> Any:
+    def __plot_spec__(self, kind: str | None = None) -> Any:
         r"""Describe this periodic orbit as a backend-agnostic :class:`PlotSpec`.
 
         Builds a phase portrait of the orbit :attr:`points`: a closed ``LINE3D``
@@ -290,7 +290,7 @@ class OrbitSet(CollectionResult):
         """Export the stable/unstable split the repr reports."""
         return {"n_stable": len(self.stable), "n_unstable": len(self.unstable)}
 
-    def to_plot_spec(self, kind: str | None = None) -> Any:
+    def __plot_spec__(self, kind: str | None = None) -> Any:
         r"""Describe the whole orbit set as one backend-agnostic phase portrait.
 
         Overlays every orbit's points in one spec — one labelled layer per orbit
@@ -324,7 +324,7 @@ class OrbitSet(CollectionResult):
 
         # Build each orbit's own spec (it owns the per-dim layering logic) and
         # gather the layers, relabelling each by its period/stability.
-        sub = [(o, o.to_plot_spec()) for o in orbits]
+        sub = [(o, o.__plot_spec__()) for o in orbits]
         ndim = max(int(s.ndim) for _, s in sub)
         layers: list[Layer] = []
         for o, s in sub:

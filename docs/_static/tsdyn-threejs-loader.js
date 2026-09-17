@@ -18,7 +18,7 @@
  * Animation (reveal comet)
  * ------------------------
  * When the payload's `metadata.animation` block is present (an *animated*
- * `PlotSpec`, e.g. `to_plot_spec(animate=True)`), each line geometry plays a
+ * `PlotSpec`, e.g. `ts.plot(traj, animate=True)`), each line geometry plays a
  * **reveal comet**: a faint full-curve backdrop is drawn once, and a bright comet
  * (a windowed trail + a `THREE.Points` head) sweeps the curve by advancing
  * `geometry.setDrawRange(start, count)` per `requestAnimationFrame` — no buffer is

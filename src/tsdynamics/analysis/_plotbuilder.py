@@ -2,7 +2,7 @@
 
 The trajectory side funnels every plot through the parameterised
 :mod:`tsdynamics.viz.producers`; the **analysis** side — the ~two-dozen
-:class:`~tsdynamics.analysis._result.AnalysisResult` ``to_plot_spec`` methods —
+:class:`~tsdynamics.analysis._result.AnalysisResult` ``__plot_spec__`` methods —
 used to each hand-assemble the same ``Layer(...)`` / ``Axis(...)`` /
 ``PlotSpec(...)`` boilerplate inline.  This module is the analysis counterpart of
 the producers: a handful of small, engine-free, backend-free helpers that
@@ -355,7 +355,7 @@ def spec(
     The single "resolve the semantic kind, build the labelled
     :class:`~tsdynamics.viz.spec.Axis` pair (or triple), attach the optional
     legend / colorbar / annotations / clim and copy meta" wrapper every bespoke
-    ``to_plot_spec`` opens and closes with.  ``kind`` is the caller's override (or
+    ``__plot_spec__`` opens and closes with.  ``kind`` is the caller's override (or
     ``None``) and ``default`` the result's natural kind — resolved through the
     closed :class:`~tsdynamics.viz.spec.PlotKind` vocabulary exactly as before.
 

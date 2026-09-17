@@ -244,7 +244,7 @@ def test_no_visualization_degraded_warning_for_composite():
 def test_empty_composite_is_rejected_at_construction():
     # A 0-panel COMPOSITE used to render as a blank figure on every backend — a
     # silent no-op that looked like a successful plot (it is what
-    # ``to_plot_spec(kind="composite")`` produced, discarding the trajectory).
+    # ``__plot_spec__(kind="composite")`` produced, discarding the trajectory).
     # The COMPOSITE <=> panels invariant now rejects it at construction.
     with pytest.raises(InvalidParameterError):
         PlotSpec(kind=PlotKind.COMPOSITE, panels=[], layout=Layout(mode="stack"))

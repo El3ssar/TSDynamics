@@ -194,13 +194,13 @@ ANY_AXIS = ""
 _ORDINAL_LABEL = re.compile(r"\$?([A-Za-z])_\{?(\d+)\}?\$?")
 
 #: A **bare** ``<letter><digits>`` label (``y0`` from ``Trajectory``, ``x1`` /
-#: ``x2`` hard-coded by ``AttractorSet.to_plot_spec``).  These name a *position*
+#: ``x2`` hard-coded by ``AttractorSet.__plot_spec__``).  These name a *position*
 #: with no agreed base — ``y0`` is 0-based, ``x1`` is 1-based — so they are
 #: read as "unnamed" rather than guessed at.  A **declared** variable arrives
 #: dollar-wrapped (``$x1$``) or as a non-numeric bare name (``x``), so it is not
 #: caught here.  Documented limitation: a system whose variables are themselves
 #: digit-suffixed (``ArnoldWeb``'s ``x1`` / ``x2``) plotted through
-#: ``Trajectory.to_plot_spec`` reads as unnamed, so the axis check cannot
+#: ``Trajectory.__plot_spec__`` reads as unnamed, so the axis check cannot
 #: separate its ``(x1, x2)`` plane from its ``(p1, p2)`` plane.  The fix is for
 #: the producers to name their coordinates (P1's typed geometry channels), not
 #: for this regex to guess harder.

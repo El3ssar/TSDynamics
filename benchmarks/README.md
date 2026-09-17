@@ -12,12 +12,21 @@ It measures **speed** (every task) and, where a task has a ground truth,
 library that does not provide a capability — or that does not install in this
 environment — leaves that cell **blank**, exactly as requested.
 
-> This folder also holds two *internal* performance-regression harnesses, which
-> answer a different question from the cross-library comparison documented here:
+> This folder also holds three *internal* performance harnesses, which answer a
+> different question from the cross-library comparison documented here:
 >
 > - `analysis_bench.py` — the **analysis layer**, driven by
 >   `.github/workflows/perf-analysis.yml`; it times the analyses against `main` on
 >   the same runner and is advisory.
+> - `animation_bench.py` — the **movie writer** (`plot.save("x.mp4")`), the third
+>   hot path a user waits on. It A/Bs the matplotlib frame compositor against the
+>   un-blitted path in one process and prints frames per second:
+>   `python benchmarks/animation_bench.py --frames 360`. Each arm gets a discarded
+>   warm-up and then `--repeat` interleaved runs, and the **minimum** is reported —
+>   without that, the arm that runs first absorbs the process's one-time costs
+>   (font cache, first Agg render, first `ffmpeg` spawn) and the table over-reports
+>   by 2-3x. Measurement only — the byte-identity of the two paths is a test
+>   (`tests/test_viz_anim_fast.py`), not a benchmark.
 > - `check_engine_bench.py` + `engine_bench_baseline.json` — the **Rust engine's**
 >   hot path, driven by `.github/workflows/perf-engine.yml`. It reads the criterion
 >   benches in `crates/*/benches/**` (`cd crates && cargo bench --workspace`) and

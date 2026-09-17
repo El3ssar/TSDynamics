@@ -202,7 +202,7 @@ class CollectionResult(AnalysisResult):
             data.update({k: _jsonify(v) for k, v in self._derived().items()})
         return data
 
-    def to_plot_spec(self, kind: str | None = None) -> Any:
+    def __plot_spec__(self, kind: str | None = None) -> Any:
         """Describe the collection as a :class:`PlotSpec` (safe generic scatter).
 
         Each item contributes one representative point (its ``x`` attribute, the
@@ -229,7 +229,7 @@ class CollectionResult(AnalysisResult):
         if not points:
             raise VisualizationNotInstalled(
                 f"{type(self).__name__} has no item with a numeric point to scatter, so the "
-                "generic CollectionResult to_plot_spec() has nothing to draw; export it with "
+                "generic CollectionResult __plot_spec__() has nothing to draw; export it with "
                 ".to_dict() instead."
             )
         dim = min(p.size for p in points)

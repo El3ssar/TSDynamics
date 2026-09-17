@@ -219,14 +219,14 @@ class AttractorSet(AnalysisResult):
         }
         return min(dists, key=dists.__getitem__)
 
-    def to_plot_spec(self, kind: str | None = None) -> Any:
+    def __plot_spec__(self, kind: str | None = None) -> Any:
         r"""Describe the located attractors as a backend-agnostic :class:`PlotSpec`.
 
         Builds a ``PHASE_PORTRAIT_2D`` of every attractor's point cloud as one
         ``SCATTER`` layer (the first two state coordinates).  Each point carries
         a ``"cat"`` channel — the attractor id's swatch index in the shared
         categorical palette (``tab20``) — so the same id is drawn the same colour
-        here and on the basin image (:meth:`BasinsResult.to_plot_spec`).  The
+        here and on the basin image (:meth:`BasinsResult.__plot_spec__`).  The
         palette name and the fixed diverged colour are recorded in ``meta`` so a
         renderer can reproduce the mapping; the colorbar is marked
         :attr:`~tsdynamics.viz.spec.Colorbar.discrete`.

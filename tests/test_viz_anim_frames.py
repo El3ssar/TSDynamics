@@ -38,6 +38,7 @@ import dataclasses
 
 import numpy as np
 import pytest
+from matplotlib.animation import FuncAnimation
 
 import tsdynamics as ts
 from tsdynamics.errors import InvalidParameterError
@@ -84,7 +85,7 @@ def test_one_frame_per_panel_not_one_tiled_figure():
     movie = _movie(_sweep(5))
     anim = movie.render(backend="matplotlib")
 
-    assert type(anim).__name__ == "FuncAnimation"
+    assert isinstance(anim, FuncAnimation)  # a movie, whatever subclass renders it
     assert anim._save_count == 5  # one frame per panel
     assert len(anim._fig.axes) == 1  # one axes, re-drawn — NOT five tiled axes
     assert isinstance(anim.to_jshtml(), str)  # every frame renders (and consumes the anim)
@@ -249,7 +250,7 @@ def test_plotly_declines_and_says_so():
     movie = _movie(_sweep(3))
     with pytest.warns(VisualizationDegraded, match="composite"):
         result = movie.render(backend="plotly")
-    assert type(result).__name__ == "FuncAnimation"
+    assert isinstance(result, FuncAnimation)
     result.to_jshtml()  # consume so the animation is not GC'd un-rendered
 
 

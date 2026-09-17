@@ -615,7 +615,7 @@ def _resolve_delay(
     """Resolve ``delay`` / ``delay_time`` to a validated sample lag.
 
     The single place the two spellings are turned into samples, shared by the
-    transform and by :meth:`tsdynamics.data.Trajectory.to_plot_spec`, so the two
+    transform and by :meth:`tsdynamics.data.Trajectory.__plot_spec__`, so the two
     front doors cannot disagree about what a delay means.
     """
     from tsdynamics.data import Trajectory
@@ -624,7 +624,7 @@ def _resolve_delay(
     if tau is not None:
         raise InvalidParameterError(
             "tau= is not a delay spelling in this library: it used to mean SAMPLES on "
-            "ts.plot(...) and TIME UNITS on Trajectory.to_plot_spec(...). Say which you "
+            "ts.plot(...) and TIME UNITS on traj.plot(kind='delay', ...). Say which you "
             f"mean:\n{_DELAY_HINT}"
         )
     if (delay is None) == (delay_time is None):

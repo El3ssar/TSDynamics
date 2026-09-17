@@ -81,7 +81,7 @@ class ContinuationResult(AnalysisResult):
         """Tipping events along this continuation (see :func:`tipping_points`)."""
         return tipping_points(self, threshold=threshold)
 
-    def to_plot_spec(self, kind: str | None = None) -> Any:
+    def __plot_spec__(self, kind: str | None = None) -> Any:
         r"""Describe the continuation as a backend-agnostic :class:`PlotSpec`.
 
         Builds a ``CONTINUATION`` spec — the basin fractions **stacked** against

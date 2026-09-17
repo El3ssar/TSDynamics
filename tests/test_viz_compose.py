@@ -94,8 +94,8 @@ def test_overlay_of_incompatible_frames_raises():
 
 def test_overlay_mixing_2d_and_3d_portrait_raises():
     """Same space family, different dimension — ``state2`` is not ``state3``."""
-    two_d = _lorenz().to_plot_spec(components=["x", "y"])  # PHASE_PORTRAIT_2D
-    three_d = _lorenz().to_plot_spec()  # PHASE_PORTRAIT_3D
+    two_d = _lorenz().__plot_spec__(components=["x", "y"])  # PHASE_PORTRAIT_2D
+    three_d = _lorenz().__plot_spec__()  # PHASE_PORTRAIT_3D
     with pytest.raises(InvalidParameterError, match="different spaces"):
         viz.plot(two_d, three_d)
 
@@ -164,7 +164,7 @@ def test_unknown_layout_raises():
 
 
 def test_build_kwargs_with_prebuilt_spec_raises():
-    spec = _lorenz().to_plot_spec()
+    spec = _lorenz().__plot_spec__()
     with pytest.raises(InvalidParameterError):
         viz.plot(spec, components="x")
 
@@ -714,18 +714,18 @@ def test_plot_and_overlay_on_agree_on_what_is_legal():
     traj = lorenz.run(final_time=10.0, dt=0.02, ic=[1.0, 1.0, 1.0])
     fps = ts.analysis.fixed_points(lorenz, seed=0)
 
-    same_plane = traj.to_plot_spec(components=("x", "z"))
+    same_plane = traj.__plot_spec__(components=("x", "z"))
     n_host = len(same_plane.layers)
     merged = fps.overlay_on(same_plane, components=("x", "z"))
     assert merged is same_plane  # host-first, mutate-and-return
     assert len(merged.layers) > n_host
     assert viz.plot(traj, fps, components=("x", "z")) is not None
 
-    wrong_plane = traj.to_plot_spec(components=("x", "y"))
+    wrong_plane = traj.__plot_spec__(components=("x", "y"))
     with pytest.raises(InvalidParameterError, match="axes mismatch"):
         fps.overlay_on(wrong_plane, components=("x", "z"))
     with pytest.raises(InvalidParameterError, match="axes mismatch"):
-        viz.plot(wrong_plane, fps.to_plot_spec(components=("x", "z")))
+        viz.plot(wrong_plane, fps.__plot_spec__(components=("x", "z")))
 
 
 def test_the_generic_overlay_on_forwards_build_keywords():
@@ -744,7 +744,7 @@ def test_the_generic_overlay_on_forwards_build_keywords():
     lorenz = ts.systems.Lorenz()
     traj = lorenz.run(final_time=10.0, dt=0.02, ic=[1.0, 1.0, 1.0])
     fps = ts.analysis.fixed_points(lorenz, seed=0)
-    host = traj.to_plot_spec(components=("x", "z"))
+    host = traj.__plot_spec__(components=("x", "z"))
     n_host = len(host.layers)
     merged = fps.overlay_on(host, components=("x", "z"))
     zs = [float(v) for layer in merged.layers[n_host:] for v in layer.data["y"]]
@@ -762,7 +762,7 @@ def test_a_recurrence_scatter_can_no_longer_be_spliced_onto_a_time_series():
     traj = ts.systems.Lorenz().run(final_time=10.0, dt=0.02, ic=[1.0, 1.0, 1.0])
     rm = ts.analysis.recurrence_matrix(np.asarray(traj["x"])[:150], threshold=1.0)
     with pytest.raises(InvalidParameterError, match="different spaces"):
-        rm.overlay_on(traj.to_plot_spec(components="x"))
+        rm.overlay_on(traj.__plot_spec__(components="x"))
 
 
 def test_a_merged_overlay_never_aliases_its_inputs():

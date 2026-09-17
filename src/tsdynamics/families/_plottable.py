@@ -7,7 +7,7 @@ through the visualization seam, exactly as the analysis result types already do.
 
 The default :meth:`SystemPlottable.__plot_spec__` integrates a short default
 trajectory (each family's own ``run`` with its defaults) and delegates
-to :meth:`tsdynamics.data.Trajectory.to_plot_spec`, which already dispatches on
+to :meth:`tsdynamics.data.Trajectory.__plot_spec__`, which already dispatches on
 ``family`` (a map → scatter orbit, a flow → time series / phase portrait).
 Richer system draw-views (vector fields, cobwebs, component triples) are layered
 on by the gap-fill stream; this is the safe default.
@@ -35,7 +35,7 @@ class SystemPlottable:
 
     Mixed into :class:`~tsdynamics.families.base.SystemBase`, so every system
     family inherits it.  A system describes itself by integrating a default
-    trajectory and delegating to :meth:`tsdynamics.data.Trajectory.to_plot_spec`;
+    trajectory and delegating to :meth:`tsdynamics.data.Trajectory.__plot_spec__`;
     the rendering sugar mirrors :class:`tsdynamics.viz.spec.Plottable` but is
     spelled out here with lazy imports so importing the family bases never drags
     in the visualization package.
@@ -51,10 +51,10 @@ class SystemPlottable:
 
         Integrates the system with its family's ``run`` (defaults, or
         the integration keywords you pass — ``final_time`` / ``dt`` / ``steps`` /
-        ``ic`` / …) and delegates to the trajectory's own ``to_plot_spec``.  The
+        ``ic`` / …) and delegates to the trajectory's own ``__plot_spec__``.  The
         plot-shaping keywords (``components`` and the per-kind options ``delay`` /
         ``delay_time`` / ``color_by`` / ``transpose``) are split out and forwarded to the
-        trajectory's ``to_plot_spec``; every other keyword goes to
+        trajectory's ``__plot_spec__``; every other keyword goes to
         ``run``.  This split keys off the **closed** set of plot
         keywords (``tsdynamics.data.trajectory._PLOT_SPEC_KEYS``), so a system's
         own — possibly heterogeneous — ``trajectory`` signature stays open-ended.
@@ -63,15 +63,15 @@ class SystemPlottable:
         ----------
         kind : str, optional
             Override / select the semantic kind, forwarded to the trajectory's
-            ``to_plot_spec`` (a ``PlotKind`` value or the ``"delay"`` recipe).
+            ``__plot_spec__`` (a ``PlotKind`` value or the ``"delay"`` recipe).
         **kwargs
             Plot-shaping keywords (``components`` / ``primitive`` / ``delay`` /
             ``delay_time`` / ``color_by`` / ``transpose``) forwarded to the trajectory's
-            ``to_plot_spec``; all other keywords forwarded to ``run``
+            ``__plot_spec__``; all other keywords forwarded to ``run``
             (``final_time``, ``dt``, ``steps``, ``ic``, …).  ``primitive=``
             selects **how** the view is drawn (``"points"`` / ``"density"`` / …),
             validated against the transform's declared row — see
-            :meth:`tsdynamics.data.Trajectory.to_plot_spec` and
+            :meth:`tsdynamics.data.Trajectory.__plot_spec__` and
             ``ts.viz.compatibility()``.
 
         Returns
@@ -82,8 +82,7 @@ class SystemPlottable:
 
         plot_kw = {k: kwargs.pop(k) for k in list(kwargs) if k in _PLOT_SPEC_KEYS}
         traj = self.run(**kwargs)
-        builder = getattr(traj, "__plot_spec__", None) or traj.to_plot_spec
-        return builder(kind=kind, **plot_kw)
+        return traj.__plot_spec__(kind=kind, **plot_kw)
 
     def _plot_impl(self, *transforms: Any, **kwargs: Any) -> Plot:
         """Build this system's :class:`PlotSpec`, applying inline tweaks first.
@@ -157,7 +156,7 @@ class SystemPlottable:
         style_kw = _take(style_names())
         theme = kwargs.pop("theme", None)
         tweak_kw = _take(_INLINE_TWEAKS.keys() | _COLORIZE_TWEAKS)
-        # Whatever is left is an integration keyword; ``to_plot_spec`` hands it to
+        # Whatever is left is an integration keyword; ``__plot_spec__`` hands it to
         # the family's ``run``, which is the one place that knows the valid
         # names and rejects a typo.
         spec = self.__plot_spec__(**spec_kw, **kwargs)

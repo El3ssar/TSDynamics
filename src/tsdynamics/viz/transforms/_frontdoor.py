@@ -207,7 +207,7 @@ def _apply_animation(spec: Any, animate: Any, fps: float | None = None) -> Any:
     Accepts the same three spellings the single-panel front door does — ``True``
     for the defaults, a dict of knobs, or a ready-made ``Animation`` — so
     ``ts.plot(traj, "phase_portrait", animate=True)`` and
-    ``traj.to_plot_spec(animate=True)`` mean the same thing.
+    ``traj.plot(animate=True)`` mean the same thing.
     """
     from ..spec import Animation
 

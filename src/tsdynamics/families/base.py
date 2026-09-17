@@ -22,7 +22,7 @@ from tsdynamics.data.trajectory import Trajectory
 from tsdynamics.errors import InvalidInputError, remedy
 
 # The Plottable mixin (stream VIZ-SYSTEM-PLOT) gives every system a ``.plot()`` /
-# ``to_plot_spec()``.  It imports tsdynamics.viz only lazily (inside its methods),
+# ``__plot_spec__()``.  It imports tsdynamics.viz only lazily (inside its methods),
 # so importing the family bases here keeps ``import tsdynamics`` visualization-free.
 from ._derive import DeriveMixin
 from ._info import SystemInfo, Variables, family_of
@@ -339,9 +339,16 @@ _MOVED_IN_V6: dict[str, tuple[str, tuple[str, ...]]] = {
         "a system no longer accumulates metadata — a run records its own",
         ("traj = system.run(final_time=100.0)", "traj.meta"),
     ),
+    # Kept in step with ``utils.plot_namespace.plot_seam_error``, which says the
+    # same sentence for a Trajectory and for all 32 analysis results: one retired
+    # name, one answer, whatever you were holding when you typed it.
     "to_plot_spec": (
-        "the plotting seam is __plot_spec__; the verb you type is plot",
-        ("system.plot()", 'ts.plot(system, "phase_portrait")'),
+        "building a plot without drawing it is what ts.plot(system) already does",
+        (
+            "ts.plot(system)     # the Plot object — nothing is rendered",
+            "system.plot()       # the same thing, styled at the door",
+            "(the seam itself is the dunder system.__plot_spec__, not a verb you type)",
+        ),
     ),
     "default_ic": ("it is a fact about the class, printed by info", ("system.info.default_ic",)),
     "reference": ("it is a fact about the class, printed by info", ("system.info.reference",)),

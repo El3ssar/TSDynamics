@@ -285,9 +285,11 @@ def test_the_wrapped_system_surface_is_a_subset_of_the_core() -> None:
 
 @pytest.mark.xfail(
     strict=True,
-    reason="C5 · TRAJECTORY — §8.1 item 8 (§2.3): traj.<TAB> is still the pre-v6 20 names; "
-    "`sel`, `dt` derived from `t`, and the removal of component/unpack/minmax/standardize/"
-    "neighbors/n_steps/to_plot_spec/dims/lyap/recurrence/set_distance are C5's to land.",
+    reason="C5 · TRAJECTORY — §8.1 item 8 (§2.3): traj.<TAB> is 19 names, not 12. "
+    "`to_plot_spec` and the four analysis accessors HAVE landed; the rest "
+    "(component/unpack/minmax/standardize/neighbors/n_steps/set_distance) STAY by the "
+    "owner's ruling — the criterion is learnability, not smallness, and a useful name "
+    "that costs a newcomer nothing is not the problem a second spelling is.",
 )
 def test_the_trajectory_tab_surface_is_twelve_names() -> None:
     """§2.3 — data (4), properties (4), methods (4), and nothing else.
@@ -319,7 +321,6 @@ def test_the_trajectory_surface_never_grows_past_the_contract() -> None:
         "recurrence",
         "set_distance",
         "standardize",
-        "to_plot_spec",
         "unpack",
     }
     unexpected = set(public(traj)) - set(TRAJECTORY_SURFACE) - known_pre_v6
@@ -538,6 +539,89 @@ def test_ts_plot_is_the_one_plot_function() -> None:
     """
     assert ts.plot is ts.viz.plot
     assert callable(ts.plot)
+
+
+#: Every kind of thing that can be a plot *subject*, with the noun its refusal
+#: message uses.  ``ts.plot`` recognises a subject by ONE predicate —
+#: ``__plot_spec__`` — so this list is also the list of things that must carry it.
+PLOT_SUBJECTS: dict[str, Callable[[], Any]] = {
+    "system": lambda: ts.systems.Lorenz(),
+    "trajectory": lambda: _traj(),
+    "result": lambda: ts.analysis.lyapunov_spectrum(ts.systems.Henon(), steps=2000),
+    "array-result": lambda: ts.analysis.fixed_points(ts.systems.Henon()),
+    "derived": lambda: ts.systems.Rossler().poincare("y", 0.0),
+}
+
+
+@pytest.mark.parametrize("subject", sorted(PLOT_SUBJECTS))
+def test_building_a_plot_has_exactly_one_public_door(subject: str) -> None:
+    """§6.2 — ``to_plot_spec`` is retired; ``ts.plot(x)`` already returns the ``Plot``.
+
+    The owner's ruling: *"it has to be easy to make a plot, not several different
+    ways to do so."*  Three spellings built a plot without drawing it —
+    ``ts.plot(x)``, ``x.plot()`` and ``x.to_plot_spec()`` — and the first two
+    cover every case, so the third was a choice a newcomer had to make and could
+    not make wrongly enough to learn anything.  The seam survives as the dunder
+    ``__plot_spec__``, which is what ``ts.plot`` asks every subject for.
+    """
+    thing = PLOT_SUBJECTS[subject]()
+    assert hasattr(thing, "__plot_spec__"), f"{subject} lost the plot seam"
+    assert not hasattr(thing, "to_plot_spec"), f"{subject} still answers to_plot_spec"
+    assert isinstance(ts.plot(thing), ts.viz.Plot)
+    assert isinstance(thing.plot(), ts.viz.Plot)
+
+
+@pytest.mark.parametrize("subject", sorted(PLOT_SUBJECTS))
+def test_the_retired_plot_name_hands_back_a_spelling_that_resolves(subject: str) -> None:
+    """§9.4 — a message offering ``ts.<something>`` must NAME SOMETHING THAT RUNS.
+
+    Every line the refusal prints is executed here, on the very object that was
+    held when the guess was made.
+    """
+    thing = PLOT_SUBJECTS[subject]()
+    with pytest.raises(AttributeError) as excinfo:
+        _ = thing.to_plot_spec
+    message = str(excinfo.value)
+    assert "ts.plot(" in message and ".plot()" in message
+    assert "__plot_spec__" in message
+    # The two offered lines, run.
+    assert isinstance(ts.plot(thing), ts.viz.Plot)
+    assert isinstance(thing.plot(), ts.viz.Plot)
+
+
+def test_building_a_plot_renders_nothing() -> None:
+    """§6.2 — the capability ``to_plot_spec`` existed for did not move: it is ``ts.plot``.
+
+    ``ts.plot(x)`` describes the picture and stops; drawing happens at ``.fig`` /
+    ``.render()`` / ``.save()`` / ``.show()``.  Pinned by counting real
+    ``matplotlib.figure.Figure`` constructions, because a plotting front door
+    that quietly rasterises is the difference between a notebook that scrolls and
+    one that hangs.
+    """
+    pytest.importorskip("matplotlib")
+    figure_module = importlib.import_module("matplotlib.figure")
+    pyplot = importlib.import_module("matplotlib.pyplot")
+
+    built: list[int] = []
+    original = figure_module.Figure.__init__
+
+    def counting_init(self: Any, *args: Any, **kwargs: Any) -> Any:
+        built.append(1)
+        return original(self, *args, **kwargs)
+
+    traj = _traj()
+    figure_module.Figure.__init__ = counting_init  # type: ignore[method-assign]
+    try:
+        spec = ts.plot(traj)
+        spec = spec.style(lw=2).relabel(title="held")
+        assert traj.plot(color="crimson") is not None
+        assert ts.viz.grid(spec, ts.plot(traj), cols=2) is not None
+        assert not built, f"{len(built)} figure(s) drawn before anyone asked"
+        assert spec.fig is not None
+        assert built, "touching .fig must actually draw"
+    finally:
+        figure_module.Figure.__init__ = original  # type: ignore[method-assign]
+        pyplot.close("all")
 
 
 #: Submodules that a same-named object in their parent's namespace shadows, so
@@ -1252,11 +1336,10 @@ def test_every_public_method_is_documented() -> None:
 #: plotting seam did not, so ``help(lor.plot)`` promises a type a user cannot
 #: import.  Keyed by the DEFINING function, so the row does not multiply across
 #: the four family subjects that inherit it.  The table may only shrink.
-STALE_RETURN_ANNOTATIONS: dict[str, str] = {
-    "tsdynamics.data.trajectory.Trajectory.to_plot_spec": (
-        "C5 — §2.3 removes to_plot_spec from the Trajectory surface entirely"
-    ),
-}
+#:
+#: **It is empty.**  Its one row named ``Trajectory.to_plot_spec``, which §2.3
+#: removes outright; retiring the name took the annotation with it.
+STALE_RETURN_ANNOTATIONS: dict[str, str] = {}
 
 
 def test_every_return_annotation_names_a_type_that_resolves() -> None:

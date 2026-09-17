@@ -1,10 +1,10 @@
 """Viz specs for the recurrence result types (stream GAPFILL-F).
 
 These tests pin the *sparse, non-densifying* contract of the recurrence
-``to_plot_spec`` builders (the surrogate half left with the surrogate estimators
+``__plot_spec__`` builders (the surrogate half left with the surrogate estimators
 when the library narrowed to phase-space methods):
 
-- ``RecurrenceMatrix.to_plot_spec`` emits the recurrence plot as a **sparse**
+- ``RecurrenceMatrix.__plot_spec__`` emits the recurrence plot as a **sparse**
   ``(i, j)`` ``SCATTER`` read straight off the matrix COO — it must **not**
   densify (``toarray``) the matrix.  The OOM regression guard builds a sparse
   matrix at ``N = 50_000`` with only a few thousand stored recurrences and
@@ -82,7 +82,7 @@ def test_recurrence_matrix_spec_is_sparse_scatter() -> None:
     """The recurrence plot is a sparse ``(i, j)`` SCATTER, not a dense IMAGE."""
     n, pairs = 200, 50
     rm = RecurrenceMatrix(matrix=_sparse_recurrence(n, pairs), epsilon=0.5)
-    spec = rm.to_plot_spec()
+    spec = rm.__plot_spec__()
 
     assert isinstance(spec, PlotSpec)
     assert spec.kind == PlotKind.RECURRENCE_PLOT
@@ -107,17 +107,17 @@ def test_recurrence_matrix_spec_does_not_call_toarray(monkeypatch) -> None:
     rm = RecurrenceMatrix(matrix=_sparse_recurrence(300, 40), epsilon=0.5)
 
     def _boom(*_a: object, **_k: object) -> object:
-        raise AssertionError("to_plot_spec densified the recurrence matrix (toarray called)")
+        raise AssertionError("__plot_spec__ densified the recurrence matrix (toarray called)")
 
     # Forbid densification on both the wrapper and the underlying sparse matrix.
     monkeypatch.setattr(RecurrenceMatrix, "toarray", _boom)
     monkeypatch.setattr(type(rm.matrix), "toarray", _boom)
     monkeypatch.setattr(type(rm.matrix), "todense", _boom, raising=False)
 
-    spec = rm.to_plot_spec()
+    spec = rm.__plot_spec__()
     assert spec.layers[0].kind == PlotKind.SCATTER
     # to_dict must also stay sparse (no densification on serialization).
-    rm.to_plot_spec().to_dict()
+    rm.__plot_spec__().to_dict()
 
 
 def test_recurrence_matrix_oom_regression_large_n() -> None:
@@ -132,7 +132,7 @@ def test_recurrence_matrix_oom_regression_large_n() -> None:
     nnz = rm.matrix.nnz
     assert nnz <= 2 * pairs  # symmetrised pair count, no densification
 
-    spec = rm.to_plot_spec()
+    spec = rm.__plot_spec__()
     x = spec.layers[0].data["x"]
     y = spec.layers[0].data["y"]
 
@@ -155,7 +155,7 @@ def test_recurrence_matrix_oom_regression_large_n() -> None:
 def test_recurrence_matrix_spec_round_trips() -> None:
     """The sparse recurrence spec round-trips through ``to_dict`` / ``from_dict``."""
     rm = RecurrenceMatrix(matrix=_sparse_recurrence(120, 30), epsilon=0.5)
-    spec = rm.to_plot_spec()
+    spec = rm.__plot_spec__()
     rebuilt = PlotSpec.from_dict(spec.to_dict())
     assert rebuilt.kind == spec.kind
     assert len(rebuilt.layers) == len(spec.layers)
@@ -166,7 +166,7 @@ def test_recurrence_matrix_spec_round_trips() -> None:
 def test_recurrence_matrix_empty_spec() -> None:
     """An all-zero (no recurrence) matrix yields an empty but valid scatter spec."""
     rm = RecurrenceMatrix(matrix=sparse.csr_matrix((50, 50), dtype=bool), epsilon=0.5)
-    spec = rm.to_plot_spec()
+    spec = rm.__plot_spec__()
     assert spec.layers[0].kind == PlotKind.SCATTER
     assert spec.layers[0].data["x"].size == 0
     PlotSpec.from_dict(spec.to_dict())  # still round-trips
@@ -180,7 +180,7 @@ def test_recurrence_matrix_empty_spec() -> None:
 def test_rqa_result_spec_is_categorical_bar() -> None:
     """RQA's spec is a CATEGORICAL_BAR of RR / DET / LAM / ENTR (no histogram walk)."""
     result = _rqa_result()
-    spec = result.to_plot_spec()
+    spec = result.__plot_spec__()
     assert spec.kind == PlotKind.CATEGORICAL_BAR
     assert len(spec.layers) == 1
     layer = spec.layers[0]
@@ -210,7 +210,7 @@ def test_windowed_rqa_spec_is_measure_vs_window_curve() -> None:
         window=6,
         step=5,
     )
-    spec = wr.to_plot_spec()
+    spec = wr.__plot_spec__()
     assert spec.kind == PlotKind.DIAGNOSTIC_CURVE
     assert len(spec.layers) == 1
     layer = spec.layers[0]

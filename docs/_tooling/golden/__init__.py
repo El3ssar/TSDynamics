@@ -20,7 +20,7 @@ This corpus is the **renderer oracle** for the downstream DOCS-ENG streams:
 - **DOCS-ENG-ENGINEFIG** re-renders the ODE figures through the shipped engine
   (instead of the SciPy ``_rhs_numeric`` path used today) and must re-baseline
   this corpus, proving the engine render is *structurally* the same picture.
-- **DOCS-ENG-PLOTSEAM** introduces a ``to_plot_spec()``-driven figure generator
+- **DOCS-ENG-PLOTSEAM** introduces a ``__plot_spec__()``-driven figure generator
   whose output is checked against this same golden set.
 
 Public surface

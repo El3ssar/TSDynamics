@@ -3,7 +3,7 @@ Build-time **animated spatial-field movies** for the per-system documentation pa
 
 Where :mod:`figures` renders a *static* PNG of a spatial-field system's final field,
 this module emits the **evolving field movie** the library already supports — the
-same ``system.to_plot_spec(kind="field", animate=True)`` →
+same ``system.__plot_spec__(kind="field", animate=True)`` →
 :data:`~tsdynamics.viz.spec.PlotKind.SPATIAL_FIELD` path a user reaches — rendered
 to a small H.264 ``.mp4`` (with a poster PNG) and embedded like the interactive
 three.js attractor viewers: a lazy-loading, autoplaying, looping ``<video>`` on the
@@ -262,7 +262,7 @@ def _ffmpeg_available() -> bool:
 def _build_spec(entry, recipe: dict):
     """Integrate ``entry`` and build the animated ``SPATIAL_FIELD`` spec (or raise).
 
-    Uses the library's own ``system.to_plot_spec(kind="field", animate=True)`` front
+    Uses the library's own ``system.__plot_spec__(kind="field", animate=True)`` front
     door — the exact path a user reaches — with the recipe's grid / params / horizon,
     then applies the vivid colormap + smooth interpolation + no-chrome styling.
     """
@@ -299,7 +299,7 @@ def _build_spec(entry, recipe: dict):
         burn = sys_obj.run(final_time=warmup, dt=warmup)
         spec_kw["ic"] = np.asarray(burn.y[-1], dtype=float)
 
-    spec = sys_obj.to_plot_spec(**spec_kw)
+    spec = sys_obj.__plot_spec__(**spec_kw)
     # Vivid, smooth, chrome-free hero: perceptually-uniform / diverging cmap,
     # image interpolation, and no title / axes / frame so the field fills the panel;
     # the dark brand background matches the three.js viewer's canvas (and the

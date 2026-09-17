@@ -168,7 +168,7 @@ def test_the_drawn_nullclines_pass_through_the_drawn_equilibria():
     """
     system = LotkaVolterra()
     nulls = build_spec(system, "nullclines", grid=201, **_WINDOW)
-    points = fixed_points(system, seed=0).to_plot_spec()
+    points = fixed_points(system, seed=0).__plot_spec__()
     marks = np.column_stack([points.layers[0].data["x"], points.layers[0].data["y"]])
     inside = [
         p
@@ -477,8 +477,8 @@ def test_the_strogatz_composite_is_one_figure_in_role_order():
     spec = viz.plot(
         build_spec(system, "direction_field", grid=13, **window),
         build_spec(system, "nullclines", grid=201, **window),
-        traj.to_plot_spec(components=["x", "y"]),
-        fixed_points(system, seed=0).to_plot_spec(annotate=False),
+        traj.__plot_spec__(components=["x", "y"]),
+        fixed_points(system, seed=0).__plot_spec__(annotate=False),
     )
     assert spec.frame is not None
     assert spec.frame.space == "state2" and spec.frame.axes == ("x", "y")
@@ -489,8 +489,8 @@ def test_the_strogatz_composite_is_one_figure_in_role_order():
 
     # order-free: the same call with the arguments shuffled is the same picture
     shuffled = viz.plot(
-        fixed_points(system, seed=0).to_plot_spec(annotate=False),
-        traj.to_plot_spec(components=["x", "y"]),
+        fixed_points(system, seed=0).__plot_spec__(annotate=False),
+        traj.__plot_spec__(components=["x", "y"]),
         build_spec(system, "nullclines", grid=201, **window),
         build_spec(system, "direction_field", grid=13, **window),
     )

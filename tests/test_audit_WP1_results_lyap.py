@@ -5,7 +5,7 @@ Covers the audit findings:
 - ``A12:A12-1`` — :class:`ScalingResult` (and its ``DimensionResult`` /
   ``LyapunovFromData`` / ``ExpansionEntropyResult`` subclasses) must be a drop-in
   for its ``float`` value: comparisons and arithmetic, not only ``float()``.
-- ``A12:A12-2`` — the generic scalar ``to_plot_spec`` fallback must label each
+- ``A12:A12-2`` — the generic scalar ``__plot_spec__`` fallback must label each
   marker with its field name (``xcategories``), not anonymous integer ticks.
 - ``A1:A1-1`` — ``max_lyapunov`` must thread ``seed`` into the map engine-kernel
   off-basin random-IC retry so a retried result is reproducible.
@@ -98,7 +98,7 @@ def test_scalar_fallback_labels_fields() -> None:
         Sb: float = 1.2
         Sbb: float = 0.8
 
-    spec = _TwoScalarResult().to_plot_spec()
+    spec = _TwoScalarResult().__plot_spec__()
     assert spec.x.categories == ["Sb", "Sbb"]
 
 

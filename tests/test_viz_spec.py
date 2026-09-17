@@ -540,7 +540,7 @@ def test_save_json_writes_the_plotspec_ir_envelope(tmp_path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 6 — F3: to_plot_spec(kind=) is validated against the ROUTING table
+# 6 — F3: __plot_spec__(kind=) is validated against the ROUTING table
 # ---------------------------------------------------------------------------
 
 
@@ -573,16 +573,16 @@ _UNBUILDABLE = sorted(
 
 
 @pytest.mark.parametrize("kind", _BUILDABLE)
-def test_to_plot_spec_accepts_every_buildable_kind(kind: str) -> None:
+def test_plot_spec_accepts_every_buildable_kind(kind: str) -> None:
     """Each route the front door owns really builds a spec (not just passes a check)."""
     extra = {"delay_time": 0.1} if kind.startswith("delay") else {}
-    spec = _trajectory().to_plot_spec(kind=kind, **extra)
+    spec = _trajectory().__plot_spec__(kind=kind, **extra)
     assert isinstance(spec, PlotSpec)
     assert spec.layers, f"kind={kind!r} produced a spec with no layers"
 
 
 @pytest.mark.parametrize("kind", _UNBUILDABLE)
-def test_to_plot_spec_rejects_a_kind_it_cannot_build(kind: str) -> None:
+def test_plot_spec_rejects_a_kind_it_cannot_build(kind: str) -> None:
     """A kind this front door cannot build raises, naming the accepted set.
 
     Failing-first evidence: before v6 **all** of these were accepted and returned
@@ -592,20 +592,20 @@ def test_to_plot_spec_rejects_a_kind_it_cannot_build(kind: str) -> None:
     discarding the trajectory and saving a blank PNG.
     """
     with pytest.raises(InvalidParameterError) as exc:
-        _trajectory().to_plot_spec(kind=kind)
+        _trajectory().__plot_spec__(kind=kind)
     assert "accepted kinds are" in str(exc.value)
 
 
 @pytest.mark.parametrize("mark", sorted(k.value for k in PlotKind.layer_marks()))
-def test_to_plot_spec_rejects_a_layer_mark_as_a_kind(mark: str) -> None:
+def test_plot_spec_rejects_a_layer_mark_as_a_kind(mark: str) -> None:
     """A layer *mark* is not a semantic kind — ``kind="line"`` must not be accepted."""
     with pytest.raises(InvalidParameterError):
-        _trajectory().to_plot_spec(kind=mark)
+        _trajectory().__plot_spec__(kind=mark)
 
 
 def test_explicit_poincare_section_builds_a_scatter_not_a_line_portrait() -> None:
     """``kind="poincare_section"`` builds a crossing point cloud, not a line portrait."""
-    spec = _trajectory().to_plot_spec(kind="poincare_section")
+    spec = _trajectory().__plot_spec__(kind="poincare_section")
     assert spec.kind is PlotKind.POINCARE_SECTION
     assert [lyr.kind for lyr in spec.layers] == [PlotKind.SCATTER]
 

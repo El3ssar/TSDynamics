@@ -1507,7 +1507,7 @@ def _render_composite(spec: PlotSpec, *, figsize: tuple[float, float] | None) ->
     if not panels:
         # A 0-panel COMPOSITE used to render as a blank figure — a silent no-op
         # that told the caller nothing while looking like a successful plot (it
-        # is what ``to_plot_spec(kind="composite")`` produced, discarding the
+        # is what ``__plot_spec__(kind="composite")`` produced, discarding the
         # trajectory).  Fail loudly instead.  ``PlotSpec`` enforces the
         # COMPOSITE <=> panels invariant at construction, so this is a backstop.
         raise InvalidParameterError(

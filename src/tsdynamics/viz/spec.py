@@ -35,7 +35,7 @@ The pieces
   spec (NumPy arrays ↔ nested lists) so a computed spec can be cached, shipped to
   a web frontend, or replotted without recomputation.
 - :class:`Plottable` — a tiny mixin that gives any object defining
-  ``to_plot_spec()`` a ``.plot(...)`` convenience and a notebook display hook.
+  ``__plot_spec__()`` a ``.plot(...)`` convenience and a notebook display hook.
 
 Design notes
 ------------
@@ -963,7 +963,7 @@ class Animation:
       *spatial* state at that instant: a 1-D field plays as a travelling-wave line,
       a 2-D field as an ``imshow`` heatmap (Gray–Scott / Swift–Hohenberg), so
       consecutive frames carry genuinely different data.  Built via
-      ``to_plot_spec(kind="field", animate=...)`` (a
+      ``__plot_spec__(kind="field", animate=...)`` (a
       :data:`~tsdynamics.viz.spec.PlotKind.SPATIAL_FIELD` spec carrying the
       per-time field stack on its layer's ``"frames"`` channel); the matplotlib
       renderer plays the stack frame by frame, and a backend that cannot animate
@@ -1599,7 +1599,7 @@ class Plot:
 
         A composite *is* its panels.  Letting the two drift apart produced the
         two failure modes this guard closes: a ``COMPOSITE`` with no panels
-        rendered as a blank figure (which is how ``to_plot_spec(kind="composite")``
+        rendered as a blank figure (which is how ``__plot_spec__(kind="composite")``
         silently threw a trajectory away and saved an empty PNG), and a
         panel-bearing spec labelled something else had its panels ignored by every
         renderer.  Both are silent — hence a construction-time error, not a
@@ -1721,7 +1721,7 @@ class Plot:
             :class:`~tsdynamics.viz.render.caps.VisualizationDegraded` warning
             instead of raising.
         **build_kw
-            Forwarded to each non-spec thing's ``to_plot_spec`` (``components``
+            Forwarded to each non-spec thing's ``__plot_spec__`` (``components``
             / ``kind`` / per-kind options), exactly as in
             :func:`tsdynamics.viz.plot`.
 
@@ -3574,13 +3574,13 @@ _PLOT_MOVED: dict[str, str] = {
 
 
 class Plottable:
-    """Mixin giving any ``to_plot_spec()`` provider a ``.plot()`` and notebook hook.
+    """Mixin giving any ``__plot_spec__()`` provider a ``.plot()`` and notebook hook.
 
     A class that produces a :class:`PlotSpec` only has to implement
-    ``to_plot_spec(self) -> PlotSpec``; this mixin layers the rendering sugar on
+    ``__plot_spec__(self) -> PlotSpec``; this mixin layers the rendering sugar on
     top:
 
-    - :meth:`plot` — ``self.to_plot_spec()`` plus optional inline tweaks, sent
+    - :meth:`plot` — ``self.__plot_spec__()`` plus optional inline tweaks, sent
       to a backend.
     - ``_repr_mimebundle_`` — a notebook display hook that renders inline once a
       backend is installed, and **no-ops** until then (so importing core never
@@ -3592,14 +3592,14 @@ class Plottable:
     are not analysis results.
     """
 
-    def to_plot_spec(self, *args: Any, **kwargs: Any) -> Plot:
+    def __plot_spec__(self, *args: Any, **kwargs: Any) -> Plot:
         """Return the :class:`PlotSpec` describing this object.
 
         Subclasses must override this.  The base raises
         :class:`NotImplementedError`.
         """
         raise NotImplementedError(
-            f"{type(self).__name__} must implement to_plot_spec() to be Plottable."
+            f"{type(self).__name__} must implement __plot_spec__() to be Plottable."
         )
 
     def plot(self, *transforms: Any, **tweaks: Any) -> Plot:
@@ -3624,7 +3624,7 @@ class Plottable:
             (``.render("plotly")``), and self-drawing in a notebook.
         """
         reject_positional_transform(transforms, "obj")
-        return self.to_plot_spec().tweak(**tweaks)
+        return self.__plot_spec__().tweak(**tweaks)
 
     def _repr_mimebundle_(self, include: Any = None, exclude: Any = None) -> Any:
         """Rich notebook display — renders inline once a backend is installed.
@@ -3633,7 +3633,7 @@ class Plottable:
         a notebook or when no rendering backend is installed.  This keeps
         notebook import of core plot-library-free until a viz backend ships.
         """
-        return _notebook_mimebundle(lambda: self.to_plot_spec().render(), include, exclude)
+        return _notebook_mimebundle(lambda: self.__plot_spec__().render(), include, exclude)
 
 
 # ---------------------------------------------------------------------------

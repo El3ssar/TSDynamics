@@ -190,7 +190,7 @@ class TestOrbitDiagramQuantifiers:
         assert np.min(np.abs(bp - 3.0)) < 0.03
         assert np.min(np.abs(bp - (1.0 + np.sqrt(6.0)))) < 0.02
 
-    def test_to_plot_spec_default_is_clean(self) -> None:
+    def test_plot_spec_default_is_clean(self) -> None:
         # The default plot is the textbook bifurcation picture: just the scatter,
         # no period/bifurcation text overlay (which piles up illegibly in the
         # chaotic cascade).  It also must not walk periods() at all when clean.
@@ -211,13 +211,13 @@ class TestOrbitDiagramQuantifiers:
 
         try:
             ts.analysis.OrbitDiagram.periods = counting_periods  # type: ignore[method-assign]
-            spec = od.to_plot_spec()
+            spec = od.__plot_spec__()
         finally:
             ts.analysis.OrbitDiagram.periods = real_periods  # type: ignore[method-assign]
         assert calls["n"] == 0  # clean plot never computes the period sweep
         assert not spec.annotations  # no vline smear
 
-    def test_to_plot_spec_annotate_computes_periods_once(self) -> None:
+    def test_plot_spec_annotate_computes_periods_once(self) -> None:
         # Regression: the annotated path previously recomputed periods() once
         # directly and again inside bifurcation_points() (and a third walk).  With
         # annotate=True it must compute the period sweep exactly once per call.
@@ -238,7 +238,7 @@ class TestOrbitDiagramQuantifiers:
 
         try:
             ts.analysis.OrbitDiagram.periods = counting_periods  # type: ignore[method-assign]
-            spec = od.to_plot_spec(annotate=True)
+            spec = od.__plot_spec__(annotate=True)
         finally:
             ts.analysis.OrbitDiagram.periods = real_periods  # type: ignore[method-assign]
         assert calls["n"] == 1
@@ -391,7 +391,7 @@ class TestBifurcationDiagramOfAFlow:
         assert od.meta["section"] == "successive maxima of z"
         assert od.meta["section_auto"] is True
         # ... and the figure itself says so, so the picture is reproducible.
-        spec = od.to_plot_spec()
+        spec = od.__plot_spec__()
         assert "successive maxima of z" in spec.title
 
     def test_the_fixed_point_branch_is_recorded_not_dropped(self) -> None:

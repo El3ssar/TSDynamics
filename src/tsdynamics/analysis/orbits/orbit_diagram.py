@@ -163,7 +163,7 @@ class OrbitDiagram(AnalysisResult):
         """Midpoints between consecutive values whose ``periods`` differ (no reseed).
 
         The core of :meth:`bifurcation_points`, factored so a caller that has
-        already computed ``periods`` (e.g. :meth:`to_plot_spec`) reuses it instead
+        already computed ``periods`` (e.g. :meth:`__plot_spec__`) reuses it instead
         of recomputing the period sweep.  Transitions touching a diverged value
         (``-1``) are skipped.
         """
@@ -171,7 +171,7 @@ class OrbitDiagram(AnalysisResult):
         (i,) = np.nonzero(changed)
         return cast(np.ndarray, 0.5 * (self.values[i] + self.values[i + 1]))
 
-    def to_plot_spec(self, kind: str | None = None, *, annotate: bool = False) -> Any:
+    def __plot_spec__(self, kind: str | None = None, *, annotate: bool = False) -> Any:
         """Describe this orbit diagram as a backend-agnostic :class:`PlotSpec`.
 
         Builds an ``ORBIT_DIAGRAM`` scatter of the asymptotic state (first
@@ -938,7 +938,7 @@ def orbit_diagram(
             "components": tuple(idx),
             # The discrete view this diagram was read through — recorded so an
             # auto-chosen section is never a silent choice (it is also printed
-            # under the figure's title by ``to_plot_spec``).
+            # under the figure's title by ``__plot_spec__``).
             "section": section_label,
             "section_auto": is_peak_map,
         }

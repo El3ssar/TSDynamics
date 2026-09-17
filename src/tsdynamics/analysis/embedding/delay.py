@@ -43,7 +43,7 @@ class MutualInformation(ArrayResult):
     and iteration defer to it) while it also carries ``.meta`` / the readout ``repr`` /
     the ``.plot`` seam.  The curve's **first local minimum** is the recommended
     embedding delay (Fraser & Swinney 1986); :attr:`optimal_lag` reads it off and
-    :meth:`to_plot_spec` annotates it, so the delay-selection diagnostic plots as
+    :meth:`__plot_spec__` annotates it, so the delay-selection diagnostic plots as
     one figure.
 
     Attributes
@@ -89,7 +89,7 @@ class MutualInformation(ArrayResult):
         floor = 0.0 if bins is None or n is None else _mi_noise_floor(int(bins), int(n))
         return _select_delay(curve, floor=floor)
 
-    def to_plot_spec(self, kind: str | None = None) -> Any:
+    def __plot_spec__(self, kind: str | None = None) -> Any:
         r"""Describe the mutual-information diagnostic as a :class:`PlotSpec`.
 
         Builds a ``DIAGNOSTIC_CURVE``: the curve :math:`I(\tau)` as a ``LINE``

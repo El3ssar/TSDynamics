@@ -9,7 +9,7 @@ vocabulary on the Agg canvas without error.  This gate freezes that:
 2. **Every semantic kind renders** — a minimal spec of each
    :meth:`PlotKind.semantic_kinds` kind (2-D, 3-D, image, bar, …) renders.
 3. **Registry conformance** — every registered analysis whose result carries a
-   ``to_plot_spec`` produces a spec whose semantic kind and layer marks are real
+   ``__plot_spec__`` produces a spec whose semantic kind and layer marks are real
    :class:`~tsdynamics.viz.spec.PlotKind` members that round-trip through
    ``to_dict`` / ``from_dict`` (engine-free; the synthetic builders live in
    :mod:`tests.test_viz_fake_renderer`).
@@ -171,7 +171,7 @@ def test_every_result_spec_is_coercible_and_round_trips():
     for cls, build in builders.items():
         result = build()
         try:
-            spec = result.to_plot_spec()
+            spec = result.__plot_spec__()
         except VisualizationNotInstalled:
             continue  # the documented "nothing to draw" path
         assert isinstance(spec, PlotSpec), cls.__name__
@@ -192,7 +192,7 @@ def test_every_registered_analysis_result_renders_or_is_documented():
     for cls, build in _result_builders().items():
         result = build()
         try:
-            spec = result.to_plot_spec()
+            spec = result.__plot_spec__()
         except VisualizationNotInstalled:
             continue
         fig = spec.render("matplotlib")

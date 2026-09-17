@@ -568,7 +568,7 @@ def test_scaling_result_runtime_schema(name, thunk):
 
     ``float(result)`` returns ``estimate``; the curve arrays are equal-length
     ndarrays; ``fit_region`` is an in-bounds ``(lo, hi)`` index pair; and
-    ``to_plot_spec()`` carries the ``SCALING_FIT`` plot intent so the generic
+    ``__plot_spec__()`` carries the ``SCALING_FIT`` plot intent so the generic
     scaling renderer can find the curve and the fit.
     """
     result = thunk()
@@ -585,7 +585,7 @@ def test_scaling_result_runtime_schema(name, thunk):
     assert 0 <= lo <= hi < abscissa.size, f"{name} fit_region {result.fit_region} out of bounds"
     assert isinstance(result.intercept, float)
 
-    spec = result.to_plot_spec()
+    spec = result.__plot_spec__()
     assert spec.kind == PlotKind.SCALING_FIT
 
 
@@ -2548,7 +2548,7 @@ def test_plotspec_show_exists_and_returns_the_figure(monkeypatch) -> None:
     from tsdynamics.viz import spec as spec_mod
 
     monkeypatch.setattr(spec_mod, "_mpl_backend_is_interactive", lambda: False)
-    spec = ts.systems.Lorenz().run(final_time=2.0, dt=0.05, ic=[1.0, 1.0, 1.0]).to_plot_spec()
+    spec = ts.systems.Lorenz().run(final_time=2.0, dt=0.05, ic=[1.0, 1.0, 1.0]).__plot_spec__()
     figure = spec.show()
     assert figure.__class__.__module__.startswith("matplotlib")
     plt.close("all")
@@ -2563,7 +2563,7 @@ def test_plotspec_show_displays_on_an_interactive_backend(monkeypatch) -> None:
     calls: list[int] = []
     monkeypatch.setattr(spec_mod, "_mpl_backend_is_interactive", lambda: True)
     monkeypatch.setattr(plt, "show", lambda *a, **k: calls.append(1))
-    spec = ts.systems.Lorenz().run(final_time=2.0, dt=0.05, ic=[1.0, 1.0, 1.0]).to_plot_spec()
+    spec = ts.systems.Lorenz().run(final_time=2.0, dt=0.05, ic=[1.0, 1.0, 1.0]).__plot_spec__()
     spec.show()
     assert calls == [1]
     plt.close("all")

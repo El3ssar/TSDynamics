@@ -262,7 +262,7 @@ class ScalarResult(_NumericOps, AnalysisResult):
             return None
         return "→ chaotic (λ > 0)" if value > 0.0 else "→ regular (λ ≤ 0)"
 
-    def to_plot_spec(self, kind: str | None = None) -> Any:
+    def __plot_spec__(self, kind: str | None = None) -> Any:
         """Describe the scalar as a one-point :class:`PlotSpec` (rarely plotted).
 
         A lone number has no natural figure; this emits a minimal
@@ -374,7 +374,7 @@ class CountResult(int, AnalysisResult):
         """Return the unit the repr quotes, so an export can carry it too."""
         return {"unit": self._unit()}
 
-    def to_plot_spec(self, kind: str | None = None) -> Any:
+    def __plot_spec__(self, kind: str | None = None) -> Any:
         """Describe the count as a one-point :class:`PlotSpec` (rarely plotted)."""
         from . import _plotbuilder as pb
 

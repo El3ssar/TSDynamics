@@ -1,4 +1,4 @@
-"""GAPFILL-C: fractal-dimension ``to_plot_spec`` viz adapters.
+"""GAPFILL-C: fractal-dimension ``__plot_spec__`` viz adapters.
 
 Covers the dimension half of the GAPFILL-C ticket (the entropy bullets left with
 the estimators themselves when the library narrowed to phase-space methods):
@@ -134,7 +134,7 @@ def test_dimension_spectrum_spec_from_real_estimator() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_dimension_result_to_plot_spec_is_scaling_fit() -> None:
+def test_dimension_result_plot_spec_is_scaling_fit() -> None:
     x = np.linspace(0.0, 1.0, 12)
     result = DimensionResult(
         estimate=2.05,
@@ -146,13 +146,13 @@ def test_dimension_result_to_plot_spec_is_scaling_fit() -> None:
         intercept=0.3,
         q=2.0,
     )
-    spec = result.to_plot_spec()
+    spec = result.__plot_spec__()
     assert spec.kind is PlotKind.SCALING_FIT
     _assert_roundtrips(spec)
 
 
 def test_correlation_dimension_result_keeps_scaling_fit() -> None:
     result = correlation_dimension(_cantor_like_points())
-    spec = result.to_plot_spec()
+    spec = result.__plot_spec__()
     assert spec.kind is PlotKind.SCALING_FIT
     _assert_roundtrips(spec)

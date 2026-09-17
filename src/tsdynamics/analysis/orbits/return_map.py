@@ -72,7 +72,7 @@ class ReturnMap(AnalysisResult):
         """Return the scatter-plot arrays ``(current, successor)``."""
         return self.current, self.successor
 
-    def to_plot_spec(self, kind: str | None = None) -> Any:
+    def __plot_spec__(self, kind: str | None = None) -> Any:
         r"""Describe this return map as a backend-agnostic :class:`PlotSpec`.
 
         Builds a ``RETURN_MAP`` scatter of :math:`(v_n, v_{n+1})` with the

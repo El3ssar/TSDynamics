@@ -32,7 +32,7 @@ def _html(*, components=None) -> str:
     from tsdynamics.viz.render.plotly._anim import animated_html
 
     tr = ts.systems.Lorenz().run(final_time=20.0, dt=0.01, ic=[1.0, 1.0, 1.0]).after(3.0)
-    spec = tr.to_plot_spec(components=components, animate=True)
+    spec = tr.__plot_spec__(components=components, animate=True)
     return animated_html(spec, html=True, full_html=False)
 
 
@@ -130,7 +130,7 @@ def test_realtime_html_3d_and_2d_both_carry_the_fix(tmp_path):
     tr = ts.systems.Lorenz().run(final_time=20.0, dt=0.01, ic=[1.0, 1.0, 1.0]).after(3.0)
     for name, comps in [("orbit3d.html", None), ("orbit2d.html", ["x", "z"])]:
         out = tmp_path / name
-        assert tr.to_plot_spec(components=comps, animate=True).save(str(out)) == str(out)
+        assert tr.__plot_spec__(components=comps, animate=True).save(str(out)) == str(out)
         text = out.read_text()
         assert "_fullData" in text  # the fix shipped in the written artifact
         assert "requestAnimationFrame" in text and "Plotly.extendTraces" in text

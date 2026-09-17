@@ -228,7 +228,7 @@ class LyapunovSpectrum(ArrayResult):
             "regime": self.regime,
         }
 
-    def to_plot_spec(self, kind: str | None = None) -> Any:
+    def __plot_spec__(self, kind: str | None = None) -> Any:
         r"""Describe the Lyapunov spectrum as a backend-agnostic :class:`PlotSpec`.
 
         Builds a ``LYAPUNOV_SPECTRUM`` spec — one ``BAR`` per exponent

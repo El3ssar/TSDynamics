@@ -135,7 +135,7 @@ class GALIResult(AnalysisResult):
         """Whether the final GALI value collapsed below ``threshold`` (chaotic)."""
         return self.final < threshold
 
-    def to_plot_spec(self, kind: str | None = None) -> Any:
+    def __plot_spec__(self, kind: str | None = None) -> Any:
         r"""Describe the GALI\ :sub:`k` curve as a backend-agnostic :class:`PlotSpec`.
 
         Builds a ``DIAGNOSTIC_CURVE`` of GALI\ :sub:`k` against time (or iteration

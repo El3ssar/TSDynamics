@@ -552,13 +552,13 @@ def test_primitive_without_a_named_transform_is_an_error_not_a_no_op():
 
 def test_trajectory_front_door_takes_a_primitive():
     traj = _traj()
-    assert traj.to_plot_spec().layers[0].kind is PlotKind.LINE3D
+    assert traj.__plot_spec__().layers[0].kind is PlotKind.LINE3D
     assert (
-        traj.to_plot_spec(kind="phase_portrait_2d", primitive="points").layers[0].kind
+        traj.__plot_spec__(kind="phase_portrait_2d", primitive="points").layers[0].kind
         is PlotKind.SCATTER
     )
-    steps = traj.to_plot_spec(kind="time_series", primitive="steps")
-    plain = traj.to_plot_spec(kind="time_series")
+    steps = traj.__plot_spec__(kind="time_series", primitive="steps")
+    plain = traj.__plot_spec__(kind="time_series")
     assert steps.layers[0].data["x"].size == 2 * plain.layers[0].data["x"].size - 1
 
 
@@ -568,7 +568,7 @@ def test_trajectory_front_door_default_is_unchanged_by_the_registry():
     The transforms landed picture-preserving; the front door only consults the
     registry when asked for a *different drawing* of the same numbers.
     """
-    spec = _traj().to_plot_spec()
+    spec = _traj().__plot_spec__()
     assert spec.layers[0].transform is None  # not built through a transform
     assert spec.kind is PlotKind.PHASE_PORTRAIT_3D
 
@@ -577,7 +577,7 @@ def test_a_view_with_no_transform_refuses_a_primitive_rather_than_ignoring_it():
     traj = _traj()
     traj.meta["plot_kind"] = "poincare_section"
     with pytest.raises(InvalidParameterError, match="no registered plot transform"):
-        traj.to_plot_spec(primitive="points")
+        traj.__plot_spec__(primitive="points")
 
 
 def test_system_front_door_forwards_the_primitive():

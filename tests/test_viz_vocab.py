@@ -44,7 +44,7 @@ Removed, with the reason each was already dead:
 
 **Kept:** ``bifurcation``.  The scan flags it as unproduced by a *default* path,
 but it is genuinely reachable and genuinely drawn — ``OrbitDiagram.plot.bifurcation()``
-routes ``kind="bifurcation"`` through ``to_plot_spec`` into ``pb.spec``, and the
+routes ``kind="bifurcation"`` through ``__plot_spec__`` into ``pb.spec``, and the
 dispatcher's ``"bifurcation_diagram"`` alias resolves to it.  Verified by
 rendering: it returns a real ``Figure`` of the cascade.
 

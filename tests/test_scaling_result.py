@@ -303,7 +303,7 @@ def test_plot_scaling_renders_when_a_backend_registers(monkeypatch):
     """Forward-compat: once a renderer registers, ``.plot.scaling()`` renders.
 
     The typed ``.scaling()`` method routes ``kind="scaling_fit"`` into
-    ``to_plot_spec`` and the spec's ``render`` does the drawing.
+    ``__plot_spec__`` and the spec's ``render`` does the drawing.
     """
     import tsdynamics.registry as reg
 
@@ -330,14 +330,14 @@ def test_plot_scaling_renders_when_a_backend_registers(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# to_plot_spec — the SCALING_FIT description (no plot library pulled)
+# __plot_spec__ — the SCALING_FIT description (no plot library pulled)
 # ---------------------------------------------------------------------------
 
 
-def test_to_plot_spec_builds_a_scaling_fit_spec():
+def test_plot_spec_builds_a_scaling_fit_spec():
     from tsdynamics.viz.spec import PlotKind
 
-    spec = _scaling().to_plot_spec()
+    spec = _scaling().__plot_spec__()
     assert spec.kind == PlotKind.SCALING_FIT
     assert spec.ndim == 2
     # Three layers: the full curve, the highlighted fit region, the fit line.
@@ -346,9 +346,9 @@ def test_to_plot_spec_builds_a_scaling_fit_spec():
     assert kinds == [PlotKind.SCATTER, PlotKind.MARKERS, PlotKind.LINE]
 
 
-def test_to_plot_spec_fit_line_matches_intercept_and_slope():
+def test_plot_spec_fit_line_matches_intercept_and_slope():
     r = _scaling()
-    spec = r.to_plot_spec()
+    spec = r.__plot_spec__()
     line = spec.layers[2]  # the LINE layer
     lo, hi = r.fit_region
     expected_x = np.array([r.abscissa[lo], r.abscissa[hi]])
@@ -356,27 +356,27 @@ def test_to_plot_spec_fit_line_matches_intercept_and_slope():
     np.testing.assert_allclose(line.data["y"], r.intercept + r.estimate * expected_x)
 
 
-def test_to_plot_spec_round_trips_through_dict():
+def test_plot_spec_round_trips_through_dict():
     from tsdynamics.viz.spec import PlotSpec
 
-    spec = _scaling().to_plot_spec()
+    spec = _scaling().__plot_spec__()
     rebuilt = PlotSpec.from_dict(spec.to_dict())
     assert rebuilt.kind == spec.kind
     assert len(rebuilt.layers) == len(spec.layers)
 
 
-def test_to_plot_spec_empty_curve_has_only_the_scatter_layer():
+def test_plot_spec_empty_curve_has_only_the_scatter_layer():
     from tsdynamics.viz.spec import PlotKind
 
-    spec = ScalingResult(estimate=1.0).to_plot_spec()  # empty arrays
+    spec = ScalingResult(estimate=1.0).__plot_spec__()  # empty arrays
     assert len(spec.layers) == 1  # no fit-region / fit-line layers to draw
     assert spec.layers[0].kind == PlotKind.SCATTER
 
 
-def test_to_plot_spec_honours_kind_override():
+def test_plot_spec_honours_kind_override():
     from tsdynamics.viz.spec import PlotKind
 
-    spec = _scaling().to_plot_spec(kind="diagnostic_curve")
+    spec = _scaling().__plot_spec__(kind="diagnostic_curve")
     assert spec.kind == PlotKind.DIAGNOSTIC_CURVE
 
 

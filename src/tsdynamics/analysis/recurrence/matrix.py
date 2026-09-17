@@ -109,7 +109,7 @@ class RecurrenceMatrix(AnalysisResult):
         arr = self.toarray()
         return arr.astype(dtype) if dtype is not None else arr
 
-    def to_plot_spec(self, kind: str | None = None) -> Any:
+    def __plot_spec__(self, kind: str | None = None) -> Any:
         r"""Describe this recurrence matrix as a backend-agnostic :class:`PlotSpec`.
 
         Builds a ``RECURRENCE_PLOT`` as a **sparse** ``SCATTER`` of the recurrent

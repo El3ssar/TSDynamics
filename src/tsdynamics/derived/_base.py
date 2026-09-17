@@ -31,6 +31,21 @@ class DerivedSystem:
     def __init__(self, system: Any) -> None:
         self.system = system
 
+    def __getattr__(self, name: str) -> Any:
+        """Teach the one retired plot name; leave every other miss verbatim.
+
+        The five wrappers are plot *subjects* like any other, so a user who
+        reaches for the pre-v6 ``to_plot_spec`` on a section must get the same
+        two lines a system or a trajectory gives them, not a bare miss.  Nothing
+        else is intercepted — a wrapper does **not** forward unknown attributes
+        to the inner system, and adding a teaching branch must not start.
+        """
+        if name == "to_plot_spec":
+            from tsdynamics.utils.plot_namespace import plot_seam_error
+
+            raise plot_seam_error(type(self).__name__, "view")
+        raise AttributeError(f"{type(self).__name__!r} object has no attribute {name!r}")
+
     # --- forwarded surface ---
 
     @property
@@ -112,7 +127,7 @@ class DerivedSystem:
         The default delegates to the wrapper's own :meth:`run`: it
         collects the lens-specific trajectory (Poincaré crossings, projected
         columns, ...) and forwards to that trajectory's
-        :meth:`~tsdynamics.data.Trajectory.to_plot_spec`.  Subclasses whose
+        :meth:`~tsdynamics.data.Trajectory.__plot_spec__`.  Subclasses whose
         natural picture is *not* a single trajectory line — a stroboscopic
         scatter, an ensemble fan, a Lyapunov convergence curve — override this
         with their own spec builder.
@@ -132,14 +147,13 @@ class DerivedSystem:
         PlotSpec
         """
         traj = self.run(**kwargs)
-        builder = getattr(traj, "__plot_spec__", None) or traj.to_plot_spec
-        return cast("PlotSpec", builder(kind=kind))
+        return traj.__plot_spec__(kind=kind)
 
     def plot(self, *transforms: Any, **kwargs: Any) -> PlotSpec:
         """Draw this derived view.
 
         All five wrappers used to answer ``hasattr(pm, "plot") -> False`` while
-        ``to_plot_spec`` was ``True``: the seam was there and the verb was not.
+        the plot seam was ``True``: the seam was there and the verb was not.
         """
         from tsdynamics.viz import plot as _plot
 

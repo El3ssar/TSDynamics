@@ -102,7 +102,7 @@ class FixedPoint(AnalysisResult):
         """Return the compact one-line form used inside a set's item list."""
         return f"x* = {_state(self.x)}  {'stable' if self.stable else 'unstable'}  {self._gauge()}"
 
-    def to_plot_spec(
+    def __plot_spec__(
         self,
         kind: str | None = None,
         *,
@@ -242,7 +242,7 @@ class FixedPointSet(CollectionResult):
         """Export the stable/unstable split the repr reports."""
         return {"n_stable": len(self.stable), "n_unstable": len(self.unstable)}
 
-    def to_plot_spec(
+    def __plot_spec__(
         self,
         kind: str | None = None,
         *,
@@ -887,7 +887,7 @@ def _eigenvalue_annotations(
     survive every backend, and plotly drops an annotation's style entirely (so an
     ``ha``/``va`` nudge would work in matplotlib and silently not in plotly).  When
     the spread is zero — a single point, the common case for
-    :meth:`FixedPoint.to_plot_spec` — the offset falls back to a fraction of the
+    :meth:`FixedPoint.__plot_spec__` — the offset falls back to a fraction of the
     point's own magnitude, and finally to a bare constant at the origin.
 
     Labels are pushed **outward**, away from the centre of the point cloud, and the

@@ -95,7 +95,7 @@ class ZeroOneResult(ScalarResult):
     skew-translation variables :math:`(p_c, q_c)` at a representative frequency
     :math:`c`.  Those variables stay **bounded** for regular dynamics and
     **diffuse** like a random walk for chaotic dynamics (Gottwald & Melbourne
-    2004), so their plane is the test's diagnostic figure; :meth:`to_plot_spec`
+    2004), so their plane is the test's diagnostic figure; :meth:`__plot_spec__`
     renders it as a phase portrait.
 
     Attributes
@@ -136,7 +136,7 @@ class ZeroOneResult(ScalarResult):
             return "regular (K ≈ 0)"
         return "inconclusive (K is between the two poles — check sampling)"
 
-    def to_plot_spec(self, kind: str | None = None) -> Any:
+    def __plot_spec__(self, kind: str | None = None) -> Any:
         r"""Describe the translation plane :math:`(p_c, q_c)` as a :class:`PlotSpec`.
 
         Builds a ``PHASE_PORTRAIT_2D`` of the skew-translation trajectory: a
@@ -159,7 +159,7 @@ class ZeroOneResult(ScalarResult):
         p = np.asarray(self.p, dtype=float)
         q = np.asarray(self.q, dtype=float)
         if p.size == 0 or q.size == 0:
-            return super().to_plot_spec(kind=kind)
+            return super().__plot_spec__(kind=kind)
 
         from .. import _plotbuilder as pb
 

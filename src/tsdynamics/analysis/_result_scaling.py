@@ -229,7 +229,7 @@ class ScalingResult(_NumericOps, AnalysisResult):
 
     # -- visualization ---------------------------------------------------
 
-    def to_plot_spec(self, kind: str | None = None) -> Any:
+    def __plot_spec__(self, kind: str | None = None) -> Any:
         """Describe this scaling result as a backend-agnostic :class:`PlotSpec`.
 
         Builds a ``SCALING_FIT`` spec — the curve as a scatter layer, the fitted

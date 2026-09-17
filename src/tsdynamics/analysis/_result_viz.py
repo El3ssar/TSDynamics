@@ -17,13 +17,13 @@ if TYPE_CHECKING:
     from tsdynamics.analysis._result_base import AnalysisResult
 
 #: Keyword arguments that belong to a *rendering backend* rather than to a
-#: result's ``to_plot_spec``.  ``result.plot(**kw)`` splits its keywords on this
-#: table: a name ``to_plot_spec`` declares goes to the spec builder, a name here
+#: result's ``__plot_spec__``.  ``result.plot(**kw)`` splits its keywords on this
+#: table: a name ``__plot_spec__`` declares goes to the spec builder, a name here
 #: goes to the renderer, and **anything else raises** (see :meth:`_PlotAccessor._render`).
 #: A keyword that *some* backend accepts but the **chosen** one does not is caught
 #: one layer down, by :func:`~tsdynamics.viz.render.render_spec`.
 #:
-#: Before this table existed, ``.plot()`` called ``to_plot_spec()`` with *no*
+#: Before this table existed, ``.plot()`` called ``__plot_spec__()`` with *no*
 #: arguments and forwarded every keyword to ``render`` — where the in-tree
 #: backends absorb unknown keywords in a ``**_kw`` catch-all.  The result was
 #: total silence: ``od.plot()``, ``od.plot(annotate=True)`` and
@@ -118,7 +118,7 @@ def _available_renderers() -> Any | None:
 def _spec_keywords(to_spec: Any) -> frozenset[str]:
     """Return the keyword names ``to_spec`` declares (empty if it takes ``**kwargs``).
 
-    A ``to_plot_spec`` with a ``**kwargs`` catch-all is treated as accepting
+    A ``__plot_spec__`` with a ``**kwargs`` catch-all is treated as accepting
     *everything*, signalled by returning ``None``-like behaviour at the call site
     (see :func:`_split_plot_kwargs`).
     """
@@ -148,7 +148,7 @@ def _split_plot_kwargs(
     """Split ``.plot(**tweaks)`` into ``(spec_kwargs, backend_kwargs)``, or raise.
 
     See :meth:`_PlotAccessor._render` for why this exists.  A keyword the result's
-    ``to_plot_spec`` declares wins over the renderer table, because that is where
+    ``__plot_spec__`` declares wins over the renderer table, because that is where
     the caller's intent lives (a result that declares ``path=`` means its own
     ``path``).
     """
@@ -247,13 +247,13 @@ class _PlotAccessor:
     def _render(self, *, kind: str | None = None, backend: str | None = None, **tweaks: Any) -> Any:
         """Resolve a backend and render, or raise :class:`VisualizationNotInstalled`.
 
-        The ``kind`` requested by a typed method routes into ``to_plot_spec`` (so
+        The ``kind`` requested by a typed method routes into ``__plot_spec__`` (so
         the *spec* carries the semantic kind), and rendering goes through the
         documented ``PlotSpec.render(backend, **backend_kw)`` contract — ``kind``
         is never passed to ``render``.
 
         **Keyword routing.**  ``**tweaks`` is split three ways: a keyword the
-        result's own ``to_plot_spec`` declares is forwarded there (this is what
+        result's own ``__plot_spec__`` declares is forwarded there (this is what
         makes ``OrbitDiagram.plot(annotate=True)`` reachable at all), a keyword in
         :func:`_renderer_kwargs` goes to the renderer, and anything else raises
         :class:`~tsdynamics.errors.InvalidParameterError` naming both accepted
@@ -270,7 +270,7 @@ class _PlotAccessor:
             The renderer to use (``"matplotlib"`` / ``"plotly"`` / …); ``None``
             lets :meth:`~tsdynamics.viz.spec.PlotSpec.render` pick the default.
         **tweaks
-            Spec-shaping keywords (whatever this result's ``to_plot_spec``
+            Spec-shaping keywords (whatever this result's ``__plot_spec__``
             accepts) and/or backend keywords (:func:`_renderer_kwargs`).
 
         Returns
@@ -291,21 +291,21 @@ class _PlotAccessor:
         ------
         VisualizationNotInstalled
             If no rendering backend can be registered, or the result has no
-            ``to_plot_spec`` method.
+            ``__plot_spec__`` method.
         InvalidParameterError
-            If a keyword is recognised by neither ``to_plot_spec`` nor the
+            If a keyword is recognised by neither ``__plot_spec__`` nor the
             renderer contract.
         """
         renderers = _available_renderers()
         if renderers is None:
             raise VisualizationNotInstalled(_VIZ_HINT)
-        to_spec = getattr(self._result, "to_plot_spec", None)
-        if to_spec is None:  # pragma: no cover - every result has to_plot_spec
+        to_spec = getattr(self._result, "__plot_spec__", None)
+        if to_spec is None:  # pragma: no cover - every result has __plot_spec__
             raise VisualizationNotInstalled(
-                f"{type(self._result).__name__} has no to_plot_spec() yet, so it cannot be plotted."
+                f"{type(self._result).__name__} has no __plot_spec__() yet, so it cannot be plotted."
             )
         spec_kw, backend_kw = _split_plot_kwargs(to_spec, tweaks, type(self._result).__name__)
-        # A typed method (e.g. .scaling()) requests a kind; pass it to to_plot_spec
+        # A typed method (e.g. .scaling()) requests a kind; pass it to __plot_spec__
         # when that result accepts an override, else fall back to its natural kind.
         try:
             spec = to_spec(kind=kind, **spec_kw) if kind is not None else to_spec(**spec_kw)

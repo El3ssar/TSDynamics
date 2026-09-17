@@ -96,7 +96,7 @@ class WindowedRQA(AnalysisResult):
             raise ValueError(f"unknown RQA measure {name!r}; choose from {_MEASURES}.")
         return np.array([getattr(r, name) for r in self.results], dtype=float)
 
-    def to_plot_spec(self, kind: str | None = None) -> Any:
+    def __plot_spec__(self, kind: str | None = None) -> Any:
         r"""Describe the windowed RQA as a :class:`PlotSpec`.
 
         Builds a ``DIAGNOSTIC_CURVE`` carrying a ``LINE`` of the **determinism**

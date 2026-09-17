@@ -194,6 +194,10 @@ _AREA_TESTS: dict[str, tuple[str, ...]] = {
 _VIZ_EXTRA_TESTS: tuple[str, ...] = (
     "test_plotspec.py",
     "test_plotspec_completeness.py",
+    # Named for the method v6 retired; the file still tests the trajectory plot
+    # front door (now the ``__plot_spec__`` seam behind ``ts.plot`` /
+    # ``traj.plot``).  ``.github/workflows/ci.yml`` names the path too, so the
+    # rename is a CI-infra change, not a test change.
     "test_to_plot_spec.py",
     "test_plot_accessor_kinds.py",
     "test_renderers_registry.py",

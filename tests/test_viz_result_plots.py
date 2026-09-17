@@ -49,7 +49,7 @@ def orbit_diagram():  # noqa: ANN202
 
 
 def test_spec_keyword_reaches_the_artifact(orbit_diagram, tmp_path: Path) -> None:  # noqa: ANN001
-    """``OrbitDiagram.to_plot_spec`` declares ``annotate=``; ``.plot()`` must forward it.
+    """``OrbitDiagram.__plot_spec__`` declares ``annotate=``; ``.plot()`` must forward it.
 
     Before this fix ``.plot()``, ``.plot(annotate=True)`` and
     ``.plot(totally_bogus_kwarg=42)`` produced **byte-identical** PNGs: every
@@ -182,7 +182,7 @@ def test_fixed_points_label_axes_with_the_systems_variables() -> None:
     """``$x_0$`` / ``$x_1$`` throws away names the system already declares."""
     import tsdynamics as ts
 
-    spec = ts.analysis.fixed_points(ts.systems.Lorenz()).to_plot_spec()
+    spec = ts.analysis.fixed_points(ts.systems.Lorenz()).__plot_spec__()
     assert spec.x.label == "$x$"
     assert spec.y.label == "$y$"
 
@@ -202,7 +202,7 @@ def test_3d_specs_draw_their_annotations() -> None:
     from tsdynamics.viz.spec import Annotation
 
     tr = ts.systems.Lorenz().run(final_time=5.0, dt=0.05, ic=[1.0, 1.0, 1.0])
-    spec = tr.to_plot_spec()
+    spec = tr.__plot_spec__()
     before = len(spec.render(backend="matplotlib").axes[0].lines)
     spec.annotations.append(Annotation(kind="vline", x=0.0, text="x = 0"))
     after = len(spec.render(backend="matplotlib").axes[0].lines)
@@ -216,7 +216,7 @@ def test_dark_theme_themes_the_3d_panes() -> None:
     import tsdynamics as ts
 
     tr = ts.systems.Lorenz().run(final_time=5.0, dt=0.05, ic=[1.0, 1.0, 1.0])
-    fig = tr.to_plot_spec().theme("dark").render(backend="matplotlib")
+    fig = tr.__plot_spec__().theme("dark").render(backend="matplotlib")
     ax = fig.axes[0]
     background = to_rgba(fig.get_facecolor())
     for axis in (ax.xaxis, ax.yaxis, ax.zaxis):
@@ -246,7 +246,7 @@ def test_basin_colorbar_is_a_categorical_legend() -> None:
         warnings.simplefilter("ignore")
         res = ts.analysis.basins(_Duffing(), grid, dt=0.05, max_steps=2000)
 
-    spec = res.to_plot_spec()
+    spec = res.__plot_spec__()
     labels = spec.meta["category_labels"]
     assert all(isinstance(v, str) for v in labels.values())
     assert any(v.startswith("attractor") for v in labels.values())
@@ -266,7 +266,7 @@ def test_basin_colorbar_is_a_categorical_legend() -> None:
 
 
 def _result_specs():
-    """One spec per analysis result type that owns a ``to_plot_spec``.
+    """One spec per analysis result type that owns a ``__plot_spec__``.
 
     Built once and shared, because several of these integrate a system.  Kept in
     one place so a new result type joins the sweep by being added here rather than
@@ -279,7 +279,7 @@ def _result_specs():
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         return {
-            "fixed_points": ts.analysis.fixed_points(lor, seed=0).to_plot_spec(),
+            "fixed_points": ts.analysis.fixed_points(lor, seed=0).__plot_spec__(),
             "eigenvalue_plane": ts.analysis.fixed_points(lor, seed=0).eigenvalue_plane(),
             "orbit_diagram": ts.analysis.orbit_diagram(
                 ts.systems.Logistic(),
@@ -287,22 +287,22 @@ def _result_specs():
                 np.linspace(2.8, 4.0, 60),
                 points_per_value=30,
                 transient=200,
-            ).to_plot_spec(),
+            ).__plot_spec__(),
             "basins": ts.analysis.basins(
                 ts.systems.Henon(), ts.data.Grid([-2.0, -2.0], [2.0, 2.0], (24, 24))
-            ).to_plot_spec(),
+            ).__plot_spec__(),
             "recurrence": ts.analysis.recurrence_matrix(
                 traj.y[:300], recurrence_rate=0.05
-            ).to_plot_spec(),
-            "dimension": ts.analysis.correlation_dimension(traj.y[::4]).to_plot_spec(),
+            ).__plot_spec__(),
+            "dimension": ts.analysis.correlation_dimension(traj.y[::4]).__plot_spec__(),
             "poincare": ts.analysis.poincare_section(
                 ts.systems.Rossler(), plane=("y", 0.0, "up"), crossings=120, seed=0
-            ).to_plot_spec(),
-            "gali": ts.analysis.gali(lor, k=2, final_time=40.0, ic=[1.0, 1.0, 1.0]).to_plot_spec(),
-            "return_map": ts.analysis.return_map(traj, components="z", kind="max").to_plot_spec(),
+            ).__plot_spec__(),
+            "gali": ts.analysis.gali(lor, k=2, final_time=40.0, ic=[1.0, 1.0, 1.0]).__plot_spec__(),
+            "return_map": ts.analysis.return_map(traj, components="z", kind="max").__plot_spec__(),
             "lyapunov_from_data": ts.analysis.lyapunov_from_data(
                 traj["x"][::4], dt=0.04, dimension=3
-            ).to_plot_spec(),
+            ).__plot_spec__(),
         }
 
 

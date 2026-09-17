@@ -547,9 +547,15 @@ import Trajectory` are the same object.
   module-level registry cannot be tab-completed from the thing in your hand.
 - `meta` carries provenance (system, params, solver, dt, tolerances, ic,
   version); preserved through slicing/`after()`.
-- **Plotting front door — `to_plot_spec(kind=None, *, components=None, **kind_kw)`:**
-  the one entry point for trajectory plots (the parameterised `viz.producers`
-  builders stay an internal detail). Auto-dispatches on the number of *selected*
+- **Plotting front door — `traj.plot(...)`, and the seam under it is the dunder
+  `__plot_spec__(kind=None, *, components=None, animate=False, primitive=None,
+  **kind_kw)`.** `to_plot_spec` is **gone** (v6): it was a second public spelling
+  of a picture you already knew how to ask for, and a user who typed it had to
+  learn that some plots are made with `plot` and others with `to_plot_spec`. There
+  is one verb now — `ts.plot(subject)` / `subject.plot()` — and one seam every
+  subject carries, so `ts.plot` classifies with a single predicate. A guess at the
+  old name is answered by name, and the line it hands back runs on the object that
+  was held. The seam auto-dispatches on the number of *selected*
   components — 1 → `TIME_SERIES`, 2 → `PHASE_PORTRAIT_2D`, 3 → `PHASE_PORTRAIT_3D`,
   **4+ → `SPACETIME`** (a field image, never a misleading 3-D portrait of the
   first three coords). `components=` (a name / index / sequence) picks the
@@ -564,8 +570,8 @@ import Trajectory` are the same object.
   live at the top of `data/trajectory.py`; extending a kind's options is a
   one-line edit there. `Trajectory.plot()` / `SystemPlottable.plot()` peel the
   spec-shaping kwargs (the closed `_PLOT_SPEC_KEYS` set) and forward them to
-  `to_plot_spec`; the remainder are inline tweaks / backend kwargs.
-  `SystemPlottable.to_plot_spec` likewise splits plot kwargs from integration
+  `__plot_spec__`; the remainder are inline tweaks / backend kwargs.
+  `SystemPlottable.__plot_spec__` likewise splits plot kwargs from integration
   kwargs (`final_time`/`dt`/`steps`/`ic`/…) on that same closed set.
 
 ### The `System` protocol (`families/protocol.py`)
@@ -1714,8 +1720,8 @@ Nothing else in the library learns a new name when one is added.
     `.size(...)`, `.vline/.hline/.span/.text`, alongside
     `.relabel/.rescale/.limits/.ticks/.colorize/.animate/…`.
     (Full guide: `docs/visualization/styling.md`.)
-- **Single-panel front door:** `Trajectory.to_plot_spec(...)` / `.plot(...)` (see
-  the `Trajectory` section) builds **one panel**.
+- **Single-panel front door:** `traj.plot(...)` / `system.plot(...)` (see the
+  `Trajectory` section) builds **one panel**.
 - **Composition — `tsdynamics.viz.plot(*things, layout="overlay", **build_kw)`
   (`viz/compose.py`):** the figure-level front door. It converts each thing (a
   `Trajectory` / system / result / `PlotSpec`) to a spec — forwarding `build_kw`
@@ -1748,11 +1754,76 @@ Nothing else in the library learns a new name when one is added.
     (`RendererCapabilities.can_render_spec`), so plotly still falls back to mpl
     when a panel uses a kind it declines. (Plotly **declines** only `COMPOSITE`
     *animations* for now — `viz/render/plotly/_anim.py` is single-panel.)
+- **Writing a movie blits (v6, `viz/render/mpl/_anim.py`).** The frame drivers
+  always *mutated* artists rather than rebuilding them, but **writing** a frame
+  still cost a whole figure: matplotlib's `Animation.save` draws through
+  `draw_idle` and discards it, `print_figure` draws again to settle the layout
+  engine, and `savefig` draws a third time — each re-solving constrained layout
+  and re-measuring every tick label. Three changes, all confined to `save`:
+  `_FastAnimation._post_draw` skips the discarded draw; **`_LayoutFreeze`**
+  converges the layout solver once and then drops it; and **`_FrameCompositor`**
+  replaces the figure's `draw` with a cached background raster plus the handful of
+  artists the drivers touch.
+  - **It is O(n) → O(1) in whole-figure draws**, which is the claim that cannot
+    flake: measured with `Figure.draw` counted, the old path did **3.00 draws per
+    frame** at every length (20 → 60, 60 → 180) while the new one does a
+    **constant 7 (2-D) / 17 (3-D)** for the whole movie, 20 frames or 180. That is
+    why the factor *grows* with movie length.
+  - **The headline, at the default movie length** (360 frames, `.mp4`, min of 2,
+    spread ≤ 1.04×): a Lorenz comet is **30.16 s → 0.91 s**, i.e. **11.9 → 396.0
+    fps (33×)**; a time series **45×**, a 3-D comet **23×**, a clock **20×**, a
+    spatial field **13×**.
+  - **Measured** — `benchmarks/animation_bench.py`, 60-frame `.mp4`, warm-up
+    discarded, min of 3, interleaved, spread ≤ 1.05×, **all nine kinds**:
+
+    | kind | before (fps) | after (fps) | speedup |
+    |---|---|---|---|
+    | time series | 8.8 | 160.4 | **18.3×** |
+    | 2-D comet | 12.0 | 184.6 | **15.4×** |
+    | clock | 11.2 | 133.9 | **12.0×** |
+    | spatial field | 11.0 | 113.9 | **10.4×** |
+    | composite (lockstep) | 6.1 | 50.1 | **8.2×** |
+    | 3-D comet | 11.2 | 79.9 | **7.2×** |
+    | fading comet | 10.6 | 74.2 | **7.0×** |
+    | spinning camera *(exempt)* | 16.2 | 27.4 | **1.7×** |
+    | `layout="frames"` *(exempt)* | 49.9 | 81.0 | **1.6×** |
+
+    The two exempt kinds still gain from the other two savings. Longer movies
+    amortise the fixed calibration further — which is why every 360-frame row
+    above is roughly twice its 60-frame one. *Time the benchmark the way it times
+    itself*: a first run in a fresh process pays the font cache, the first Agg
+    render and the first `ffmpeg` spawn (measured 11.39 s vs a 6.95 s steady
+    state), so a single cold-vs-warm pair over-reports by 2-3×. The table prints a
+    `spread` column (max/min within an arm) — a row far above 1 was measured on a
+    busy machine and is not evidence.
+  - **Correctness is measured, not argued.** The compositor renders probe frames
+    the unoptimised way and **bit-compares** them; any difference disables it for
+    that save. `tests/test_viz_anim_fast.py` pins byte-identity on nine kinds
+    through both writer paths, pins the draw count, and pins that **every eligible
+    kind actually blits** — falling back safely is the safety net, not the goal.
+    `TSDYNAMICS_NO_BLIT` is the bypass that proves WITH == WITHOUT.
+  - **Two kinds are exempt by construction.** A **spinning** 3-D camera re-draws
+    the axes, so it is never armed — but it still gets the layout freeze, and that
+    is a *fix*: a spinning axes re-measures its tick labels every frame, so
+    constrained layout never converged and the axes walked through **11 distinct
+    rectangles over 20 frames**. A `layout="frames"` composite gets neither (it
+    calls `fig.clear()` per frame, so there is no static prefix and no single
+    framing).
+  - Three defects the blitting work surfaced, all fixed here: **annotations were
+    silently dropped from every animated render** (the reveal renderer called
+    neither annotation applier, so a `.vline()` on a movie drew nothing while the
+    same spec drew it as a still); the **fading-comet driver was not a pure
+    function of the frame index** (frame 0 kept the previous frame's comet, which
+    is what a `pingpong` loop replays every cycle); and a **composite ignored its
+    own clock** (`animate=` stamps a default `Animation` on each panel, and the
+    renderer read that in preference to the composite's, so `.animate(duration=2)`
+    wrote the 360-frame default — `_lockstep` now takes fps/duration/n_frames/
+    loop/pingpong from the master and leaves head/trail/spin to the panel).
 - **Animation — an orthogonal modifier (`viz/spec.py::Animation`,
   `PlotSpec.animation`):** any spec of any `PlotKind` (single-panel or composite)
   becomes a movie by carrying an `Animation`; the semantic `kind` is unchanged and
   a backend that cannot animate draws the final frame. Built via
-  `to_plot_spec(animate=True | dict | Animation)` / `ts.viz.plot(..., animate=...)`,
+  `ts.plot(subject, animate=True | dict | Animation)` / `ts.viz.plot(..., animate=...)`,
   then tuned with the chainable spec methods `.animate(fps/duration/loop/pingpong)`
   / `.trail(length=("time"|"steps", v) | None, fade)` / `.head(show/size/color/symbol)`
   / `.camera(elev/azim/spin)` / `.clock(fmt)` (all mutate-and-return-self, composing
@@ -1793,7 +1864,7 @@ Nothing else in the library learns a new name when one is added.
   is a travelling-wave **line** (the profile — Kuramoto–Sivashinsky), a **2-D
   field** `u(x,y)` an `imshow` **heatmap** movie (Gray–Scott / Swift–Hohenberg).
   ONE semantic kind covers both — the new `SPATIAL_FIELD` `PlotKind` (the
-  renderer dispatches on the field's spatial ndim, like `to_plot_spec`
+  renderer dispatches on the field's spatial ndim, like the `__plot_spec__` seam
   auto-dispatches on component count). The producer
   (`viz/producers.py::spatial_field`) stacks every per-time snapshot on the
   layer's `"frames"` channel (shape `(T, *spatial)`) and keeps the **final** field
@@ -1801,7 +1872,7 @@ Nothing else in the library learns a new name when one is added.
   that can't animate draws the final field; the mpl renderer plays the stack frame
   by frame (`viz/render/mpl/_anim.py::_field_movie_driver` → `_field_movie_2d` /
   `_field_movie_1d`), consecutive frames carrying genuinely different data. **Front
-  door:** `system.to_plot_spec(kind="field", animate=True)` — the `"field"` recipe
+  door:** `ts.plot(system, kind="field", animate=True)` — the `"field"` recipe
   routes via `_KIND_ALIASES`; the spatial layout comes from the **system**, via the
   optional `_field_shape: tuple[int, ...]` ClassVar (recorded onto
   `traj.meta["field_shape"]` at integration time, so a bare `Trajectory` carries
@@ -1812,7 +1883,7 @@ Nothing else in the library learns a new name when one is added.
   from the DATA, not from the door** (v6, `mpl/_anim.py::_play_the_field_stack`):
   a `"frames"` channel exists only because the producer stacked the per-time
   snapshots so they could be played, so an animated `SPATIAL_FIELD` carrying one
-  plays it whichever door built the spec. Only the `to_plot_spec(kind="field")`
+  plays it whichever door built the spec. Only the `kind="field"`
   recipe forced the mode, so the transform spelling — `ts.plot(traj,
   "spatial_field", animate=True)`, the one the front door and the v6 docs use —
   animated in `reveal` mode and swept a ruler across the **final** field: measured
@@ -2469,6 +2540,8 @@ Two layers now cover them:
 | A repr shows `PoincareSection(crossings=…)` / an `OrbitSet` says "period 6" | Fixed in v6: **every** result's repr IS the answer (§4.3) — the section prints `PoincareSection  300 crossings of y = 0 up   ·  3-D states   (Rossler)` and a *flow's* period renders as the real number `T = 6.66329` (a map's stays an integer count). `summary()` exists on nothing. |
 | `ts.plot(traj, "psd", components="x")` used to raise | `components=` is the ONE spelling at every analysis and every transform door since v6 (M38). |
 | `system.to_plot_spec(...)` | The plotting seam is the dunder `__plot_spec__` — carried by systems, `Trajectory` and all 32 results, so `ts.plot` classifies a subject with ONE predicate. The verb you type is `plot`. |
+| A movie renders differently from its still, or you suspect the blitting | `TSDYNAMICS_NO_BLIT=1` writes every frame the unoptimised way; if that changes the picture it is a bug, not a setting — the compositor bit-compares probe frames and disables itself on any difference. |
+| A new animated artist is mutated per frame | Declare it on the `_LayerDriver` that mutates it, at the same site. An undeclared artist freezes at its first frame (it lands in the cached background); a declared one that the drivers do *not* mutate only costs a redraw. And the driver must be a pure function of the frame index — the compositor restores the frame it calibrated on, and `pingpong`/`loop` replay frame 0. |
 | `set_state` on a DDE | **Does not exist** (v6) — the state is a history function; use `reinit(u)` for a constant past or `run(history=...)`. |
 | `ts.Lorenz` / `ts.correlation_dimension` / `ts.Box` stopped resolving | Deliberate (C5). The top level is 17 names; everything else lives at one address, and the `MovedInV6` prints it: `ts.systems.Lorenz()` / `ts.analysis.correlation_dimension` / `ts.data.Box`. |
 | Removing or renaming a public name | Add its row to `src/tsdynamics/_redirects.py` **in the same commit**, sorted by key. The table is the migration guide; a removed name with no row gets the generic near-miss answer. |

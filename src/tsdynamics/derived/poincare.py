@@ -442,7 +442,7 @@ class PoincareSection(Trajectory):
     mistaking the full-dimensional crossing states for a flow line, and adds the
     self-describing result surface (the repr / :meth:`to_dict`) on top of
     the ordinary trajectory affordances (``.t`` / ``.y`` / named components /
-    :meth:`~tsdynamics.data.Trajectory.plot` / ``to_plot_spec``).
+    :meth:`~tsdynamics.data.Trajectory.plot` / ``__plot_spec__``).
 
     ``t`` holds the continuous crossing times and ``y`` the full-dimensional
     crossing states; the section plane and direction live in ``meta["plane"]`` /

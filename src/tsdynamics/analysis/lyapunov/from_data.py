@@ -172,7 +172,7 @@ class LyapunovFromData(ScalingResult):
         """The stretching curve ``S(k)`` (alias of :attr:`ordinate`)."""
         return self.ordinate
 
-    def to_plot_spec(self, kind: str | None = None) -> Any:
+    def __plot_spec__(self, kind: str | None = None) -> Any:
         r"""Describe the divergence curve as a backend-agnostic :class:`PlotSpec`.
 
         Builds a ``SCALING_FIT`` spec — the stretching curve :math:`S(k)` (mean

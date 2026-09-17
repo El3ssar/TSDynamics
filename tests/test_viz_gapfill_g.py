@@ -97,7 +97,7 @@ def _roundtrips(spec: PlotSpec) -> None:
 
 
 def test_attractor_set_is_a_scatter_with_palette() -> None:
-    spec = _attractor_set().to_plot_spec()
+    spec = _attractor_set().__plot_spec__()
     assert spec.kind == PlotKind.PHASE_PORTRAIT_2D
     assert [layer.kind for layer in spec.layers] == [PlotKind.SCATTER]
     layer = spec.layers[0]
@@ -112,7 +112,7 @@ def test_attractor_set_is_a_scatter_with_palette() -> None:
 
 
 def test_attractor_set_kind_override() -> None:
-    spec = _attractor_set().to_plot_spec(kind="phase_portrait_2d")
+    spec = _attractor_set().__plot_spec__(kind="phase_portrait_2d")
     assert spec.kind == PlotKind.PHASE_PORTRAIT_2D
 
 
@@ -125,7 +125,7 @@ def test_basin_fractions_is_a_categorical_bar() -> None:
     bf = BasinFractions(
         fractions={1: 0.6, 2: 0.4}, diverged=0.0, n=100, attractors=_attractor_set()
     )
-    spec = bf.to_plot_spec()
+    spec = bf.__plot_spec__()
     assert spec.kind == PlotKind.CATEGORICAL_BAR
     assert [layer.kind for layer in spec.layers] == [PlotKind.BAR]
     layer = spec.layers[0]
@@ -141,7 +141,7 @@ def test_basin_fractions_appends_a_diverged_bar() -> None:
     bf = BasinFractions(
         fractions={1: 0.5, 2: 0.3}, diverged=0.2, n=100, attractors=_attractor_set()
     )
-    spec = bf.to_plot_spec()
+    spec = bf.__plot_spec__()
     # the diverged share becomes a final bar with its own category label.
     assert spec.layers[0].data["y"].size == 3
     assert list(spec.x.categories)[-1] == "diverged"
@@ -153,7 +153,7 @@ def test_basin_fractions_appends_a_diverged_bar() -> None:
 
 
 def test_continuation_is_stacked_bands_with_tipping_vlines() -> None:
-    spec = _continuation().to_plot_spec()
+    spec = _continuation().__plot_spec__()
     assert spec.kind == PlotKind.CONTINUATION
     # one stacked AREA band per attractor id.
     assert [layer.kind for layer in spec.layers] == [PlotKind.AREA, PlotKind.AREA]
@@ -175,7 +175,7 @@ def test_continuation_is_stacked_bands_with_tipping_vlines() -> None:
 
 
 def test_uncertainty_exponent_is_a_scaling_fit() -> None:
-    spec = _uncertainty().to_plot_spec()
+    spec = _uncertainty().__plot_spec__()
     assert spec.kind == PlotKind.SCALING_FIT
     kinds = [layer.kind for layer in spec.layers]
     assert PlotKind.SCATTER in kinds and PlotKind.LINE in kinds
@@ -189,7 +189,7 @@ def test_uncertainty_exponent_is_a_scaling_fit() -> None:
 
 def test_uncertainty_exponent_scaling_kind_override() -> None:
     # the .plot.scaling() seam passes kind="scaling_fit" explicitly.
-    spec = _uncertainty().to_plot_spec(kind="scaling_fit")
+    spec = _uncertainty().__plot_spec__(kind="scaling_fit")
     assert spec.kind == PlotKind.SCALING_FIT
 
 
@@ -199,7 +199,7 @@ def test_uncertainty_exponent_scaling_kind_override() -> None:
 
 
 def test_basins_result_is_a_basins_image() -> None:
-    spec = _basins().to_plot_spec()
+    spec = _basins().__plot_spec__()
     assert spec.kind == PlotKind.BASINS_IMAGE
     assert spec.layers[0].kind == PlotKind.IMAGE
     assert spec.layers[0].data["c"].ndim == 2
@@ -208,7 +208,7 @@ def test_basins_result_is_a_basins_image() -> None:
 
 
 def test_basins_result_3d_slice_squeezes_to_a_2d_image() -> None:
-    spec = _basins(slice3d=True).to_plot_spec()
+    spec = _basins(slice3d=True).__plot_spec__()
     assert spec.kind == PlotKind.BASINS_IMAGE
     image = spec.layers[0].data["c"]
     # the degenerate (counts == 1) axis is dropped: a 3-D slice paints 2-D.
@@ -237,8 +237,8 @@ def test_same_id_same_colour_across_scatter_and_image() -> None:
         attractors=aset,
         grid=Grid(lo=np.array([-1.0, -1.0]), hi=np.array([1.0, 1.0]), counts=(3, 3)),
     )
-    scatter_spec = aset.to_plot_spec()
-    image_spec = basins.to_plot_spec()
+    scatter_spec = aset.__plot_spec__()
+    image_spec = basins.__plot_spec__()
 
     # both views carry the same palette name and the same {id: swatch} mapping.
     assert scatter_spec.meta["palette"] == image_spec.meta["palette"] == "tab20"
@@ -258,13 +258,13 @@ def test_palette_index_is_consistent_with_basin_fractions_and_continuation() -> 
         diverged=np.zeros(3),
     )
     expected = {1: 0, 2: 1, 3: 2}
-    assert aset.to_plot_spec().meta["palette_index"] == expected
-    assert bf.to_plot_spec().meta["palette_index"] == expected
-    assert cont.to_plot_spec().meta["palette_index"] == {1: 0, 2: 1}
+    assert aset.__plot_spec__().meta["palette_index"] == expected
+    assert bf.__plot_spec__().meta["palette_index"] == expected
+    assert cont.__plot_spec__().meta["palette_index"] == {1: 0, 2: 1}
 
 
 def test_palette_wraps_past_twenty_ids() -> None:
     """The 20-swatch palette is cyclic: id 21 reuses swatch 0."""
     aset = _attractor_set(ids=(1, 21))
-    idx = aset.to_plot_spec().meta["palette_index"]
+    idx = aset.__plot_spec__().meta["palette_index"]
     assert idx[1] == idx[21] == 0

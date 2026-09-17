@@ -51,9 +51,16 @@ def _attractor_states(cls, *, n_warm: int = 60, drop: int = 40, take: int = 5) -
     Iterates the reference path from a seeded initial condition and keeps a tail
     slice, so the test points are finite (the reference path only returns once the
     whole buffer is finite) and sit on the orbit rather than in the transient.
+
+    The seed goes to ``run``, **not** to the global ``numpy.random`` stream: a
+    system's random-IC draw comes from its own private ``Generator``
+    (``SystemBase._ic_generator``), seeded from OS entropy precisely so a plain
+    ``run()`` cannot disturb a caller's ``np.random.seed(0)``.  So the global
+    reseed this used to do had no effect, and "deterministically" was untrue —
+    which showed up as a ~1-in-3 failure on ``Bogdanov``, whose random draws
+    escape to infinity.
     """
-    np.random.seed(0)
-    warm = cls().run(steps=n_warm, backend="reference")
+    warm = cls().run(steps=n_warm, backend="reference", seed=0)
     finite = warm.y[np.isfinite(warm.y).all(axis=1)]
     # Guard the slice that follows, not just the row count: finite[drop:drop+take]
     # is only non-degenerate when there are at least drop + take finite rows.

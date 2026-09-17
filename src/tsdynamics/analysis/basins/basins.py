@@ -151,7 +151,7 @@ class BasinsResult(AnalysisResult):
         """Fraction of cells that diverged / never settled."""
         return float(np.mean(self.labels == DIVERGED))
 
-    def to_plot_spec(self, kind: str | None = None) -> Any:
+    def __plot_spec__(self, kind: str | None = None) -> Any:
         """Describe this basin diagram as a backend-agnostic :class:`PlotSpec`.
 
         Builds a ``BASINS_IMAGE`` spec — the integer label field as an image on
@@ -164,7 +164,7 @@ class BasinsResult(AnalysisResult):
         on the spec.
 
         The image shares the attractor palette (``tab20``) with
-        :meth:`AttractorSet.to_plot_spec`: the explicit ``{id: swatch index}``
+        :meth:`AttractorSet.__plot_spec__`: the explicit ``{id: swatch index}``
         mapping is recorded in ``meta["palette_index"]`` (identical to the one the
         scatter carries), so a given attractor id is the same colour in both
         views; ``meta["palette"]`` / ``meta["diverged_color"]`` name the colormap
@@ -345,7 +345,7 @@ class BasinFractions(AnalysisResult):
         """
         return self.fractions[key]
 
-    def to_plot_spec(self, kind: str | None = None) -> Any:
+    def __plot_spec__(self, kind: str | None = None) -> Any:
         r"""Describe the basin fractions as a backend-agnostic :class:`PlotSpec`.
 
         Builds a ``CATEGORICAL_BAR`` — one ``BAR`` per attractor id (plus a final

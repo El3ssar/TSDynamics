@@ -27,6 +27,7 @@ import numpy as np
 
 from tsdynamics.errors import InvalidInputError
 from tsdynamics.utils.plot_namespace import plot_namespace as _plot_namespace
+from tsdynamics.utils.plot_namespace import plot_seam_error as _plot_seam_error
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
@@ -54,7 +55,7 @@ _DELETED_TRAJECTORY_ACCESSORS: dict[str, tuple[str, ...]] = {
 
 
 # ---------------------------------------------------------------------------
-# to_plot_spec routing tables (the single-panel front door)
+# __plot_spec__ routing tables (the single-panel front door)
 # ---------------------------------------------------------------------------
 
 #: Friendly ``kind=`` spellings → the internal routing key.  A *recipe* like
@@ -74,7 +75,7 @@ _KIND_ALIASES: dict[str, str] = {
 }
 
 #: Per-route allow-list of the extra keyword(s) accepted via ``**kind_kw`` — kept
-#: off the ``to_plot_spec`` signature because each is valid for one kind only.
+#: off the ``__plot_spec__`` signature because each is valid for one kind only.
 #: This table is the one place the per-kind options live; extending a kind's
 #: options is a one-line edit here (the validation + ``plot()`` forwarding both
 #: read it), so the surface grows without reshaping the signature.
@@ -97,7 +98,7 @@ _KIND_KW: dict[str, frozenset[str]] = {
     "poincare_section": frozenset(),
 }
 
-#: The keywords ``plot()`` peels off and forwards to :meth:`Trajectory.to_plot_spec`
+#: The keywords ``plot()`` peels off and forwards to :meth:`Trajectory.__plot_spec__`
 #: (rather than leaking them to the renderer).  Derived from the routing tables so
 #: it can never drift out of sync with the per-kind options above.
 _PLOT_SPEC_KEYS: frozenset[str] = frozenset({"kind", "components", "animate", "primitive"}).union(
@@ -123,13 +124,13 @@ _TRANSFORM_ROUTE: dict[str, str] = {
     "spatial_field": "spatial_field",
 }
 
-#: The routing keys :meth:`Trajectory.to_plot_spec` can actually **build** — the
+#: The routing keys :meth:`Trajectory.__plot_spec__` can actually **build** — the
 #: auto-dispatch targets plus the recipes in :data:`_KIND_ALIASES`.  Validation
 #: keys off *this*, not off :class:`~tsdynamics.viz.spec.PlotKind` membership:
 #: the enum is the vocabulary of every plot the *library* can describe, while
 #: this front door builds exactly one panel from one trajectory.  Before v6
 #: ``kind=`` was resolved straight through ``PlotKind(route)``, so
-#: ``to_plot_spec(kind="basins_image")`` returned a spec **labelled**
+#: ``__plot_spec__(kind="basins_image")`` returned a spec **labelled**
 #: ``basins_image`` whose only layer was a plain ``LINE`` — a mislabelled plot,
 #: rendered with a basin-image preset — and ``kind="composite"`` produced a
 #: zero-panel composite that silently discarded the trajectory.  A kind this
@@ -345,6 +346,8 @@ class Trajectory:
         """
         if name.startswith("_") or name in Trajectory.__slots__:
             raise AttributeError(name)
+        if name == "to_plot_spec":
+            raise _plot_seam_error("Trajectory", "traj")
         from tsdynamics.analysis import _discovery
 
         try:
@@ -586,19 +589,7 @@ class Trajectory:
 
     # --- visualization seam ---
 
-    def __plot_spec__(self, kind: str | None = None, **kwargs: Any) -> Plot:
-        """Describe this trajectory as a plot — the ONE seam every subject answers to.
-
-        CONTRACT §6.2 / §3.5.
-
-        ``ts.plot`` classifies a positional argument as a *subject* by asking
-        whether it carries ``__plot_spec__`` — one predicate, so a system, a
-        trajectory and an analysis result are all recognised the same way.
-        :meth:`to_plot_spec` stays the readable spelling and owns the body.
-        """
-        return self.to_plot_spec(kind, **kwargs)
-
-    def to_plot_spec(
+    def __plot_spec__(
         self,
         kind: str | None = None,
         *,
@@ -610,9 +601,23 @@ class Trajectory:
         """
         Describe this trajectory as a backend-agnostic :class:`PlotSpec`.
 
-        This is the **one front door** for trajectory plotting — every common
-        view goes through here, so the parameterised ``viz.producers`` builders
-        stay an internal detail.
+        **This is the internal seam, not a verb you type.**  ``ts.plot``
+        classifies a positional argument as a *subject* by asking whether it
+        carries ``__plot_spec__`` — one predicate, so a system, a trajectory and
+        all 32 analysis results are recognised the same way.  The two spellings a
+        user types are :func:`tsdynamics.plot` (hands back the
+        :class:`~tsdynamics.viz.spec.Plot`, drawing nothing) and
+        :meth:`plot` (the same thing, styled at the door).
+
+        .. versionchanged:: 6.0
+           Was the public ``to_plot_spec``.  ``ts.plot(traj)`` returns the very
+           same object without rendering, so a third public spelling for
+           "build a plot but do not draw it" bought nothing and cost a
+           newcomer a choice.  ``traj.to_plot_spec`` now raises, naming both
+           spellings that work.
+
+        Every common view goes through here, so the parameterised
+        ``viz.producers`` builders stay an internal detail.
 
         Auto-dispatch
             With ``kind=None`` the semantic kind follows the number of selected
@@ -930,7 +935,7 @@ class Trajectory:
         """Convert a delay in **time units** to an integer sample lag.
 
         The one conversion, shared by both plotting front doors (this class's
-        ``to_plot_spec`` and the ``delay_embedding`` transform behind
+        ``__plot_spec__`` and the ``delay_embedding`` transform behind
         ``ts.plot``), so a delay can never mean two different things depending on
         which door you came in through.
         """
@@ -1215,10 +1220,10 @@ class Trajectory:
             traj.plot().render("plotly")         # a plotly figure
             traj.plot(title="Lorenz")            # tweak, still a PlotSpec
 
-        Sugar over :meth:`to_plot_spec`: the spec-shaping keywords (``kind``,
+        Sugar over :meth:`__plot_spec__`: the spec-shaping keywords (``kind``,
         ``components``, ``primitive``, ``animate``, and the per-kind options
         ``delay`` / ``delay_time`` / ``color_by`` / ``transpose``) are peeled off
-        and passed to :meth:`to_plot_spec`; the **style** vocabulary
+        and passed to :meth:`__plot_spec__`; the **style** vocabulary
         (:data:`~tsdynamics.viz.style.STYLE_KEYS` and its aliases — ``color`` /
         ``lw`` / ``alpha`` / …) plus ``theme`` are applied to the finished spec;
         the rest are inline spec tweaks (``xlabel`` / ``yscale`` / ``title`` /
@@ -1248,7 +1253,7 @@ class Trajectory:
         names = style_names()
         style = {k: kwargs.pop(k) for k in list(kwargs) if k in names}
         theme = kwargs.pop("theme", None)
-        spec = self.to_plot_spec(**spec_kw)
+        spec = self.__plot_spec__(**spec_kw)
         if theme is not None:
             spec.theme(theme)
         if style:

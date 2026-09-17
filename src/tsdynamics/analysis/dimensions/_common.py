@@ -474,7 +474,7 @@ class DimensionResult(ScalingResult):
         lo, hi = self.fit_slice
         return float(self.x[lo]), float(self.x[hi])
 
-    def to_plot_spec(self, kind: str | None = None) -> Any:
+    def __plot_spec__(self, kind: str | None = None) -> Any:
         r"""Describe this dimension estimate as a backend-agnostic :class:`PlotSpec`.
 
         Builds a ``SCALING_FIT`` spec — the log--log curve as a scatter layer, the

@@ -110,7 +110,7 @@ class EmbeddingDimension(AnalysisResult):
             return (f"E1 at m: {e1}{e2}  (E1 saturates to 1; E2 near 1 means stochastic)",)
         return ()
 
-    def to_plot_spec(self, kind: str | None = None) -> Any:
+    def __plot_spec__(self, kind: str | None = None) -> Any:
         r"""Describe the embedding-dimension diagnostic as a :class:`PlotSpec`.
 
         Builds a ``DIAGNOSTIC_CURVE`` of the per-dimension diagnostic against the

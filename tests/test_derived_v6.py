@@ -3,7 +3,7 @@
 Five defects are reproduced-and-fixed here, every one measured on the v5 tree:
 
 * ``hasattr(pm, "plot")`` was ``False`` on all five wrappers while
-  ``to_plot_spec`` was ``True`` — the seam existed and the verb did not;
+  ``__plot_spec__`` was ``True`` — the seam existed and the verb did not;
 * ``_DerivedSystem.params`` blindly forwarded ``self.system.params``, so
   ``PoincareMap(wrapped).run(5)`` marched correctly and then died with a raw
   ``AttributeError``;

@@ -2,7 +2,7 @@
 
 ``ts.systems.Lorenz().plot()`` must resolve through the visualization seam exactly like
 an analysis result: a system describes itself with ``__plot_spec__()`` (a default
-trajectory delegated to :meth:`tsdynamics.data.Trajectory.to_plot_spec`), and
+trajectory delegated to :meth:`tsdynamics.data.Trajectory.__plot_spec__`), and
 ``.plot()`` routes that spec to a backend (raising the documented
 ``VisualizationNotInstalled`` until one registers).  The mixin imports the viz
 package only lazily, so ``import tsdynamics`` stays visualization-free.
@@ -37,7 +37,7 @@ def test_every_family_base_is_plottable():
         assert issubclass(cls, SystemPlottable)
 
 
-def test_continuous_system_to_plot_spec_resolves():
+def test_continuous_system_plot_spec_resolves():
     """A flow integrates a default trajectory and yields a valid spec."""
     spec = ts.systems.Lorenz().__plot_spec__()
     assert isinstance(spec, PlotSpec)
@@ -45,14 +45,14 @@ def test_continuous_system_to_plot_spec_resolves():
     assert spec.layers
 
 
-def test_discrete_map_to_plot_spec_resolves():
+def test_discrete_map_plot_spec_resolves():
     """A map's default spec resolves too (dispatching on is_discrete)."""
     spec = ts.systems.Henon().__plot_spec__()
     assert isinstance(spec, PlotSpec)
     assert isinstance(spec.kind, PlotKind)
 
 
-def test_to_plot_spec_forwards_trajectory_kwargs():
+def test_plot_spec_forwards_trajectory_kwargs():
     """__plot_spec__ passes integration kwargs through to the family trajectory."""
     spec = ts.systems.Lorenz().__plot_spec__(final_time=5.0, dt=0.05)
     assert isinstance(spec, PlotSpec)

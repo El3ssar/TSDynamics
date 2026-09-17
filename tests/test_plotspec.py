@@ -231,21 +231,21 @@ def test_render_raises_without_a_backend(_no_backend):
 
 def test_plottable_mixin_plot_raises_without_backend(_no_backend):
     class _Thing(Plottable):
-        def to_plot_spec(self):
+        def __plot_spec__(self):
             return PlotSpec(kind=PlotKind.TIME_SERIES)
 
     with pytest.raises(ImportError):
         _Thing().plot(xscale="log").render()
 
 
-def test_plottable_base_to_plot_spec_raises():
+def test_plottable_base_plot_spec_raises():
     with pytest.raises(NotImplementedError):
-        Plottable().to_plot_spec()
+        Plottable().__plot_spec__()
 
 
 def test_plottable_mimebundle_is_noop_without_backend(_no_backend):
     class _Thing(Plottable):
-        def to_plot_spec(self):
+        def __plot_spec__(self):
             return PlotSpec(kind=PlotKind.TIME_SERIES)
 
     assert _Thing()._repr_mimebundle_() is None

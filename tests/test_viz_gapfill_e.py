@@ -1,4 +1,4 @@
-"""Derived-wrapper ``to_plot_spec`` contract (stream GAPFILL-E).
+"""Derived-wrapper ``__plot_spec__`` contract (stream GAPFILL-E).
 
 Every derived wrapper that can describe itself produces a valid, JSON-round-trip
 :class:`~tsdynamics.viz.spec.PlotSpec`:

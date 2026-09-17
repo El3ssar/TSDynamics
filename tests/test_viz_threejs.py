@@ -500,14 +500,14 @@ def test_static_points_spec_does_not_warn() -> None:
     assert "animation" not in payload["metadata"]
 
 
-def test_to_plot_spec_animate_flag_drives_threejs_payload() -> None:
-    """``to_plot_spec(animate=True)`` → animation block; ``animate=False`` → none."""
+def test_plot_spec_animate_flag_drives_threejs_payload() -> None:
+    """``__plot_spec__(animate=True)`` → animation block; ``animate=False`` → none."""
     pytest.importorskip("tsdynamics._rust")
     import tsdynamics as ts
 
     tr = ts.systems.Lorenz().run(final_time=10.0, dt=0.01).after(2.0)
-    animated = tr.to_plot_spec(animate=True).render("threejs", raw=True)
-    static = tr.to_plot_spec(animate=False).render("threejs", raw=True)
+    animated = tr.__plot_spec__(animate=True).render("threejs", raw=True)
+    static = tr.__plot_spec__(animate=False).render("threejs", raw=True)
     assert "animation" in animated["metadata"]
     assert "animation" not in static["metadata"]
     # The animation toggle never perturbs the geometry buffers.
@@ -1479,7 +1479,7 @@ def test_a_dense_map_cloud_shows_its_banding_in_a_browser(tmp_path) -> None:
     traj = henon.run(steps=200_000, ic=[0.1, 0.1])
     out = tmp_path / "henon.html"
     with pytest.warns(VisualizationDegraded):
-        traj.to_plot_spec().render("threejs", path=out, poster=False)
+        traj.__plot_spec__().render("threejs", path=out, poster=False)
 
     rgb = _browser_screenshot(out, tmp_path)
     lit = _lit_mask(rgb)
@@ -1506,7 +1506,7 @@ def test_the_viewer_draws_a_labelled_scale_frame_in_a_browser(tmp_path) -> None:
 
     traj = ts.systems.Lorenz().run(final_time=40.0, dt=0.005, ic=[1.0, 1.0, 1.0])
     out = tmp_path / "lorenz.html"
-    traj.to_plot_spec().render("threejs", path=out, poster=False)
+    traj.__plot_spec__().render("threejs", path=out, poster=False)
 
     rgb = _browser_screenshot(out, tmp_path)
     lit = _lit_mask(rgb)
