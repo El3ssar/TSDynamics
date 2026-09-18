@@ -213,8 +213,18 @@ class LyapunovFromData(ScalingResult):
 
     #: R2 for the curve pair, R1-adjacent for the two counts — see the class
     #: Notes.  Every name here still resolves and still exports.
+    #: ``abscissa``/``ordinate`` are hidden as the generic spellings of this
+    #: result's own :attr:`times` / :attr:`divergence` (rule R2 — keep the name
+    #: the subject actually has); ``decorrelation`` is an input echoed back.
+    #:
+    #: ``n_reference`` is **not** hidden.  It is printed twice — in the context
+    #: line (``151 ref pts``) and inside the warning that carries the UNTRUSTED
+    #: verdict (``151 reference points / 160 samples per window``) — and it is
+    #: half of the arithmetic behind :attr:`independent_windows`, which *is*
+    #: listed.  A reader asking the obvious next question, "why is this
+    #: untrusted?", needs both halves to be reachable by tab.
     _HIDDEN_ATTRIBUTES: ClassVar[frozenset[str]] = frozenset(
-        {"abscissa", "ordinate", "n_reference", "decorrelation"}
+        {"abscissa", "ordinate", "decorrelation"}
     )
 
     embedding_dim: int = 0

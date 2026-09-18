@@ -437,6 +437,38 @@ _JET_UFUNC_MAP: dict[str, Callable[[IntervalJet], IntervalJet]] = {
 }
 
 
+def _bind_object_loop_methods() -> None:
+    """Expose every jet ufunc as a same-named **method** on :class:`IntervalJet`.
+
+    Two different NumPy dispatch paths reach this class, and they look for
+    different things:
+
+    * ``np.exp(jet)`` — a bare object — consults
+      :meth:`IntervalJet.__array_ufunc__`.
+    * ``np.exp(array_of_jets)`` — the ``dtype=object`` array that ``to_native``
+      now hands every map kernel — uses NumPy's **object loop**, which ignores
+      ``__array_ufunc__`` and calls the method ``element.exp()`` instead.
+
+    Binding the same callables under their ufunc names serves the second path
+    without restating any interval math.  Without this, moving 1-D kernels onto
+    the object array (so that the documented ``u[0]`` spelling works) would have
+    broken every scalar-style kernel calling a ufunc — measured on ``Gauss`` and
+    ``Ricker``, which use ``np.exp``.
+    """
+    for _name, _fn in _JET_UFUNC_MAP.items():
+
+        def _method(self: IntervalJet, _fn: Any = _fn) -> Any:
+            return _fn(self)
+
+        _method.__name__ = _name
+        _method.__qualname__ = f"IntervalJet.{_name}"
+        _method.__doc__ = f"Interval-jet ``{_name}`` (NumPy object-loop entry point)."
+        setattr(IntervalJet, _name, _method)
+
+
+_bind_object_loop_methods()
+
+
 # ── symengine tree evaluation with IntervalJet (flows) ────────────────────────
 
 # symengine elementary-function node name -> the IntervalJet wrapper.  ``exp`` and
@@ -535,12 +567,25 @@ def map_interval_fn(system: DiscreteMap) -> ResidJacIv:
     params = tuple(cast("ParamSet", system.params).as_tuple())
 
     def to_native(jets: list[IntervalJet]) -> Any:
-        return jets[0] if dim == 1 else jets
+        """Present the jets to ``_step`` the way a map kernel expects its state.
+
+        A NumPy **object** array, for every dimension — the interval twin of
+        :func:`~tsdynamics.analysis._tangent.to_native`.  It indexes like a
+        vector (``u[0]``, the documented spelling) *and* broadcasts elementwise
+        under the plain arithmetic a scalar-style 1-D kernel writes
+        (``r * x * (1 - x)``), so both kernel styles push through the same
+        forward-mode AD.  Passing the bare ``jets[0]`` for ``dim == 1`` served
+        only the second style and raised ``'IntervalJet' object is not
+        subscriptable`` for the first.
+        """
+        return np.array(jets, dtype=object)
 
     def resid_jac(lo: np.ndarray, hi: np.ndarray) -> tuple[list[Interval], list[list[Interval]]]:
         jets = [IntervalJet.var(Interval(lo[i], hi[i]), i, dim) for i in range(dim)]
         out = cls._step(to_native(jets), *params)
-        out_list = [out] if dim == 1 else list(out)
+        # A kernel may hand back a list, a NumPy object array (scalar-style
+        # arithmetic over the input array), or — for ``dim == 1`` — a bare jet.
+        out_list = list(np.asarray(out, dtype=object).ravel())
         g: list[Interval] = []
         jac: list[list[Interval]] = []
         for i in range(dim):
@@ -603,9 +648,28 @@ def _probe(resid_jac: ResidJacIv, system: Any, dim: int) -> None:
         # TypeError/ValueError from the kernel (``%``, a ``<`` comparison, an
         # ``np.where``) hitting an operator the Interval/IntervalJet lacks.
         raise InvalidInputError(
-            f"method='interval' cannot enclose {type(system).__name__}: {exc} "
+            f"method='interval' cannot enclose {type(system).__name__}: {_why(exc)} "
             f"Use method='newton' (or 'sd'/'dl' for a map) for this system."
         ) from exc
+
+
+def _why(exc: Exception) -> str:
+    """Say which operation could not be enclosed, in this module's own words.
+
+    A ufunc we do not model reaches us by two routes with two very different
+    sentences: our own ``__array_ufunc__`` raises *"interval method does not
+    support numpy ufunc 'arccos'"*, while NumPy's object loop (the path taken
+    since map kernels are handed a ``dtype=object`` array) raises *"loop of
+    ufunc does not support argument 0 of type IntervalJet which has no callable
+    arccos method"*.  Same cause, and the second sentence describes our own
+    internals rather than the user's kernel, so it is restated as the first.
+    """
+    text = str(exc)
+    if "no callable" in text and "method" in text:
+        op = text.rsplit("no callable", 1)[-1].replace("method", "").strip()
+        if op:
+            return f"interval method does not support numpy ufunc {op!r} in the kernel."
+    return text
 
 
 # ── Krawczyk branch-and-prune ─────────────────────────────────────────────────

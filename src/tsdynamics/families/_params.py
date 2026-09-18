@@ -19,13 +19,19 @@ add or remove a key.  All five are overridden here to route through the same key
 check as ``__setitem__``, so the fixed-key contract survives the change.
 
 Three of those five — ``pop`` / ``popitem`` / ``clear`` — can only ever *raise*
-on a fixed-key mapping, and a sixth, the inherited ``dict.fromkeys``, is
-uncallable in any spelling (it reaches ``ParamSet.__init__``, whose ``data``
-argument the classmethod does not supply).  All four are therefore withheld from
-``dir()`` by :func:`~tsdynamics.families._hidden.hide` — ``params.<TAB>`` is the
-one place a user looks, and offering four names that cannot work is the exact
-overwhelm v6 §11 exists to remove.  ``setdefault`` and ``update`` stay listed
-because they *do* something: both update declared values in place.
+on a fixed-key mapping, and a sixth, the inherited ``dict.fromkeys``, could not
+work either: it builds the result by calling ``cls()``, and ``ParamSet.__init__``
+requires ``data``.  All four are withheld from ``dir()`` by
+:func:`~tsdynamics.families._hidden.hide` — ``params.<TAB>`` is the one place a
+user looks, and offering four names that cannot work is the exact overwhelm v6
+§11 exists to remove.  ``setdefault`` and ``update`` stay listed because they
+*do* something: both update declared values in place.
+
+All four also **answer by name**.  ``fromkeys`` was the odd one out: hidden but
+not overridden, it failed with a raw ``TypeError`` naming ``ParamSet.__init__``
+and its missing ``data`` argument — a constructor the caller never wrote, about
+a class they were not using.  It now raises the same teaching
+``InvalidInputError`` its three siblings do (``CONTRACT.md`` §11.3 T2).
 
 The overrides themselves are untouched, and so is reachability: ``dir()`` is not
 the lookup path, so ``p.pop("sigma")`` still raises the teaching
@@ -134,6 +140,30 @@ class ParamSet(dict[str, Any]):
         from tsdynamics.errors import InvalidInputError
 
         raise InvalidInputError("Parameters are fixed-key — cannot clear.")
+
+    @classmethod
+    def fromkeys(cls, *args: Any, **kwargs: Any) -> Any:
+        """Refuse — a parameter set's keys come from the system that declares them.
+
+        The inherited ``dict.fromkeys`` was already **uncallable in every
+        spelling**: it builds the new mapping by calling ``cls()``, and
+        ``ParamSet.__init__`` requires ``data``, so the class method died on a
+        raw ``TypeError: ParamSet.__init__() missing 1 required positional
+        argument: 'data'`` — an error about a constructor the caller never
+        wrote.  Its three fixed-key siblings (``pop`` / ``popitem`` /
+        ``clear``) all answer by name, so this one does too.
+        """
+        from tsdynamics.errors import InvalidInputError, remedy
+
+        raise InvalidInputError(
+            "Parameters are fixed-key — cannot build a ParamSet from bare keys. "
+            "The keys are the ones the system declares, and the values are the "
+            "point."
+            + remedy(
+                'ParamSet({"sigma": 10.0, "rho": 28.0})',
+                "system.with_params(sigma=12.0)",
+            )
+        )
 
     def setdefault(self, key: str, default: Any = None, /) -> Any:
         """Return ``self[key]``; refuse to *insert* an undeclared key."""

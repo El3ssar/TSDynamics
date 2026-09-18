@@ -894,3 +894,262 @@ class TestNothingPublicIsUndocumented:
         for name in ("t", "y", "system", "meta"):
             doc = inspect.getdoc(getattr(Trajectory, name)) or ""
             assert len(doc) > 40, f"Trajectory.{name} still has no docstring of its own"
+
+
+# --- CONTRACT.md §11.3 T2 + §11.6 defect 1 — a write cannot corrupt an answer  #
+#
+# The visibility ruling hid ~40 slots across this territory, but it also found
+# eight public attributes that were *writable* and, once written, made the object
+# answer wrongly rather than loudly.  The chair ruled all of them **KEEP** — a
+# guarded setter, never a hidden name — because renaming a system's components or
+# re-aiming a projection is legitimate customization (G1).  What follows pins the
+# guard AND the capability it protects: for every refusal there is a paired test
+# that the legitimate write still works.
+
+
+def _lorenz():
+    return ts.systems.Lorenz()
+
+
+def _tangent():
+    from tsdynamics.derived import TangentSystem
+
+    return TangentSystem(_lorenz(), k=2)
+
+
+def _projected():
+    from tsdynamics.derived import ProjectedSystem
+
+    return ProjectedSystem(_lorenz(), [0, 2])
+
+
+def _section():
+    return _lorenz().poincare("z", 20.0)
+
+
+def _traj():
+    return _lorenz().run(final_time=1.0, dt=0.1, ic=[1.0, 1.0, 1.0])
+
+
+#: ``(id, factory, attribute, rejected value, message must name)``.  One row per
+#: attribute §11.6 defect 1 lists that this slot owns; ``Plot.kind``/``.layers``
+#: are the viz slot's two.
+STRUCTURAL_WRITES = [
+    ("system-params", _lorenz, "params", {"sigma": 10.0}, "with_params"),
+    ("system-plot", _lorenz, "plot", 42, "plot()"),
+    ("system-dim", _lorenz, "dim", 5, "read-only"),
+    ("system-variables-arity", _lorenz, "variables", ("a", "b"), "but this system has 3"),
+    ("system-variables-type", _lorenz, "variables", 42, "sequence of 3 component names"),
+    ("system-variables-dupes", _lorenz, "variables", ("a", "a", "b"), "repeats"),
+    ("tangent-k-range", _tangent, "k", 7, "must be in [1, 3]"),
+    ("tangent-k-whole", _tangent, "k", 2.5, "whole number"),
+    ("projected-components-range", _projected, "components", [0, 99], "does not exist"),
+    ("projected-components-name", _projected, "components", ["x", "q"], "no component 'q'"),
+    ("projected-components-empty", _projected, "components", [], "at least one"),
+    ("section-plane", _section, "plane", (0, 1.0), "read-only"),
+    ("traj-y-rows", _traj, "y", np.zeros((3, 3)), "rows"),
+    ("traj-t-rows", _traj, "t", np.zeros(3), "rows"),
+    ("traj-meta-type", _traj, "meta", 42, "provenance mapping"),
+]
+
+
+class TestAWriteCannotCorruptTheAnswer:
+    """§11.6 defect 1: the write is refused where the mistake is, not five frames on."""
+
+    @pytest.mark.parametrize(
+        ("factory", "attr", "value", "names"),
+        [row[1:] for row in STRUCTURAL_WRITES],
+        ids=[row[0] for row in STRUCTURAL_WRITES],
+    )
+    def test_a_structural_write_is_refused_and_the_message_says_why(
+        self, factory, attr, value, names
+    ):
+        subject = factory()
+        with pytest.raises((ts.InvalidParameterError, ts.InvalidInputError)) as excinfo:
+            setattr(subject, attr, value)
+        assert names in str(excinfo.value)
+
+    @pytest.mark.parametrize(
+        ("factory", "attr", "value", "names"),
+        [row[1:] for row in STRUCTURAL_WRITES],
+        ids=[row[0] for row in STRUCTURAL_WRITES],
+    )
+    def test_the_refusal_is_catchable_as_the_builtin_it_subclasses(
+        self, factory, attr, value, names
+    ):
+        # The typed hierarchy is purely additive, so code that predates it and
+        # catches ValueError/TypeError keeps catching these.
+        subject = factory()
+        with pytest.raises((ValueError, TypeError)):
+            setattr(subject, attr, value)
+
+    def test_every_remedy_line_the_refusal_prints_actually_parses(self):
+        # The errgate rule: a line the library hands back must be one the user can
+        # type.  13 catalogue systems declare NO parameters (every ``Sprott*``),
+        # and a template filled from an empty parameter list printed
+        # ``sprotta.<param> = ...``.  Those lines are dropped, not faked.
+        import ast
+
+        from tsdynamics import registry
+
+        unparseable = []
+        for entry in registry.all_systems():
+            try:
+                entry.cls().params = {"x": 1}
+            except (ts.InvalidParameterError, ts.InvalidInputError) as err:
+                for line in str(err).splitlines()[1:]:
+                    if not line.strip():
+                        continue
+                    try:
+                        ast.parse(line.strip())
+                    except SyntaxError:
+                        unparseable.append((entry.name, line.strip()))
+        assert unparseable == []
+
+    def test_a_system_with_no_parameters_says_so_instead_of_inventing_one(self):
+        bare = ts.systems.SprottA()
+        assert bare.params == {}
+        with pytest.raises(ts.InvalidParameterError, match="declares no parameters"):
+            bare.params = {"a": 1.0}
+
+    def test_a_refused_write_leaves_the_object_usable(self):
+        # The whole point: before the guard, `lor.variables = ("a", "b")` was
+        # accepted and `lor.info` then raised a raw `IndexError: tuple index out
+        # of range` from inside the equation renderer.
+        lor = _lorenz()
+        with pytest.raises(ts.InvalidInputError):
+            lor.variables = ("a", "b")
+        assert lor.variables == ("x", "y", "z")
+        assert lor.info.dim == 3
+        assert lor.run(final_time=0.3, dt=0.1, ic=[1.0, 1.0, 1.0]).shape == (4, 3)
+
+
+class TestTheGuardedWritesStillWork:
+    """G1, paired with every refusal above: not one capability was cut."""
+
+    def test_a_parameter_value_is_as_writable_as_it_ever_was(self):
+        lor = _lorenz()
+        lor.sigma = 12.0
+        lor.params["rho"] = 29.0
+        lor.params.update({"beta": 2.0})
+        assert (lor.sigma, lor.rho, lor.beta) == (12.0, 29.0, 2.0)
+        assert lor.run(final_time=0.3, dt=0.1, ic=[1.0, 1.0, 1.0]).shape == (4, 3)
+        assert _lorenz().with_params(sigma=12.0).sigma == 12.0
+
+    def test_renaming_the_components_works_end_to_end(self):
+        lor = _lorenz()
+        lor.variables = ("a", "b", "c")
+        traj = lor.run(final_time=0.3, dt=0.1, ic=[1.0, 1.0, 1.0])
+        assert lor.variables == ("a", "b", "c")
+        assert traj.variables == ("a", "b", "c")
+        assert traj["a"].shape == (4,)
+        assert lor.info.variables == ("a", "b", "c")
+
+    def test_a_projection_can_be_re_aimed_by_name_or_by_index(self):
+        proj = _projected()
+        assert (proj.components, proj.dim, proj.variables) == ((0, 2), 2, ("x", "z"))
+        proj.components = ["y"]
+        proj.reinit([1.0, 1.0, 1.0])
+        assert (proj.components, proj.dim, proj.variables) == ((1,), 1, ("y",))
+        assert proj.step(0.01).shape == (1,)
+
+    @pytest.mark.parametrize(("system", "ic", "new_k"), [("Lorenz", [1.0, 1.0, 1.0], 3)])
+    def test_a_tangent_frame_can_be_widened_after_construction(self, system, ic, new_k):
+        tang = _tangent()
+        tang.reinit(ic)
+        tang.step()
+        tang.k = new_k
+        tang.reinit(ic)
+        tang.step()
+        # The extended variational tape is shaped by k and was cached on the
+        # structural parameters ALONE, so this used to reuse the k=2 tape and die
+        # with `cannot reshape array of size 6 into shape (3,3)`.
+        assert tang.deviations().shape == (3, new_k)
+        assert len(tang.exponents()) == new_k
+
+    def test_a_map_tangent_frame_narrows_too(self):
+        from tsdynamics.derived import TangentSystem
+
+        tang = TangentSystem(ts.systems.Henon(), k=2)
+        tang.reinit([0.1, 0.1])
+        tang.step()
+        tang.k = 1
+        tang.reinit([0.1, 0.1])
+        tang.step()
+        assert tang.deviations().shape == (2, 1)
+
+    def test_writing_the_same_k_keeps_a_running_average(self):
+        tang = _tangent()
+        tang.reinit([1.0, 1.0, 1.0])
+        for _ in range(5):
+            tang.step()
+        before = tang.exponents().copy()
+        tang.k = 2  # the value it already has — a no-op, not a reset
+        np.testing.assert_array_equal(tang.exponents(), before)
+
+    def test_measured_data_can_still_be_patched_in_place(self):
+        traj = _traj()
+        traj.y = traj.y + 100.0
+        assert float(traj.y[0, 0]) == pytest.approx(101.0)
+        traj.y = traj.y[:, 0]  # a 1-D write normalises, exactly as the constructor does
+        assert traj.y.shape == (11, 1)
+        traj.meta = {"system": "measured"}
+        assert traj.meta == {"system": "measured"}
+
+
+class TestAStateWriteDropsWhatWasDerivedFromIt:
+    """The defect verbatim: two caches are computed from ``y`` and were kept."""
+
+    def test_the_escape_verdict_is_recomputed(self):
+        traj = _traj()
+        assert traj.unbounded is None  # read it, so the verdict is cached
+        traj.y = np.outer(np.linspace(1.0, 1e12, traj.n_steps), np.ones(3))
+        assert traj.unbounded is not None, "unbounded reported a stale verdict"
+        assert "unbounded" in str(traj.unbounded)
+
+    def test_the_neighbour_index_is_rebuilt(self):
+        traj = _traj()
+        traj.neighbors(traj.y[0], 2)  # build the KD-tree over the original states
+        traj.y = traj.y + 100.0
+        moved = traj.neighbors(traj.y[0], 2)
+        # Queried at a state that IS in the new cloud, so distance 0 — a stale
+        # tree would answer from the pre-write coordinates.
+        assert float(moved.distance[0]) == pytest.approx(0.0, abs=1e-9)
+
+    def test_a_write_keeps_the_two_axes_describing_the_same_rows(self):
+        traj = _traj()
+        with pytest.raises(ts.InvalidInputError, match="rows"):
+            traj.y = np.zeros((3, 3))
+        assert traj.shape == (11, 3)
+        assert traj.y.shape[0] == traj.t.shape[0]
+
+
+class TestTheFixedKeyMappingAnswersInEverySpelling:
+    """§11.3 T2: ``fromkeys`` was hidden but not overridden, so it raised about
+    ``ParamSet.__init__`` — a constructor the caller never wrote."""
+
+    def test_fromkeys_is_refused_by_name_like_its_three_siblings(self):
+        from tsdynamics.families import ParamSet
+
+        params = _lorenz().params
+        for call in (
+            lambda: ParamSet.fromkeys(["a"]),
+            lambda: params.fromkeys(["a"]),
+            lambda: ParamSet.fromkeys(["a"], 0.0),
+        ):
+            with pytest.raises(ts.InvalidInputError, match="fixed-key"):
+                call()
+
+    def test_the_four_hidden_mutators_are_off_the_listing_but_answer(self):
+        params = _lorenz().params
+        for name in ("clear", "fromkeys", "pop", "popitem"):
+            assert name not in public(params), f"ParamSet.{name} is listed after all"
+            assert hasattr(params, name), f"ParamSet.{name} was UNBOUND, not hidden"
+
+    def test_the_values_are_still_writable_through_every_listed_door(self):
+        params = _lorenz().params
+        params["sigma"] = 11.0
+        params.sigma = 12.0
+        params.update({"rho": 29.0})
+        assert params.setdefault("sigma") == 12.0
+        assert params.as_tuple() == (12.0, 29.0, params["beta"])

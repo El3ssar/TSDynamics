@@ -36,7 +36,31 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Sequence
 
-__all__ = ["dir_without", "listing_dir"]
+__all__ = ["INHERITED_DICT_METHODS", "INHERITED_STR_METHODS", "dir_without", "listing_dir"]
+
+#: The 47 public methods ``str`` contributes to **every** ``str`` subclass.
+#:
+#: Subclassing a builtin is how three values in this library stay drop-in
+#: replacements for the plain thing they replace — ``Plot.title`` is a ``str``
+#: you can compare and format, and :class:`~tsdynamics.viz.spec.PlotKind` /
+#: :class:`~tsdynamics.viz._frames.FrameSpace` are ``StrEnum``\ s whose members
+#: serialize as their own value.  The tab surface pays for that in full:
+#: ``capitalize`` / ``casefold`` / ``expandtabs`` / ``zfill`` and 43 siblings
+#: land on a value nobody reached for in order to manipulate text.
+#:
+#: Measured across ``src/``, ``tests/``, ``docs/`` and ``hooks/``: **zero**
+#: call sites invoke any of the 47 on a kind or a frame space.  Hiding them is
+#: a ``__dir__`` edit, so even a future caller keeps working.
+INHERITED_STR_METHODS: frozenset[str] = frozenset(n for n in dir(str) if not n.startswith("_"))
+
+#: The 11 public methods ``dict`` contributes to every ``dict`` subclass.
+#:
+#: The same trade as :data:`INHERITED_STR_METHODS`, one container down.  A
+#: ``dict`` subclass keeps ``m[k]``, ``k in m``, ``len(m)``, iteration and
+#: ``isinstance(m, dict)`` — all dunders, none of them listed — while donating
+#: ``keys`` / ``values`` / ``items`` / ``get`` / ``copy`` and six mutators to a
+#: listing that has one verb of its own.
+INHERITED_DICT_METHODS: frozenset[str] = frozenset(n for n in dir(dict) if not n.startswith("_"))
 
 
 def listing_dir(names: Sequence[str]) -> Callable[[], list[str]]:

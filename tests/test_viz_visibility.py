@@ -16,13 +16,23 @@ So this module does not merely assert the new counts: for every name it claims t
 have hidden, it **reaches the name and uses it**.  If a future edit turns a
 ``__dir__`` curation into a real removal, the test that catches it is here.
 
-The third thing pinned here is the **enforcement clause**: a module that declares
-``__all__`` must define ``__dir__`` returning ``sorted(__all__)``.  ``__all__``
-governs only ``from X import *``; it has zero effect on ``dir()``/TAB, so a
-module that declares one and stops has a documented surface and an actual surface
-that disagree — which is how 32 viz modules came to offer 405 names no
-``__all__`` claimed.  The sweep is over the whole package, so a **new** module
-cannot regrow the leak.
+Section 3 pins the **inherited-builtin** listings.  Subclassing ``str`` or
+``dict`` is how a value stays a drop-in replacement for the plain thing it
+replaces, and the tab surface pays for it in full; the chair ruled the defect
+four times elsewhere, and the completion sweep found three more here, each
+reached from a *listed* name: ``p.kind`` 89 → 42 and ``g.frame.space`` 60 → 13
+(two ``StrEnum``\\ s donating 47 text verbs apiece) and
+``ts.viz.compatibility()`` 12 → 1 (a ``dict`` donating ``keys``/``values``/… to a
+record whose one verb is ``rows()``).  Measured first: **zero** call sites invoke
+any of them, and every advertised operation on all three is a dunder.
+
+Section 4 pins the **enforcement clause**: a module that declares ``__all__``
+must define ``__dir__`` returning ``sorted(__all__)``.  ``__all__`` governs only
+``from X import *``; it has zero effect on ``dir()``/TAB, so a module that
+declares one and stops has a documented surface and an actual surface that
+disagree — which is how 32 viz modules came to offer 405 names no ``__all__``
+claimed.  The sweep is over the whole package, so a **new** module cannot regrow
+the leak.
 """
 
 from __future__ import annotations
@@ -482,7 +492,129 @@ def test_the_json_round_trip_the_user_drives_is_untouched(plot, tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# 3. The enforcement clause — a module that declares __all__ defines __dir__
+# 3. Inherited noise — the three values that subclass a builtin
+# ---------------------------------------------------------------------------
+#
+# Subclassing a builtin is how a value stays a drop-in replacement for the plain
+# thing it replaces, and the tab surface pays for it in full.  The chair ruled
+# this defect four times (``CountResult``'s 11 ``int`` members, ``ParamSet``'s
+# mutators, ``count``/``index`` on the two records, and ``dir(p.title)``'s 47
+# ``str`` methods); the sweep that followed found three more in viz, all of them
+# reached from a *listed* name:
+#
+#   ``p.kind``              89 -> 42   (``PlotKind``, a ``StrEnum``)
+#   ``g.frame.space``       60 -> 13   (``FrameSpace``, a ``StrEnum``)
+#   ``ts.viz.compatibility()``  12 -> 1    (``CompatibilityMatrix``, a ``dict``)
+#
+# Each is hidden from ``__dir__`` only.  The tests below pin the listing *and*
+# call every hidden member, because the whole risk of this kind of edit is that
+# a later refactor reads "hidden" as "removable".
+
+
+def test_a_plot_kind_lists_the_vocabulary_not_the_string_methods():
+    """``p.kind.<TAB>`` is the closed vocabulary, not 47 ways to manipulate text."""
+    from tsdynamics.viz.spec import PlotKind
+
+    listing = _public(PlotKind.TIME_SERIES)
+    members = {m.name for m in PlotKind}
+    # The 36 members are the point: tabbing a kind is how you discover the set.
+    assert members <= set(listing)
+    # What remains beside them is the enum API and the four governance verbs.
+    assert sorted(set(listing) - members) == [
+        "is_mark",
+        "is_semantic",
+        "layer_marks",
+        "name",
+        "semantic_kinds",
+        "value",
+    ]
+    assert len(listing) == len(members) + 6 == 42
+
+
+def test_a_frame_space_lists_the_vocabulary_not_the_string_methods():
+    """The twin ruling, on the other ``StrEnum`` a user can reach."""
+    from tsdynamics.viz._frames import FrameSpace
+
+    listing = _public(FrameSpace.STATE2)
+    members = {m.name for m in FrameSpace}
+    assert sorted(set(listing) - members) == ["name", "value"]
+    assert len(listing) == len(members) + 2 == 13
+
+
+@pytest.mark.parametrize("value_name", ["PlotKind.TIME_SERIES", "FrameSpace.STATE2"])
+def test_the_str_enums_are_still_strings_in_every_way_that_matters(value_name):
+    """G1: hiding ``str``'s methods must not touch what being a ``str`` buys."""
+    import json
+
+    from tsdynamics.viz._frames import FrameSpace
+    from tsdynamics.viz.spec import PlotKind
+
+    value = {"PlotKind.TIME_SERIES": PlotKind.TIME_SERIES, "FrameSpace.STATE2": FrameSpace.STATE2}[
+        value_name
+    ]
+    # value equality, serialization and formatting — none of them read dir()
+    assert value == value.value
+    assert isinstance(value, str)
+    assert json.dumps(value) == f'"{value.value}"'
+    assert f"{value}" == value.value
+    # ...and every hidden method is still there and still correct.
+    for method in ("upper", "lower", "title", "capitalize", "casefold", "strip"):
+        assert getattr(value, method)() == getattr(value.value, method)()
+    assert value.split("_") == value.value.split("_")
+    assert value.startswith(value.value[:2])
+    assert value.replace("_", "-") == value.value.replace("_", "-")
+    assert value.zfill(30) == value.value.zfill(30)
+
+
+def test_the_compatibility_matrix_lists_its_one_verb():
+    """12 -> 1: ``rows()``.  The programmable half the docstring advertises is dunders."""
+    matrix = ts.viz.compatibility()
+    assert _public(matrix) == ["rows"]
+    # Everything the class docstring calls "programmable" still works...
+    assert matrix["phase_portrait"]
+    assert "psd" in matrix
+    assert len(matrix) == len(matrix.rows()) > 0
+    assert isinstance(matrix, dict)
+    assert sorted(matrix)[0] == min(matrix)
+    # ...and the repr is still the answer.
+    assert "FROM DATA" in repr(matrix)
+
+
+def test_every_hidden_dict_method_on_the_matrix_still_resolves():
+    """G1: hidden is not removed — all eleven are callable and correct."""
+    matrix = ts.viz.compatibility()
+    assert sorted(matrix.keys()) == sorted(ts.viz.transforms.names())  # the 2nd spelling
+    assert matrix.get("psd") == matrix["psd"]
+    assert len(matrix.values()) == len(matrix.items()) == len(matrix)
+    assert matrix.copy() == matrix
+    for method in ("pop", "popitem", "clear", "update", "setdefault", "fromkeys"):
+        assert callable(getattr(matrix, method))
+
+
+def test_no_viz_value_regrows_an_inherited_builtin_listing():
+    """The sweep that found these three, frozen so a fourth cannot land unnoticed.
+
+    A new ``str``/``dict``/``list``/``int`` subclass on the viz surface is a
+    perfectly good design; shipping one whose listing is mostly the builtin's is
+    the thing this catches.
+    """
+    from tsdynamics.viz._frames import FrameSpace
+    from tsdynamics.viz.spec import PlotKind
+
+    subjects = {
+        "PlotKind": PlotKind.TIME_SERIES,
+        "FrameSpace": FrameSpace.STATE2,
+        "CompatibilityMatrix": ts.viz.compatibility(),
+        "Plot.title": ts.plot(np.linspace(0, 1, 8), title="t").title,
+    }
+    for label, value in subjects.items():
+        base = next(b for b in (str, dict, list, int) if isinstance(value, b))
+        leaked = [n for n in _public(value) if hasattr(base, n)]
+        assert not leaked, f"{label} leaks {len(leaked)} inherited {base.__name__} names: {leaked}"
+
+
+# ---------------------------------------------------------------------------
+# 4. The enforcement clause — a module that declares __all__ defines __dir__
 # ---------------------------------------------------------------------------
 
 
@@ -553,7 +685,7 @@ def test_hiding_a_module_name_did_not_unbind_it():
 
 
 # ---------------------------------------------------------------------------
-# 4. `allow` — the extension point's other half (the highest-value G1 item)
+# 5. `allow` — the extension point's other half (the highest-value G1 item)
 # ---------------------------------------------------------------------------
 
 

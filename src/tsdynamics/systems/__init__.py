@@ -117,6 +117,22 @@ class SystemList(list):  # type: ignore[type-arg]
         super().__init__(classes)
         self._header = header
 
+    def __dir__(self) -> list[str]:
+        """Nothing — this **is** the answer, not a container to edit (§11.1).
+
+        Measured before this: ``ts.systems.find("delay").<TAB>`` offered
+        ``append clear copy count extend index insert pop remove reverse sort``
+        — eleven ways to edit a search result and not one way to use it, on the
+        verb v6 advertises as *the* way to search the one namespace with 177
+        members.  Nobody types ``find("delay").sort()``.
+
+        Hiding is a **discovery** change, never a reachability one: every one of
+        those eleven stays bound and callable, the object is still a complete
+        ``list``, and what you actually do with it — ``[0]``, ``len``, ``for``,
+        ``in``, ``print`` — are builtins that never needed a name on the object.
+        """
+        return []
+
     def __repr__(self) -> str:  # noqa: D105
         from tsdynamics import registry
 

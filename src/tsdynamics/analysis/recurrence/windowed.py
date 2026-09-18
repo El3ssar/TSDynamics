@@ -45,6 +45,13 @@ _MEASURES = (
     "max_vertical_length",
 )
 
+#: The literature abbreviations for exactly those nine, in the spelling the repr
+#: prints — derived from ``RQAResult``'s own map so the two classes can never
+#: drift into answering to different names for the same quantity.
+_ABBREVIATIONS_FOR_MEASURES = tuple(
+    short for short, long in RQAResult._PRINTED_ABBREVIATIONS.items() if long in _MEASURES
+)
+
 
 @dataclass(frozen=True)
 class WindowedRQA(AnalysisResult):
@@ -67,9 +74,15 @@ class WindowedRQA(AnalysisResult):
         Stride between consecutive windows in samples.
     """
 
-    #: Served through this class's own ``__getattr__``, so ``dir()`` cannot see
-    #: them; declared here so a wrong guess can still be corrected to one.
-    _extra_attribute_names: ClassVar[tuple[str, ...]] = _MEASURES
+    #: Served through this class's own ``__getattr__``, so Python cannot see
+    #: them; declared here so ``dir()`` lists them and a wrong guess can be
+    #: corrected to one.  The nine descriptive names **and** the literature
+    #: abbreviations, because this result answers to both and its repr prints
+    #: ``DET`` — the spelling a reader completes is the one they just read.
+    _extra_attribute_names: ClassVar[tuple[str, ...]] = (
+        *_MEASURES,
+        *_ABBREVIATIONS_FOR_MEASURES,
+    )
 
     #: R2 — ``table()`` is what :meth:`__array__` already returns, so
     #: ``np.asarray(w)`` is the same ``(n_windows, 9)`` array by the spelling
@@ -183,6 +196,13 @@ class WindowedRQA(AnalysisResult):
             return self.measure(name)
         if name.startswith("_"):
             raise AttributeError(name)
+        # The literature abbreviations, resolved exactly as ``RQAResult`` resolves
+        # them (same nine quantities, same papers, case-insensitively).  This
+        # class's own repr prints ``DET ∈ [0.392, 0.722]``, so ``w.DET`` failing
+        # was the library refusing the only name it had shown the reader.
+        measure = RQAResult._ABBREVIATIONS.get(name.replace("_", "").upper())
+        if measure in _MEASURES:
+            return self.measure(measure)
         # A wrong guess must name THIS class and the nearest measure: this was the
         # only one of the 32 results whose ``AttributeError`` was a bare
         # ``AttributeError("determinsm")``, naming nothing and suggesting nothing.

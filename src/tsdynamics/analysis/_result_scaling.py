@@ -106,7 +106,16 @@ class ScalingResult(_NumericOps, AnalysisResult):
     #: subclasses, so the field stays and the listing keeps one.  ``n_fit`` states
     #: as a count what :attr:`fit_region` states as a range; it stays readable and
     #: stays in ``to_dict(full=True)``.
-    _HIDDEN_ATTRIBUTES: ClassVar[frozenset[str]] = frozenset({"estimate", "n_fit"})
+    #: ``estimate`` is hidden as the second spelling of :attr:`value` (rule R2).
+    #:
+    #: ``n_fit`` is **not** hidden, though an earlier pass had it here: the repr
+    #: prints ``(correlation, q=2, 15 fit pts, log r ∈ […], R² = 0.99992)`` — the
+    #: point count and ``r_squared`` in one parenthesis, as the pair a reader
+    #: judges a scaling fit by.  Listing one and hiding the other made the line
+    #: half-completable, and it is the *wrong* half: R² near 1 means nothing
+    #: without knowing it was fitted over 15 points rather than 3.  That is the
+    #: same standard §4.4 applies to a verdict — it must be supported by the data.
+    _HIDDEN_ATTRIBUTES: ClassVar[frozenset[str]] = frozenset({"estimate"})
 
     estimate: float = 0.0
     stderr: float = 0.0
@@ -161,6 +170,20 @@ class ScalingResult(_NumericOps, AnalysisResult):
         The :attr:`abscissa` values at the two endpoints of :attr:`fit_region`
         — the actual coordinate window of the scaling region (not the index
         bounds).
+
+        Choosing the window yourself
+        ----------------------------
+        Reading this and wanting to *set* it is the usual next step, and the
+        keyword differs by estimator because the window means a different thing
+        in each — so it is named here rather than guessed at:
+
+        * the **dimension** estimators (``correlation_dimension``,
+          ``generalized_dimension``, ``dimension_spectrum``,
+          ``fixed_mass_dimension``) take ``c_lo=`` / ``c_hi=``, which bound the
+          *correlation-sum* fraction the window is drawn from, plus ``flatness=``
+          for how flat the fitted log–log window must be;
+        * :func:`~tsdynamics.analysis.lyapunov_from_data` takes ``fit=(lo, hi)``,
+          index bounds straight into its stretching curve ``S(k)``.
 
         Returns
         -------
@@ -280,8 +303,17 @@ class ScalingResult(_NumericOps, AnalysisResult):
         return None if self.trusted else self._fit_quality_clause()
 
     def _quantity(self) -> str:
-        """Return the symbol the answer is named by (``D_corr``, ``λ_max``, …)."""
-        return "estimate"
+        """Return the symbol the answer is named by (``D_corr``, ``λ_max``, …).
+
+        The fallback is ``value``, not ``estimate``: they are the same number
+        (:attr:`value` is a property over :attr:`estimate`), but ``value`` is the
+        spelling rule R2 kept on the listing, and a repr must print a name its
+        reader can tab-complete.  Every shipped subclass overrides this with its
+        own domain symbol, so the fallback shows only on a bare
+        :class:`ScalingResult` — which is exactly where an unreachable name would
+        have gone unnoticed.
+        """
+        return "value"
 
     def _unit(self) -> str:
         """Return the unit the estimate is quoted in (``""`` when dimensionless)."""

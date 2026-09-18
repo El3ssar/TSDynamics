@@ -157,25 +157,40 @@ class RQAResult(AnalysisResult):
         ("ENTR", "diagonal_entropy"),
     )
 
-    #: The literature abbreviations the repr prints, mapped to the attributes
-    #: that hold them.  The abbreviations are *right* — they are what every RQA
-    #: paper calls these quantities — but the repr showing ``L_max`` while only
+    #: The literature abbreviations, **spelled as the repr prints them**, mapped
+    #: to the attributes that hold them.  The single source of truth for the nine:
+    #: :attr:`_ABBREVIATIONS` (the case-insensitive lookup) and
+    #: :attr:`_extra_attribute_names` (the listing) are both derived from it, and
+    #: :class:`~tsdynamics.analysis.recurrence.windowed.WindowedRQA` reads it too,
+    #: so the two RQA results cannot drift into answering to different names for
+    #: the same quantity.
+    #:
+    #: The abbreviations are *right* — they are what every RQA paper calls these
+    #: quantities — but the repr showing ``L_max`` while only
     #: ``max_diagonal_length`` resolves is a name the library taught and then
     #: refused, in a library where nearly every other wrong guess is translated.
-    _ABBREVIATIONS: ClassVar[dict[str, str]] = {
+    _PRINTED_ABBREVIATIONS: ClassVar[dict[str, str]] = {
         "DET": "determinism",
         "DIV": "divergence",
         "ENTR": "diagonal_entropy",
         "L": "avg_diagonal_length",
-        "L_MAX": "max_diagonal_length",
         "LAM": "laminarity",
+        "L_max": "max_diagonal_length",
         "RR": "recurrence_rate",
         "TT": "trapping_time",
-        "V_MAX": "max_vertical_length",
+        "V_max": "max_vertical_length",
     }
 
-    #: What ``dir()`` and the wrong-guess message advertise beyond the fields.
-    _extra_attribute_names: ClassVar[tuple[str, ...]] = tuple(_ABBREVIATIONS)
+    #: The same nine, keyed for the **case-insensitive** lookup ``__getattr__``
+    #: performs: papers write ``Lmax``, ``LMAX`` and ``L_max`` for one quantity.
+    _ABBREVIATIONS: ClassVar[dict[str, str]] = {
+        short.replace("_", "").upper(): long for short, long in _PRINTED_ABBREVIATIONS.items()
+    }
+
+    #: What ``dir()`` and the wrong-guess message advertise beyond the fields —
+    #: the printed spelling, because a reader completing a name has just read
+    #: ``L_max = 678`` off the repr and must find *that* in the listing.
+    _extra_attribute_names: ClassVar[tuple[str, ...]] = tuple(_PRINTED_ABBREVIATIONS)
 
     def _printed_names(self) -> dict[str, str]:
         """Map the literature abbreviations the repr prints to the attributes."""

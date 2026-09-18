@@ -669,6 +669,13 @@ class DelaySlot(NamedTuple):
     component: int
     delay: float
 
+    def __dir__(self) -> list[str]:
+        """List the three fields, not ``tuple``'s ``count`` / ``index`` (§11.1).
+
+        Both stay bound and callable; only the listing shrinks.
+        """
+        return sorted(self._fields)
+
 
 @dataclass(frozen=True)
 class Tape:

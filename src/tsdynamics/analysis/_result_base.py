@@ -317,6 +317,17 @@ class AnalysisResult:
         }
     )
 
+    #: Names this result serves through its **own** ``__getattr__`` — a
+    #: :class:`~tsdynamics.analysis.recurrence.rqa.RQAResult`'s literature
+    #: abbreviations (``DET``, ``LAM``, ``L_max``, …), a
+    #: :class:`~tsdynamics.analysis.recurrence.windowed.WindowedRQA`'s per-measure
+    #: columns.  Python cannot see such a name, so it is invisible to ``dir`` and
+    #: to the wrong-guess suggester unless the class declares it here.  Spell each
+    #: one **exactly as the repr prints it** — that is the whole point: the reader
+    #: is completing a name they just read off the result.  Empty for a result
+    #: whose attributes are all ordinary fields.
+    _extra_attribute_names: ClassVar[tuple[str, ...]] = ()
+
     #: ``meta`` is provenance, not identity: ``compare=False`` keeps it out of the
     #: generated ``__eq__`` / ``__hash__`` (a dict is unhashable, and two otherwise
     #: identical results should compare equal even with differing run provenance),
@@ -359,8 +370,20 @@ class AnalysisResult:
         resolves, still exports through :meth:`to_dict`, and every existing
         caller keeps working.  What it buys is that ``result.<TAB>`` shows the
         measurement instead of burying it.
+
+        :attr:`_extra_attribute_names` is added back, because a name served
+        through a subclass's own ``__getattr__`` is invisible to Python and so
+        cannot be *listed* without being declared.  Those declarations already
+        fed the wrong-guess suggester; not feeding ``dir`` too was the half-wiring
+        that let :class:`~tsdynamics.analysis.recurrence.rqa.RQAResult` print
+        ``DET = 0.999 · LAM = 0.993 · L_max = 678 · ENTR = 3.726`` and then
+        tab-complete **none** of those four — a vocabulary the library taught in
+        the same breath it refused it.  A name a result prints back is a name its
+        reader must be able to complete (contract §11).
         """
-        return sorted(set(super().__dir__()) - self._HIDDEN_ATTRIBUTES)
+        listed = set(super().__dir__()) - self._HIDDEN_ATTRIBUTES
+        listed |= {n for n in self._extra_attribute_names if not n.startswith("_")}
+        return sorted(listed)
 
     def __getattr__(self, name: str) -> Any:
         """Teach the retired plot name and every analysis reached as a method.

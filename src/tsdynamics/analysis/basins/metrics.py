@@ -165,6 +165,12 @@ class BasinEntropy(AnalysisResult):
     #: the two box counts.
     _HIDDEN_ATTRIBUTES: ClassVar[frozenset[str]] = frozenset({"box_size", "log_base"})
 
+    #: The repr and ``to_dict`` both write Daza's own casing — ``Sb`` / ``Sbb`` —
+    #: so both must resolve and both must be listed.  They did neither: the repr
+    #: printed ``Sb = 0.4057 · Sbb = 0.5617`` while only the lower-case fields
+    #: existed, which is a name the library teaches and then does not have.
+    _extra_attribute_names: ClassVar[tuple[str, ...]] = ("Sb", "Sbb")
+
     sb: float = 0.0
     sbb: float = 0.0
     n_boxes: int = 0
@@ -172,6 +178,16 @@ class BasinEntropy(AnalysisResult):
     box_size: int = 0
     log_base: float = 0.0
     fractal_boundary: bool = False
+
+    @property
+    def Sb(self) -> float:  # noqa: N802
+        """Basin entropy, in Daza's casing — the same number as :attr:`sb`."""
+        return float(self.sb)
+
+    @property
+    def Sbb(self) -> float:  # noqa: N802
+        """Boundary basin entropy, in Daza's casing — the same number as :attr:`sbb`."""
+        return float(self.sbb)
 
     def _answer(self) -> str:
         """Return the two entropies."""
@@ -245,6 +261,10 @@ class UncertaintyExponent(AnalysisResult):
     #: which is what the repr prints and what a caller acts on.
     _HIDDEN_ATTRIBUTES: ClassVar[frozenset[str]] = frozenset({"slope_drift"})
 
+    #: The repr and ``to_dict`` both write Grebogi's ``D0`` for the boundary
+    #: dimension, so it must resolve and be listed — it did neither.
+    _extra_attribute_names: ClassVar[tuple[str, ...]] = ("D0",)
+
     alpha: float = 0.0
     boundary_dimension: float = 0.0
     state_dimension: int = 0
@@ -253,6 +273,11 @@ class UncertaintyExponent(AnalysisResult):
         default_factory=lambda: np.empty(0), repr=False, compare=False
     )
     r_squared: float = 0.0
+
+    @property
+    def D0(self) -> float:  # noqa: N802
+        """Boundary dimension in Grebogi's casing — the same number as :attr:`boundary_dimension`."""
+        return float(self.boundary_dimension)
 
     def __plot_spec__(self, kind: str | None = None) -> Any:
         r"""Describe the uncertainty exponent as its log--log scaling fit.

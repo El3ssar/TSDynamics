@@ -184,6 +184,26 @@ _AREA_TESTS: dict[str, tuple[str, ...]] = {
     ),
 }
 
+#: The result-surface gate, appended to **every** analysis area below.
+#:
+#: ``tests/test_result_visibility.py`` pins what ``result.<TAB>`` shows, class by
+#: class, and the declarations it pins (``_HIDDEN_ATTRIBUTES`` /
+#: ``_extra_attribute_names``) live in the *area* modules — ``recurrence/rqa.py``,
+#: ``dimensions/_common.py``, ``lyapunov/from_data.py`` and seven more — not in
+#: the shared ``_result*.py`` files.  Only the shared files escalate to a full
+#: run, so without this every area could add a public field to its result class,
+#: grow the listing, and go green on the PR: measured, a change to
+#: ``recurrence/rqa.py`` selected 7 files and none of them was this gate.  It is
+#: cheap (0.4 s, no integration), so it rides along with all of them rather than
+#: being mapped area by area — which is also what keeps a *new* area covered on
+#: the day it is added, instead of depending on someone remembering this file.
+_RESULT_SURFACE_GATE: tuple[str, ...] = ("test_result_visibility.py",)
+
+_AREA_TESTS = {
+    area: tests if area == "benchmarks" else tests + _RESULT_SURFACE_GATE
+    for area, tests in _AREA_TESTS.items()
+}
+
 #: Viz test files that do **not** carry the ``test_viz_`` prefix, and so cannot be
 #: discovered by :func:`viz_tests`' glob.  Everything named ``test_viz_*.py`` is
 #: picked up automatically — deliberately, because the old hand-written tuple

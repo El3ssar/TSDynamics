@@ -58,6 +58,18 @@ class ProjectedSystem(DerivedSystem):
         complete: Callable[[np.ndarray], Any] | None = None,
     ) -> None:
         super().__init__(system)
+        self.components = components
+        self.complete = complete
+
+    @staticmethod
+    def _resolve_components(system: Any, components: Any) -> tuple[int, ...]:
+        """Resolve a name/index selection against *system* to a tuple of indices.
+
+        The one reading, shared by the constructor and the :attr:`components`
+        setter, so ``ProjectedSystem(sys, ["x", "z"])`` and
+        ``proj.components = ["x", "z"]`` accept exactly the same grammar and
+        refuse exactly the same mistakes.
+        """
         if isinstance(components, str | int | np.integer):
             components = (components,)
         # The INSTANCE names, not ``type(system).variables``: every system names
@@ -66,8 +78,20 @@ class ProjectedSystem(DerivedSystem):
         # class refused the names of the 5 built-ins that generate theirs, and of
         # every user system that does not declare them on the class.
         names = tuple(getattr(system, "variables", ()) or ())
+        width = int(system.dim)
+        try:
+            selection = list(components)
+        except TypeError:
+            raise InvalidInputError(
+                f"components must be a component name, an index, or a sequence of "
+                f"them, got {type(components).__name__}."
+                + remedy(
+                    "ts.derived.ProjectedSystem(system, ['x', 'z'])",
+                    "ts.derived.ProjectedSystem(system, [0, 2])",
+                )
+            ) from None
         idx = []
-        for c in components:
+        for c in selection:
             if isinstance(c, str):
                 if c not in names:
                     raise InvalidParameterError(
@@ -76,8 +100,27 @@ class ProjectedSystem(DerivedSystem):
                         + remedy(f"ts.derived.ProjectedSystem(system, {list(range(2))})")
                     )
                 idx.append(names.index(c))
-            else:
-                idx.append(int(c))
+                continue
+            try:
+                i = int(c)
+            except (TypeError, ValueError):
+                raise InvalidInputError(
+                    f"components entry {c!r} is neither a component name nor an index."
+                    + remedy(f"ts.derived.ProjectedSystem(system, {list(range(2))})")
+                ) from None
+            # An out-of-range index used to be stored verbatim and then surface
+            # from NumPy on the first ``step()`` — ``index 99 is out of bounds``,
+            # about the state array, not about the projection the caller wrote
+            # (``CONTRACT.md`` §11.6 defect 1).
+            if not -width <= i < width:
+                raise InvalidParameterError(
+                    f"{type(system).__name__} has {width} component"
+                    f"{'' if width == 1 else 's'}, so component index {i} does not "
+                    f"exist; valid indices are 0..{width - 1}"
+                    + (f" (named {names})." if names else ".")
+                    + remedy(f"ts.derived.ProjectedSystem(system, {list(range(min(2, width)))})")
+                )
+            idx.append(i % width)
         if not idx:
             raise InvalidParameterError(
                 "components must name at least one component of the system."
@@ -86,8 +129,27 @@ class ProjectedSystem(DerivedSystem):
                     "ts.derived.ProjectedSystem(system, [0, 2])",
                 )
             )
-        self.components = tuple(idx)
-        self.complete = complete
+        return tuple(idx)
+
+    @property
+    def components(self) -> tuple[int, ...]:
+        """Which components of the inner system this view hands you, in order.
+
+        This **is** the projection, so it is writable — re-aiming a view is a
+        legitimate customization, and it accepts the same names-or-indices
+        grammar the constructor does (``proj.components = ["x", "z"]``).  The
+        write is validated for the same reason the constructor's is: an
+        out-of-range index used to be stored verbatim and then surface on the
+        next ``step()`` as NumPy's ``index 99 is out of bounds``, an error about
+        the state array rather than about the selection that was written.
+
+        Note that :attr:`dim` and :attr:`variables` both follow it.
+        """
+        return self._components
+
+    @components.setter
+    def components(self, value: Any) -> None:
+        self._components = self._resolve_components(self.system, value)
 
     def _rebuild(self, inner: Any) -> ProjectedSystem:
         return ProjectedSystem(inner, self.components, complete=self.complete)

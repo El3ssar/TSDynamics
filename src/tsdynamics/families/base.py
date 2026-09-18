@@ -367,6 +367,38 @@ def _subclass_contract_error(cls: type, missing: frozenset[str]) -> TypeError:
     return TypeError(f"{head}  In this family {why}.\n\n{body}\n\n{see}")
 
 
+#: Public names on a system that are a FACT or a DOOR, never a setting, and so
+#: refuse a whole-attribute write: ``name -> (rule, runnable remedy lines)``.
+#:
+#: Both used to pass :meth:`SystemBase.__setattr__`'s typo guard — ``params`` is
+#: an instance attribute and ``plot`` a class attribute, and that guard only
+#: catches names which are *neither* — so the clobber was accepted in silence and
+#: the damage surfaced frames away (``CONTRACT.md`` §11.6 defect 1).  ``dim`` is
+#: guarded separately just above the lookup, because its message quotes the
+#: system's real width.
+#:
+#: This refuses replacing the whole object.  Changing a parameter *value* is
+#: untouched — ``{sys}.{p} = ...``, ``{sys}.params[...] = ...`` and
+#: ``params.update(...)`` all still work, which is what keeps the refusal a
+#: correction rather than a cut.  ``{sys}`` and ``{p}`` are filled in per class
+#: so the printed lines RUN (the errgate rule) — and a line naming ``{p}`` is
+#: **dropped entirely** on a system that declares no parameters (13 in the
+#: catalogue, every ``Sprott*`` among them), because ``sprotta.<param> = ...``
+#: is not a line anyone can type.
+_STRUCTURAL_WRITES: dict[str, tuple[str, tuple[str, ...]]] = {
+    "params": (
+        "is the fixed-key ParamSet the tape lowering and the run provenance both "
+        "read; replacing it with a plain mapping breaks every later run()",
+        ("{sys}.{p} = ...", '{sys}.params["{p}"] = ...', "{sys} = {sys}.with_params({p}=...)"),
+    ),
+    "plot": (
+        "is the plotting namespace, not a setting — it is a verb you call and a "
+        "table of the transforms this subject admits",
+        ("{sys}.plot()", '{sys}.plot("phase_portrait")'),
+    ),
+}
+
+
 def _reject_state_as_params(cls_name: str, params: Any, declared: Mapping[str, Any]) -> None:
     """Refuse a **state vector** handed to the constructor's ``params`` slot.
 
@@ -1209,6 +1241,45 @@ class SystemBase(DeriveMixin, SystemPlottable):
                 hint=(
                     "dim is fixed by the equations. For a variable-dimension system "
                     f"build another instance: {type(self).__name__}(dim={value!r})"
+                ),
+            )
+
+        # Two more names are FACTS or DOORS, not settings, and both used to be
+        # silently clobberable because they pass the typo guard below — ``params``
+        # is already in ``__dict__`` and ``plot`` is a class attribute
+        # (``CONTRACT.md`` §11.6 defect 1).  Neither write has a correct reading:
+        #
+        #   lor.params = {"sigma": 12.0}   killed EVERY later run(), because the
+        #                                  ParamSet the tape lowering and
+        #                                  ``_provenance`` both require became a
+        #                                  plain dict — and the failure surfaced
+        #                                  frames away, inside ``_provenance``.
+        #   lor.plot = 42                  replaced the plotting namespace with an
+        #                                  int; ``lor.plot()`` then raised
+        #                                  ``'int' object is not callable``.
+        #
+        # The parameter VALUES stay as writable as they ever were — that is what
+        # the transparent routing at the top of this method is for.
+        refusal = _STRUCTURAL_WRITES.get(name)
+        if refusal is not None:
+            from tsdynamics.errors import invalid_value, remedy
+
+            rule, lines = refusal
+            low = type(self).__name__.lower()
+            declared = list(params)
+            runnable = [
+                ln.format(sys=low, p=declared[0] if declared else "")
+                for ln in lines
+                if declared or "{p}" not in ln
+            ]
+            raise invalid_value(
+                f"{type(self).__name__}.{name}",
+                value,
+                rule=rule,
+                hint=(
+                    remedy(*runnable)
+                    if runnable
+                    else "This system declares no parameters, so there is nothing to set."
                 ),
             )
 

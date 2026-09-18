@@ -1046,7 +1046,16 @@ sees; each class still lives in the subpackage that produces it.
 Gates: `tests/test_result_repr.py` (walks `AnalysisResult.__subclasses__()`, so a
 new result class cannot ship without a rendered fixture in
 `tests/_result_fixtures.py`), `tests/test_result_plain.py`,
-`tests/test_results_namespace.py`.
+`tests/test_results_namespace.py`, and — since round 9 —
+**`tests/test_result_visibility.py`**, which pins what `result.<TAB>` shows: a
+literal `LISTED` row per class (**492** names total, re-measured never nudged),
+the capability half derived from `_HIDDEN_ATTRIBUTES` / `fields()` / the MRO so
+every hidden name is proved to still resolve, and the two reachability rules
+above. It is selected by `--changed` for **every** analysis area (the
+`_RESULT_SURFACE_GATE` appended to each `_AREA_TESTS` row), because the
+declarations it pins live in the area modules, not in the shared `_result*.py`
+files that escalate to a full run — without that, an area could add a public
+field to its result class, grow the listing, and go green on the PR.
 
 ### `result.plot` is the FIFTH plotting door, and it speaks the same words
 
@@ -2243,6 +2252,40 @@ Nothing else in the library learns a new name when one is added.
     two of `Geometry`'s own errors ended *"iterate g.parts"*; it is listed again,
     and `tests/test_viz_visibility.py` now derives the requirement from the
     source rather than asserting a literal list.
+  - **The corollary cost 40 names back on the result layer, and is now TWO
+    GATES** (`tests/test_result_visibility.py::TestAPrintedNameIsACompletableName`).
+    The same sweep that hid 78 result names also hid, or never had, names the
+    library itself hands the reader. Restoring them took the layer 452 → **492**,
+    purely additively — no listing lost a name.
+    - *A name the repr prints must be listed* (+32). `RQAResult` printed
+      `DET = 0.999 · LAM = 0.993 · L_max = 678 · ENTR = 3.726` and tab-completed
+      **none** of the four (all four resolved); `DimensionResult` printed
+      `15 fit pts, R² = 0.99992` while listing only `r_squared`, the half you
+      cannot judge a fit by alone. The mechanism is
+      `AnalysisResult._extra_attribute_names` — names served by a subclass's own
+      `__getattr__`, which Python cannot see, so they must be *declared* to be
+      listed. It existed already but fed only the wrong-guess suggester, not
+      `__dir__`: that half-wiring is what let the defect through. The gate is
+      scoped to printed names the result **carries**, because a repr also writes
+      the maths symbol for its quantity (`D_corr`, `D_KY`, `H0`, `GALI_2`, `K`)
+      and the swept parameter's name (`r`, `delta`) — those are not attributes
+      and requiring them would mean naming every quantity twice.
+    - *A name `to_dict(full=True)` promises must exist* (+8). `to_dict` is the
+      door every result's `AttributeError` recommends, so a key is a claim — and
+      three were false, each a **casing** nobody would guess: `BasinEntropy`
+      emitted `Sb`/`Sbb` (Daza's, and what its own repr prints) carrying only
+      `sb`/`sbb`; `UncertaintyExponent` emitted `D0` (Grebogi's) carrying
+      `boundary_dimension`; `LyapunovSpectrum` emitted `zero_tolerance` — the
+      threshold its chaos verdict turns on — from a *private* property. This
+      gate needs no judgement about which printed symbols are names: `to_dict`
+      already decided. One documented exception, `unit` (provenance, reachable
+      as `meta["unit"]`), and the table must not grow.
+
+    The nine RQA abbreviations now have **one** source of truth
+    (`RQAResult._PRINTED_ABBREVIATIONS`, spelled as the repr prints them); the
+    case-insensitive lookup map, the listing, and `WindowedRQA`'s copy are all
+    derived from it, so the two RQA results cannot drift into answering to
+    different names for one quantity.
 - **Formatter/Linter:** `ruff format` / `ruff check` (line length 100; D rules on)
 - **Types:** `mypy --strict src/tsdynamics` is **green and CI-gated** (the
   `typecheck` job in `ci.yml`). The core library is fully strict; the system
@@ -2431,7 +2474,8 @@ systems/analyses join the sweeps with zero test edits:
   pins the v6 public surface, so `planning/api-v6/CONTRACT.md` §2's "every listing
   is a contract" has teeth. Six invariants, each the inverse of a way the surface
   eroded: the **listings** (`ts.__all__` = 17; `system.<TAB>` = the 19-name core
-  minus each family's declared absences; `ts.analysis` = 50 + 3; `ts.viz` = 13;
+  minus each family's declared absences; `ts.analysis` = 52 (49 analyses + `find`
+  + `register` + `results`); `ts.viz` = 14;
   `dir(M) == sorted(M.__all__)` over the 14 declared public packages); **one
   spelling** (no two exported names are the same object; no submodule shadowed by
   a same-named function — `import tsdynamics.analysis.recurrence.rqa as m` must
@@ -2825,6 +2869,9 @@ Two layers now cover them:
 | An error message hands back `ts.<something>` | It must **resolve**. `ts.fixed_points(system)` no longer runs, so a message offering it is worse than one offering nothing. Gate: `test_polish_standards.py::test_errgate_remedy_lines_resolve`, whose must-shrink table went 5 rows → 1 in round 9 (the four `analysis/dimensions` messages now say `ts.analysis.…`). |
 | A teaching `AttributeError` ends in someone else's guess | Seal it with `errors.taught(err, name)`. CPython augments any `AttributeError` escaping a `__getattr__` and prints `Did you mean: …?` from `dir(obj)` — measured, it answered `lorenz.lyapunov_spectrum` with the **private** `_lyapunov_spectrum` and `traj.dims` with `dim`, an integer. Every message builder (`_absent_name_error`, `_discovery.attribute_error`, `plot_seam_error`, `Trajectory._miss`) seals; gate: `tests/test_visibility_restorations.py`. |
 | You hid a name and something still prints it | Then it is not hidden, it is broken. A remedy line, a repr and a docstring are all discovery surfaces; if one names `x.y`, `y` belongs in `dir(x)`. See CONTRACT §11 and the `Geometry.parts` row. |
+| A result's repr names a quantity `dir()` will not complete | A gate fails (`test_result_visibility.py::TestAPrintedNameIsACompletableName`). If the name is served by the class's own `__getattr__`, declare it in `_extra_attribute_names` — Python cannot see such a name, so it is invisible to `dir` until declared. Otherwise drop it from `_HIDDEN_ATTRIBUTES`. `r.DET` / `r.L_max` / `w.DET` are the RQA case this closed. |
+| A 1-D `DiscreteMap` you wrote crashes inside your own `_step` | Fixed in round 9: the shared tangent helper passed 1-D maps a bare `float`, so the documented `u[0]` spelling raised `'float' object is not subscriptable` at every A-FP/A-CHAOS door (`periodic_orbits`, `fixed_points`, map Lyapunov). A map kernel now always receives the `(dim,)` **vector**, every dimension. Invisible in-house because all seven built-in 1-D maps are scalar-style (`r * x * (1 - x)`), which NumPy broadcasting accepts either way. |
+| `ts.EnsembleSystem` | The class is `Ensemble`; `ts.derived.Ensemble`. It has a `_redirects.py` row now — removing a public name without one is what made it the single demoted name that answered with a generic near-miss instead of its address. |
 | `system.integrate(...)` / `.iterate(...)` / `.trajectory(...)` | **Gone** (v6) — `run` is the one trajectory verb; the `AttributeError` prints the replacement line. |
 | `run(method="rk45")` | **`solver=`** since v6: `solver=` picks a numerical kernel, `method=` picks an *estimator* on an analysis. |
 | A keyword your `run` silently ignored | It no longer can — every family's signature is closed (`families/_kwargs.py`) and the message states why that word belongs to a different family. |

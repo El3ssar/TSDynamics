@@ -21,13 +21,13 @@ The point-set operations (:meth:`Trajectory.minmax`,
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple, cast
 
 import numpy as np
 
-from tsdynamics.errors import InvalidInputError
+from tsdynamics.errors import InvalidInputError, remedy
 from tsdynamics.errors import taught as _taught
 from tsdynamics.utils.escape import Unbounded, detect_unbounded
 from tsdynamics.utils.plot_namespace import plot_namespace as _plot_namespace
@@ -284,6 +284,31 @@ def _validated_variables(names: Sequence[str], dim: int) -> tuple[str, ...]:
     return resolved
 
 
+#: The public channels :meth:`Trajectory.__setattr__` validates on the way in.
+#: ``system`` is deliberately absent — re-pointing a trajectory at another system
+#: is provenance the caller owns, and nothing is derived from it.
+_GUARDED_CHANNELS = frozenset({"meta", "t", "y"})
+
+
+def _validated_meta(value: Any) -> dict[str, Any]:
+    """Return *value* as a plain provenance dict, or raise naming what ``meta`` is.
+
+    Every consumer in the library reaches into ``meta`` by key
+    (``meta["variables"]``, ``meta["dt"]``, ``meta["field_shape"]``), so a
+    non-mapping write breaks reading, plotting and every analysis that asks
+    where the data came from — each of them far from the assignment.
+    """
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise InvalidInputError(
+            f"Trajectory.meta is the run's provenance mapping (system, params, "
+            f"solver, dt, tolerances, ic), got {type(value).__name__}."
+            + remedy('traj.meta = {"system": "measured"}', 'traj.meta["source"] = "rig 2"')
+        )
+    return dict(value)
+
+
 def _reject_unbuildable_kind(kind: str, route: str) -> None:
     """Raise unless ``route`` names a view this front door can build from a trajectory.
 
@@ -476,6 +501,60 @@ class Trajectory:
         self._kdtree: cKDTree | None = None
         self._unbounded: Unbounded | None = None
         self._unbounded_checked = False
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        """Write a public channel, keeping the derived answers honest.
+
+        The data channels stay writable — patching ``traj.y`` in place is a
+        legitimate thing to do to measured data, and refusing it would cost
+        capability for no gain.  What is *not* legitimate is what used to
+        happen afterwards: two caches are computed from ``y`` and kept
+        (:attr:`unbounded`'s verdict and the KD-tree behind :meth:`neighbors`),
+        and a plain slot write left both in place.  Measured, overwriting a
+        bounded orbit's states with ``1e300`` left ``traj.unbounded`` reporting
+        ``None`` — "this orbit stayed bounded", about data that no longer
+        existed (``CONTRACT.md`` §11.6 defect 1).
+
+        So a write to ``y`` or ``t`` drops those caches, ``y`` is reshaped to
+        the ``(T, dim)`` the constructor guarantees, and the two axes are
+        required to keep describing the same rows.  ``meta`` must stay a
+        mapping, since every consumer in the library indexes it.
+        """
+        if name.startswith("_") or name not in _GUARDED_CHANNELS:
+            object.__setattr__(self, name, value)
+            return
+        if name == "meta":
+            object.__setattr__(self, name, _validated_meta(value))
+            return
+        arr = np.asarray(value)
+        if name == "y":
+            arr = arr[:, None] if arr.ndim == 1 else arr
+            if arr.ndim != 2:
+                raise InvalidInputError(
+                    f"Trajectory.y must be the (T, dim) state array — 2-D, or 1-D "
+                    f"for a single component — got shape {arr.shape}."
+                )
+            other = getattr(self, "t", None)
+        else:
+            if arr.ndim != 1:
+                raise InvalidInputError(
+                    f"Trajectory.t must be the (T,) sample axis, got shape {arr.shape}."
+                )
+            other = getattr(self, "y", None)
+        if other is not None and len(other) != len(arr):
+            held = "t" if name == "y" else "y"
+            raise InvalidInputError(
+                f"Trajectory.{name} would have {len(arr)} rows but .{held} has "
+                f"{len(other)}; the two axes describe the same samples, so writing "
+                f"one alone leaves the trajectory unreadable. Build the trajectory "
+                f"you mean instead." + remedy("traj = ts.Trajectory(t, y, traj.system, traj.meta)")
+            )
+        object.__setattr__(self, name, arr)
+        # Both caches are functions of ``y``; ``t`` selects the rows they are
+        # read over, so either write invalidates them.
+        object.__setattr__(self, "_kdtree", None)
+        object.__setattr__(self, "_unbounded", None)
+        object.__setattr__(self, "_unbounded_checked", False)
 
     # --- derived facts about the sampling ---
 

@@ -65,8 +65,8 @@ import numpy as np
 
 from ._frames import Frame, FrameSpace, frame_of
 from ._tweaks import figure_scoped, panel_scoped, panel_scoped_custom
+from ._visibility import INHERITED_STR_METHODS, listing_dir
 from ._visibility import dir_without as _dir_without
-from ._visibility import listing_dir
 from .style import Theme, get_theme, normalize_style
 
 if TYPE_CHECKING:  # pragma: no cover - typing only; resolved by ``__getattr__``
@@ -273,6 +273,28 @@ class PlotKind(StrEnum):
     def is_mark(cls, kind: PlotKind | str) -> bool:
         """Whether ``kind`` is a layer mark (vs. a semantic spec kind)."""
         return PlotKind(kind) in _LAYER_MARKS
+
+    def __dir__(self) -> list[str]:
+        """Hide the 47 inherited ``str`` methods; keep the vocabulary and the enum API.
+
+        ``p.kind`` is a listed name on :class:`Plot`, so this listing is one tab
+        press from the library's front door — and before this it answered with
+        **89** names for an enum with 36 members, 47 of them ``str``'s
+        (``zfill``, ``expandtabs``, ``rpartition``, …).  That is the same trade
+        :class:`_TitleText` makes and the same 47 names, on a value reached far
+        more often.
+
+        What remains is what the vocabulary is *for*: the 36 sibling members (so
+        ``p.kind.<TAB>`` is how you discover the closed set), ``name`` / ``value``
+        (the enum API), and the four governance classmethods
+        (:meth:`semantic_kinds`, :meth:`layer_marks`, :meth:`is_semantic`,
+        :meth:`is_mark`).
+
+        Being a ``StrEnum`` is untouched: ``PlotKind.LINE == "line"``,
+        ``json.dumps`` and :meth:`Plot.to_dict` all read the value, none of them
+        through ``dir()``.  Every hidden method is still callable.
+        """
+        return _dir_without(self, INHERITED_STR_METHODS)
 
 
 #: The frozen set of **layer marks** — how a single :class:`Layer` is drawn.

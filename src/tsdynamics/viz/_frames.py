@@ -43,7 +43,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
     from .spec import PlotSpec
 
-from ._visibility import dir_without, listing_dir
+from ._visibility import INHERITED_STR_METHODS, dir_without, listing_dir
 
 __all__ = [
     "ANY_AXIS",
@@ -159,6 +159,21 @@ class FrameSpace(StrEnum):
     SCALING = "scaling"
     CATEGORY = "category"
     FREE = "free"
+
+    def __dir__(self) -> list[str]:
+        """Hide the 47 inherited ``str`` methods; keep the closed vocabulary.
+
+        The twin of :meth:`tsdynamics.viz.spec.PlotKind.__dir__`, for the same
+        reason and with the same 47 names: a ``StrEnum`` buys serialization and
+        value-equality, and charges the tab surface every text-manipulation verb
+        ``str`` has.  A frame space is reached as ``geometry(...).frame.space``
+        and compared; it is never sliced or padded.
+
+        What remains is the 11 sibling members plus ``name`` / ``value``.
+        ``FrameSpace.STATE2 == "state2"`` is untouched, and every hidden method
+        is still callable.
+        """
+        return dir_without(self, INHERITED_STR_METHODS)
 
 
 #: The frozen membership of :class:`FrameSpace` (the governance gate reads this).

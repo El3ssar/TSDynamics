@@ -123,9 +123,7 @@ class TangentSystem(DerivedSystem):
                 f"got {type(system).__name__}."
             )
         super().__init__(system)
-        self.k = int(k) if k is not None else system.dim
-        if not 1 <= self.k <= system.dim:
-            raise ValueError(f"k must be in [1, {system.dim}], got {self.k}")
+        self.k = system.dim if k is None else k
 
         # Both maps and ODEs select among the same three backends: the compiled
         # engine (``jit``, the default, or ``interp``) or the pure-Python
@@ -176,6 +174,64 @@ class TangentSystem(DerivedSystem):
         # be reproduced and are marked stale (set True there, cleared by ``reinit``)
         # so they raise an honest error instead of returning the long-run average.
         self._map_engine_stale = False
+
+    @property
+    def k(self) -> int:
+        """How many deviation vectors ride along — the number of exponents.
+
+        Writable, and validated on the way in against the same rule the
+        constructor applies (``1 <= k <= system.dim``).  It used to be a plain
+        attribute, so ``tang.k = 7`` on a 3-D flow was accepted and the next
+        ``step()`` died inside NumPy with ``cannot reshape array of size 6 into
+        shape (7,3)`` — an error about an array the caller never saw, from a
+        rule the constructor had already written down (``CONTRACT.md`` §11.3 T2,
+        §11.6 defect 1).
+
+        Changing it re-arms the estimator: the orthonormal frame and the
+        accumulated growth records are shaped by ``k``, so they are dropped and
+        the next :meth:`reinit` starts a fresh average.  Assigning the value it
+        already has is a no-op and keeps a running average intact.
+        """
+        return self._k
+
+    @k.setter
+    def k(self, value: Any) -> None:
+        from tsdynamics.errors import invalid_value
+
+        dim = int(self.system.dim)
+        try:
+            new = int(value)
+            whole = not isinstance(value, bool) and new == value
+        except (TypeError, ValueError):
+            new, whole = 0, False
+        if not whole:
+            raise invalid_value(
+                "TangentSystem.k", value, rule=f"must be a whole number in [1, {dim}]"
+            ) from None
+        if not 1 <= new <= dim:
+            raise invalid_value(
+                "TangentSystem.k",
+                new,
+                rule=f"must be in [1, {dim}]",
+                hint=(
+                    f"{type(self.system).__name__} has {dim} state components, so its "
+                    f"tangent space holds at most {dim} independent directions."
+                ),
+            )
+        previous = getattr(self, "_k", None)
+        self._k = new
+        if previous is None or previous == new:
+            # Construction, or a write that changes nothing: the constructor
+            # arms the accumulators itself immediately after, and a no-op write
+            # must not silently discard a running average.
+            return
+        self._W = None
+        self._z = None
+        self._ode_stepper = None
+        self._ext_tape = None
+        self._ext_tape_key = None
+        self._ext_tape_arrays = None
+        self._reset_accumulators()
 
     def _rebuild(self, inner: Any) -> TangentSystem:
         return TangentSystem(inner, self.k, backend=self._backend)
@@ -299,7 +355,12 @@ class TangentSystem(DerivedSystem):
         shared bounded-LRU tape cache).  That turns a repeat spectrum into a cache
         hit — worth ~17 s per call on a 32-D field system.
         """
-        key = tuple(sorted(self.system._structural_vals().items()))
+        # ``k`` is part of the key, not just the structural parameters: the tape
+        # carries the state PLUS k tangent vectors, so two values of k are two
+        # different tapes.  Keyed on the structural values alone, a later
+        # ``tang.k = 3`` reused the k=2 tape and ``split_extended`` failed with
+        # ``cannot reshape array of size 6 into shape (3,3)``.
+        key = (self.k, tuple(sorted(self.system._structural_vals().items())))
         if self._ext_tape is None or key != self._ext_tape_key:
             self._ext_tape = build_variational_tape_cached(self.system, self.k)
             self._ext_tape_key = key

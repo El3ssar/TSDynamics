@@ -167,10 +167,17 @@ def test_scaling_window_returns_plain_floats():
 
 
 def test_repr_is_the_readout_not_a_constructor_call():
-    """v6: the repr became what ``summary()`` printed (contract §4.2 rule 3)."""
+    """v6: the repr became what ``summary()`` printed (contract §4.2 rule 3).
+
+    The fallback quantity label is ``value``, not ``estimate``: they are the same
+    number, but ``value`` is the spelling rule R2 left on the listing, and a repr
+    must print a name its reader can tab-complete (contract §11).  Every shipped
+    subclass overrides ``_quantity`` with its own symbol, so this label is only
+    ever seen on a bare ``ScalingResult``.
+    """
     text = repr(_scaling())
     head = text.splitlines()[0]
-    assert head.startswith("ScalingResult  estimate = 2")
+    assert head.startswith("ScalingResult  value = 2")
     assert "± 0.05" in head
     assert "(Lorenz)" in head  # the subject, read off meta
     assert "abscissa" not in text  # the curve arrays are never dumped
@@ -400,4 +407,7 @@ def test_domain_subclass_can_alias_estimate():
     assert r.scaling_window == (0.0, 4.0)
     # The inherited repr survives the @dataclass redecoration (the WS-RESULT gotcha).
     assert repr(r).startswith("_Dim  ")
-    assert "estimate = 1.886" in repr(r)
+    # ``value`` is the inherited fallback label (see the repr test above); this
+    # subclass adds ``dimension`` without overriding ``_quantity``, so it prints
+    # the base spelling — which is the one a reader can tab-complete.
+    assert "value = 1.886" in repr(r)

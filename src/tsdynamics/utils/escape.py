@@ -59,6 +59,18 @@ class Unbounded(NamedTuple):
     first_sample: int
     non_finite: bool
 
+    def __dir__(self) -> list[str]:
+        """List the five measurements, not ``tuple``'s ``count`` / ``index`` (§11.1).
+
+        ``traj.unbounded`` is a record a user *receives* and reads, so its tab
+        surface should be what was measured.  Measured before this it offered
+        seven names, and the two extras were ``tuple``'s — which is the same
+        confusion the ``first_sample`` field is named around (see above).
+
+        Both stay bound and callable; only the listing shrinks.
+        """
+        return sorted(self._fields)
+
     def __str__(self) -> str:
         """Render the one line that says the orbit left the building."""
         what = "became non-finite" if self.non_finite else f"reached {self.peak:.3g}"

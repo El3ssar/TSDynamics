@@ -375,6 +375,20 @@ class OrbitSet(CollectionResult):
             f"{n_stable} stable, {len(self.items) - n_stable} unstable"
         )
 
+    @property
+    def n_stable(self) -> int:
+        """How many of these are stable — the count the repr reports.
+
+        ``len(result.stable)`` has always worked; this is the name ``to_dict``
+        already emitted, so that the serialized answer and the object agree.
+        """
+        return len(self.stable)
+
+    @property
+    def n_unstable(self) -> int:
+        """How many of these are unstable — the count the repr reports."""
+        return len(self.unstable)
+
     def _derived(self) -> dict[str, Any]:
         """Export the stable/unstable split the repr reports."""
         return {"n_stable": len(self.stable), "n_unstable": len(self.unstable)}

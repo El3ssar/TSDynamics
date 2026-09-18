@@ -226,6 +226,13 @@ def test_structural_change_rebuilds_extended_tape(monkeypatch) -> None:
     same shared ``Tape`` object.  What must still hold is that the branch runs — a
     genuine structural change would then key a different cache entry and get a
     structurally different tape.
+
+    The key is ``(k, structural_values)``: the extended tape carries the state
+    PLUS ``k`` tangent vectors, so two values of ``k`` are two different tapes.
+    Keyed on the structural values alone (as it was before v6 round 9) a live
+    ``tang.k = 3`` silently reused the ``k=2`` tape — see
+    :func:`test_changing_k_rebuilds_the_extended_tape` below, which is the
+    failing-first half of this pair.
     """
     from tsdynamics.derived import tangent as tangent_mod
 
@@ -244,8 +251,10 @@ def test_structural_change_rebuilds_extended_tape(monkeypatch) -> None:
     first_key = tang._ext_tape_key
     assert builds["n"] == 1
 
-    # No structural params on LinOsc → key is the empty tuple and the tape is
-    # reused across reinit (a control/IC change is not a structural change).
+    # No structural params on LinOsc → the structural half of the key is the
+    # empty tuple, and the tape is reused across reinit (a control/IC change is
+    # not a structural change).
+    assert first_key == (2, ())
     tang.reinit([0.2, 0.3])
     assert tang._ext_tape is first_tape
     assert tang._ext_tape_key == first_key
@@ -253,10 +262,33 @@ def test_structural_change_rebuilds_extended_tape(monkeypatch) -> None:
 
     # Simulate a structural change by poking the cached key stale; the next
     # reinit must take the rebuild branch (key mismatch path).
-    tang._ext_tape_key = (("N", 99),)
+    tang._ext_tape_key = (2, (("N", 99),))
     tang.reinit([0.2, 0.3])
     assert builds["n"] == 2
-    assert tang._ext_tape_key == ()
+    assert tang._ext_tape_key == (2, ())
+
+
+def test_changing_k_rebuilds_the_extended_tape() -> None:
+    """Changing ``k`` on a live ``TangentSystem`` re-lowers the extended tape.
+
+    The extended variational tape carries the base state PLUS ``k`` tangent
+    vectors, so ``k`` is part of the math the tape encodes, not a runtime knob
+    read off the system.  Before v6 round 9 the per-instance cache was keyed on
+    the structural parameters alone, so raising ``k`` after a ``reinit`` reused
+    the narrower tape and ``split_extended`` failed with ``cannot reshape array
+    of size 6 into shape (3,3)``.
+
+    Asserted on the observable — the shape of :meth:`TangentSystem.deviations`
+    — rather than on the private key, so the test survives a change of key
+    representation.
+    """
+    tang = TangentSystem(ts.systems.Lorenz(), k=2, backend="reference")
+    tang.reinit([1.0, 1.0, 1.0])
+    assert tang.deviations().shape == (3, 2)
+
+    tang.k = 3
+    tang.reinit([1.0, 1.0, 1.0])
+    assert tang.deviations().shape == (3, 3)
 
 
 @pytest.mark.slow

@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Any
 
 from ... import registry as _registry
 from .._frames import FrameSpace, OverlayRole, space_arity
-from .._visibility import listing_dir
+from .._visibility import INHERITED_DICT_METHODS, dir_without, listing_dir
 from ..spec import Plot, PlotKind
 from ._base import (
     PART_KEYS,
@@ -1603,6 +1603,28 @@ class CompatibilityMatrix(dict):  # type: ignore[type-arg]
         parameter of :func:`register`, so no row could ever set one.  Both the
         field and the ``"exclusive"`` column of :meth:`rows` are gone.
     """
+
+    def __dir__(self) -> Iterable[str]:
+        """List this matrix's one verb; hide the 11 inherited ``dict`` methods.
+
+        Everything the class docstring advertises as *programmable* is a dunder
+        and therefore survives untouched: ``m["phase_portrait"]``
+        (``__getitem__``), ``"psd" in m`` (``__contains__``), ``len(m)``,
+        iteration, ``sorted(m)`` and ``isinstance(m, dict)``.  What leaves the
+        listing is the named half — ``keys`` / ``values`` / ``items`` / ``get``
+        / ``copy`` and six mutators — which measured **zero** callers across
+        ``src/``, ``tests/``, ``docs/`` and ``hooks/`` and is, where it means
+        anything at all, a second spelling of something already taught:
+
+        - ``sorted(m.keys())`` is ``ts.viz.transforms.names()`` (measured equal);
+        - ``m.get(name)`` is ``m[name]``, and the one-row door is the function's
+          own argument — ``ts.viz.compatibility("phase_portrait")``;
+        - the six mutators write to a *derived view* of the registry, so they
+          change nothing and mean nothing.
+
+        Hidden from ``dir()`` only — every one of them is still callable.
+        """
+        return dir_without(self, INHERITED_DICT_METHODS)
 
     def rows(self) -> list[dict[str, Any]]:
         """Return one record per transform — the DataFrame-able form."""

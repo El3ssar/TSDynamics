@@ -919,6 +919,341 @@ def test_the_split_out_engine_seams_are_still_reachable_through_run():
         assert hasattr(run, name), f"engine.run lost its re-export of {name}"
 
 
+# ── the nine listings that were shape-checked but never content-pinned ──────────
+
+#: The package-level and seam listings this slot owns, transcribed name for name.
+#:
+#: These nine were **shape**-checked and never **content**-checked.
+#: ``test_dir_mirrors_all_for_every_public_package`` proves ``dir(M) ==
+#: sorted(M.__all__)``, which is a statement about two listings *agreeing* — it
+#: stays green when a name is added to both.  So the exact defect this whole
+#: stream exists to prevent, a listing silently regrowing, had no gate on the
+#: modules a plugin author, a solver author and the engine all reach through.
+#: ``_CURATED_MODULE_LISTINGS`` above pins the eleven *seams* round 9 curated;
+#: this pins the nine that already had a listing and were simply never reviewed
+#: against one.
+#:
+#: Deliberately **not** here: ``tsdynamics.systems`` (180) and
+#: ``tsdynamics.analysis`` (52), whose listings are *generated* — from the
+#: catalogue and from ``registry.analyses`` — and are pinned as such in
+#: ``test_api_contract.py``.  Transcribing a generated listing would make adding
+#: a system a two-file edit, which is the thing ``systems/__init__.py`` is built
+#: to avoid.
+#:
+#: Adding a name below is a review, not an accident: that is the entire point.
+_CURATED_PACKAGE_LISTINGS: dict[str, list[str]] = {
+    "tsdynamics.engine": ["compile", "problem", "run", "symbols"],
+    "tsdynamics.engine.compile": [
+        "DelaySlot",
+        "LoweredSDE",
+        "Tape",
+        "TapeCompileError",
+        "clear_tape_cache",
+        "eval_tape",
+        "eval_tape_jac",
+        "lower_dde",
+        "lower_dde_cached",
+        "lower_expressions",
+        "lower_map",
+        "lower_map_cached",
+        "lower_map_sweep",
+        "lower_map_sweep_cached",
+        "lower_ode",
+        "lower_ode_cached",
+        "lower_sde",
+        "lower_sde_cached",
+        "map_jacobian_fn",
+        "run_tape",
+        "tape_cache_stats",
+        "tape_jacobian_is_smooth",
+    ],
+    "tsdynamics.engine.problem": [
+        "DDEProblem",
+        "DelaySlot",
+        "MapProblem",
+        "ODEProblem",
+        "Problem",
+        "SDEProblem",
+        "build_problem",
+        "dde_problem",
+        "map_problem",
+        "ode_problem",
+        "sde_problem",
+    ],
+    "tsdynamics.engine.run": [
+        "BACKENDS",
+        "EngineNotAvailableError",
+        "Event",
+        "EventSolution",
+        "clear_jit_cache",
+        "crossings",
+        "ensemble",
+        "eval_jac",
+        "eval_rhs",
+        "integrate",
+        "integrate_events",
+        "jit_cache_stats",
+        "make_ode_stepper",
+        "map_lyapunov",
+        "resolve_backend",
+        "sde_ensemble_final",
+        "sde_integrate_dense",
+        "step_advance",
+        "step_advance_to_event",
+    ],
+    "tsdynamics.plugins": [
+        "ALL_GROUPS",
+        "ANALYSES_GROUP",
+        "PLOT_PRIMITIVES_GROUP",
+        "PLOT_TRANSFORMS_GROUP",
+        "RENDERERS_GROUP",
+        "SOLVERS_GROUP",
+        "SYSTEMS_GROUP",
+        "import_submodules",
+        "iter_entry_points",
+        "load_plugins",
+        "register_entry_points",
+    ],
+    "tsdynamics.registry": [
+        "Registry",
+        "RegistryEntry",
+        "SystemEntry",
+        "all_systems",
+        "analyses",
+        "by_family",
+        "categories",
+        "families",
+        "get",
+        "plot_transforms",
+        "renderers",
+    ],
+    "tsdynamics.solvers": [
+        "DEFAULT_METHOD",
+        "Resolution",
+        "STIFF_METHOD",
+        "SolverCaps",
+        "SolverSpec",
+        "all_specs",
+        "available",
+        "available_for",
+        "build_kwargs",
+        "default_method",
+        "get",
+        "is_implicit",
+        "is_stiff",
+        "needs_jacobian",
+        "normalize",
+        "recommend",
+        "register",
+        "resolve",
+        "select",
+        "unregister",
+    ],
+    "tsdynamics.solvers.select": [
+        "DEFAULT_METHOD",
+        "Resolution",
+        "STIFF_METHOD",
+        "available_for",
+        "build_kwargs",
+        "default_method",
+        "is_implicit",
+        "is_stiff",
+        "needs_jacobian",
+        "normalize",
+        "recommend",
+        "resolve",
+        "select",
+    ],
+    "tsdynamics.utils": [
+        "BASIN_ATOL",
+        "BASIN_RTOL",
+        "DDE_ATOL",
+        "DDE_LYAPUNOV_ATOL",
+        "DDE_LYAPUNOV_RTOL",
+        "DDE_RTOL",
+        "DEFAULT_ATOL",
+        "DEFAULT_RTOL",
+        "make_output_grid",
+    ],
+}
+
+
+@pytest.mark.parametrize("mod_name", sorted(_CURATED_PACKAGE_LISTINGS))
+def test_the_package_listing_is_exactly_the_contract(mod_name):
+    """A reviewed listing, pinned name for name, so it cannot silently regrow.
+
+    The failure message names both directions, because they are different
+    mistakes: a **new** name means something public appeared without review, and
+    a **missing** one means a public name was demoted without the table being
+    told.
+    """
+    module = importlib.import_module(mod_name)
+    expected = _CURATED_PACKAGE_LISTINGS[mod_name]
+    measured = dir(module)
+    assert measured == expected, (
+        f"{mod_name}'s listing moved:\n"
+        f"  appeared (review it, then add the row): {sorted(set(measured) - set(expected))}\n"
+        f"  vanished (delete the row): {sorted(set(expected) - set(measured))}"
+    )
+
+
+def test_every_pinned_package_listing_is_sorted_and_resolves():
+    """Guard the guard: a table that drifted out of sort order would pin nothing."""
+    for mod_name, expected in _CURATED_PACKAGE_LISTINGS.items():
+        assert expected == sorted(expected), f"{mod_name}: the pinned listing is not sorted"
+        module = importlib.import_module(mod_name)
+        missing = [n for n in expected if not hasattr(module, n)]
+        assert not missing, f"{mod_name} advertises names that do not resolve: {missing}"
+    assert len(_CURATED_PACKAGE_LISTINGS) == 9
+
+
+# ── a record you RECEIVE shows what was measured, not its container's plumbing ──
+
+
+def _container_leak(obj: object) -> list[str]:
+    """Public names ``dir(obj)`` offers that no ``tsdynamics`` class in its MRO owns.
+
+    For a record built on ``list`` / ``tuple`` / ``dict`` that is every inherited
+    member — the plumbing of the container it happens to be implemented with.
+    """
+    own: set[str] = set()
+    for klass in type(obj).__mro__:
+        if klass.__module__.split(".")[0] == "tsdynamics":
+            own |= {a for a in vars(klass) if not a.startswith("_")}
+    own |= set(getattr(type(obj), "_fields", ()) or ())
+    return sorted(n for n in dir(obj) if not n.startswith("_") and n not in own)
+
+
+def _received_records() -> dict[str, object]:
+    """One instance of each record a user is handed and then tab-completes."""
+    from tsdynamics.engine.compile import DelaySlot
+    from tsdynamics.utils.escape import Unbounded
+
+    return {
+        # ── this slot ────────────────────────────────────────────────────────
+        "ts.systems.find(...)": ts.systems.find("delay"),
+        "traj.unbounded": Unbounded(
+            peak=1e9, start=1.0, growth=1e9, first_sample=3, non_finite=False
+        ),
+        "engine.compile.DelaySlot": DelaySlot(input_index=3, component=0, delay=1.0),
+        # ── sibling slots (see the backlog below) ────────────────────────────
+        "ts.analysis.find(...)": analysis.find("chaos"),
+        "ts.viz.transforms.find(...)": ts.viz.transforms.find("spectrum"),
+        "ts.viz.renderers.find(...)": ts.viz.renderers.find(),
+        "ts.viz.styles.find(...)": ts.viz.styles.find(),
+    }
+
+
+#: The records that still hand back their container's plumbing, each with the
+#: slot that owns the file.  Split fast/``full`` exactly like
+#: ``_UNCURATED_MODULE_LISTINGS``: the fast tier refuses a **new** offender and
+#: the ``full`` tier refuses a **stale row**, so a sibling slot landing its half
+#: never turns anyone else's run red.
+#:
+#: The defect is one defect, found on all five ``find`` doors at once: measured,
+#: ``ts.analysis.find("is this chaotic").<TAB>`` offers ``append clear copy count
+#: extend index insert pop remove reverse sort`` — eleven ways to edit a search
+#: result and not one way to use it — on the verb v6 advertises as *the* route to
+#: discovery.  ``ts.systems.find`` is fixed here; the other four are one
+#: three-line ``__dir__`` each, in files this slot does not own.
+#:
+#: The two ``list`` rows are the sharper case and need a decision, not a patch:
+#: ``renderers.find`` and ``styles.find`` return a **bare** ``list``, which cannot
+#: be curated without giving them the small subclass their two siblings already
+#: have.  That the four-verb shape returns three different answer shapes is worth
+#: fixing on its own.
+_UNCURATED_RECEIVED_RECORDS: dict[str, str] = {
+    "ts.analysis.find(...)": "RESULTS · AnalysisList, analysis/_discovery.py",
+    "ts.viz.transforms.find(...)": "VIZ · TransformList, viz/transforms/_registry.py",
+    "ts.viz.renderers.find(...)": "VIZ · a bare list — needs a subclass, not a __dir__",
+    "ts.viz.styles.find(...)": "VIZ · a bare list — needs a subclass, not a __dir__",
+}
+
+
+def test_the_received_record_sweep_actually_builds_its_subjects():
+    """Guard the guard: a subject that failed to build would certify an empty set."""
+    records = _received_records()
+    assert len(records) == 7, sorted(records)
+    assert len(ts.systems.find("delay")) >= 5, "the find() subject came back empty"
+    assert set(_UNCURATED_RECEIVED_RECORDS) <= set(records), "a backlog row names no subject"
+
+
+@pytest.mark.parametrize(
+    "label", [k for k in _received_records() if k not in _UNCURATED_RECEIVED_RECORDS]
+)
+def test_a_received_record_shows_what_was_measured(label):
+    """A record you are *handed* lists its answer, never ``list``/``tuple`` plumbing.
+
+    C2 — a type you receive is not one you type, and that goes for its members
+    too.  ``ts.systems.find("delay")`` is the answer to a question; ``.sort()``
+    and ``.append()`` are not things anyone does to an answer.
+
+    Reachability is untouched and
+    :func:`test_hiding_a_record_s_plumbing_costs_no_capability` measures it.
+    """
+    obj = _received_records()[label]
+    leak = _container_leak(obj)
+    assert not leak, (
+        f"{label} offers {len(leak)} inherited container members: {leak}.  "
+        "Give the class the three-line __dir__; do not add a row to "
+        "_UNCURATED_RECEIVED_RECORDS, which may only shrink."
+    )
+
+
+def test_the_received_record_backlog_admits_no_new_offender():
+    """The anti-rot half: a new record may not ship with its plumbing showing."""
+    measured = {k for k, v in _received_records().items() if _container_leak(v)}
+    new = sorted(measured - set(_UNCURATED_RECEIVED_RECORDS))
+    assert not new, f"records leaking their container's members: {new}"
+
+
+@pytest.mark.full
+def test_the_received_record_backlog_is_self_cleaning():
+    """The shrink half: a row that starts passing must be deleted.
+
+    In the ``full`` tier, and the emptiness check with it: all four rows are
+    owned by *other* slots working concurrently, so "you fixed one, now delete
+    the row" is bookkeeping — and this file's own argument is that bookkeeping
+    fired in the fast tier makes one slot's correct change redden everyone else.
+    """
+    measured = {k for k, v in _received_records().items() if _container_leak(v)}
+    fixed = sorted(set(_UNCURATED_RECEIVED_RECORDS) - measured)
+    assert not fixed, f"these records now curate their listing — delete their rows: {fixed}"
+    assert _UNCURATED_RECEIVED_RECORDS, "the backlog went empty — delete it and this test"
+
+
+def test_hiding_a_record_s_plumbing_costs_no_capability():
+    """G1 — every hidden member stays bound, callable and correct.
+
+    This is the measurement the whole ruling rests on: a ``__dir__`` is a
+    *discovery* change.  If any of this ever fails, the hide was a removal and
+    must be reverted.
+    """
+    from tsdynamics.engine.compile import DelaySlot
+    from tsdynamics.utils.escape import Unbounded
+
+    found = ts.systems.find("delay")
+    assert len(found) >= 5 and isinstance(found, list)
+    first = found[0]
+    assert found.count(first) == 1 and found.index(first) == 0
+    grown = found.copy()
+    grown.append(int)
+    assert len(grown) == len(found) + 1
+    assert [c.__name__ for c in found] == [c.__name__ for c in list(found)]
+    assert "systems match" in repr(found), "the tabulated repr is the answer and must survive"
+
+    record = Unbounded(peak=1e9, start=1.0, growth=1e9, first_sample=3, non_finite=False)
+    assert record.peak == 1e9 and record.first_sample == 3
+    assert record.count(1.0) == 1 and record.index(1.0) == 1
+    assert tuple(record) == (1e9, 1.0, 1e9, 3, False)
+    assert list(record._asdict()) == ["peak", "start", "growth", "first_sample", "non_finite"]
+    assert "unbounded" in str(record)
+
+    slot = DelaySlot(input_index=3, component=0, delay=1.0)
+    assert (slot.input_index, slot.component, slot.delay) == (3, 0, 1.0)
+    assert tuple(slot) == (3, 0, 1.0) and slot.count(0) == 1
+
+
 def test_the_standard_library_does_not_resolve_on_the_top_level():
     """``ts.importlib`` / ``ts.textwrap`` / ``ts.Any`` were never a decision.
 

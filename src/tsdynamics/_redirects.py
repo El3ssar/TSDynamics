@@ -68,6 +68,12 @@ __all__ = [
 #: cannot go stale the way a hand-written table does.  This table is only for
 #: names whose *spelling* changed.
 RENAMED_IN_V6: dict[str, tuple[str, str]] = {
+    "EnsembleSystem": (
+        "ts.derived.Ensemble",
+        "the class is called Ensemble now — the -System suffix said nothing the "
+        "other four derived wrappers did not also say, and sys.ensemble(states) "
+        "is the verb that builds one",
+    ),
     "PlotSpec": (
         "ts.viz.Plot",
         "it is the type ts.plot hands back, and nothing about it is a spec any "

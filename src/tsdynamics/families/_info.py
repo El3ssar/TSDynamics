@@ -23,6 +23,7 @@ which is why every caller that needed to had to sniff the class.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -97,13 +98,28 @@ def resolve_variables(system: Any) -> tuple[str, ...]:
     return tuple(f"y{i}" for i in range(dim))
 
 
-class Variables:
-    """Non-data descriptor: declared names off the class, resolved names off an instance.
+#: Where a resolved (or user-assigned) name tuple is memoised on an instance.
+#: Deliberately **not** ``"variables"`` itself: :class:`Variables` is a *data*
+#: descriptor, so it wins over the instance ``__dict__`` and a value parked
+#: under its own name would never be read again.
+_VARIABLES_CACHE = "_variables_resolved"
 
-    Non-data (only ``__get__``) so the first instance read writes the resolved
-    tuple straight into ``obj.__dict__`` and every later read is a plain dict
-    hit — the laziness that keeps a 4,608-component field system cheap to
-    construct.
+
+class Variables:
+    """Data descriptor: declared names off the class, resolved names off an instance.
+
+    Reading is still one dict hit after the first time — the resolved tuple is
+    memoised under :data:`_VARIABLES_CACHE` — which is the laziness that keeps a
+    4,608-component field system cheap to construct.  It used to be a *non-data*
+    descriptor (``__get__`` only), memoising under its own name so that Python
+    stopped consulting the descriptor at all.
+
+    It grew a ``__set__`` because that same shortcut made ``system.variables``
+    an **unguarded** write (``CONTRACT.md`` §11.3 T2, §11.6 defect 1).  Renaming
+    a system's components is a legitimate customization and stays legitimate —
+    but it has exactly one correct arity, and a wrong one used to be accepted
+    in silence and then surface far away, as a raw ``IndexError: tuple index out
+    of range`` from inside ``system.info``'s equation renderer.
     """
 
     __slots__ = ()
@@ -113,9 +129,55 @@ class Variables:
             # ``type(sys).variables`` — the DECLARED tuple (or None), which is
             # what the class-level readers deferred to v6.1 still expect.
             return getattr(objtype, "_declared_variables", None)
+        cached = obj.__dict__.get(_VARIABLES_CACHE)
+        if cached is not None:
+            return cached
         names = resolve_variables(obj)
-        obj.__dict__["variables"] = names
+        obj.__dict__[_VARIABLES_CACHE] = names
         return names
+
+    def __set__(self, obj: Any, value: Any) -> None:
+        """Rename this system's components — one name per state component.
+
+        Raises
+        ------
+        InvalidInputError
+            If *value* is not a sequence of strings, or does not name every
+            component exactly once.
+        """
+        from tsdynamics.errors import InvalidInputError, remedy
+
+        dim = int(obj.dim)
+        if isinstance(value, str) or not isinstance(value, Sequence):
+            raise InvalidInputError(
+                f"{type(obj).__name__}.variables must be a sequence of "
+                f"{dim} component names, got {type(value).__name__}."
+                + remedy(f"system.variables = {_example_names(dim)!r}")
+            )
+        names = tuple(str(n) for n in value)
+        if len(names) != dim:
+            raise InvalidInputError(
+                f"{type(obj).__name__}.variables names {len(names)} component"
+                f"{'' if len(names) == 1 else 's'} {names}, but this system has "
+                f"{dim}. Every component is named, or none is — a partial "
+                f"listing silently relabels the wrong columns."
+                + remedy(f"system.variables = {_example_names(dim)!r}")
+            )
+        if len(set(names)) != len(names):
+            dupes = sorted({n for n in names if names.count(n) > 1})
+            raise InvalidInputError(
+                f"{type(obj).__name__}.variables repeats {dupes}; a name selects "
+                f"a column, so two columns cannot share one."
+                + remedy(f"system.variables = {_example_names(dim)!r}")
+            )
+        obj.__dict__[_VARIABLES_CACHE] = names
+
+
+def _example_names(dim: int) -> tuple[str, ...]:
+    """Return a runnable ``variables`` tuple of the right width for *dim*."""
+    if dim <= 3:
+        return ("x", "y", "z")[:dim]
+    return tuple(f"x{i}" for i in range(dim))
 
 
 def _render_equations(system: Any, *, limit: int = 12) -> list[str]:

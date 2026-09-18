@@ -573,7 +573,25 @@ class DimensionResult(ScalingResult):
 
     @property
     def scaling_window(self) -> tuple[float, float]:
-        """The ``(x_lo, x_hi)`` abscissa span of the selected scaling region."""
+        """The ``(x_lo, x_hi)`` abscissa span of the selected scaling region.
+
+        Choosing the window yourself
+        ----------------------------
+        Reading this and wanting to *set* it is the usual next step, and the
+        keyword is named here rather than guessed at, because it differs from the
+        one :func:`~tsdynamics.analysis.lyapunov_from_data` uses for the same job:
+
+        * **here** — ``c_lo=`` / ``c_hi=`` bound the *correlation-sum fraction*
+          the window is drawn from, and ``flatness=`` says how flat the fitted
+          log–log window has to be;
+        * **there** — ``fit=(lo, hi)`` takes index bounds straight into the
+          stretching curve ``S(k)``.
+
+        They are spelled differently because they select on different things: a
+        dimension window is chosen by where the correlation sum is well-sampled,
+        a Lyapunov window by which stretching-curve samples are in the linear
+        regime.
+        """
         lo, hi = self.fit_region
         return float(self.x[lo]), float(self.x[hi])
 

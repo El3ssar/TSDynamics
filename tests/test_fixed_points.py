@@ -939,3 +939,66 @@ class TestFixedPointPlotSpec:
         assert overlaid, "the overlay contributed no layers"
         zs = [float(v) for layer in overlaid for v in layer.data["y"]]
         assert sorted(zs)[-2:] == pytest.approx([27.0, 27.0], abs=1e-6)
+
+
+class TestAOneDimensionalUserMapReachesEveryDoor:
+    r"""A 1-D map written in the documented style works at every analysis door.
+
+    The family contract is that a :class:`~tsdynamics.families.DiscreteMap`
+    kernel takes a plain **state vector** — ``u[0]``, ``u[1]``, … — which is the
+    one place the families differ from an ODE's callable accessor, and the
+    spelling a user reaches for after writing a 2-D map.
+
+    Until v6 round 9 the shared tangent helper
+    :func:`tsdynamics.analysis._tangent.to_native` special-cased ``dim == 1`` and
+    passed a bare ``float``, so every A-FP / A-CHAOS door raised ``TypeError:
+    'float' object is not subscriptable`` *inside the user's own kernel* for 1-D
+    maps only.  It was invisible in-house because all seven built-in 1-D maps are
+    written scalar-style (``r * x * (1 - x)``), which NumPy broadcasting accepts
+    either way — so no catalogue system could reproduce it.
+
+    The system below has analytically known fixed points: ``a·x − x³ = x`` gives
+    ``x ∈ {0, ±√(a−1)}``, i.e. ``{0, ±√1.8}`` at ``a = 2.8``.
+    """
+
+    class Cubic1D(ts.DiscreteMap):
+        """``x ↦ a·x − x³`` — written in the documented ``u[0]`` vector style."""
+
+        variables = ("x",)
+        params = {"a": 2.8}  # noqa: RUF012
+
+        @staticmethod
+        def _step(u, a):  # noqa: ANN001, ANN205, D102
+            return [a * u[0] - u[0] ** 3]
+
+    EXPECTED = (-(1.8**0.5), 0.0, 1.8**0.5)
+
+    @pytest.mark.parametrize("method", ["newton", "interval"])
+    def test_fixed_points_finds_the_analytic_roots(self, method: str) -> None:
+        """Both root finders recover ``{0, ±√(a−1)}`` from the vector-style kernel."""
+        fps = fixed_points(self.Cubic1D(), method=method, region=[(-3.0, 3.0)], seed=0)
+        assert np.allclose(np.sort(fps.points.ravel()), self.EXPECTED, atol=1e-8)
+
+    def test_periodic_orbits_runs(self) -> None:
+        """``periodic_orbits`` is the door the round-9 blind tester hit outright."""
+        orbits = periodic_orbits(self.Cubic1D(), 2, seed=0)
+        assert len(orbits) > 0
+        assert orbits.periods.tolist() == [2] * len(orbits)
+
+    def test_lyapunov_spectrum_runs(self) -> None:
+        """The map tangent path shares ``to_native`` and was broken with it."""
+        spec = ts.analysis.lyapunov_spectrum(self.Cubic1D(), k=1, ic=[0.5])
+        assert np.isfinite(np.asarray(spec)).all()
+
+    def test_a_scalar_style_one_d_kernel_still_works(self) -> None:
+        """The tolerant spelling the catalogue uses must keep working.
+
+        This is the non-regression half: the fix widens what is accepted, so the
+        seven built-in 1-D maps — every one of them scalar-style — must be
+        untouched.  ``Gauss`` additionally calls ``np.exp``, which is what forced
+        the interval engine to grow object-loop methods.
+        """
+        for name in ("Logistic", "Tent", "Ulam", "Gauss", "Ricker"):
+            system = ts.systems.get(name)()
+            fps = fixed_points(system, method="interval", region=[(-2.0, 2.0)])
+            assert len(fps) > 0, name

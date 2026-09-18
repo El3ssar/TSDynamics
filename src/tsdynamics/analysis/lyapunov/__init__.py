@@ -139,6 +139,24 @@ class LyapunovSpectrum(ArrayResult):
         base = 1e-3 * float(e.max())
         return max(base, float(e.min())) if self._is_flow else max(1e-6, base)
 
+    @property
+    def zero_tolerance(self) -> float:
+        """The floor below which an exponent counts as zero — the verdict's evidence.
+
+        The repr prints this number (``λ > 0.0146``) and :meth:`to_dict` has
+        always emitted it, but it was reachable only through ``to_dict``: the
+        calculation lives on the private :attr:`_zero_tolerance`.  Since §4.4
+        requires a verdict to be supported by the data, the threshold the verdict
+        turns on is part of the answer, not an internal — it is how a reader tells
+        ``λ_max = 0.02`` two floors above the noise from ``λ_max = 0.02`` one
+        floor above it.
+
+        Returns
+        -------
+        float
+        """
+        return self._zero_tolerance
+
     def _n_positive(self) -> tuple[int, int]:
         """Return the positive-exponent count at ``lo`` and at ``10 × lo``."""
         e = np.asarray(self.values, dtype=float)
