@@ -3216,7 +3216,18 @@ class Plot:
         save : write the figure (or animation) to a file.
         fig : the matplotlib figure, rendered once and cached.
         """
-        figure = self.render(backend, **backend_kw)
+        # Display the CACHED figure — the one ``.fig`` / ``.ax`` hand out — not a
+        # fresh render.  ``render()`` draws anew on every call, so going through
+        # it made ``p.ax.set_facecolor(...)`` followed by ``p.show()`` display a
+        # figure without the edit: the escape hatch and this verb disagreed about
+        # which figure was yours, silently.  A default (matplotlib) ``show`` is
+        # therefore the cached path; an explicit ``backend=`` is a different
+        # renderer and has no cache to honour.
+        if backend is None and not backend_kw:
+            figure = self._rendered()[0]
+            self._figure_handed_out = True  # a later tweak must warn, as for .fig
+        else:
+            figure = self.render(backend, **backend_kw)
         if not _display_figure(figure):
             import warnings
 
@@ -4512,6 +4523,7 @@ def _display_figure(figure: Any) -> bool:
             return False  # headless: no window; save() writes the file
         import matplotlib.pyplot as plt
 
+        _adopt_into_pyplot(figure)
         plt.show()
         return True
     show = getattr(figure, "show", None)
@@ -4519,6 +4531,39 @@ def _display_figure(figure: Any) -> bool:
         show()
         return True
     return False
+
+
+def _adopt_into_pyplot(figure: Any) -> None:
+    """Give ``figure`` a pyplot figure manager, so ``plt.show()`` can display it.
+
+    This renderer builds a bare :class:`matplotlib.figure.Figure` rather than
+    going through ``plt.figure()`` — the right thing for a library, because
+    pyplot's figure registry is global process state and a plotting *library*
+    must not append to it on every render.  The consequence is that the figure
+    has **no manager**, and ``plt.show()`` displays the managed figures and
+    nothing else.
+
+    So ``.show()`` was a silent no-op wherever a window was actually available:
+    measured on ``QtAgg``, ``Gcf.get_all_fig_managers()`` was empty, ``show()``
+    returned instantly, and the interactivity check passed — so not even the
+    windowless warning fired.  The one verb this library's own ``__repr__``
+    tells every user to call did nothing and said nothing.
+
+    The fix is matplotlib's documented adoption recipe: make one managed figure,
+    hand its canvas our figure, and point the figure back at that canvas.  It is
+    done **here**, at the moment of display, rather than at render time — so a
+    ``render()`` / ``save()`` / ``.fig`` that never asks for a window still
+    leaves pyplot's global registry untouched.
+    """
+    import matplotlib.pyplot as plt
+
+    if getattr(figure.canvas, "manager", None) is not None:
+        return  # already managed (an ``ax=`` handed in from plt.subplots)
+    manager = plt.figure().canvas.manager
+    if manager is None:  # pragma: no cover - a backend with no manager at all
+        return
+    manager.canvas.figure = figure
+    figure.set_canvas(manager.canvas)
 
 
 def _display_target(figure: Any) -> str:

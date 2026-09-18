@@ -31,8 +31,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+import tsdynamics as ts
 from tsdynamics.errors import InvalidParameterError
 from tsdynamics.viz._tweaks import tweak_scopes
+from tsdynamics.viz.render.caps import VisualizationDegraded
 from tsdynamics.viz.spec import Layer, Layout, PlotKind, PlotSpec
 from tsdynamics.viz.style import get_theme
 
@@ -1055,3 +1057,79 @@ def test_a_plot_without_a_backend_still_says_what_it_is_in_a_notebook() -> None:
         spec_mod._resolve_renderers = saved  # type: ignore[assignment]
     assert html is not None
     assert "run 4" in html and "time_series" in html and "no drawing backend" in html
+
+
+class TestShowActuallyDisplays:
+    """``.show()`` opens a window, and it opens the window on YOUR figure.
+
+    Two defects, both silent, both on the verb this library's own ``__repr__``
+    tells every user to call.
+    """
+
+    def test_show_hands_the_figure_to_pyplot(self, monkeypatch):
+        """A bare ``Figure`` has no manager, and ``plt.show()`` ignores it.
+
+        The renderer builds ``matplotlib.figure.Figure(...)`` directly — right
+        for a library, since pyplot's registry is global process state — so the
+        figure carried no manager and ``Gcf.get_all_fig_managers()`` was empty.
+        ``plt.show()`` displays the *managed* figures, of which there were none,
+        so it returned instantly having drawn nothing.  And because the backend
+        was genuinely interactive, the windowless warning did not fire either.
+        """
+        pytest.importorskip("matplotlib")
+        import matplotlib.pyplot as plt
+        from matplotlib._pylab_helpers import Gcf
+
+        monkeypatch.setattr("tsdynamics.viz.spec._mpl_backend_is_interactive", lambda: True)
+        called: list[bool] = []
+        monkeypatch.setattr(plt, "show", lambda *a, **k: called.append(True))
+
+        plt.close("all")
+        plot = ts.plot(ts.systems.Lorenz().run(final_time=2.0, dt=0.1, ic=[1.0, 1.0, 1.0]))
+        assert Gcf.get_all_fig_managers() == [], "nothing managed before .show()"
+
+        assert plot.show() is None, "show() is a side effect; it returns nothing"
+        assert called, "plt.show() must be reached"
+        managed = [m.canvas.figure for m in Gcf.get_all_fig_managers()]
+        assert plot.fig in managed, ".show() must give the figure a pyplot manager"
+        plt.close("all")
+
+    def test_show_displays_the_figure_you_edited(self, monkeypatch):
+        """``p.ax`` edits must survive ``p.show()``.
+
+        ``show`` went through ``render()``, which draws afresh every call, so it
+        displayed a figure *without* the hand edit while ``p.fig`` held one with
+        it — the escape hatch and this verb disagreeing about which figure is
+        yours, in silence.
+        """
+        pytest.importorskip("matplotlib")
+        import matplotlib.pyplot as plt
+        from matplotlib._pylab_helpers import Gcf
+
+        monkeypatch.setattr("tsdynamics.viz.spec._mpl_backend_is_interactive", lambda: True)
+        monkeypatch.setattr(plt, "show", lambda *a, **k: None)
+
+        plt.close("all")
+        plot = ts.plot(ts.systems.Lorenz().run(final_time=2.0, dt=0.1, ic=[1.0, 1.0, 1.0]))
+        plot.ax.set_facecolor("#112233")
+        plot.show()
+
+        shown = Gcf.get_all_fig_managers()[-1].canvas.figure
+        assert shown is plot.fig, "show() must display the cached figure, not a re-render"
+        assert shown.axes[0].get_facecolor() == pytest.approx(
+            (0.06666666666666667, 0.13333333333333333, 0.2, 1.0)
+        ), "the hand edit must be on the displayed figure"
+        plt.close("all")
+
+    def test_show_on_a_windowless_backend_still_says_so(self):
+        """The headless path is unchanged: one warning naming the backend."""
+        pytest.importorskip("matplotlib")
+        import matplotlib
+        import matplotlib.pyplot as plt
+
+        if matplotlib.get_backend().lower() != "agg":  # pragma: no cover
+            pytest.skip("this assertion is about the non-interactive path")
+        plot = ts.plot(ts.systems.Lorenz().run(final_time=2.0, dt=0.1, ic=[1.0, 1.0, 1.0]))
+        with pytest.warns(VisualizationDegraded, match="has no window"):
+            plot.show()
+        plt.close("all")
