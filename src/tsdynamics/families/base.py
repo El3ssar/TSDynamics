@@ -20,6 +20,7 @@ import numpy as np
 # is cycle-safe.
 from tsdynamics.data.trajectory import Trajectory
 from tsdynamics.errors import InvalidInputError, remedy
+from tsdynamics.errors import taught as _taught
 
 # The Plottable mixin (stream VIZ-SYSTEM-PLOT) gives every system a ``.plot()`` /
 # ``__plot_spec__()``.  It imports tsdynamics.viz only lazily (inside its methods),
@@ -587,7 +588,18 @@ def _absent_name_error(system: Any, name: str) -> AttributeError:
     four deleted analysis namespaces, an analysis that is now a free function, a
     near miss on a declared parameter, and a plain miss.  Every one of them ends
     in a line the reader can type.
+
+    Every return is sealed with :func:`~tsdynamics.errors.taught`, so CPython
+    cannot append a guess of its own after the line we wrote.  Measured before
+    the seal, ``lorenz.lyapunov_spectrum`` — whose message names the free
+    function to call — ended with ``Did you mean: '_lyapunov_spectrum'?``,
+    offering the reader the *private* helper behind that very function.
     """
+    return _taught(_absent_name_error_body(system, name), name)
+
+
+def _absent_name_error_body(system: Any, name: str) -> AttributeError:
+    """Build the message; :func:`_absent_name_error` seals it.  See that docstring."""
     slot = _absent_slot(type(system), name)
     if slot is not None:
         try:

@@ -29,7 +29,7 @@ of identity).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 import numpy as np
 from numpy.typing import NDArray
@@ -89,6 +89,11 @@ class RecurrenceMatrix(AnalysisResult):
     theiler_window : int
         Excluded near-diagonal band :math:`|i-j| \le w`.
     """
+
+    #: R1 — ``metric`` is the distance name the caller chose, echoed back.  It
+    #: is provenance (and the repr's context already prints it), not one of the
+    #: matrix's measurements.  Still readable, still in ``to_dict()``.
+    _HIDDEN_ATTRIBUTES: ClassVar[frozenset[str]] = frozenset({"metric"})
 
     matrix: Any = field(default=None, repr=False, compare=False)
     epsilon: float = 0.0

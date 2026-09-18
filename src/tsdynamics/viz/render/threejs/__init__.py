@@ -58,6 +58,7 @@ from typing import TYPE_CHECKING, Any
 
 from tsdynamics.errors import InvalidParameterError
 
+from ..._visibility import listing_dir
 from ..caps import RendererCapabilities, RenderResult
 from ._lower import DEFAULT_DECIMALS as _DEFAULT_DECIMALS
 from ._lower import DEFAULT_MAX_POINTS as _DEFAULT_MAX_POINTS
@@ -89,6 +90,8 @@ __all__ = [
     "render_page",
     "write_loader_asset",
 ]
+
+__dir__ = listing_dir(__all__)
 
 #: File extensions this backend can genuinely **write**.  ``PlotSpec.save`` uses it
 #: to refuse an ``(extension, backend)`` pair loudly instead of returning a path it

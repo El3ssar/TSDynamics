@@ -36,6 +36,7 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from .._visibility import listing_dir
 from .caps import RendererCapabilities, RenderResult
 
 if TYPE_CHECKING:
@@ -44,6 +45,8 @@ if TYPE_CHECKING:
     from ..spec import PlotSpec
 
 __all__ = ["register"]
+
+__dir__ = listing_dir(__all__)
 
 #: The registry name the json exporter registers under.
 _BACKEND_NAME = "json"

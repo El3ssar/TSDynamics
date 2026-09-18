@@ -40,7 +40,7 @@ from tsdynamics.errors import InvalidParameterError, invalid_value, remedy
 from tsdynamics.families import ContinuousSystem, DiscreteMap
 
 from .._common import reject_data
-from .._result import AnalysisResult, CollectionResult, _ArrayBacked
+from .._result import AnalysisResult, CollectionResult, _ArrayBacked, _build_meta
 from .._result_json import _sig, _state
 from . import _common as _c
 
@@ -272,22 +272,49 @@ class FixedPointSet(CollectionResult):
 
     @property
     def is_stable(self) -> np.ndarray:
-        """Boolean mask over the members — ``fps.points[fps.is_stable]`` selects."""
+        """A boolean **mask** over the members — one ``bool`` each, in order.
+
+        Not a filtered set: this is the ``(n,)`` array you index the *other*
+        vectorised columns with, which is what makes a custom selection possible
+        without ever touching a record::
+
+            fps.points[fps.is_stable]          # coordinates of the stable ones
+            fps.eigenvalues[~fps.is_stable]    # spectra of the unstable ones
+
+        :attr:`stable` is the other half of the pair and returns the filtered
+        :class:`FixedPointSet` itself; use that when you want the repr, the
+        table and the plot to come with it.
+
+        Returns
+        -------
+        numpy.ndarray
+            Shape ``(n,)``, ``dtype=bool``.
+        """
         return np.array([bool(fp.stable) for fp in self.items], dtype=bool)
 
     @property
     def stable(self) -> FixedPointSet:
-        """The stable fixed points / equilibria, as a :class:`FixedPointSet`.
+        """The stable members, as a **:class:`FixedPointSet` of their own**.
 
-        Filtering keeps the result surface (v6): it used to hand back a plain
-        ``list``, so the repr, ``to_frame()`` and ``.plot`` were lost the moment
-        you narrowed the set.
+        Not a mask: this is the narrowed *set*, so everything a set does still
+        works on it — ``fixed_points(sys).stable`` prints its own readout,
+        tabulates with ``to_frame()``, draws with ``.plot()`` and can be
+        overlaid.  (Before v6 it handed back a plain ``list`` and all of that was
+        lost the moment you narrowed.)
+
+        :attr:`is_stable` is the other half of the pair and gives the boolean
+        mask instead; reach for that when you want to index the vectorised
+        columns yourself.
+
+        Returns
+        -------
+        FixedPointSet
         """
         return self._select(stable=True)
 
     @property
     def unstable(self) -> FixedPointSet:
-        """The unstable fixed points / equilibria, as a :class:`FixedPointSet`."""
+        """The unstable members, as a :class:`FixedPointSet` (the complement of :attr:`stable`)."""
         return self._select(stable=False)
 
     def _select(self, *, stable: bool) -> FixedPointSet:
@@ -658,7 +685,7 @@ def fixed_points(
     out.sort(key=lambda fp: tuple(fp.x))
     return FixedPointSet(
         items=tuple(out),
-        meta=AnalysisResult.build_meta(
+        meta=_build_meta(
             system,
             analysis="fixed_points",
             method=method,
@@ -735,7 +762,7 @@ def _interval_fixed_points(
     out.sort(key=lambda fp: tuple(fp.x))
     return FixedPointSet(
         items=tuple(out),
-        meta=AnalysisResult.build_meta(
+        meta=_build_meta(
             system,
             analysis="fixed_points",
             method="interval",

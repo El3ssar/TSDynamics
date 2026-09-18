@@ -373,9 +373,10 @@ def test_derived_wrappers_round_trip_through_pickle(name: str) -> None:
     wrapper = _wrappers()[name]
     restored = pickle.loads(pickle.dumps(wrapper))
     assert type(restored) is type(wrapper)
-    # ``Ensemble`` names its inner system ``template``; the rest ``system``.
-    inner_attr = "system" if hasattr(wrapper, "system") else "template"
-    inner, restored_inner = getattr(wrapper, inner_attr), getattr(restored, inner_attr)
+    # Every wrapper names its inner system ``system`` since v6 — ``Ensemble``
+    # used to call it ``template``, which is what this branch used to handle
+    # (``CONTRACT.md`` §11, T2: one concept, one spelling).
+    inner, restored_inner = wrapper.system, restored.system
     assert type(restored_inner) is type(inner)
     assert restored.dim == wrapper.dim
     np.testing.assert_array_equal(restored_inner.params.as_tuple(), inner.params.as_tuple())

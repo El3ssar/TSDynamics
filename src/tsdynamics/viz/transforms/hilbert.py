@@ -87,6 +87,7 @@ from typing import Any
 import numpy as np
 
 from .._frames import FrameSpace, OverlayRole
+from .._visibility import listing_dir
 from ..spec import PlotKind
 from ._base import Geometry, Presentation, make_frame
 from ._registry import plot_transform
@@ -102,6 +103,8 @@ __all__ = [
     "hilbert_labels",
     "sample_index_map",
 ]
+
+__dir__ = listing_dir(__all__)
 
 #: The dependency-free orderings that ship in-tree.  They are **not**
 #: substitutes for a Hilbert curve (see the module docstring on locality); they

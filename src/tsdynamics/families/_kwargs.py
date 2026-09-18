@@ -265,3 +265,8 @@ def reject_unknown_run_keywords(
         raise run_keyword_error(
             system, bad, leftovers[bad], family=family, accepted=accepted, verb=verb
         )
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

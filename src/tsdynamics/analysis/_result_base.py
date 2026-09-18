@@ -36,6 +36,33 @@ built from four subclass hooks, none of which a subclass is obliged to override:
 Because every renderer (``__str__``, ``_repr_html_``, ``__format__``) is derived
 from those hooks, a subclass gets the console, the notebook and the f-string for
 one override instead of three.
+
+What ``result.<TAB>`` lists (v6 round 9)
+---------------------------------------
+``dir(result)`` is curated, and the rule is contract §11.1:
+
+    a name is public iff a user **types** it in ordinary work, or it is the only
+    route to a capability the library protects.
+
+Hiding is a **discovery** change, never a reachability one.  Every name taken
+off a result's listing stays bound, stays readable and stays in ``to_dict()``;
+what changes is that it no longer competes for the reader's attention with the
+answer.  Two rules decide which side a name falls on:
+
+**R1 — an input echoed back hides; a measured quantity stays.**  A threshold, a
+metric name, a box size, a log base that the *caller passed in* is provenance
+(it belongs in ``meta``), not a measurement.  Every number the analysis actually
+computed stays listed, however rarely it is read — an unused diagnostic is still
+a diagnostic, and that discipline is what stops a hiding sweep from quietly
+costing capability.
+
+**R2 — one quantity, one spelling.**  Where a result grew a domain alias
+(``dimension`` for ``estimate``, ``times`` for ``abscissa``), the generic twin
+hides; where it grew none, the generic one stays.
+
+A subclass declares its own hides with the :attr:`~AnalysisResult._HIDDEN_ATTRIBUTES`
+ClassVar, which :meth:`~AnalysisResult.__init_subclass__` unions with every
+ancestor's, so a hide is inherited and a subclass can only ever add to it.
 """
 
 from __future__ import annotations
@@ -102,17 +129,50 @@ _VERDICT_NAMES = frozenset(
 )
 
 
+#: Result attributes v6 round 9 **retired** — a name that used to resolve and
+#: now does not — mapped to the line that answers the same question.  Every other
+#: name the visibility ruling touched was merely taken off ``dir()`` and still
+#: resolves, so it is deliberately absent here: this table is for the two aliases
+#: that were measured to be exact duplicates of a field (contract §11.3) and for
+#: the one field that moved behind an underscore.
+#:
+#: Keyed by the retired spelling; the value is a runnable expression on the very
+#: object in hand, because a library that takes a name away owes the reader the
+#: replacement and not a near-miss guess.  A row fires only when the result in
+#: hand actually carries the replacement, so ``f`` is answered on an
+#: :class:`~tsdynamics.analysis.results.UncertaintyExponent` and nowhere else.
+_RETIRED_RESULT_ATTRIBUTES: dict[str, str] = {
+    "f": "result.uncertain_fractions",
+    "fit_slice": "result.fit_region",
+    "log_growth": "result.ordinate",
+}
+
+
 def _unknown_result_attribute(result: Any, name: str) -> AttributeError:
     """Build the ``AttributeError`` for a wrong guess on an analysis result.
 
     Names the result class (not ``numpy.ndarray``), suggests the nearest thing
     the result really carries, and points at the two doors that always work.
+
+    A name in :data:`_RETIRED_RESULT_ATTRIBUTES` is answered **by name** rather
+    than by similarity: it used to resolve, so the reader is not guessing and a
+    ranked suggestion would be a worse answer than the one true replacement.
     """
     import difflib
 
     cls = type(result)
     if name == "to_plot_spec":
         return plot_seam_error(cls.__name__, "result")
+    # Probed on the INSTANCE, not the class: a dataclass field declared with
+    # ``default_factory`` sets no class attribute, so ``hasattr(cls, ...)`` is
+    # ``False`` for exactly the array-valued replacements these rows name.
+    if (replacement := _RETIRED_RESULT_ATTRIBUTES.get(name)) is not None and hasattr(
+        result, replacement.removeprefix("result.")
+    ):
+        return AttributeError(
+            f"{cls.__name__}.{name} was retired in v6: it was a second spelling of "
+            f"the same numbers.\n    {replacement}"
+        )
     # An analysis is a FREE FUNCTION whose first argument is its subject (ruling
     # A2), and a result is a subject like any other.  A guess at a *registered*
     # analysis is therefore not a typo — it is the right verb reached by the
@@ -144,6 +204,80 @@ def _unknown_result_attribute(result: Any, name: str) -> AttributeError:
     )
 
 
+def _build_meta(system: Any = None, **extra: Any) -> dict[str, Any]:
+    """Build a provenance dict for a result, from a system plus run settings.
+
+    **The analysis author's builder, not a user's.**  A user never constructs a
+    result (contract §2.7), so this is a module-level private function rather
+    than a method on all 32 result classes — where it was the single largest
+    piece of listing noise in the whole result layer, present on every
+    ``result.<TAB>`` and typed by nobody.
+
+    Delegates to ``system._provenance(**extra)`` when ``system`` exposes it
+    (every :class:`~tsdynamics.families.base.SystemBase`), so a result's ``meta``
+    matches the provenance attached to trajectories.  Falls back to a minimal
+    ``{"system": ..., **extra}`` for plain objects or ``None``.
+
+    Parameters
+    ----------
+    system : object, optional
+        The system the analysis ran on.
+    **extra
+        Additional run settings to record (e.g. ``transient=50``).
+
+    Returns
+    -------
+    dict
+    """
+    provenance = getattr(system, "_provenance", None)
+    if callable(provenance):
+        return dict(provenance(**extra))
+    if system is None:
+        return dict(extra)
+    name = getattr(type(system), "__name__", str(system))
+    return {"system": name, **extra}
+
+
+def _data_span(spec: Any, channel: str) -> tuple[float, float] | None:
+    """Return the finite ``(lo, hi)`` of one channel across every layer of *spec*."""
+    lo = np.inf
+    hi = -np.inf
+    for layer in spec.layers:
+        values = layer.data.get(channel)
+        if values is None:
+            continue
+        array = np.asarray(values, dtype=float).ravel()
+        finite = array[np.isfinite(array)]
+        if finite.size:
+            lo = min(lo, float(finite.min()))
+            hi = max(hi, float(finite.max()))
+    return None if lo > hi else (lo, hi)
+
+
+def _widen_axes_to_fit(base: Any, added: Any) -> None:
+    """Grow *base*'s explicit axis limits so *added*'s data is inside the frame.
+
+    Only the axes the host pinned are touched: an axis left to auto-scale
+    already includes the new layers, and an axis the caller set by hand with
+    ``.limits(...)`` after the fact is indistinguishable here from one a
+    transform set — so both are *widened*, never narrowed and never dropped.
+    See :meth:`AnalysisResult._overlay_on` for why this exists.
+    """
+    for name in ("x", "y", "z"):
+        axis: Any = getattr(base, name, None)
+        current = getattr(axis, "limits", None) if axis is not None else None
+        if axis is None or current is None:
+            continue
+        span = _data_span(added, name)
+        if span is None:
+            continue
+        lo, hi = float(current[0]), float(current[1])
+        pad = 0.02 * (hi - lo) if hi > lo else 0.0
+        wide = (min(lo, span[0] - pad), max(hi, span[1] + pad))
+        if wide != (lo, hi):
+            axis.limits = wide
+
+
 @dataclass(frozen=True)
 class AnalysisResult:
     """Base class for every analysis result object.
@@ -158,13 +292,30 @@ class AnalysisResult:
     meta : Mapping
         Provenance for the computation: the originating system, its parameters,
         the library version, and the run settings.  Keyword-only; defaults to an
-        empty dict.  Build it with :meth:`build_meta`.
+        empty dict.  Analyses build it with :func:`_build_meta`.
     """
 
     #: Names of the fields shown in ``__repr__`` / :meth:`summary` / the HTML
     #: table.  When empty the dataclass fields are used (skipping ``meta`` and
     #: any declared with ``field(repr=False)``).
     _repr_fields: ClassVar[tuple[str, ...]] = ()
+
+    #: Names this class carries but does **not** list on ``result.<TAB>`` — the
+    #: visibility ruling (contract §11), applied per class.  See the module
+    #: docstring for rules R1/R2, which decide membership.
+    #:
+    #: Declared as the class's **own** hides; :meth:`__init_subclass__` unions it
+    #: with every ancestor's, so a subclass inherits its parents' hides and can
+    #: only add.  Purely a ``dir()`` filter: every name here still resolves,
+    #: still exports through :meth:`to_dict`, and every existing caller works.
+    _HIDDEN_ATTRIBUTES: ClassVar[frozenset[str]] = frozenset(
+        {
+            # The analysis author's provenance builder, now :func:`_build_meta`.
+            # Kept bound because it is a documented construction-time seam, but
+            # it was 32 tab slots for a call a *user* never makes.
+            "build_meta",
+        }
+    )
 
     #: ``meta`` is provenance, not identity: ``compare=False`` keeps it out of the
     #: generated ``__eq__`` / ``__hash__`` (a dict is unhashable, and two otherwise
@@ -187,6 +338,29 @@ class AnalysisResult:
         if "__repr__" not in cls.__dict__:
             inherited_repr = cls.__repr__
             cls.__repr__ = inherited_repr  # type: ignore[method-assign]
+        # A hide is INHERITED and a subclass may only add to it.  Declaring
+        # ``_HIDDEN_ATTRIBUTES`` in a class body shadows the parent's set, so a
+        # subclass that hides one name of its own would otherwise un-hide every
+        # name its parents hid — silently, since nothing raises.
+        inherited: frozenset[str] = frozenset()
+        for base in cls.__mro__[1:]:
+            inherited |= frozenset(base.__dict__.get("_HIDDEN_ATTRIBUTES", ()))
+        cls._HIDDEN_ATTRIBUTES = frozenset(cls.__dict__.get("_HIDDEN_ATTRIBUTES", ())) | inherited
+
+    def __dir__(self) -> list[str]:
+        """List what a reader of this result actually types (contract §11).
+
+        Everything Python knows about the object, minus
+        :attr:`_HIDDEN_ATTRIBUTES` — the inputs echoed back, the second
+        spellings, and the protocol members a base type contributed that are not
+        part of this result's answer.
+
+        This is a **listing**, not a permission: every hidden name still
+        resolves, still exports through :meth:`to_dict`, and every existing
+        caller keeps working.  What it buys is that ``result.<TAB>`` shows the
+        measurement instead of burying it.
+        """
+        return sorted(set(super().__dir__()) - self._HIDDEN_ATTRIBUTES)
 
     def __getattr__(self, name: str) -> Any:
         """Teach the retired plot name and every analysis reached as a method.
@@ -209,12 +383,14 @@ class AnalysisResult:
 
     @staticmethod
     def build_meta(system: Any = None, **extra: Any) -> dict[str, Any]:
-        """Build a provenance dict for a result, from a system plus run settings.
+        """Build a provenance dict — the compatibility spelling of :func:`_build_meta`.
 
-        Delegates to ``system._provenance(**extra)`` when ``system`` exposes it
-        (every :class:`~tsdynamics.families.base.SystemBase`), so a result's
-        ``meta`` matches the provenance attached to trajectories.  Falls back to
-        a minimal ``{"system": ..., **extra}`` for plain objects or ``None``.
+        **Off ``result.<TAB>`` since v6** (contract §11.3): building provenance is
+        something an *analysis* does at construction time, and a user never
+        constructs a result, so the name cost 32 tab slots and bought nothing a
+        reader types.  It stays bound and keeps working — hiding is a discovery
+        change, never a reachability one — but new code inside the library calls
+        the module-level :func:`_build_meta`.
 
         Parameters
         ----------
@@ -227,13 +403,7 @@ class AnalysisResult:
         -------
         dict
         """
-        provenance = getattr(system, "_provenance", None)
-        if callable(provenance):
-            return dict(provenance(**extra))
-        if system is None:
-            return dict(extra)
-        name = getattr(type(system), "__name__", str(system))
-        return {"system": name, **extra}
+        return _build_meta(system, **extra)
 
     # -- repr / summary ---------------------------------------------------
 
@@ -371,19 +541,38 @@ class AnalysisResult:
 
     @property
     def headline(self) -> str:
-        """The single line that carries the answer.
+        """The **one line** that carries the answer — for a log, a table row, a caption.
+
+        ``<Name>  <answer>   <verdict>   (<subject>)``, with the empty slots
+        omitted.  It is the repr's first line **and nothing else**: printing a
+        result gives the headline *plus* its indented supporting lines (the fit
+        diagnostics, the item list), so ``str(result) != result.headline`` for
+        every result that has detail to show.  Reach for this when you want one
+        row per result and the block form would wreck the layout::
+
+            >>> import numpy as np
+            >>> from tsdynamics.analysis.results import LyapunovSpectrum
+            >>> spectrum = LyapunovSpectrum(values=np.array([0.906, 0.0, -14.57]))
+            >>> print(spectrum.headline)
+            LyapunovSpectrum  λ = [0.906, 0, -14.57]   chaotic · D_KY = 2.062
+            >>> str(spectrum) == spectrum.headline       # the repr adds detail lines
+            False
+
+        ``f"{result}"`` (an *embedding* context, where a multi-line block is
+        never what was wanted) gives this same line.
 
         A **property**, not a method: ``print(result.headline)`` used to render
         ``<bound method AnalysisResult.headline of …>``, which is the one place
         in the result surface where reading a public name gave you plumbing
         instead of the answer.
 
-        ``<Name>  <answer>   <verdict>   (<subject>)``, with the empty slots
-        omitted — the repr's first line.
-
         Returns
         -------
         str
+
+        See Also
+        --------
+        verdict : the conclusion slot of this line, on its own.
         """
         line = self._result_name()
         answer = self._answer()
@@ -629,15 +818,42 @@ class AnalysisResult:
 
     @property
     def verdict(self) -> str | None:
-        """The clause the repr prints as its verdict, or ``None`` when it has none.
+        """What this measurement **concluded**, in the repr's own words.
 
-        The one spelling for "what did this measurement conclude?", in the exact
-        words the headline uses, so a caller never has to parse the repr to get
-        it.  :meth:`to_dict` emits it under ``"verdict"`` at ``full=True``.
+        The one spelling for "so what does this say?", so a caller never has to
+        parse the repr to get it — it is the exact clause the headline prints
+        between the answer and the parenthesised subject::
+
+            >>> import numpy as np
+            >>> from tsdynamics.analysis.results import LyapunovSpectrum
+            >>> spectrum = LyapunovSpectrum(values=np.array([0.906, 0.0, -14.57]))
+            >>> spectrum.verdict
+            'chaotic · D_KY = 2.062'
+
+        ``None`` means the result is **not** claiming anything, and it has two
+        distinct causes that the string itself distinguishes when there is one:
+
+        * the analysis does not classify at all (a correlation sum, an
+          embedding) — there is no verdict to report;
+        * the analysis classifies, but **the test did not apply** to this data.
+          A verdict must be supported by the data (contract §4.2 rule 9), so a
+          result that measured nothing says so rather than printing a
+          measured-looking negative — ``wada_property`` on a two-basin image
+          reports *not applicable*, never ``W = 0``.  Read the companion
+          ``applicable`` flag when you need to tell "no" from "cannot say".
+
+        Exported by **plain** :meth:`to_dict`, not only by ``to_dict(full=True)``
+        — a reader who saw the clause in the repr and typed ``to_dict()["verdict"]``
+        must not get a ``KeyError`` for a word the library just printed at them.
 
         Returns
         -------
         str or None
+            The verdict clause, or ``None`` when this result draws no conclusion.
+
+        See Also
+        --------
+        headline : the whole answer line, of which this is one slot.
         """
         return self._interpretation()
 
@@ -807,12 +1023,12 @@ class AnalysisResult:
         override this with one row per member.
 
         .. versionchanged:: 6.0
-           It used to tabulate ``_display_fields`` and keep only the *scalars*,
-           so ``to_frame()`` dropped **the answer** on 10 of the 32 classes: a
-           fixed point tabulated ``['stable', 'continuous']`` and lost its
-           coordinates, while the set it belongs to spread them properly — the
-           same information, two answers.  A field that is itself a result, a
-           mapping or a grid is dropped rather than parked in a cell.
+            It used to tabulate ``_display_fields`` and keep only the *scalars*,
+            so ``to_frame()`` dropped **the answer** on 10 of the 32 classes: a
+            fixed point tabulated ``['stable', 'continuous']`` and lost its
+            coordinates, while the set it belongs to spread them properly — the
+            same information, two answers.  A field that is itself a result, a
+            mapping or a grid is dropped rather than parked in a cell.
 
         Returns
         -------
@@ -844,8 +1060,8 @@ class AnalysisResult:
         ``result.plot()``.
 
         .. versionchanged:: 6.0
-           Was the public ``to_plot_spec``.  ``result.to_plot_spec`` now raises,
-           naming both spellings that work.
+            Was the public ``to_plot_spec``.  ``result.to_plot_spec`` now raises,
+            naming both spellings that work.
 
         Result types with a *natural* figure override this with a bespoke spec
         (a scaling fit, a recurrence image, a phase portrait, …).  This base
@@ -938,13 +1154,29 @@ class AnalysisResult:
     def overlay_on(
         self, base: PlotSpec, *, kind: str | None = None, on: str | None = None, **build_kw: Any
     ) -> PlotSpec:
-        """Overlay this result's figure onto a host ``base`` spec (host drawn first).
+        """Draw this result **on top of** a figure you already have.
 
-        The ``base=`` overlay convention, as a method that does not perturb the
-        uniform ``__plot_spec__(self, kind=None)`` signature: build this result's
-        spec and append its layers / annotations *after* the host's, so e.g.
-        fixed-point markers land over a phase portrait or an attractor scatter
-        over a basin image.  The merged ``base`` is mutated and returned.
+        This is the route from *an answer* to *an answer in context*, and it is
+        the only one: ``ts.plot`` composes subjects side by side or as one
+        overlay of its own making, but it takes no "and put this result over
+        that plot" argument.  Hand it the host :class:`~tsdynamics.viz.spec.Plot`
+        and the result draws itself after it::
+
+            import tsdynamics as ts
+
+            vdp = ts.systems.VanDerPol()
+            field = ts.plot(vdp, "nullclines")               # the host figure
+            ts.analysis.fixed_points(vdp, region=[(-3, 3), (-3, 3)]).overlay_on(field)
+            field.save("vdp.png")                            # markers over nullclines
+
+        The host is drawn first and this result's layers and annotations are
+        appended after it, so the overlay lands on top.  ``base`` is **mutated**
+        and returned, which is what lets the call read as a statement (the two
+        lines above and ``field = …overlay_on(field)`` do the same thing).
+
+        Every result carries it, so the gesture is learned once: an attractor
+        scatter over a basin image, a return map over a cobweb, a scaling fit
+        over a curve.
 
         **Frame-checked (v6).**  The host and the overlay must be drawings of the
         same space on the same axes (see
@@ -999,6 +1231,15 @@ class AnalysisResult:
         overlay policy rather than two that disagree.  The merge itself stays
         host-first append (rather than ``compose``'s role sort) because this
         method's contract is that it mutates and returns the host you handed it.
+
+        **The host's window is widened to enclose what was added.**  A ``model``
+        transform — a vector field, a nullcline set, a basin image — pins its own
+        explicit ``xlim``/``ylim``, because it sampled a lattice and that lattice
+        *is* the picture.  Appending layers to such a host used to leave those
+        limits alone, so an equilibrium (or the annotation naming it) outside the
+        sampled box was silently clipped off the figure: the overlay reported
+        three fixed points and drew two.  Widening is a no-op whenever the
+        overlay already fits, which is the common case.
         """
         if base is None:
             return spec
@@ -1007,6 +1248,7 @@ class AnalysisResult:
         check_overlay([base, spec], force=force_requested(on))
         base.layers = list(base.layers) + list(spec.layers)
         base.annotations = list(base.annotations) + list(spec.annotations)
+        _widen_axes_to_fit(base, spec)
         if base.legend is None and len(base.layers) > 1:
             from tsdynamics.viz.spec import Legend
 

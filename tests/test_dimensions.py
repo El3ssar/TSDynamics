@@ -224,7 +224,7 @@ def test_dimension_result_api(uniform_sets):
     lo, hi = d.scaling_window
     assert lo < hi
     assert "correlation" in repr(d)
-    a, b = d.fit_slice
+    a, b = d.fit_region
     assert 0 <= a <= b < d.x.size
 
 

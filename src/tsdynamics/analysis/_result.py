@@ -10,7 +10,8 @@ The surface every result inherits
 ---------------------------------
 - ``meta`` — a provenance mapping (system, params, version, run settings),
   built from :meth:`tsdynamics.families.base.SystemBase._provenance` at the
-  call site via :meth:`AnalysisResult.build_meta`.
+  call site via :func:`tsdynamics.analysis._result_base._build_meta` (private:
+  an analysis builds it, a user never does).
 - ``__repr__`` — a compact, ``_repr_fields``-driven one-liner.
 - ``_repr_html_`` — a small table for Jupyter / IPython.
 - :meth:`summary` — a human-readable multi-line readout plus an optional
@@ -89,6 +90,7 @@ from __future__ import annotations
 from tsdynamics.analysis._result_array import ArrayResult
 from tsdynamics.analysis._result_array import _ArrayBacked as _ArrayBacked
 from tsdynamics.analysis._result_base import AnalysisResult
+from tsdynamics.analysis._result_base import _build_meta as _build_meta
 from tsdynamics.analysis._result_collection import CollectionResult
 
 # Private helpers re-exported (redundant ``as`` alias = intentional re-export) for

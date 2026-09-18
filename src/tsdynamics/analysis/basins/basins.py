@@ -31,7 +31,7 @@ import numpy as np
 
 from ...data import Ball, Box, Grid, grid_points, sampler
 from ...errors import InvalidInputError, remedy
-from .._result import AnalysisResult
+from .._result import AnalysisResult, _build_meta
 from .._result_json import _pct, _sig, _spread
 from ._common import (
     DIVERGED_COLOR,
@@ -681,7 +681,7 @@ def basins(
         labels=labels,
         grid=region,
         attractors=attractors,
-        meta=AnalysisResult.build_meta(
+        meta=_build_meta(
             system,
             analysis="basins",
             seed=seed,
@@ -811,7 +811,7 @@ def basin_fractions(
         diverged=diverged / n,
         n=n,
         attractors=attractors,
-        meta=AnalysisResult.build_meta(system, analysis="basin_fractions"),
+        meta=_build_meta(system, analysis="basin_fractions"),
     )
 
 

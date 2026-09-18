@@ -56,7 +56,7 @@ from __future__ import annotations
 
 import functools
 import warnings
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self, cast, get_args
@@ -65,6 +65,8 @@ import numpy as np
 
 from ._frames import Frame, FrameSpace, frame_of
 from ._tweaks import figure_scoped, panel_scoped, panel_scoped_custom
+from ._visibility import dir_without as _dir_without
+from ._visibility import listing_dir
 from .style import Theme, get_theme, normalize_style
 
 if TYPE_CHECKING:  # pragma: no cover - typing only; resolved by ``__getattr__``
@@ -76,6 +78,12 @@ if TYPE_CHECKING:  # pragma: no cover - typing only; resolved by ``__getattr__``
     )
     from .export import (
         to_dict_envelope as to_dict_envelope,
+    )
+    from .render.caps import (
+        RendererCapabilities as RendererCapabilities,
+    )
+    from .render.caps import (
+        RenderResult as RenderResult,
     )
     from .transforms import (
         Geometry as Geometry,
@@ -96,16 +104,27 @@ if TYPE_CHECKING:  # pragma: no cover - typing only; resolved by ``__getattr__``
         make_frame as make_frame,
     )
 
-#: ``ts.viz.spec`` — the IR sub-namespace (contract §2.7).  Nineteen nouns you
-#: only ever *receive*: a renderer author reads them, a transform author never
-#: needs one (both extension doors take plain mappings).  ``Plot`` itself is
-#: deliberately **absent** — it is the one type you annotate, and it lives one
-#: level up at :data:`tsdynamics.viz.Plot`.
+#: ``ts.viz.spec`` — the IR sub-namespace (contract §2.7).  Eighteen nouns you
+#: only ever *receive* or *declare*: a renderer author reads them, a transform
+#: author never needs one (both extension doors take plain mappings).  ``Plot``
+#: itself is deliberately **absent** — it is the one type you annotate, and it
+#: lives one level up at :data:`tsdynamics.viz.Plot`.
 #:
-#: Ten of the nineteen are owned by sibling modules (``viz._frames``,
-#: ``viz.export``, ``viz.transforms``) which import *this* module; they are
-#: re-exported through the module :func:`__getattr__` below so the cycle never
-#: forms and ``import tsdynamics.viz.spec`` still costs nothing.
+#: Twelve of the eighteen are owned by sibling modules (``viz._frames``,
+#: ``viz.export``, ``viz.transforms``, ``viz.render.caps``) which import *this*
+#: module; they are re-exported through the module :func:`__getattr__` below so
+#: the cycle never forms and ``import tsdynamics.viz.spec`` still costs nothing.
+#:
+#: .. versionchanged:: 6.0
+#:    ``SCHEMA_VERSION`` / ``to_dict_envelope`` / ``from_dict_envelope`` left the
+#:    listing — envelope plumbing, with no executable use anywhere; the round trip
+#:    a caller drives is :meth:`Plot.to_json` and :func:`tsdynamics.viz.load`.
+#:    :class:`~tsdynamics.viz.render.caps.RendererCapabilities` and
+#:    :class:`~tsdynamics.viz.render.caps.RenderResult` **joined** it: writing a
+#:    renderer is one of the six declared plugin doors, and a third-party backend
+#:    cannot declare which kinds it draws or which extensions it writes without
+#:    the type — yet both were an ``AttributeError`` at every public address.
+#:    All five stay bound, importable and unchanged.
 __all__ = [
     "Animation",
     "Annotation",
@@ -121,16 +140,17 @@ __all__ = [
     "PlotKind",
     "PlotTransform",
     "Presentation",
-    "SCHEMA_VERSION",
+    "RenderResult",
+    "RendererCapabilities",
     "T",
-    "from_dict_envelope",
     "make_frame",
-    "to_dict_envelope",
 ]
 
-#: ``name -> module`` for the ten IR nouns this module re-exports lazily.  Each
-#: owner imports ``viz.spec``, so an eager import here would be a cycle; the
-#: module :func:`__getattr__` resolves and caches them on first touch.
+#: ``name -> module`` for the twelve IR nouns this module re-exports lazily.
+#: Each owner imports ``viz.spec``, so an eager import here would be a cycle; the
+#: module :func:`__getattr__` resolves and caches them on first touch.  The three
+#: envelope names are off :data:`__all__` but stay here, so
+#: ``ts.viz.spec.SCHEMA_VERSION`` keeps resolving.
 _LAZY_IR_NAMES: dict[str, str] = {
     "Geometry": "tsdynamics.viz.transforms",
     "Part": "tsdynamics.viz.transforms",
@@ -141,6 +161,8 @@ _LAZY_IR_NAMES: dict[str, str] = {
     "SCHEMA_VERSION": "tsdynamics.viz.export",
     "to_dict_envelope": "tsdynamics.viz.export",
     "from_dict_envelope": "tsdynamics.viz.export",
+    "RendererCapabilities": "tsdynamics.viz.render.caps",
+    "RenderResult": "tsdynamics.viz.render.caps",
 }
 
 
@@ -521,6 +543,21 @@ class _TitleText(str):
 
     __slots__ = ()
 
+    def __dir__(self) -> Iterable[str]:
+        """Hide the 47 inherited ``str`` methods; keep the dunders that prove it is one.
+
+        ``p.title`` is a *value*, and the only thing being a ``str`` subclass buys
+        it is the read/call duality documented above.  ``capitalize`` /
+        ``casefold`` / ``expandtabs`` / ``zfill`` and their 43 siblings are real
+        and still callable — they are simply not what anyone is looking for when
+        they tab-complete a plot's title, and they were the largest single block
+        of noise anywhere under ``Plot``.
+
+        The dunders stay, so introspection tooling still reads this as the string
+        it is (``__len__``, ``__eq__``, ``__format__``, ``__call__``).
+        """
+        return sorted(n for n in super().__dir__() if n.startswith("_"))
+
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         """Raise the message ``TypeError: 'str' object is not callable`` should have been."""
         from tsdynamics.errors import InvalidInputError
@@ -531,6 +568,24 @@ class _TitleText(str):
             f"    p.relabel(title={wanted!r})\n"
             f"or at the door:  ts.plot(subject, title={wanted!r})"
         )
+
+
+# ---------------------------------------------------------------------------
+# Curated tab surfaces for the IR nouns
+# ---------------------------------------------------------------------------
+
+#: The serialization plumbing every IR noun carries and **no user drives
+#: directly**.  The round trip a caller actually performs is one level up —
+#: :meth:`Plot.to_dict` / :meth:`Plot.to_json` / ``p.save("f.json")`` and
+#: :func:`tsdynamics.viz.load` — which walks these for you.  ``coerce`` and
+#: ``from_mapping`` are the same story for construction: they exist so
+#: ``Plot(legend="upper left")`` and ``.vline(3, style={...})`` accept plain
+#: Python, and they are called *by* those doors, never at one.
+#:
+#: Hidden from ``dir()`` only.  ``Layer.to_dict()`` is still a public, tested,
+#: importable method; a renderer author or anyone writing their own exporter
+#: reads it here and calls it exactly as before.
+_IR_PLUMBING: frozenset[str] = frozenset({"coerce", "from_dict", "from_mapping", "to_dict"})
 
 
 # ---------------------------------------------------------------------------
@@ -586,6 +641,10 @@ class Axis:
     label_size: float | None = None
     tick_size: float | None = None
     tick_rotation: float | None = None
+
+    def __dir__(self) -> Iterable[str]:
+        """List the axis's declaration; hide the serialization plumbing (:data:`_IR_PLUMBING`)."""
+        return _dir_without(self, _IR_PLUMBING)
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-friendly mapping of this axis."""
@@ -662,6 +721,14 @@ class Annotation:
     span: tuple[float, float] | None = None
     axis: Literal["x", "y"] = "x"
     style: dict[str, Any] = field(default_factory=dict)
+
+    def __dir__(self) -> Iterable[str]:
+        """List the annotation's declaration; hide the plumbing (:data:`_IR_PLUMBING`).
+
+        ``from_mapping`` goes with it: it is what lets ``.vline(3.0,
+        style={"color": "red"})`` take a plain dict, and the verbs are the door.
+        """
+        return _dir_without(self, _IR_PLUMBING)
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-friendly mapping of this annotation."""
@@ -771,6 +838,10 @@ class Colorbar:
     discrete: bool = False
     label_size: float | None = None
 
+    def __dir__(self) -> Iterable[str]:
+        """List the colorbar's declaration; hide the plumbing (:data:`_IR_PLUMBING`)."""
+        return _dir_without(self, _IR_PLUMBING)
+
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-friendly mapping of this colorbar."""
         return {
@@ -872,6 +943,10 @@ class Legend:
     font_size: float | None = None
     ncol: int = 1
     frame: bool = True
+
+    def __dir__(self) -> Iterable[str]:
+        """List the legend's declaration; hide the plumbing (:data:`_IR_PLUMBING`)."""
+        return _dir_without(self, _IR_PLUMBING)
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-friendly mapping of this legend."""
@@ -991,6 +1066,15 @@ class Layout:
     share_x: bool = False
     share_y: bool = False
     share_color: bool = False
+
+    def __dir__(self) -> Iterable[str]:
+        """List the arrangement a user reads (``mode`` / ``rows`` / ``cols`` / ``share_*``).
+
+        ``grid(n)`` is the renderers' tiling arithmetic and ``to_dict`` /
+        ``from_dict`` the envelope's — both still public and both still called by
+        every backend, just not things anyone types after ``g.layout.``.
+        """
+        return _dir_without(self, _IR_PLUMBING | {"grid"})
 
     def grid(self, n_panels: int) -> tuple[int, int]:
         """Resolve the ``(rows, cols)`` subplot grid for ``n_panels`` panels.
@@ -1154,6 +1238,20 @@ class Animation:
     spin: float = 0.0
     clock: bool = False
     clock_format: str = "t = {t:.2f}"
+
+    def __dir__(self) -> Iterable[str]:
+        """List the directive's knobs plus the two frame sums documentation reads.
+
+        :meth:`frame_count` and :meth:`tail_samples` stay listed — ``animation.md``
+        runs both on three lines.  :meth:`head_indices` (the per-frame index list a
+        renderer walks), :meth:`playback_seconds` (the wall-clock length the two
+        HTML exporters derive) and :data:`DEFAULT_FRAMES` (the constant behind
+        ``frame_count``) leave the listing; they are still public and still what
+        every backend calls.
+        """
+        return _dir_without(
+            self, _IR_PLUMBING | {"DEFAULT_FRAMES", "head_indices", "playback_seconds"}
+        )
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-friendly mapping of this animation directive."""
@@ -1359,6 +1457,15 @@ class Layer:
         self.kind = PlotKind(self.kind)
         self.data = {k: np.asarray(v) for k, v in self.data.items()}
 
+    def __dir__(self) -> Iterable[str]:
+        """List all five fields; hide only the serialization plumbing.
+
+        ``p.layers[0].data["frames"].shape`` and ``[lyr.label for lyr in
+        p.layers]`` are runnable documentation lines — a :class:`Layer` is the
+        route to one curve, so every field it carries stays listed.
+        """
+        return _dir_without(self, _IR_PLUMBING)
+
     def __repr__(self) -> str:
         """Describe the layer — ``Layer(line, 'x', n=201, style={})``.
 
@@ -1479,7 +1586,17 @@ class Plot:
         The *semantic* kind of the whole plot (``TIME_SERIES``,
         ``PHASE_PORTRAIT_3D``, ``BIFURCATION``, …).  A renderer dispatches on it.
     layers : list of Layer
-        The drawable layers, in draw order.
+        The drawable layers, in draw order — **the route to one curve**.  This is
+        how you reach the numbers behind a picture and the style of a single
+        line, without leaving the library or rendering anything::
+
+            [lyr.label for lyr in p.layers]        # what is drawn here?
+            p.layers[0].data["y"]                  # the numbers, as an ndarray
+            p.style("nullclines", color="white")   # ...restyle one source
+
+        A :class:`Layer` is plain data (a mark, a channel dict, a label, a style
+        dict, and the name of the transform that produced it), so reading one
+        costs nothing and mutating one is honoured at the next render.
     x, y : Axis, optional
         The horizontal / vertical axes.  Default empty :class:`Axis`.
     z : Axis, optional
@@ -1524,6 +1641,28 @@ class Plot:
         portrait and an ``(x, z)`` overlay are refused.
 
         .. versionadded:: 6.0
+
+    panels : list of Plot, optional
+        On a :data:`PlotKind.COMPOSITE`, the child plots — **the route to one
+        panel**.  They *are* the plots that were composed (not copies), so a
+        panel restyles in place and a grid stays inspectable::
+
+            g = ts.viz.grid(p1, p2, p3, cols=2)
+            g.panels[0].style(color="crimson")     # restyle just that panel
+            g[1].relabel(title="the middle one")   # g[i] is the same panel
+            g.panels[2].ax.set_yscale("log")       # ...and its matplotlib axes
+
+        Empty on a single-panel plot, where ``p[0] is p``.
+    layout : Layout, optional
+        How a composite's :attr:`panels` are arranged — ``mode`` (``"stack"`` /
+        ``"row"`` / ``"grid"`` / ``"frames"``), ``rows`` / ``cols``, and the
+        ``share_x`` / ``share_y`` / ``share_color`` switches.  ``None`` on a
+        single-panel plot.
+    animation : Animation, optional
+        The directive that makes this plot a movie — ``p.animation.fps``,
+        ``.duration``, ``.trail_length``, ``.head``.  ``None`` for a still.
+        Animation is an **orthogonal modifier**: the semantic :attr:`kind` is
+        unchanged, and a backend that cannot animate draws the final frame.
 
     Notes
     -----
@@ -1720,6 +1859,19 @@ class Plot:
     @property
     def ax(self) -> Any:
         """The single matplotlib :class:`~matplotlib.axes.Axes` this plot draws on.
+
+        **The escape hatch, at axes level.**  Anything matplotlib can do to an
+        axes is one dot away, with no rewrite and no change of type::
+
+            p = ts.plot(traj, "phase_portrait")
+            p.ax.axvline(3.0, ls="--")          # raw matplotlib, right here
+            p.ax.set_yscale("symlog")
+            p.save("f.png")                     # ...and the library still works
+
+        The rule that keeps this honest: **library tweaks first, matplotlib
+        last.**  Reading ``.ax`` renders the plot and caches the figure; a
+        library tweak afterwards drops that cache (so your hand edits would be
+        discarded) and warns once, by design.
 
         Raises
         ------
@@ -3146,11 +3298,11 @@ class Plot:
         whole library in every page.
 
         .. note::
-           ``.json`` is **two** formats behind one extension.  The default
-           (``backend="json"``) writes the :class:`Plot` **IR envelope** — the
-           thing :meth:`from_dict` reads back.  ``backend="threejs"`` writes the
-           three.js **geometry payload** (buffers + metadata), which is not a
-           Plot.  Pass ``backend=`` to disambiguate.
+            ``.json`` is **two** formats behind one extension.  The default
+            (``backend="json"``) writes the :class:`Plot` **IR envelope** — the
+            thing :meth:`from_dict` reads back.  ``backend="threejs"`` writes the
+            three.js **geometry payload** (buffers + metadata), which is not a
+            Plot.  Pass ``backend=`` to disambiguate.
 
         Parameters
         ----------
@@ -3657,11 +3809,19 @@ class Plot:
 
         The renderer internals (``autocolor`` / ``has_color_channel`` /
         ``resolved_panels`` / ``resolved_frame`` / ``is_three_d`` / ``tweak``) and
-        the nine dataclass fields a caller reads but never types (``aspect``
+        the seven dataclass fields a caller reads but never types (``aspect``
         ``clim`` ``colorbar`` ``legend`` ``frame`` ``ndim`` ``x`` ``y`` ``z``)
         stay fully readable and callable — they leave the *tab surface*, not the
         object.  ``panels`` and ``layers`` stay listed: they appear on eleven
         documentation lines, seven of them runnable.
+
+        .. versionchanged:: 6.0
+            ``layout`` and ``animation`` were **restored** to the listing.  The
+            docstring above said "nine" fields while the table dropped twelve,
+            and the two extras are the ones documentation actually *reads* —
+            ``grid.layout.mode`` and ``b.animation.fps`` are both executed by the
+            doctest gate.  A field a runnable doc line reads is, by definition, a
+            field a user types.
         """
         return sorted(set(_PLOT_PUBLIC) | {n for n in type(self).__dict__ if n.startswith("__")})
 
@@ -3732,12 +3892,38 @@ class Plot:
         Parameters
         ----------
         d : Mapping
-            The mapping produced by :meth:`to_dict`.
+            The mapping produced by :meth:`to_dict` — or the **envelope**
+            produced by :meth:`to_json` / ``ts.viz.spec.to_dict_envelope``,
+            which wraps that mapping as ``{"schema_version": …, "spec": …}``.
+            Both are accepted, because ``Plot.from_dict(json.loads(p.to_json()))``
+            reads as the obvious inverse of ``to_json`` and used to fail with a
+            bare ``KeyError: 'kind'`` many frames from the cause.  A mapping that
+            is neither raises :class:`~tsdynamics.errors.InvalidInputError`
+            naming the three round trips that work.
 
         Returns
         -------
         Plot
+
+        See Also
+        --------
+        tsdynamics.viz.load : the loader for JSON **text** or a path.
         """
+        if "kind" not in d and "spec" in d and "schema_version" in d:
+            # The envelope, handed straight back: unwrap rather than refuse.
+            inner = d["spec"]
+            if isinstance(inner, Mapping):
+                return cls.from_dict(inner)
+        if "kind" not in d:
+            from tsdynamics.errors import InvalidInputError
+
+            raise InvalidInputError(
+                "Plot.from_dict needs a plot mapping (one carrying 'kind'); this one "
+                f"carries {sorted(d)[:6]}. The three round trips that work:\n"
+                "    ts.viz.Plot.from_dict(p.to_dict())\n"
+                "    ts.viz.Plot.from_dict(json.loads(p.to_json()))   # the envelope\n"
+                "    ts.viz.load(p.to_json())                         # text or a path"
+            )
         z = d.get("z")
         clim = d.get("clim")
         colorbar = d.get("colorbar")
@@ -3820,6 +4006,8 @@ _PLOT_PUBLIC: tuple[str, ...] = (
     "from_dict",
     "kind",
     "meta",
+    "layout",
+    "animation",
     "is_animated",
     "is_composite",
 )
@@ -4477,6 +4665,4 @@ def __getattr__(name: str) -> Any:
     return value
 
 
-def __dir__() -> list[str]:
-    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
-    return sorted(__all__)
+__dir__ = listing_dir(__all__)

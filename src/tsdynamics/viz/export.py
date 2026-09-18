@@ -43,6 +43,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from ._visibility import listing_dir
 from .spec import Plot, PlotSpec
 
 __all__ = [
@@ -52,6 +53,8 @@ __all__ = [
     "to_dict_envelope",
     "to_json",
 ]
+
+__dir__ = listing_dir(__all__)
 
 #: The current JSON-envelope schema version stamped by :func:`to_json` /
 #: :func:`to_dict_envelope`.  Bumped only when the *envelope* or the underlying

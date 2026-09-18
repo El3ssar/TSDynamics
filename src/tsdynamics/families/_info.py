@@ -26,6 +26,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from ._hidden import hide
+
 __all__ = ["SystemInfo", "Variables", "family_of", "resolve_variables"]
 
 
@@ -199,12 +201,18 @@ def _render_sde(
 
 
 @dataclass(frozen=True)
+@hide("of")
 class SystemInfo:
     """Everything true about one system, in one printable record.
 
     Received, never constructed — ``system.info`` builds it.  ``print(info)``
     (and a bare ``info`` in a REPL) is the whole point; the fields are there for
     the tooling that used to reach for the ClassVars directly.
+
+    ``of`` — the builder ``system.info`` calls — is withheld from ``dir()`` for
+    that same reason (``CONTRACT.md`` §11): it is the one member of this record
+    that is not a *fact about the system*, and a user holding an ``info`` has
+    already built it.  It remains bound and callable.
     """
 
     name: str
@@ -331,3 +339,8 @@ class SystemInfo:
 
     def __str__(self) -> str:
         return self.__repr__()
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

@@ -1465,9 +1465,11 @@ def _entry(record, cells: list[Cell]) -> list[str]:
         out.append("")
         return out
     for cell in cells:
+        # ``PlotTransform.exclusive`` was deleted in v6 (measured ``frozenset()``
+        # on all 39 rows, and not a parameter of ``register``), so the
+        # " · exclusive" suffix this line used to compute could never appear.
         mark = " (default)" if cell.primitive == record.default_primitive else ""
-        excl = " · exclusive" if cell.primitive in record.exclusive else ""
-        out.append(f'=== "`{cell.primitive}`{mark}{excl}"')
+        out.append(f'=== "`{cell.primitive}`{mark}"')
         out.append("")
         if cell.filename:
             alt = _alt_text(record, cell)

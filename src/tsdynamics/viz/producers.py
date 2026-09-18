@@ -7,12 +7,12 @@ functions exist because they are cited in the documentation and are therefore
 de-facto public.
 
 .. versionchanged:: 6.0
-   These were the pre-registry *producers*.  Migrating them was deliberately
-   picture-preserving — ``tests/test_viz_golden.py`` pins each one's rendered
-   figure and full spec fingerprint — so that any later difference in a plot is
-   attributable to the change that made it, not to the migration.  The one
-   intended difference is that every layer now carries ``Layer.transform``
-   provenance, which no renderer reads.
+    These were the pre-registry *producers*.  Migrating them was deliberately
+    picture-preserving — ``tests/test_viz_golden.py`` pins each one's rendered
+    figure and full spec fingerprint — so that any later difference in a plot is
+    attributable to the change that made it, not to the migration.  The one
+    intended difference is that every layer now carries ``Layer.transform``
+    provenance, which no renderer reads.
 
 New code should prefer the transform surface, which is strictly larger::
 
@@ -35,6 +35,8 @@ import numpy as np
 
 from tsdynamics.viz.transforms import build_spec
 
+from ._visibility import listing_dir
+
 if TYPE_CHECKING:
     from tsdynamics.data import Trajectory
     from tsdynamics.viz.spec import Plot
@@ -50,6 +52,8 @@ __all__ = [
     "time_series",
     "vector_field",
 ]
+
+__dir__ = listing_dir(__all__)
 
 # ---------------------------------------------------------------------------
 # Density-aware line resolution (H1)

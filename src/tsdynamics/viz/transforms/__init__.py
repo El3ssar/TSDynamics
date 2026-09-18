@@ -6,10 +6,11 @@ geometry into layers; a declared **compatibility row** says which pairs are
 legal.  Adding a plot to TSDynamics is one decorated function, and every name it
 needs is public (:mod:`tsdynamics.viz` re-exports all of them)::
 
-    from tsdynamics.viz import PlotKind, plot_transform
+    from tsdynamics.viz import PlotKind
+    from tsdynamics.viz.transforms import register
     from tsdynamics.analysis import recurrence_matrix
 
-    @plot_transform(
+    @register(
         name="recurrence", source="data",
         frame="grid2", ndim=2, kind=PlotKind.IMAGE, labels=("i", "j"),
         default_primitive="image", primitives=("image",),
@@ -47,6 +48,13 @@ Two rules the registry enforces rather than merely documents:
 
 Out-of-tree transforms arrive through the ``tsdynamics.plot_transforms``
 entry-point group and are indistinguishable from in-tree ones.
+
+The listing here is **five verbs** — ``register`` / ``names`` / ``find`` / ``get``
+/ ``allow``.  The authoring types (:class:`Geometry`, :class:`Part`,
+:class:`FrameSpace`, :func:`make_frame`, :class:`Presentation`) are listed one
+dot away at :mod:`ts.viz.spec <tsdynamics.viz.spec>` and stay importable from
+here; the drawing doors (``plot`` / ``draw`` / ``geometry`` / ``compatibility``)
+are the ``ts.viz`` names, measured ``is``-identical to these.  See ``__all__``.
 """
 
 from __future__ import annotations
@@ -67,7 +75,13 @@ from types import ModuleType
 #   ledger recording which series diagnostics this library does and does not own.
 # * ``TransformCall`` / ``build_spec`` / ``lower`` — the transform→PlotSpec
 #   lowering pipeline that :func:`plot` drives.
-from .._frames import FrameSpace
+# * the six front doors (``plot`` ``draw`` ``geometry`` ``compatibility``
+#   ``make_frame`` ``T``) — measured ``is``-identical to the ``ts.viz`` spelling,
+#   which is the one the documentation teaches; ``plot_transform`` is measured
+#   ``is register``; the five IR types are listed at ``ts.viz.spec``; and the
+#   four primitive names are the ``ts.viz.primitives`` registry.  See ``__all__``.
+from .._frames import FrameSpace as FrameSpace
+from .._visibility import listing_dir
 
 # Imported for its **registration side effect**: importing ``_data`` is what puts
 # the in-tree transforms into ``registry.plot_transforms``.  (It pulls in
@@ -89,21 +103,39 @@ from ._base import (
     ChannelType as ChannelType,
 )
 from ._base import (
-    Geometry,
-    Part,
-    PlotTransform,
-    Presentation,
-    Primitive,
-    make_frame,
+    Geometry as Geometry,
 )
-from ._frontdoor import plot
+from ._base import (
+    Part as Part,
+)
+from ._base import (
+    PlotTransform as PlotTransform,
+)
+from ._base import (
+    Presentation as Presentation,
+)
+from ._base import (
+    Primitive as Primitive,
+)
+from ._base import (
+    make_frame as make_frame,
+)
+from ._frontdoor import plot as plot
 from ._primitives import (
     PRIMITIVES as PRIMITIVES,
 )
 from ._primitives import (
     RESERVED_PRIMITIVES as RESERVED_PRIMITIVES,
 )
-from ._primitives import get_primitive, primitive_names, register_primitive
+from ._primitives import (
+    get_primitive as get_primitive,
+)
+from ._primitives import (
+    primitive_names as primitive_names,
+)
+from ._primitives import (
+    register_primitive as register_primitive,
+)
 from ._registry import (
     ADMITTED_SERIES_DIAGNOSTICS as ADMITTED_SERIES_DIAGNOSTICS,
 )
@@ -114,23 +146,29 @@ from ._registry import (
     PART_KEYS as PART_KEYS,
 )
 from ._registry import (
-    T,
-    allow,
-    compatibility,
-    draw,
-    find,
-    geometry,
-    get,
-    names,
-    plot_transform,
-    register,
-    transforms,
+    T as T,
 )
 from ._registry import (
     TransformCall as TransformCall,
 )
 from ._registry import (
+    allow,
+    find,
+    get,
+    names,
+    register,
+)
+from ._registry import (
     build_spec as build_spec,
+)
+from ._registry import (
+    compatibility as compatibility,
+)
+from ._registry import (
+    draw as draw,
+)
+from ._registry import (
+    geometry as geometry,
 )
 from ._registry import (
     lower as lower,
@@ -139,9 +177,38 @@ from ._registry import (
     part_from_mapping as part_from_mapping,
 )
 from ._registry import (
+    plot_transform as plot_transform,
+)
+from ._registry import (
     record_for as record_for,
 )
+from ._registry import (
+    transforms as transforms,
+)
 
+#: ``ts.viz.transforms`` — **the four shared registry verbs, plus the one verb
+#: that is only here** (contract §11.3, T3).
+#:
+#: This namespace answers the same ``register`` / ``names`` / ``find`` / ``get``
+#: shape as ``primitives`` / ``renderers`` / ``themes``, so learning one teaches
+#: the rest — and :func:`~tsdynamics.viz.transforms.allow` is the fifth because
+#: it exists nowhere else: registering a primitive is only half of adding a way
+#: to draw, and ``allow`` is the half that admits it into a shipped row.
+#:
+#: .. versionchanged:: 6.0
+#:    Seventeen names left the listing, and **not one stopped resolving**.  Six
+#:    were the front doors, measured ``is``-identical to the ``ts.viz`` spelling
+#:    of the same object (``plot`` ``draw`` ``geometry`` ``compatibility``
+#:    ``make_frame`` ``T``) — a second address for a thing you have already
+#:    found.  ``plot_transform`` is measured ``is register``: one object, two
+#:    spellings, which is the C3 defect.  Five are IR types already listed one
+#:    dot away at :mod:`ts.viz.spec <tsdynamics.viz.spec>` (``PlotTransform``
+#:    ``Geometry`` ``Part`` ``FrameSpace`` ``Presentation``), and the five
+#:    primitive names are the ``ts.viz.primitives`` registry under second
+#:    spellings (``Primitive`` ``primitive_names`` ``get_primitive``
+#:    ``register_primitive``) plus ``transforms``, which is this module naming
+#:    itself.  Every one is still bound here and still importable:
+#:    ``from tsdynamics.viz.transforms import Geometry`` is unchanged.
 __all__ = [
     # The four shared registry verbs (`register` / `names` / `find` / `get`),
     # so `ts.viz.transforms` answers exactly like primitives / renderers / themes.
@@ -149,40 +216,12 @@ __all__ = [
     "names",
     "find",
     "get",
-    # The front door and its option carrier.
-    "plot",
-    "T",
-    # Writing a transform: everything the authoring recipe needs, so no
-    # transform author has to import from a private module.
-    "PlotTransform",
-    "Geometry",
-    "Part",
-    "FrameSpace",
-    "make_frame",
-    "plot_transform",
-    # Writing / choosing a primitive.
-    "Primitive",
-    "Presentation",
-    "primitive_names",
-    "get_primitive",
-    "register_primitive",
-    # Introspecting the registry, and extending a declared row.
-    "transforms",
-    "compatibility",
+    # ...and the fifth verb, which lives only here: extend a declared row so a
+    # primitive YOU registered becomes a legal cell (see `allow`).
     "allow",
-    # Raw-array escape hatches.
-    "geometry",
-    "draw",
 ]
 
-
-def __dir__() -> list[str]:
-    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete.
-
-    The geometry-constituent types, the primitive tables and the lowering
-    pipeline stay bound and importable — see the internals block above.
-    """
-    return sorted(__all__)
+__dir__ = listing_dir(__all__)
 
 
 class _CallableModule(ModuleType):

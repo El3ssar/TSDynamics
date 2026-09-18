@@ -23,12 +23,15 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from ..._visibility import listing_dir
 from ..caps import RendererCapabilities
 
 if TYPE_CHECKING:
     from tsdynamics.registry import Registry
 
 __all__ = ["register"]
+
+__dir__ = listing_dir(__all__)
 
 #: The registry name the matplotlib backend registers under.
 _BACKEND_NAME = "matplotlib"

@@ -21,6 +21,12 @@ from tsdynamics.errors import ConvergenceError, InvalidParameterError
 from .compile import eval_tape
 from .problem import MapProblem, ODEProblem, Problem
 
+#: The reference oracle exports **nothing**: it is an internal seam whose four
+#: entry points are underscored and reached as ``tsdynamics.engine.run.<name>``.
+#: Declared (rather than omitted) so ``dir()`` says so instead of offering
+#: ``math`` / ``np`` / ``Problem`` as if they were library helpers.
+__all__: list[str] = []
+
 
 def _reference_ode(
     problem: ODEProblem,
@@ -217,3 +223,8 @@ def _scipy_method(method: str) -> str:
             hint=f"Use backend='interp'/'jit' (the Rust engine) for this method, or "
             f"choose a reference-capable one from {sorted(_SCIPY_METHOD)}.",
         ) from None
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

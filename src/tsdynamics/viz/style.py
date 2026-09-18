@@ -33,6 +33,8 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, Literal, cast
 
+from ._visibility import dir_without, listing_dir
+
 #: The figure layout algorithms a renderer may be asked to apply.  Spelled as a
 #: closed literal (not a bare ``str``) so a backend can pass it straight through
 #: to matplotlib's ``Figure(layout=...)``, whose accepted set is exactly these.
@@ -52,6 +54,8 @@ __all__ = [
     "styles",
     "themes",
 ]
+
+__dir__ = listing_dir(__all__)
 
 
 # ---------------------------------------------------------------------------
@@ -251,6 +255,17 @@ class StyleKey:
     honored_by: frozenset[str] = _ALL_BACKENDS
     validate: Callable[[Any], Any] | None = None
     doc: str = ""
+
+    def __dir__(self) -> list[str]:
+        """Expose the vocabulary entry: ``name`` ``aliases`` ``honored_by`` ``doc``.
+
+        Those four *are* the question ``ts.viz.styles`` exists to answer — what
+        may I pass, what else is it spelled, will this backend draw it, and what
+        does it do.  :attr:`validate` is the coercer
+        :func:`normalize_style` runs on the way in; it is the machinery behind
+        the vocabulary, not part of it.  Still public, still tested.
+        """
+        return dir_without(self, {"validate"})
 
 
 def _build_style_keys() -> dict[str, StyleKey]:
@@ -491,14 +506,14 @@ class Theme:
     from :attr:`palette` (the color cycle).
 
     .. versionchanged:: 6.0
-       :attr:`figsize` / :attr:`dpi` / :attr:`layout_engine` **are** theme fields
-       now.  They used to live only in ``PlotSpec.meta`` (set by
-       :meth:`~tsdynamics.viz.spec.PlotSpec.size`), which meant the
-       ``"publication"`` theme produced matplotlib's default 6.4×4.8 in @ 100 dpi
-       figure — publication *ink* on a screenshot-resolution canvas.  A theme now
-       carries its output geometry too.  ``PlotSpec.meta["figsize"]`` /
-       ``meta["dpi"]`` still **win** when set (an explicit ``spec.size(...)`` beats
-       the theme); the theme is the default underneath.
+        :attr:`figsize` / :attr:`dpi` / :attr:`layout_engine` **are** theme fields
+        now.  They used to live only in ``PlotSpec.meta`` (set by
+        :meth:`~tsdynamics.viz.spec.PlotSpec.size`), which meant the
+        ``"publication"`` theme produced matplotlib's default 6.4×4.8 in @ 100 dpi
+        figure — publication *ink* on a screenshot-resolution canvas.  A theme now
+        carries its output geometry too.  ``PlotSpec.meta["figsize"]`` /
+        ``meta["dpi"]`` still **win** when set (an explicit ``spec.size(...)`` beats
+        the theme); the theme is the default underneath.
 
     Parameters
     ----------
@@ -559,6 +574,21 @@ class Theme:
     dpi: float | None = None
     layout_engine: LayoutEngineName | None = None
     autostyle: bool = True
+
+    def __dir__(self) -> list[str]:
+        """Expose the sixteen fields; hide the three construction/serialization helpers.
+
+        ``styling.md`` reads ``.palette`` ``.font_family`` ``.title_size``
+        ``.background`` ``.name`` straight off a theme, so every field stays.
+
+        :meth:`merged` leaves the listing because the **taught** derive route is
+        ``ts.viz.themes.register("mine", "dark", palette=(...))`` — one call that
+        derives *and* names *and* registers, which is what a user actually wants
+        and which ``merged`` alone does not do.  ``to_dict`` / ``from_dict`` are
+        the envelope's.  All three stay public and are what ``themes.register``
+        calls.
+        """
+        return dir_without(self, {"from_dict", "merged", "to_dict"})
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-friendly mapping of this theme."""

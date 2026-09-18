@@ -371,7 +371,10 @@ def _degenerate_cases() -> dict[str, object]:
             boundary_dimension=1.34,
             state_dimension=2,
             epsilons=np.array([0.01, 0.02]),
-            f=np.array([0.10, 0.16]),
+            # ``f`` was renamed ``uncertain_fractions`` in v6 round 9 (CONTRACT
+            # §11.3 T1): a one-letter field on a public result, paired with
+            # ``epsilons``.
+            uncertain_fractions=np.array([0.10, 0.16]),
             r_squared=1.0,
             meta={"analysis": "uncertainty_exponent"},
         ),

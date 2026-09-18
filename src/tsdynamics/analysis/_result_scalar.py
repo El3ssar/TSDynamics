@@ -345,9 +345,37 @@ class CountResult(int, AnalysisResult):
     ----------
     value : int
         The measured count (an alias for the integer itself).
+
+    .. versionchanged:: 6.0
+        ``dir()`` no longer lists the eleven members inherited from ``int``
+        (``bit_length``, ``to_bytes``, ``numerator``, …).  They are the *most*
+        of what a count's tab completion used to show and the *least* of what a
+        reader of an embedding delay wants; being an ``int`` is the contract, so
+        the MRO is untouched and every one of them still resolves and still
+        works.
     """
 
     _repr_fields: ClassVar[tuple[str, ...]] = ("value",)
+
+    #: The ``int`` protocol, inherited because being an ``int`` *is* this class's
+    #: contract (§4 "a result behaves as the plain thing it replaced") — and
+    #: noise on ``result.<TAB>``, where it outnumbered the answer 11 to 8.  A
+    #: listing edit only: ``tau.bit_length()`` and ``tau.numerator`` still work.
+    _HIDDEN_ATTRIBUTES: ClassVar[frozenset[str]] = frozenset(
+        {
+            "as_integer_ratio",
+            "bit_count",
+            "bit_length",
+            "conjugate",
+            "denominator",
+            "from_bytes",
+            "imag",
+            "is_integer",
+            "numerator",
+            "real",
+            "to_bytes",
+        }
+    )
 
     def __new__(cls, value: Any = 0, *, meta: Mapping[str, Any] | None = None) -> CountResult:
         """Construct the integer (``int.__new__``); ``meta`` is set in ``__init__``."""

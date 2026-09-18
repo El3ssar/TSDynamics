@@ -53,9 +53,38 @@ class OrbitDiagram(AnalysisResult):
     ``.meta`` / the readout ``repr`` / ``.to_dict()`` / the ``.plot`` seam.  Iterate to
     get ``(value, points)`` pairs, or use :meth:`flat` for the scatter-ready
     arrays.
+
+    Attributes
+    ----------
+    param : str
+        Name of the swept control parameter.
+    values : ndarray
+        **The swept parameter axis** — see the note below.
+    points : list of ndarray
+        The asymptotic orbit recorded at each value, ``points[k]`` of shape
+        ``(n, k_components)``; one entry per entry of :attr:`values`.
+
+    .. note::
+        **``values`` is the parameter axis here, not the answer.**  The name
+        means three different things across the result classes — on a Lyapunov
+        spectrum or an embedding it is the measurement, on this class and on
+        :class:`~tsdynamics.analysis.results.ContinuationResult` it is the
+        *control parameter* that was swept, and on
+        :class:`~tsdynamics.analysis.results.ReturnMap` it is the observable
+        series.  Always read the field's own line below before using it.
     """
 
     param: str = ""
+    #: **The swept PARAMETER values, not the measured points** — the horizontal
+    #: axis of the diagram, one entry per sweep step, in sweep order.  What was
+    #: *measured* at each of them is :attr:`points` (and ``flat()`` pairs the
+    #: two into the scatter the picture draws).
+    #:
+    #: The generic name is kept deliberately: it is what
+    #: :class:`~tsdynamics.analysis.results.ContinuationResult` calls the same
+    #: axis, so a sweep reads the same way whichever verb produced it — but it
+    #: is the one name in the result layer that means something different from
+    #: class to class, so it is spelled out at every site.
     values: np.ndarray = field(default_factory=lambda: np.empty(0), compare=False)  # (V,)
     points: list[np.ndarray] = field(default_factory=list, compare=False)  # per value (n, k)
     components: tuple[int, ...] = ()

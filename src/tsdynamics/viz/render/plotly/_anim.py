@@ -39,12 +39,15 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from ..._visibility import listing_dir
 from ...spec import Axis, PlotKind, PlotSpec
 
 if TYPE_CHECKING:
     import plotly.graph_objects as go
 
 __all__ = ["animated_html", "build_animated_figure", "playback_seconds"]
+
+__dir__ = listing_dir(__all__)
 
 
 def playback_seconds(anim: Any, n_samples: int) -> float:

@@ -83,7 +83,7 @@ class ScalingResult(_NumericOps, AnalysisResult):
             estimate=2.05, stderr=0.03,
             abscissa=log_r, ordinate=log_C,
             fit_region=(8, 24), intercept=-1.2,
-            meta=AnalysisResult.build_meta(system, ...),
+            meta=_build_meta(system, ...),
         )
 
     The class is declared ``@dataclass(frozen=True, eq=False)`` so the
@@ -99,6 +99,14 @@ class ScalingResult(_NumericOps, AnalysisResult):
     """
 
     _repr_fields: ClassVar[tuple[str, ...]] = ("estimate", "stderr")
+
+    #: R2 (one quantity, one spelling) plus R1 — see the ``_result_base`` module
+    #: docstring.  ``estimate`` is a *third* name for the number already spelled
+    #: :attr:`value` here and ``dimension`` / ``lyapunov`` / ``entropy`` on the
+    #: subclasses, so the field stays and the listing keeps one.  ``n_fit`` states
+    #: as a count what :attr:`fit_region` states as a range; it stays readable and
+    #: stays in ``to_dict(full=True)``.
+    _HIDDEN_ATTRIBUTES: ClassVar[frozenset[str]] = frozenset({"estimate", "n_fit"})
 
     estimate: float = 0.0
     stderr: float = 0.0

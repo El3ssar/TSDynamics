@@ -629,14 +629,14 @@ class StochasticSystem(SystemBase, ABC):
             ``traj.meta["seed"]``, and the IC seed in ``traj.meta["ic_seed"]``.
 
             .. note::
-               ``integrate(seed=s)`` draws its noise from the **raw** seed ``s``,
-               whereas a single-row batch ``ensemble([ic], seed=s)[0]`` draws from
-               the **per-index** stream ``seed_for(s, 0)`` (the
-               parallel-equals-serial contract of :meth:`ensemble`).  These two
-               derived seeds differ, so the two calls trace **different** sample
-               paths for the same ``s`` — by design, not a bug.  To reproduce one
-               ``ensemble`` trajectory standalone, integrate with that index's
-               derived seed.
+                ``integrate(seed=s)`` draws its noise from the **raw** seed ``s``,
+                whereas a single-row batch ``ensemble([ic], seed=s)[0]`` draws from
+                the **per-index** stream ``seed_for(s, 0)`` (the
+                parallel-equals-serial contract of :meth:`ensemble`).  These two
+                derived seeds differ, so the two calls trace **different** sample
+                paths for the same ``s`` — by design, not a bug.  To reproduce one
+                ``ensemble`` trajectory standalone, integrate with that index's
+                derived seed.
         backend : {"jit", "interp", "reference"}, optional
             Defaults to ``_default_backend`` (``"jit"``, the Cranelift JIT served
             from the compiled-evaluator cache).  ``"jit"`` / ``"interp"`` (the
@@ -649,8 +649,8 @@ class StochasticSystem(SystemBase, ABC):
             the extension is not built.
 
             .. versionchanged:: 6.0
-               The default moved from ``"interp"`` to ``"jit"``, once the v6
-               compiled-evaluator cache removed the JIT's per-call recompile.
+                The default moved from ``"interp"`` to ``"jit"``, once the v6
+                compiled-evaluator cache removed the JIT's per-call recompile.
         transient : float, optional
             Leading stretch of the path to discard, in **time units** (the same
             unit as ``final_time``).  The window is extended to
@@ -781,11 +781,11 @@ class StochasticSystem(SystemBase, ABC):
         row of ``NaN`` rather than aborting the batch.
 
         .. note::
-           Because every trajectory is seeded by index, ``ensemble([ic], seed=s)``
-           draws from ``seed_for(s, 0)``, which differs from the **raw** seed ``s``
-           used by ``integrate(seed=s)``.  The two calls therefore trace different
-           sample paths for the same ``s`` — by design (the index seeding is what
-           makes a batch reproducible and parallel-safe).
+            Because every trajectory is seeded by index, ``ensemble([ic], seed=s)``
+            draws from ``seed_for(s, 0)``, which differs from the **raw** seed ``s``
+            used by ``integrate(seed=s)``.  The two calls therefore trace different
+            sample paths for the same ``s`` — by design (the index seeding is what
+            makes a batch reproducible and parallel-safe).
 
         Parameters
         ----------
@@ -801,8 +801,8 @@ class StochasticSystem(SystemBase, ABC):
             tolerance.
 
             .. versionchanged:: 6.0
-               Default moved from ``"interp"`` to ``"jit"`` (see
-               :meth:`run`).
+                Default moved from ``"interp"`` to ``"jit"`` (see
+                :meth:`run`).
 
         Returns
         -------

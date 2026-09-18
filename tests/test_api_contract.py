@@ -171,6 +171,12 @@ ANALYSIS_VERBS: tuple[str, ...] = ("find", "register", "results")
 #: §2.5 — ``ts.viz.<TAB>``.
 VIZ_SURFACE: tuple[str, ...] = (
     "Plot",
+    # §11.3 T3 — PROMOTED in the visibility ruling (13 -> 14).  34 user-doc
+    # mentions and 120 test uses, and its only address was the internal
+    # ``ts.viz.render``; ``docs/visualization/styling.md`` worked around that by
+    # comparing ``w[0].category.__name__`` to a *string*.  v6 promoted six
+    # exception classes on exactly that argument.
+    "VisualizationDegraded",
     "compatibility",
     "draw",
     "geometry",
@@ -205,6 +211,10 @@ PUBLIC_PACKAGES: tuple[str, ...] = (
     "tsdynamics.utils",
     "tsdynamics.viz",
     "tsdynamics.viz.spec",
+    # §11.3 T4 — the gap the ruling closed.  Measured: the fourteen-package gate
+    # did not include the one viz namespace carrying 22 names, which is exactly
+    # why that listing drifted while every swept one held.
+    "tsdynamics.viz.transforms",
 )
 
 
@@ -375,6 +385,22 @@ def test_the_viz_listing_is_the_thirteen_names() -> None:
     assert dir(ts.viz) == sorted(VIZ_SURFACE)
 
 
+def test_the_transforms_namespace_is_the_five_verb_shape() -> None:
+    """§11.3 T3 — ``ts.viz.transforms`` is ``register`` / ``names`` / ``find`` / ``get`` / ``allow``.
+
+    It used to be 22: the five verbs plus six front doors that are ``is``-identical
+    to ``ts.viz.<name>``, five IR nouns that already live at ``ts.viz.spec``, and
+    ``plot_transform``, which **is** ``register`` under a second name.  It is also
+    the namespace :data:`PUBLIC_PACKAGES` never swept — which is precisely why it
+    was the one that drifted, and why the row now exists.
+    """
+    module = _module("tsdynamics.viz.transforms")
+    assert tuple(sorted(module.__all__)) == ("allow", "find", "get", "names", "register")
+    assert "tsdynamics.viz.transforms" in PUBLIC_PACKAGES, (
+        "the namespace is curated now — it must be inside the C5 gate that keeps it so"
+    )
+
+
 @pytest.mark.parametrize("name", ("primitives", "renderers", "themes", "transforms"))
 def test_the_four_viz_registries_share_one_four_verb_shape(name: str) -> None:
     """§2.5 — ``register`` / ``names`` / ``find`` / ``get``, identically, on all four.
@@ -477,13 +503,14 @@ def test_every_module_valued_export_is_one_the_contract_declares(pkg_name: str) 
 #: contract line that sanctions it.  Two spellings for one concept is the
 #: silent-wrong-answer defect, so this table may only shrink — and
 #: :func:`test_the_declared_aliases_are_still_aliases` fails when a row goes stale.
-DECLARED_ALIASES: dict[tuple[str, str], str] = {
-    ("tsdynamics.derived", "EnsembleSystem"): (
-        "§9.3 F1: 'the v6 name is Ensemble (EnsembleSystem is kept as an alias)'. "
-        "It is an alias in ts.derived.__all__, so `ts.derived.<TAB>` offers one "
-        "concept twice — see the mutation filed against this row."
-    ),
-}
+#: **It is empty, and that is the target state.**  Its one row —
+#: ``ts.derived.EnsembleSystem``, an alias of ``Ensemble`` — was ruled out in
+#: §11.3 T2 and the listing edit landed, so the row was deleted here in the same
+#: commit.  The teeth are in :func:`test_no_two_exported_names_are_the_same_object`,
+#: which sweeps all fifteen public packages and is the test that cannot pass
+#: vacuously; this table is only the sanctioned-exception door, and an empty
+#: door is the whole point.  Re-opening it costs a written contract line.
+DECLARED_ALIASES: dict[tuple[str, str], str] = {}
 
 
 def _api_objects(module: types.ModuleType) -> dict[str, Any]:

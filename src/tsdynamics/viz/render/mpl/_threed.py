@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from ..._visibility import listing_dir
 from ...producers import autostyle_enabled, autostyle_line
 from ...spec import PlotKind, PlotSpec
 from ...style import Theme, normalize_style
@@ -48,6 +49,8 @@ if TYPE_CHECKING:
     from matplotlib.figure import Figure
 
 __all__ = ["is_three_d", "render_3d"]
+
+__dir__ = listing_dir(__all__)
 
 # Default camera (matplotlib's own default elev/azim) when the spec carries none.
 _DEFAULT_ELEV = 30.0

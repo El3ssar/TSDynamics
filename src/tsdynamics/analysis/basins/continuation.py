@@ -25,7 +25,7 @@ from ...data import Ball, Box, Grid, set_distance
 from ...errors import InvalidInputError, remedy
 from .._common import is_data, reject_system
 from .._discovery import wrong_subject
-from .._result import AnalysisResult, CollectionResult
+from .._result import AnalysisResult, CollectionResult, _build_meta
 from .._result_json import _pct, _sig, _spread, _state
 from ._common import (
     DIVERGED_COLOR,
@@ -60,7 +60,14 @@ class ContinuationResult(AnalysisResult):
     param : str
         The swept parameter name.
     values : ndarray
-        Parameter values, in sweep order.
+        **The swept parameter axis, not a measurement** — the values of
+        :attr:`param`, in sweep order.  What was measured at each of them is
+        :attr:`fractions` / :attr:`attractors` / :attr:`diverged`, all indexed
+        by the same position.  (``values`` is the one name in the result layer
+        that means different things on different classes: the *answer* on a
+        spectrum or an embedding, the swept parameter here and on
+        :class:`~tsdynamics.analysis.results.OrbitDiagram`, the observable
+        series on :class:`~tsdynamics.analysis.results.ReturnMap`.)
     fractions : dict[int, ndarray]
         Global attractor id → basin fraction at each value (``nan`` where the
         attractor is absent).
@@ -441,7 +448,7 @@ def continuation(
         fractions=frac_arrays,
         attractors=per_value,
         diverged=np.asarray(diverged),
-        meta=AnalysisResult.build_meta(system, analysis="continuation", param=param),
+        meta=_build_meta(system, analysis="continuation", param=param),
     )
 
 

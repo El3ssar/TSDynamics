@@ -122,6 +122,12 @@ class RQAResult(AnalysisResult):
         for inspection / plotting.
     """
 
+    #: R1 — ``min_diagonal`` / ``min_vertical`` are the caller's own line-length
+    #: cuts echoed back, not measurements.  They stay readable (and stay in
+    #: ``to_dict()``), but they are provenance, and a reader scanning an RQA
+    #: readout is looking for DET / LAM / L_max.
+    _HIDDEN_ATTRIBUTES: ClassVar[frozenset[str]] = frozenset({"min_diagonal", "min_vertical"})
+
     recurrence_rate: float
     determinism: float
     laminarity: float

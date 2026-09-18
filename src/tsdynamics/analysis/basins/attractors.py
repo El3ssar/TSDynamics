@@ -35,7 +35,7 @@ from ...data import Ball, Box, Grid, sampler, set_distance
 from ...errors import ConvergenceError
 from ...utils.tolerances import BASIN_ATOL, BASIN_RTOL
 from .._common import reject_data
-from .._result import AnalysisResult, _ArrayBacked
+from .._result import AnalysisResult, _ArrayBacked, _build_meta
 from .._result_base import _MAX_ITEMS
 from .._result_json import _pct, _state
 from ._common import (
@@ -195,6 +195,11 @@ class AttractorSet(AnalysisResult):
     seeds : int
         How many seeds were classified in total.
     """
+
+    #: R1 — ``seeds`` is the size of the IC array the caller handed in, echoed
+    #: back.  :attr:`diverged` is a MEASUREMENT (how many of them escaped) and
+    #: stays listed; the input count is provenance.  Still readable.
+    _HIDDEN_ATTRIBUTES: ClassVar[frozenset[str]] = frozenset({"seeds"})
 
     attractors: dict[int, Attractor] = field(default_factory=dict, compare=False)
     diverged: int = 0
@@ -1527,7 +1532,7 @@ def attractors(
     found, _ = canonical_relabel(found, merge)
     # Attach provenance without re-allocating the (potentially large) attractor
     # dict — ``replace`` reuses every field but ``meta``.
-    return replace(found, meta=AnalysisResult.build_meta(system, analysis="attractors"))
+    return replace(found, meta=_build_meta(system, analysis="attractors"))
 
 
 def canonical_relabel(

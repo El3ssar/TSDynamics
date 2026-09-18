@@ -17,6 +17,7 @@ local chord, used e.g. as a ``color_by`` field).  The result container
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import ClassVar
 
 import numpy as np
 
@@ -49,11 +50,19 @@ class SagittaDt:
         The percentile used (kept for inspection).
     epsilon : float
         The geometric tolerance used (kept for inspection).
-    searched_ms : numpy.ndarray
-        The candidate strides evaluated during the search.
     notes : str
         Informational / warning text (e.g. embedding parameters for 1-D input).
+
+    .. versionchanged:: 6.0
+        ``searched_ms`` is off ``dir()`` (it still resolves).  It is the
+        *search's* own scratch — every candidate stride the selector tried on the
+        way to :attr:`stride` — and reading a solver's trial list off the answer
+        it returned is debugging, not use.
     """
+
+    #: The candidate strides the search walked through: a trace of how the
+    #: answer was found, not part of it.  Contract §11.3.
+    _HIDDEN_ATTRIBUTES: ClassVar[frozenset[str]] = frozenset({"searched_ms"})
 
     delta_t: float  # Δt* = stride * base_dt
     stride: int  # stride m*
@@ -63,6 +72,16 @@ class SagittaDt:
     epsilon: float  # tolerance used (kept for backward-compat)
     searched_ms: np.ndarray  # candidate strides evaluated
     notes: str = ""  # info / warnings
+
+    def __dir__(self) -> list[str]:
+        """List the fields a caller reads, minus :attr:`_HIDDEN_ATTRIBUTES`.
+
+        :class:`SagittaDt` is not an
+        :class:`~tsdynamics.analysis._result_base.AnalysisResult` (it is a
+        sampling *tool*'s return, not a quantifier's), so it carries its own copy
+        of the one-line curation the result layer applies.  A listing edit only.
+        """
+        return sorted(set(super().__dir__()) - self._HIDDEN_ATTRIBUTES)
 
 
 def _sagitta_chord(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> tuple[np.ndarray, np.ndarray]:

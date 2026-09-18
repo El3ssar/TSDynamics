@@ -59,6 +59,7 @@ import numpy as np
 
 from tsdynamics.errors import InvalidParameterError
 
+from ..._visibility import listing_dir
 from ...producers import autostyle_enabled, autostyle_line, autostyle_marker
 from ...spec import Annotation, Axis, Colorbar, Layer, PlotKind, PlotSpec
 from ...style import Theme, normalize_style
@@ -73,6 +74,8 @@ if TYPE_CHECKING:
 
 
 __all__ = ["KIND_PRESETS", "MARK_DISPATCH", "render"]
+
+__dir__ = listing_dir(__all__)
 
 
 # ---------------------------------------------------------------------------

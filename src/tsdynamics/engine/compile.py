@@ -958,17 +958,17 @@ class _Emitter:
         the last (default) branch backwards as ``mk*ek + (1 - mk)*acc``.
 
         .. important::
-           Because the blend is *arithmetic*, **every branch is evaluated on
-           every input**, then masked.  The IR has no control flow that could
-           skip the unselected arm.  So each branch expression must be **finite
-           on the whole domain**, not merely on the region its condition
-           selects: a branch that is singular off its own region (``±inf`` or
-           ``NaN`` there) poisons the result through ``0 * inf = NaN`` /
-           ``0 * inf + finite = NaN``.  This holds for the finite-branch
-           piecewise maps this targets (Baker's modular branches), but a
-           ``Piecewise((1/u, u != 0), (0, True))``-style guard against a
-           singularity would *not* lower correctly — rewrite it so both arms are
-           finite (e.g. blend on a regularised expression).
+            Because the blend is *arithmetic*, **every branch is evaluated on
+            every input**, then masked.  The IR has no control flow that could
+            skip the unselected arm.  So each branch expression must be **finite
+            on the whole domain**, not merely on the region its condition
+            selects: a branch that is singular off its own region (``±inf`` or
+            ``NaN`` there) poisons the result through ``0 * inf = NaN`` /
+            ``0 * inf + finite = NaN``.  This holds for the finite-branch
+            piecewise maps this targets (Baker's modular branches), but a
+            ``Piecewise((1/u, u != 0), (0, True))``-style guard against a
+            singularity would *not* lower correctly — rewrite it so both arms are
+            finite (e.g. blend on a regularised expression).
         """
         acc = self.emit(pairs[-1][0])
         for value, cond in reversed(pairs[:-1]):

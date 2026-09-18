@@ -19,7 +19,8 @@ What it checks, in the order the plan lists them:
    set;
 3. every **structural** claim holds — the primitive accepts the transform's
    coordinate space, and its required channels are present in the geometry;
-4. every **exclusive** primitive appears in exactly one row;
+4. the matrix's reading marks are real — ``*`` prints, and the vestigial ``!``
+   (and the always-empty ``exclusive`` field behind it) stays deleted;
 5. every registered transform's ``compute`` is callable and returns a
    ``Geometry`` — the check that stops the matrix advertising a plot the library
    cannot draw.
@@ -234,23 +235,27 @@ def test_every_geometry_frame_is_one_the_transform_declared():
 
 
 # ---------------------------------------------------------------------------
-# 4. Exclusivity
+# 4. The matrix's reading marks
 # ---------------------------------------------------------------------------
 
 
-def test_every_exclusive_primitive_appears_in_exactly_one_row():
-    """``exclusive`` means exclusive — otherwise the ``!`` marker is decoration."""
+def test_the_exclusive_field_and_its_marker_are_gone():
+    """``exclusive`` was a field no row could set, driving a ``!`` that never printed.
+
+    It was measured ``frozenset()`` on all 39 registered transforms, it was not a
+    parameter of :func:`ts.viz.transforms.register`, and ``'!' in
+    str(ts.viz.compatibility())`` was ``False`` — three independent ways of saying
+    the same thing.  Deleted in v6 round 9; this pins it staying deleted, on the
+    record, on the ``rows()`` projection, and in the printed table.
+    """
     for record in transforms():
-        for primitive in record.exclusive:
-            owners = [t.name for t in transforms() if primitive in t.primitives]
-            assert owners == [record.name], (
-                f"{primitive!r} is marked exclusive to {record.name!r} but also appears in "
-                f"{[o for o in owners if o != record.name]}"
-            )
+        assert not hasattr(record, "exclusive"), record.name
+    assert "exclusive" not in compatibility().rows()[0]
+    assert "!" not in repr(compatibility())
 
 
-def test_the_matrix_reports_default_and_exclusive_markers():
-    """``compatibility()`` is readable *and* programmable: ``*`` default, ``!`` exclusive."""
+def test_the_matrix_reports_the_default_marker():
+    """``compatibility()`` is readable *and* programmable: ``*`` marks the default."""
     matrix = compatibility()
     for record in transforms():
         row = matrix[record.name]

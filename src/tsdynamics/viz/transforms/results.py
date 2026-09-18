@@ -32,11 +32,14 @@ from typing import Any
 import numpy as np
 
 from .._frames import FrameSpace, OverlayRole
+from .._visibility import listing_dir
 from ..spec import PlotKind
 from ._base import Geometry, Part, Presentation, make_frame
 from ._registry import register
 
 __all__ = ["basins", "ensemble_fan", "orbit_diagram", "poincare_section", "recurrence"]
+
+__dir__ = listing_dir(__all__)
 
 
 def _demo_orbit(n: int = 160) -> Any:

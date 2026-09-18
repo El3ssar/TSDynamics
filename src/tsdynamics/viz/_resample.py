@@ -35,6 +35,8 @@ from collections.abc import Mapping
 
 import numpy as np
 
+from ._visibility import listing_dir
+
 __all__ = [
     "DEFAULT_SAGITTA_TARGET",
     "cumulative_arclength",
@@ -43,6 +45,8 @@ __all__ = [
     "smooth_arclength",
     "uniform_subsample_indices",
 ]
+
+__dir__ = listing_dir(__all__)
 
 #: The worst-case sagitta / bounding-box-diagonal a resampled curve should stay
 #: under.  The maintainer's readability rule is ``0.01``; ``0.008`` leaves headroom

@@ -8,7 +8,11 @@ bound.
 
 from __future__ import annotations
 
-from typing import Any
+# Underscored for the same reason the top level's are (§11.3 T4): a module's
+# own imports land in its namespace, so ``from tsdynamics.analysis import Any``
+# worked.  ``__dir__`` already hid it from TAB; this stops it resolving too, so
+# the two curated registries answer identically.
+from typing import Any as _Any
 
 from .. import registry as _registry
 from ..plugins import ANALYSES_GROUP, register_entry_points
@@ -205,7 +209,7 @@ def _refresh_surface() -> None:
     __doc__ = _build_doc()
 
 
-def find(what: Any = None, /) -> AnalysisList:
+def find(what: _Any = None, /) -> AnalysisList:
     """Return the analyses that answer this question, or take this subject.
 
     ``what`` is a **string** (free-text search over the name, area, keywords and
@@ -320,7 +324,7 @@ _AREA_OF: dict[str, str] = {name: name for name in AREA_SUBPACKAGES}
 _AREA_OF["planar"] = "fields"
 
 
-def __getattr__(name: str) -> Any:
+def __getattr__(name: str) -> _Any:
     """Answer a name that is not here — a rename, a subpackage, or a guess.
 
     Three ordered cases, split by *kind of hit*.  An exact hit in a redirect

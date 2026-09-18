@@ -80,6 +80,20 @@ class DerivedSystem:
 
     @property
     def dim(self) -> int:
+        """Dimension of the state this view hands you.
+
+        The inner system's, by default — a Poincaré crossing and a stroboscopic
+        sample are both full states of the flow.  The wrappers that genuinely
+        change the state's width override it
+        (:class:`~tsdynamics.derived.ProjectedSystem` returns the number of
+        surviving components, :class:`~tsdynamics.derived.TangentSystem` the
+        extended state's).
+
+        Documented because it was not: ``help(DerivedSystem.dim)`` printed three
+        blank lines, and on an instance ``help(pmap.dim)`` resolved the *value*
+        and printed ``int([x]) -> integer`` — the builtin's reference, about a
+        different subject entirely (``CONTRACT.md`` §11.6 defect 2).
+        """
         return cast(int, self.system.dim)
 
     @property
@@ -124,15 +138,71 @@ class DerivedSystem:
         return cast(bool, self.system._is_discrete)
 
     def state(self) -> np.ndarray:
+        """Return the current state, as **this view** reports it.
+
+        The four members below are the :class:`~tsdynamics.families.System`
+        protocol, delegated to the inner system.  Each wrapper overrides
+        whichever of them its lens actually changes — a
+        :class:`~tsdynamics.derived.ProjectedSystem` returns the projected
+        columns, a :class:`~tsdynamics.derived.TangentSystem` the state ⊕
+        deviation vectors — so reading the protocol off the wrapper always
+        answers in the wrapper's own coordinates.
+
+        Returns
+        -------
+        numpy.ndarray
+            The current state vector.  On a cold view this triggers an implicit
+            :meth:`reinit`, exactly as it does on a bare system.
+        """
         return cast(np.ndarray, self.system.state())
 
     def set_state(self, u: Any) -> None:
+        """Overwrite the live state **without** restarting or resetting time.
+
+        A *capability*, not a protocol member: it left the ``System`` protocol in
+        v6 because a :class:`~tsdynamics.families.DelaySystem`'s state is a
+        history function, not a point.  Ask for it with ``hasattr`` before
+        calling it on an arbitrary view.
+
+        Parameters
+        ----------
+        u : array-like
+            The new state, in the inner system's coordinates.
+
+        See Also
+        --------
+        reinit : restart from a state — the one that also resets time.
+        """
         self.system.set_state(u)
 
     def time(self) -> float:
+        """Return the current time — iteration count for a discrete view.
+
+        Returns
+        -------
+        float
+            Elapsed time of the inner system.  Note that for a
+            :class:`~tsdynamics.derived.PoincareMap` the *inner* clock runs in
+            continuous time while ``step()`` counts crossings, so this is flow
+            time, not a crossing index.
+        """
         return cast(float, self.system.time())
 
     def reinit(self, u: Any | None = None, **kwargs: Any) -> None:
+        """Restart the view from state ``u`` (or from the system's own default).
+
+        The way to pick up a parameter change: a live stepper holds a lowered
+        tape, so edits to ``params`` do not reach it until you reinitialise.
+
+        Parameters
+        ----------
+        u : array-like, optional
+            Initial state.  ``None`` re-resolves the inner system's own initial
+            condition (its ``_default_ic``, or a fresh random draw).
+        **kwargs
+            Forwarded verbatim to the inner system's ``reinit`` — ``solver``,
+            ``rtol``/``atol``, ``backend``, ``dt``, as that family accepts them.
+        """
         self.system.reinit(u, **kwargs)
 
     def run(self, *args: Any, **kwargs: Any) -> Trajectory:

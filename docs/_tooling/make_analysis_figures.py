@@ -237,7 +237,7 @@ def fig_dimensions(plt, out_path):
     # D2 estimate + the log-log scaling curve it was read from
     res = ts.analysis.correlation_dimension(traj, n_radii=32, min_window=8)
     x, y = res.x, res.y  # log r , log C(r)
-    lo, hi = res.fit_slice  # inclusive indices of the fitted region
+    lo, hi = res.fit_region  # inclusive indices of the fitted region
     D2 = float(res)
 
     fig, ax = plt.subplots(figsize=(6.0, 4.0))

@@ -7,18 +7,32 @@ from typing import TYPE_CHECKING, Any, NamedTuple, cast, overload
 
 import numpy as np
 
+from tsdynamics.errors import remedy
+from tsdynamics.families._hidden import hide
+
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from tsdynamics.data import Trajectory
     from tsdynamics.viz.spec import PlotSpec
 
-__all__ = ["Ensemble", "EnsembleSystem", "TrajectoryBatch"]
+#: ``EnsembleSystem`` is the *same class object* as ``Ensemble`` (the v5 name,
+#: kept bound at the bottom of this module).  It is off the listing because two
+#: spellings of one class is corollary C3's silent-wrong-answer shape: a reader
+#: comparing the two would look for a difference that is not there.
+__all__ = ["Ensemble", "TrajectoryBatch"]
 
 
+@hide("count", "index")
 class EnsembleSamples(NamedTuple):
     """What :meth:`Ensemble.collect` records — ``times, states = band.collect(n)``.
 
     A named pair rather than a bare tuple: ``states`` is a three-axis block and
     "which axis is which" is not something a call site should have to remember.
+
+    ``count`` / ``index`` come free with ``NamedTuple`` and are withheld from
+    ``dir()`` (``CONTRACT.md`` §11, T2): they search the *two-element outer
+    tuple*, so ``samples.count(x)`` can only ever answer 0, 1 or 2 about which of
+    ``times`` / ``states`` equals ``x`` — never a question anyone asks.  Still
+    bound, as tuple members must be.
     """
 
     times: np.ndarray
@@ -27,6 +41,7 @@ class EnsembleSamples(NamedTuple):
     """Every member's state after each step, shape ``(steps, size, dim)``."""
 
 
+@hide("count", "index")
 class TrajectoryBatch(Sequence["Trajectory"]):
     """What ``Ensemble.run(...)`` returns — the trajectories, plus the batch view.
 
@@ -43,6 +58,12 @@ class TrajectoryBatch(Sequence["Trajectory"]):
         ``AttributeError: 'str' object has no attribute 'y'``, and ``batch.sort()``
         raised comparing two trajectories.  A batch is a measurement, not a
         workspace; ``list(batch)`` is still one keystroke away.
+
+    ``count`` / ``index`` are the two mixins ``Sequence`` supplies.  They are
+    withheld from ``dir()`` (``CONTRACT.md`` §11, T2) because both search by
+    ``==`` and a :class:`~tsdynamics.data.Trajectory` is not something you have a
+    second copy of to search for — ``batch.index(traj)`` is answerable only when
+    you already hold the element. Still bound, and correct if called.
     """
 
     __slots__ = ("_members",)
@@ -185,6 +206,7 @@ class TrajectoryBatch(Sequence["Trajectory"]):
         )
 
 
+@hide("set_states", "states")
 class Ensemble:
     """
     Many copies of one system, advanced synchronously from different states.
@@ -193,12 +215,41 @@ class Ensemble:
     statistics.  Members are independent copies — parameters are shared at
     construction, states are per-member.
 
+    Two members are withheld from ``dir()`` (``CONTRACT.md`` §11, T2) and stay
+    callable.  Both are second spellings of the ``System`` protocol this class
+    already answers in the protocol's own words:
+
+    ``states()``
+        Identical to :meth:`state` — the very body of ``state()`` is ``return
+        self.states()``.  ``state()`` is the word every other view in the library
+        uses, so it is the one that stays listed (corollary C3).
+    ``set_states(states)``
+        The plural of ``set_state``, which is a *capability* rather than a
+        protocol member since v6.  Reach it with ``hasattr`` like the others, or
+        build the ensemble you want: ``system.ensemble(new_states)`` is one call
+        and cannot desynchronise the member clocks.
+
     Parameters
     ----------
     system : System
-        The template system (copied per member; the original is untouched).
+        The system to copy per member (the original is untouched).  Readable
+        afterwards as :attr:`system`.
     states : array-like, shape (m, dim)
         One initial state per member.
+
+    Attributes
+    ----------
+    system : System
+        The system every member is a copy of.
+
+        .. versionchanged:: 6.0
+            Was ``template``.  Every other wrapper in :mod:`tsdynamics.derived`
+            calls the thing it wraps ``system``, so the one exception meant that
+            code walking a mixed list of views — the thing wrappers exist to make
+            possible — had to special-case this class by name (corollary C3: one
+            concept, one spelling).  ``band.template`` names the replacement.
+    members : list of System
+        The per-member copies, in construction order.
 
     Examples
     --------
@@ -213,7 +264,7 @@ class Ensemble:
         states_arr = np.atleast_2d(np.asarray(states, dtype=float))
         if states_arr.shape[1] != system.dim:
             raise ValueError(f"states must have shape (m, {system.dim}), got {states_arr.shape}")
-        self.template = system
+        self.system = system
         self.members = []
         for s in states_arr:
             member = system.copy()
@@ -226,11 +277,20 @@ class Ensemble:
         ``band.integrate`` used to be a bare ``AttributeError`` while
         ``lor.integrate`` named the retired verb and the line to type — and an
         ``Ensemble`` is the object the headline ``sys.ensemble(...)`` hands you,
-        so it is a likely place to guess.  It does **not** delegate to the
-        template: it raises, teaching.
+        so it is a likely place to guess.  It does **not** delegate to the inner
+        system: it raises, teaching.
         """
-        if name.startswith("_") or name in ("template", "members"):
+        if name.startswith("_") or name in ("system", "members"):
             raise AttributeError(f"{type(self).__name__!r} object has no attribute {name!r}")
+        if name == "template":
+            # The v5 spelling of ``system``.  A rename is the one kind of miss a
+            # near-miss ranker cannot help with — ``template`` resembles nothing
+            # on the object — so it is answered by name.
+            raise AttributeError(
+                "'Ensemble' object has no attribute 'template': every derived view "
+                "names the thing it wraps 'system' — one concept, one spelling."
+                + remedy("band.system", "band.system.params")
+            )
         from tsdynamics.families.base import _absent_name_error
 
         raise _absent_name_error(self, name)
@@ -243,27 +303,27 @@ class Ensemble:
     @property
     def dim(self) -> int:
         """State-space dimension of each member."""
-        return cast(int, self.template.dim)
+        return cast(int, self.system.dim)
 
     @property
     def _is_discrete(self) -> bool:
         """Match the template system's time semantics."""
-        return cast(bool, self.template._is_discrete)
+        return cast(bool, self.system._is_discrete)
 
     @property
     def family(self) -> str:
         """The template system's family word."""
-        return cast(str, self.template.family)
+        return cast(str, self.system.family)
 
     @property
     def params(self) -> Any:
         """The template system's parameters (shared by every member)."""
-        return self.template.params
+        return self.system.params
 
     @property
     def variables(self) -> tuple[str, ...]:
         """The template system's component names."""
-        return cast("tuple[str, ...]", self.template.variables)
+        return cast("tuple[str, ...]", self.system.variables)
 
     def state(self) -> np.ndarray:
         """Return the stacked member states — the ``System``-protocol reading."""
@@ -380,7 +440,7 @@ class Ensemble:
         for member, member_seed in zip(self.members, seeds, strict=True):
             extra = {} if member_seed is None else {"seed": member_seed}
             try:
-                runs.append(self.template.run(*args, ic=member.state(), **kwargs, **extra))
+                runs.append(self.system.run(*args, ic=member.state(), **kwargs, **extra))
             except ConvergenceError:
                 runs.append(None)
         template = next((r for r in runs if r is not None), None)
@@ -394,7 +454,7 @@ class Ensemble:
         return [
             r
             if r is not None
-            else Trajectory(template.t, blank.copy(), self.template, meta=dict(template.meta))
+            else Trajectory(template.t, blank.copy(), self.system, meta=dict(template.meta))
             for r in runs
         ]
 
@@ -449,6 +509,18 @@ class Ensemble:
         Advances the whole ensemble synchronously, recording each member's state
         after every step.  This is the trajectory collector the static fan chart
         (:meth:`__plot_spec__`) summarises into a median line + percentile band.
+
+        **This is a different numerical path from** :meth:`run`, which is why it
+        stays on the tab surface rather than being folded into it.  ``run``
+        launches each member as its own independent integration, on the inner
+        family's own adaptive solver and output grid; ``collect`` drives the
+        *live steppers* in lockstep, so at every returned sample the members
+        share one clock.  That is the reading an ensemble measurement needs — a
+        cross-member percentile at "time ``t``" is only meaningful if every
+        member really is at ``t`` — and it is also what makes the returned block
+        rectangular in ``(sample, member, component)``.  Use ``run`` when you want
+        per-member trajectories; use ``collect`` when you want the ensemble's
+        spread through time.
 
         Parameters
         ----------
@@ -532,7 +604,7 @@ class Ensemble:
         return PlotSpec(
             kind=spec_kind,
             ndim=2,
-            title=f"Ensemble fan — {type(self.template).__name__} (n={self.size})",
+            title=f"Ensemble fan — {type(self.system).__name__} (n={self.size})",
             x=Axis(label="iteration" if self._is_discrete else "time"),
             y=Axis(label=ylabel),
             layers=[
@@ -560,7 +632,7 @@ class Ensemble:
         return len(self.members)
 
     def __repr__(self) -> str:
-        return f"Ensemble({type(self.template).__name__}, m={self.size})"
+        return f"Ensemble({type(self.system).__name__}, m={self.size})"
 
 
 def __dir__() -> list[str]:

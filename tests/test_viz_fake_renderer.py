@@ -283,7 +283,8 @@ def _builders() -> dict[type, object]:
             boundary_dimension=1.6,
             state_dimension=2,
             epsilons=np.array([0.1, 0.05, 0.025]),
-            f=np.array([0.4, 0.3, 0.2]),
+            # v6 round 9 renamed the one-letter `f` to `uncertain_fractions`.
+            uncertain_fractions=np.array([0.4, 0.3, 0.2]),
             r_squared=0.99,
         ),
         WadaResult: lambda: WadaResult(

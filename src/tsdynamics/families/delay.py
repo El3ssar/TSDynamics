@@ -548,8 +548,8 @@ class DelaySystem(SystemBase, ABC):
             pure-Python delay integrator).
 
             .. versionchanged:: 6.0
-               The default moved from ``"interp"`` to ``"jit"``, once the v6
-               compiled-evaluator cache removed the JIT's per-call recompile.
+                The default moved from ``"interp"`` to ``"jit"``, once the v6
+                compiled-evaluator cache removed the JIT's per-call recompile.
         solver : str, default "rk45"
             The explicit kernel (``"rk45"``, ``"tsit5"``, ``"dop853"``,
             ``"rk4"``); the method of steps drives explicit kernels only.
@@ -720,8 +720,8 @@ class DelaySystem(SystemBase, ABC):
             ``"interp"`` is the bit-for-bit identical SSA-tape interpreter.
 
             .. versionchanged:: 6.0
-               Default moved from ``"interp"`` to ``"jit"`` (see
-               :meth:`run`).
+                Default moved from ``"interp"`` to ``"jit"`` (see
+                :meth:`run`).
 
         Notes
         -----

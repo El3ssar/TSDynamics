@@ -42,12 +42,30 @@ class CollectionResult(AnalysisResult):
 
     Attributes
     ----------
-    items : tuple
-        The collected result records, in order.  :attr:`details` is the public
-        spelling; this is the field the dataclass stores.
+    details : tuple
+        The collected result records, in order.  The **one public spelling**;
+        ``items`` is the dataclass field behind it and holds the same object.
+
+    .. versionchanged:: 6.0
+        Three names left ``dir()`` (all still resolve — this is a listing, not a
+        permission):
+
+        * ``items`` — measured, ``fps.items is fps.details`` was ``True``, and
+         only :attr:`details` is taught.  Two names for one tuple is the
+         second-spelling defect the v6 curation exists to remove;
+         :meth:`to_dict` still emits the ``"items"`` key.
+        * ``count`` and ``index``, the two :class:`~collections.abc.Sequence`
+         mixins.  Their plain-English reading ("how many did you find") is not
+         their meaning — ``count`` takes a *member* and counts equal ones —
+         and ``len(result)`` is the question people actually have.
     """
 
     _repr_fields: ClassVar[tuple[str, ...]] = ()
+
+    #: R2 for ``items`` (``details`` is the taught spelling of the same tuple)
+    #: and a mis-reading guard for the two ``Sequence`` mixins — see the class
+    #: ``versionchanged`` note.  A listing edit only: all three still resolve.
+    _HIDDEN_ATTRIBUTES: ClassVar[frozenset[str]] = frozenset({"count", "index", "items"})
 
     items: tuple[Any, ...] = ()
 

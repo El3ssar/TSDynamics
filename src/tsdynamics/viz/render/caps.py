@@ -54,6 +54,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
+from .._visibility import dir_without, listing_dir
 from ..spec import PlotKind, PlotSpec
 
 __all__ = [
@@ -65,6 +66,8 @@ __all__ = [
     "check_render_kwargs",
     "style_honoring_gaps",
 ]
+
+__dir__ = listing_dir(__all__)
 
 
 class VisualizationDegraded(UserWarning):
@@ -610,6 +613,24 @@ class RendererCapabilities:
     #: The render keywords this backend reads, or ``None`` (undeclared).  See
     #: :func:`accepted_render_kwargs`.
     render_kwargs: frozenset[str] | None = None
+
+    def __dir__(self) -> list[str]:
+        """Expose the **declaration** a backend author writes and a user reads.
+
+        This record is one of the six plugin doors' payloads: a renderer says what
+        it draws (``name`` ``kinds`` ``supports_3d`` ``interactive``
+        ``web_export`` ``data_export``), what it writes (``writes_static``
+        ``writes_animated``, and the undivided ``writes`` that
+        ``ts.viz.renderers.find(writes=".svg")`` reads), and which render keywords
+        it honours (``render_kwargs``).
+
+        :meth:`can_render`, :meth:`can_render_spec` and :meth:`can_save` are the
+        **dispatcher's** questions of that declaration — they are how
+        ``ts.plot(..., backend=…)`` and ``Plot.save`` pick a backend and decide
+        whether to fall back.  Answering them by hand re-decides something the
+        library has already decided.  All three stay public and tested.
+        """
+        return dir_without(self, {"can_render", "can_render_spec", "can_save"})
 
     @property
     def writes(self) -> frozenset[str]:

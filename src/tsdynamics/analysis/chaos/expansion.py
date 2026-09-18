@@ -35,7 +35,7 @@ from tsdynamics.errors import InvalidInputError, InvalidParameterError, remedy
 from tsdynamics.families import ContinuousSystem, DiscreteMap
 
 from .._common import reject_data
-from .._result import AnalysisResult, ScalingResult
+from .._result import ScalingResult, _build_meta
 from .._tangent import flow_fns, map_fns, rk4_variational
 from . import _common as _c
 
@@ -50,52 +50,51 @@ class ExpansionEntropyResult(ScalingResult):
     slope of :math:`\ln E(t)` against :math:`t` — so it inherits the canonical
     ``estimate`` / ``abscissa`` / ``ordinate`` / ``fit_region`` schema, the result
     surface (``.meta`` / the readout ``repr`` / ``.to_dict()`` / the ``.plot`` seam) and
-    ``float(result)`` (the entropy :math:`H`).  Domain-named ``@property`` aliases
-    (:attr:`entropy`, :attr:`times`, :attr:`log_growth`, :attr:`fit_slice`)
-    preserve the original field names.
+    ``float(result)`` (the entropy :math:`H`).  The domain names for the curve
+    are :attr:`entropy`, :attr:`times` and ``ordinate``.
 
     Attributes
     ----------
-    estimate : float
-        The estimated expansion entropy :math:`H`.  Aliased :attr:`entropy`.
-    abscissa : ndarray
-        The :math:`t` grid (iterations for maps, time for flows).  Aliased
-        :attr:`times`.
+    entropy : float
+        The estimated expansion entropy :math:`H`.  ``float(result)`` returns
+        it; it is the domain name for the inherited ``estimate`` field.
+    times : ndarray
+        The :math:`t` grid (iterations for maps, time for flows) — the domain
+        name for the inherited ``abscissa`` field.
     ordinate : ndarray
-        :math:`\ln E(t)` at each :math:`t`.  Aliased :attr:`log_growth`.
+        :math:`\ln E(t)` at each :math:`t`.
     fit_region : tuple[int, int]
-        Inclusive ``(lo, hi)`` indices of the fitted range.  Aliased
-        :attr:`fit_slice`.
+        Inclusive ``(lo, hi)`` indices of the fitted range.
     n_samples : int
         Number of initial conditions sampled in the region.
     n_survivors : int
         How many of them stayed in the region for the whole run.
+
+    .. versionchanged:: 6.0
+        ``fit_slice`` and ``log_growth`` are **gone** — both were measured exact
+        duplicates (of :attr:`fit_region` and ``ordinate``), and ``log_growth``
+        had no reference anywhere in the repository.  ``abscissa`` is still
+        readable but is off ``dir()``: :attr:`times` is the name this estimator's
+        curve is known by.
     """
 
     _repr_fields: ClassVar[tuple[str, ...]] = ("entropy", "stderr", "n_survivors", "n_samples")
+
+    #: R2 — the domain name for the horizontal axis here is :attr:`times`.
+    _HIDDEN_ATTRIBUTES: ClassVar[frozenset[str]] = frozenset({"abscissa"})
 
     n_samples: int = 0
     n_survivors: int = 0
 
     @property
     def entropy(self) -> float:
-        """The estimated expansion entropy (alias of :attr:`estimate`)."""
+        """The estimated expansion entropy (the domain name for ``estimate``)."""
         return float(self.estimate)
 
     @property
     def times(self) -> np.ndarray:
-        """The :math:`t` grid (alias of :attr:`abscissa`)."""
+        """The :math:`t` grid the growth curve was measured on."""
         return self.abscissa
-
-    @property
-    def log_growth(self) -> np.ndarray:
-        r"""The :math:`\ln E(t)` curve (alias of :attr:`ordinate`)."""
-        return self.ordinate
-
-    @property
-    def fit_slice(self) -> tuple[int, int]:
-        """The fitted index range (alias of :attr:`fit_region`)."""
-        return self.fit_region
 
     def _quantity(self) -> str:
         r"""Return ``H0`` — the symbol expansion entropy is known by."""
@@ -318,9 +317,7 @@ def expansion_entropy(
         intercept=intercept,
         n_samples=int(n_samples),
         n_survivors=int(survivors),
-        meta=AnalysisResult.build_meta(
-            system, analysis="expansion_entropy", n_samples=int(n_samples)
-        ),
+        meta=_build_meta(system, analysis="expansion_entropy", n_samples=int(n_samples)),
     )
 
 

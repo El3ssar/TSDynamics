@@ -71,6 +71,11 @@ class WindowedRQA(AnalysisResult):
     #: them; declared here so a wrong guess can still be corrected to one.
     _extra_attribute_names: ClassVar[tuple[str, ...]] = _MEASURES
 
+    #: R2 — ``table()`` is what :meth:`__array__` already returns, so
+    #: ``np.asarray(w)`` is the same ``(n_windows, 9)`` array by the spelling
+    #: every other result in the library answers to.  The method stays.
+    _HIDDEN_ATTRIBUTES: ClassVar[frozenset[str]] = frozenset({"table"})
+
     centers: np.ndarray = field(default_factory=lambda: np.empty(0), compare=False)
     results: tuple[RQAResult, ...] = field(default=(), repr=False, compare=False)
     window: int = 0

@@ -39,6 +39,7 @@ from __future__ import annotations
 
 from typing import Any, cast
 
+from .._visibility import listing_dir
 from ..compose import _plot_spec_of, reject_kind_keyword, unwrap_container, warn_on_offscreen_layers
 from ..compose import plot as compose_plot
 from ..spec import (
@@ -52,6 +53,8 @@ from ..spec import (
 from ._registry import DOMAIN_KEYWORD, TransformCall, build_spec, get
 
 __all__ = ["plot"]
+
+__dir__ = listing_dir(__all__)
 
 
 def _as_call(sel: Any) -> Any:

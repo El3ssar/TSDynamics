@@ -9,12 +9,14 @@ import numpy as np
 
 from tsdynamics.errors import InvalidInputError, InvalidParameterError, remedy
 from tsdynamics.families import Trajectory
+from tsdynamics.families._hidden import hide
 
 from ._base import DerivedSystem
 
 __all__ = ["ProjectedSystem"]
 
 
+@hide("complete")
 class ProjectedSystem(DerivedSystem):
     """
     View a system through a subset of its components.
@@ -23,6 +25,13 @@ class ProjectedSystem(DerivedSystem):
     *outputs* are projected.  ``set_state`` needs the inverse direction and
     therefore requires a ``complete`` callable mapping a projected state back
     to a full state.
+
+    ``complete`` is withheld from ``dir()`` (``CONTRACT.md`` §11, T2): it is a
+    constructor argument echoed back, not a measurement — you already hold the
+    callable you passed, and reading it off the view answers nothing the code
+    that built the view does not already know.  It remains bound, and
+    :attr:`components` (which the constructor *resolves*, from names to indices)
+    stays listed for exactly the opposite reason.
 
     Parameters
     ----------

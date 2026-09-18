@@ -42,6 +42,8 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 import numpy as np
 
 from .._frames import Frame, FrameSpace, OverlayRole, axis_name, space_arity
+from .._visibility import dir_without as _dir_without
+from .._visibility import listing_dir
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from ..spec import Layer, Plot, PlotKind
@@ -408,13 +410,18 @@ class Geometry:
         The semantic kind of the assembled spec, when it depends on the data
         rather than on the transform (a portrait is 2-D or 3-D).  ``None`` uses
         the transform's declared kind.
-    primitive : str, optional
+    chosen_primitive : str, optional
         Override the transform's default primitive **for this geometry only**.
         The default sometimes depends on the data rather than on the transform:
         a discrete-map orbit is a point sequence and a flow is a connected
         curve, and drawing either as the other is wrong.  An explicit
         ``primitive=`` from the caller still wins, and the override is checked
         against the transform's declared row like any other choice.
+
+        .. versionchanged:: 6.0
+            Spelled ``primitive`` — one letter from :attr:`primitives`, on the
+            same record, meaning the opposite thing (*the one chosen* versus *the
+            whole legal row*).  The old spelling raises and names this one.
     primitives : frozenset of str, optional
         Narrow the transform's declared row **for this geometry**.  A row is a
         statement about the transform; some transforms produce geometry whose
@@ -456,7 +463,7 @@ class Geometry:
     axis_limits: tuple[tuple[float, float] | None, ...] = ()
     axis_scales: tuple[str | None, ...] = ()
     kind: PlotKind | None = None
-    primitive: str | None = None
+    chosen_primitive: str | None = None
     primitives: frozenset[str] | None = None
     aspect: Literal["auto", "equal"] | None = None
     title: str = ""
@@ -478,7 +485,7 @@ class Geometry:
         axis_limits: Sequence[tuple[float, float] | None] = (),
         axis_scales: Sequence[str | None] = (),
         kind: PlotKind | None = None,
-        primitive: str | None = None,
+        chosen_primitive: str | None = None,
         primitives: Sequence[str] | None = None,
         aspect: Literal["auto", "equal"] | None = None,
         title: str = "",
@@ -486,10 +493,30 @@ class Geometry:
         legend: bool | None = None,
         clim: tuple[float, float] | None = None,
         meta: Mapping[str, Any] | None = None,
+        **moved: Any,
     ) -> None:
-        """Build a geometry from either ``parts`` or the single-part ``channels=``."""
+        """Build a geometry from either ``parts`` or the single-part ``channels=``.
+
+        ``**moved`` exists to answer the **one** renamed keyword by name: v6 spelled
+        :attr:`chosen_primitive` ``primitive``, and an unnamed ``TypeError:
+        __init__() got an unexpected keyword argument`` would be the worst possible
+        answer for a transform author mid-migration.
+        """
         from tsdynamics.errors import InvalidParameterError
 
+        if "primitive" in moved:
+            raise InvalidParameterError(
+                "Geometry(primitive=…) is now Geometry(chosen_primitive=…) — one letter "
+                "from primitives= (the whole legal row) meant the opposite thing.\n"
+                f"    Geometry(..., chosen_primitive={moved['primitive']!r})"
+            )
+        if moved:
+            raise InvalidParameterError(
+                f"Geometry got unexpected keyword(s) {sorted(moved)}; it takes "
+                "transform, frame, parts/channels, label, style, axis_labels, axis_limits, "
+                "axis_scales, kind, chosen_primitive, primitives, aspect, title, "
+                "color_label, legend, clim and meta."
+            )
         if (parts is None) == (channels is None):
             raise InvalidParameterError(
                 "Geometry takes exactly one of parts= (several drawable pieces) or "
@@ -507,7 +534,7 @@ class Geometry:
         object.__setattr__(self, "axis_limits", tuple(axis_limits))
         object.__setattr__(self, "axis_scales", tuple(axis_scales))
         object.__setattr__(self, "kind", kind)
-        object.__setattr__(self, "primitive", primitive)
+        object.__setattr__(self, "chosen_primitive", chosen_primitive)
         object.__setattr__(
             self, "primitives", frozenset(primitives) if primitives is not None else None
         )
@@ -634,11 +661,61 @@ class Geometry:
         stacked = np.stack([np.asarray(self[c], dtype=float) for c in shared])
         return stacked.astype(dtype) if dtype is not None else stacked
 
+    def __getattr__(self, name: str) -> Any:
+        """Answer the one renamed field by name; everything else is a plain miss.
+
+        Reached only when normal lookup fails, so it costs nothing on a hit and
+        leaves ``hasattr(g, anything)`` answering ``False`` as it should.
+        """
+        moved = _GEOMETRY_MOVED.get(name)
+        if moved is not None:
+            raise AttributeError(f"Geometry has no {name!r}. {moved}")
+        raise AttributeError(f"{type(self).__name__!r} object has no attribute {name!r}")
+
+    def __dir__(self) -> list[str]:
+        """Expose the documented doors: ``g["x"]``, ``.parts``, ``.frame``, ``.primitives``, ``.meta``.
+
+        ``ts.viz.geometry(subject, name)`` is *the arrays escape hatch*, and what
+        a caller does with one is read a channel (``g["x"]``), reach the drawable
+        pieces behind it (``.parts`` — each with its own ``channels``, ``label``
+        and ``style``), ask what space it is in (``.frame``), ask what may legally
+        draw it (``.primitives``), and read the choices the transform made for
+        them (``.meta`` — the sampled region, the grid resolution, the
+        integration time).
+
+        ``parts`` is listed because **this class hands it back**: both the
+        differing-shape branch of ``g["x"]`` and the no-shared-channel branch of
+        ``np.asarray(g)`` end their message with *"iterate g.parts"*, and a
+        remedy a library prints must be a name the reader can then tab-complete.
+        It is also the only route to a *per-piece* label, style or primitive,
+        which is what a multi-part geometry has that a stacked array does not.
+
+        The other fourteen names — ``channels`` ``channel_names`` ``axis_labels``
+        ``axis_limits`` ``axis_scales`` ``space`` ``axes`` ``kind`` ``aspect``
+        ``title`` ``clim`` ``color_label`` ``legend`` ``transform``
+        ``chosen_primitive`` — are what the *lowering* reads on the way to a
+        :class:`~tsdynamics.viz.spec.Plot`.  Every one is still a readable,
+        tested attribute; ``dir`` has no part in attribute lookup.  Iteration
+        (``for part in g``) and ``len(g)`` are untouched.
+        """
+        return ["__getitem__", "frame", "meta", "parts", "primitives"]
+
     def __repr__(self) -> str:  # noqa: D105
         return (
             f"Geometry({self.transform!r}, frame={self.frame.describe()}, "
             f"parts={len(self.parts)}, channels={sorted(self.channel_names())})"
         )
+
+
+#: ``old Geometry attribute -> the sentence naming the working spelling``.
+#: Read by :meth:`Geometry.__getattr__`; a rename's message *is* its migration guide.
+_GEOMETRY_MOVED: dict[str, str] = {
+    "primitive": (
+        "It is `chosen_primitive` now — one letter from `primitives` (the whole "
+        "legal row), on the same record, meaning the opposite thing. Read it with "
+        "`g.chosen_primitive`; the row is `g.primitives`."
+    ),
+}
 
 
 def make_frame(
@@ -668,8 +745,8 @@ def make_frame(
         space — a spatial field is a 2-D lattice or a 1-D profile.
 
         .. versionchanged:: 6.0
-           It used to be the required second positional argument, which made
-           every caller state a number the space already fixes.
+            It used to be the required second positional argument, which made
+            every caller state a number the space already fixes.
     """
     width = space_arity(space) if ndim is None else int(ndim)
     names = [axis_name(label) for label in list(labels)[:width]]
@@ -741,8 +818,29 @@ class Primitive:
         """Whether this primitive can draw in coordinate space ``space``."""
         return self.frames is None or space in self.frames
 
+    def __dir__(self) -> list[str]:
+        """Expose what ``primitives.get("line")`` is asked: ``name doc requires marks``.
+
+        ``ts.viz.primitives.get("line").requires`` is the advertised read — *what
+        channels must my geometry carry for this to draw it?* — and ``marks`` is
+        the governance answer to *what does it lower to?*.
+
+        ``build`` (the drawing function), ``frames`` / ``accepts_frame`` (the
+        coordinate-space guard), ``options`` (checked for you when you pass one)
+        and ``consumes`` / ``emits_frame`` are how the lowering drives the record.
+        All six stay public; a primitive author still writes and reads them.
+        """
+        return _dir_without(self, _PRIMITIVE_MACHINERY)
+
     def __repr__(self) -> str:  # noqa: D105
         return f"Primitive({self.name!r})"
+
+
+#: What a :class:`Primitive` record carries for the lowering to drive it — as
+#: opposed to the four names a caller asks it about.  Hidden from ``dir()`` only.
+_PRIMITIVE_MACHINERY: frozenset[str] = frozenset(
+    {"accepts_frame", "build", "consumes", "emits_frame", "frames", "options"}
+)
 
 
 # ---------------------------------------------------------------------------
@@ -791,6 +889,40 @@ class Presentation:
 #: transform on, and the options to run it with.
 ExampleFactory = Callable[[str], "tuple[Any, Mapping[str, Any]]"]
 
+#: What a :class:`PlotTransform` record carries so the *library* can drive it,
+#: as opposed to what it declares so a *reader* can understand it.  Hidden from
+#: ``dir()`` only — every one is public, importable, tested, and called on every
+#: single plot this library draws.
+_TRANSFORM_MACHINERY: frozenset[str] = frozenset(
+    {
+        "accepts_subject",
+        "analysis",
+        "compute",
+        "describe_primitives",
+        "example",
+        "labels",
+        "ndim",
+        "presentation",
+        "role",
+        "shape_dependent",
+    }
+)
+
+#: ``deleted PlotTransform attribute -> the sentence that answers the guess``.
+#: Read by :meth:`PlotTransform.__getattr__`, for the same reason
+#: :data:`_GEOMETRY_MOVED` exists: this record is handed to third-party
+#: transform authors by ``ts.viz.transforms.get(...)``, and a field the docs
+#: once described must answer by name rather than with a bare miss.
+_TRANSFORM_MOVED: dict[str, str] = {
+    "exclusive": (
+        "It was deleted in v6: measured `frozenset()` on all 39 registered "
+        "transforms, it was never a parameter of `register()`, and the `!` marker "
+        "it drove could not appear in `ts.viz.compatibility()`. The declared "
+        "compatibility row is `t.primitives`, and `ts.viz.transforms.allow(name, "
+        "primitive)` widens it."
+    ),
+}
+
 
 @dataclass(frozen=True)
 class PlotTransform:
@@ -819,13 +951,6 @@ class PlotTransform:
         mark) is a different thing and keeps its warn-and-fall-back behaviour;
         a *semantic* mismatch has no correct drawing, so there is nothing to
         fall back to.
-    exclusive : frozenset of str, optional
-        **Vestigial and always empty.**  It meant "valid only in this row" and
-        drove a ``!`` marker in :func:`tsdynamics.viz.compatibility` — a marker
-        that could never appear, because all 35 in-tree rows left it empty.  The
-        declaration was removed from
-        :func:`~tsdynamics.viz.transforms.register` in v6; the field survives so
-        the docs-gallery tooling that reads it keeps working.
     frame : FrameSpace or tuple of FrameSpace
         The coordinate space(s) this transform draws in.  The axis *names* come
         from the geometry, not from here.
@@ -874,7 +999,6 @@ class PlotTransform:
     frame: tuple[FrameSpace, ...]
     role: OverlayRole
     ndim: tuple[int, ...]
-    exclusive: frozenset[str] = frozenset()
     requires: str | None = None
     doc: str = ""
     kind: PlotKind | None = None
@@ -929,13 +1053,13 @@ class PlotTransform:
         ``subject.plot.<TAB>`` lists — so it must be *true*, not permissive.
 
         .. versionchanged:: 6.0
-           Measured before: ``find(subject=henon)`` advertised all **38**
-           transforms and **14 raised**, including every 2-D-flow field
-           transform; ``find(subject=lyapunov_spectrum)`` advertised 38 and
-           **22 raised**.  The old rule accepted everything that was not literally
-           an array or a trajectory, so a *map* was offered ``nullclines`` and a
-           *result* was offered ``vector_field``.  Declared subjects replace the
-           guess.
+            Measured before: ``find(subject=henon)`` advertised all **38**
+            transforms and **14 raised**, including every 2-D-flow field
+            transform; ``find(subject=lyapunov_spectrum)`` advertised 38 and
+            **22 raised**.  The old rule accepted everything that was not literally
+            an array or a trajectory, so a *map* was offered ``nullclines`` and a
+            *result* was offered ``vector_field``.  Declared subjects replace the
+            guess.
         """
         return bool(set(self.subjects) & subject_kinds(subject))
 
@@ -980,6 +1104,36 @@ class PlotTransform:
         ``ts.viz.geometry(subject, name).primitives``.
         """
         return len(set(self.ndim)) > 1 or len(self.frame) > 1
+
+    def __dir__(self) -> list[str]:
+        """Expose the **declaration** a registry reader wants; hide the machinery.
+
+        ``ts.viz.transforms.get("psd")`` hands back this record so a caller can
+        ask what it is and what may draw it — ``name`` ``doc`` ``source``
+        ``subjects`` ``frame`` ``kind`` ``primitives`` ``default_primitive``
+        ``requires`` ``available`` ``aliases``.  That is the eleven names left.
+
+        The ten removed are how the library *uses* the record, not what it says:
+        ``compute`` (the function — reached by calling the transform through
+        ``ts.plot``), ``ndim`` ``role`` ``presentation`` ``labels`` (spec-assembly
+        inputs), ``example`` (the governance gate's fixture), ``analysis`` (the
+        provenance string), and the three derived helpers ``accepts_subject``
+        ``describe_primitives`` ``shape_dependent`` whose answers
+        ``ts.viz.transforms.find(subject=…)`` and ``ts.viz.compatibility()``
+        already print.  All ten stay public and tested.
+        """
+        return _dir_without(self, _TRANSFORM_MACHINERY)
+
+    def __getattr__(self, name: str) -> Any:
+        """Answer the one deleted field by name; everything else is a plain miss.
+
+        Reached only when normal lookup fails, so it costs nothing on a hit and
+        leaves ``hasattr(t, anything)`` answering ``False`` as it should.
+        """
+        moved = _TRANSFORM_MOVED.get(name)
+        if moved is not None:
+            raise AttributeError(f"PlotTransform has no {name!r}. {moved}")
+        raise AttributeError(f"{type(self).__name__!r} object has no attribute {name!r}")
 
     def __repr__(self) -> str:  # noqa: D105
         return (
@@ -1073,3 +1227,6 @@ def _has_color(layers: list[Layer], geometry: Geometry) -> bool:
     if geometry.color_label is not None or geometry.clim is not None:
         return True
     return any("c" in lyr.data or str(lyr.kind) in ("image", "surface3d") for lyr in layers)
+
+
+__dir__ = listing_dir(__all__)

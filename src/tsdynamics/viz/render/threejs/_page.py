@@ -43,6 +43,8 @@ from typing import TYPE_CHECKING, Any
 
 from tsdynamics.errors import InvalidParameterError
 
+from ..._visibility import listing_dir
+
 if TYPE_CHECKING:
     from ...spec import PlotSpec
 
@@ -56,6 +58,8 @@ __all__ = [
     "render_page",
     "write_loader_asset",
 ]
+
+__dir__ = listing_dir(__all__)
 
 #: The reference loader's filename, both in the package and when written out.
 LOADER_FILENAME = "tsdyn-threejs-loader.js"

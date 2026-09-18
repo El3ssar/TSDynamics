@@ -65,6 +65,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from .._frames import FrameSpace, OverlayRole
+from .._visibility import listing_dir
 from ..spec import PlotKind
 from ._base import Geometry, Part, Presentation, make_frame
 from ._data import _component_index, _meta, _split_traj, _title
@@ -82,6 +83,8 @@ __all__ = [
     "psd",
     "return_time",
 ]
+
+__dir__ = listing_dir(__all__)
 
 
 # ---------------------------------------------------------------------------

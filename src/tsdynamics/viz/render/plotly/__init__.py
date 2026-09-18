@@ -35,6 +35,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from ..._visibility import listing_dir
 from ...spec import PlotKind, PlotSpec
 from ..caps import RendererCapabilities
 
@@ -42,6 +43,8 @@ if TYPE_CHECKING:
     from tsdynamics.registry import Registry
 
 __all__ = ["register"]
+
+__dir__ = listing_dir(__all__)
 
 
 @dataclass(frozen=True)

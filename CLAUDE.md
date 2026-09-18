@@ -53,6 +53,7 @@ src/tsdynamics/
 │   ├── _info.py              # SystemInfo (system.info) + the `variables` descriptor + family_of
 │   ├── _derive.py            # DeriveMixin: the two derivation verbs, poincare (absorbs the strobe) + ensemble
 │   ├── _kwargs.py            # the closed-run-signature guard + the per-name WHY table
+│   ├── _hidden.py            # the @hide decorator: the families/derived half of the §11 visibility ruling (a `__dir__` edit, NEVER a rename — every hidden name stays bound, importable, callable)
 │   ├── protocol.py           # the System runtime Protocol (run/step/state/time/reinit + dim/family)
 │   ├── continuous.py         # ContinuousSystem (engine run + jacobian autogen)
 │   ├── delay.py              # DelaySystem (engine method-of-steps, forward-only)
@@ -106,11 +107,15 @@ src/tsdynamics/
 │   ├── embedding/           # owned by A-EMBED
 │   └── sampling/            # sagitta tools: estimate_dt_from_sagitta (output-dt selector) + sagitta_profile (per-point bow, the color_by="sagitta" field). NOT registered into registry.analyses (a sampling tool, not a quantifier); SagittaDt result is hidden (not exported)
 ├── viz/                      # PlotSpec IR seam + renderers (mpl/plotly/json/threejs) + compose.py (ts.viz.plot)
+│   ├── export.py             # the JSON envelope: to_json/from_json + to_dict_envelope/from_dict_envelope + SCHEMA_VERSION (all off ts.viz.spec's listing; the round trip a user drives is Plot.to_dict/to_json + ts.viz.load)
+│   └── _visibility.py        # the viz half of the §11 visibility ruling: the curated __dir__ tables
 ├── systems/
 │   ├── continuous/           # 9 ODE category modules (+ spatial_fields.py 2-D PDEs) + delayed_systems.py (DDEs!)
 │   └── discrete/             # 5 map category modules
 └── utils/                    # the LEAF package: values both families/ and engine/ must agree on
+    ├── escape.py             # Unbounded + detect_unbounded (the runaway-orbit verdict Trajectory.unbounded reports)
     ├── grids.py              # make_output_grid (the single hoisted output-grid builder; sagitta tooling moved to analysis/sampling/)
+    ├── plot_namespace.py     # subject.plot as a callable NAMESPACE (bound on Trajectory + SystemBase) + the retired-`to_plot_spec` message
     └── tolerances.py         # the single hoisted rtol/atol defaults (DEFAULT_/DDE_/DDE_LYAPUNOV_/BASIN_); see "Solver tolerances"
 
 hooks/docs_autogen.py          # mkdocs hook: per-system pages + figures/viewers (TSD_DOCS_ONLY= subset preview)
@@ -1520,21 +1525,27 @@ subpackages).
 pulls in **no** plotting library — `ts.viz` is bound lazily, and every renderer
 import is deferred to first render.
 
-**`ts.viz.__all__` is exactly THIRTEEN names** (down from 32; gate
+**`ts.viz.__all__` is exactly FOURTEEN names** (down from 32; gate
 `tests/test_viz_dispatch.py::test_ts_viz_tab_surface_is_the_contract`, exact and
 sorted — re-measure, never nudge):
 
 ```
-Plot  compatibility  draw  geometry  grid  load  plot
-primitives  renderers  spec  styles  themes  transforms
+Plot  VisualizationDegraded  compatibility  draw  geometry  grid  load
+plot  primitives  renderers  spec  styles  themes  transforms
 ```
 
 Four registries with the **identical four-verb shape** (`register` / `names` /
 `find` / `get` — learn one, know all four): `transforms` · `primitives` ·
-`renderers` · `themes`. Two drawing doors (`plot`, `draw`), one panel arranger
-(`grid`), one received type (`Plot`), the arrays escape hatch (`geometry`), the
-matrix (`compatibility`), the style table (`styles`), the round-trip loader
-(`load`), and the IR one dot away (`spec`).
+`renderers` · `themes`. (`transforms` carries a **fifth**, `allow`, which widens
+a transform's declared primitive row — see below; it is the only asymmetry and
+it exists because a user's custom primitive has no other way in.) Two drawing
+doors (`plot`, `draw`), one panel arranger (`grid`), one received type (`Plot`),
+the arrays escape hatch (`geometry`), the matrix (`compatibility`), the style
+table (`styles`), the round-trip loader (`load`), the IR one dot away (`spec`),
+and **the warning you catch** (`VisualizationDegraded`, promoted in v6 round 9:
+34 doc mentions and 120 test uses against an address inside
+`ts.viz.render`, which is why `docs/visualization/styling.md` was reduced to
+comparing `w[0].category.__name__` to a *string*).
 
 Everything else is **demoted, never removed** — the IR nouns, `to_json` /
 `from_json` / `to_dict_envelope` / `from_dict_envelope` / `SCHEMA_VERSION`,
@@ -1653,8 +1664,15 @@ Nothing else in the library learns a new name when one is added.
   (`viz.spec.FIGURE_KEYS`: `title`/`xlabel`/`ylabel`/`zlabel`/`xlim`/`ylim`/
   `zlim`/`xscale`/`yscale`/`zscale`/`xticks`/`yticks`/`zticks`/`clim`/`colorbar`/
   `legend`/`theme`), applied to every panel. The composition knobs
-  (`layout`/`rows`/`cols`/`share_x`/`share_y`/`share_color`/`primitive`/`on`/
-  `animate`/`fps`/`ax`) are **on the signature**, so `help(ts.plot)` shows them.
+  (`layout`/`rows`/`cols`/`share_x`/`share_y`/`share_color`/`primitive`/`force`/
+  `animate`/`fps`/`labels`/`ax`) are **on the signature**, so `help(ts.plot)`
+  shows them. **There is no `on=`** — this line used to claim one, and the claim
+  was measured false in v6 round 9 (`inspect.signature(ts.plot)`). Putting a
+  result onto a figure you already have is
+  `result.overlay_on(existing_plot)`, which is the *only* route and is therefore
+  a permanent KEEP; since round 9 it also **widens** the host's window so what
+  you added is inside the frame (a `model` host pins its own sampled box, so an
+  equilibrium outside it used to be silently clipped).
 - **`ts.viz.draw` is the arrays door** (`viz/transforms/_registry.py::draw`): a
   channel mapping, a **list** of them, or a hand-built `Geometry` → a `Plot`, with
   no transform registered and no IR type imported. `Geometry.transform` became
@@ -1728,8 +1746,16 @@ Nothing else in the library learns a new name when one is added.
   `mark`. Marks are coerced from the words an author already uses
   (`_primitives.as_mark`), so **no new `PlotKind` is ever needed to add a way of
   drawing** — the invariant that keeps the matrix growable.
-- **`ts.viz.transforms` answers the four shared registry verbs** —
-  `register` / `names` / `find` / `get`. `find(subject=traj)` is the *user's*
+- **`ts.viz.transforms` is FIVE names** — the four shared registry verbs
+  `register` / `names` / `find` / `get`, plus **`allow`**. (It was 22 until v6
+  round 9; the other seventeen were the IR types and the front doors, every one
+  measured `is`-identical to its `ts.viz.<name>` / `ts.viz.spec.<name>` spelling
+  — `plot_transform is register` included — so nothing became a second object and
+  nothing stopped resolving.) `allow(transform, primitive)` widens a shipped
+  transform's declared compatibility row: a user's own
+  `@ts.viz.primitives.register("stem")` is refused by every shipped transform
+  until it is called, and it is the **only** way in, so the refusal message names
+  it. `find(subject=traj)` is the *user's*
   question ("what can I draw from THIS?"), `find("spectrum")` is free text over
   name + summary, `find(source=/frame=/primitive=/available=)` the author's.
   `ts.viz.compatibility()` prints the matrix **grouped by source**, each row with
@@ -1837,10 +1863,15 @@ Nothing else in the library learns a new name when one is added.
     copy. Every door peels these (and `style.style_names()`) **before** the
     remainder is treated as something to compute, so an integration typo is still
     reported as an integration typo.
-  - **`ts.viz.spec` is the IR sub-namespace** — exactly 19 nouns
+  - **`ts.viz.spec` is the IR sub-namespace** — exactly 18 nouns
     (`Animation Annotation Axis Colorbar Frame FrameSpace Geometry Layer Layout
-    Legend Part PlotKind PlotTransform Presentation SCHEMA_VERSION T
-    from_dict_envelope make_frame to_dict_envelope`). Ten are owned by sibling
+    Legend Part PlotKind PlotTransform Presentation RenderResult
+    RendererCapabilities T make_frame`). v6 round 9 dropped the three envelope
+    names (`SCHEMA_VERSION` / `to_dict_envelope` / `from_dict_envelope` — still
+    bound; the round trip a user drives is `Plot.to_dict`/`to_json` +
+    `ts.viz.load`) and promoted the two a **third-party renderer** cannot declare
+    itself without (`RendererCapabilities` / `RenderResult`, measured
+    `AttributeError` at both public addresses before). Ten are owned by sibling
     modules that import `spec.py`, so they are re-exported through a module
     `__getattr__` (`_LAZY_IR_NAMES`) — no cycle, and `import tsdynamics` still
     pulls in no plotting library. `Plot` is deliberately **not** here: it is the
@@ -2189,6 +2220,29 @@ Nothing else in the library learns a new name when one is added.
 
 ## Code conventions
 
+- **Visibility (v6 round 9, CONTRACT §11).** *A name is public if and only if a
+  user TYPES it in ordinary work, **or** it is the only route to a capability the
+  owner has protected* — composition, custom transforms, custom primitives,
+  grids, animation, the matplotlib escape hatch, writing your own
+  system/analysis/solver/renderer, the six plugin entry points. Two mechanical
+  rules follow, and both are gated:
+  - **Hiding is a DISCOVERY change, never a REACHABILITY change.** Every hide is
+    a `__dir__` / `__all__` edit. The name stays bound, importable, callable and
+    tested; only the tab surface shrinks. `families/_hidden.py::hide` and
+    `viz/_visibility.py` are the two mechanisms — **never** an underscore rename,
+    which is what would cost capability.
+  - **A module that declares `__all__` MUST define `__dir__` returning
+    `sorted(__all__)`.** `__all__` governs only `import *`; it has zero effect on
+    TAB. Before this rule 44 modules leaked 329 non-API names, mostly their own
+    imports (symengine's `sin`/`cos`/`exp` looked like library helpers on 38
+    catalogue modules). Gate: `tests/test_namespace_curation.py`, whose backlog
+    table is split "no new offender" (fast tier) / "delete the stale row"
+    (`full`), so one slot's correct fix cannot redden everyone else.
+  - **Corollary, learned the hard way:** a name a library *prints back* must be
+    a name the reader can then tab-complete. `Geometry.parts` was hidden while
+    two of `Geometry`'s own errors ended *"iterate g.parts"*; it is listed again,
+    and `tests/test_viz_visibility.py` now derives the requirement from the
+    source rather than asserting a literal list.
 - **Formatter/Linter:** `ruff format` / `ruff check` (line length 100; D rules on)
 - **Types:** `mypy --strict src/tsdynamics` is **green and CI-gated** (the
   `typecheck` job in `ci.yml`). The core library is fully strict; the system
@@ -2768,7 +2822,9 @@ Two layers now cover them:
 | `set_state` on a DDE | **Does not exist** (v6) — the state is a history function; use `reinit(u)` for a constant past or `run(history=...)`. |
 | `ts.Lorenz` / `ts.correlation_dimension` / `ts.Box` stopped resolving | Deliberate (C5). The top level is 17 names; everything else lives at one address, and the `MovedInV6` prints it: `ts.systems.Lorenz()` / `ts.analysis.correlation_dimension` / `ts.data.Box`. |
 | Removing or renaming a public name | Add its row to `src/tsdynamics/_redirects.py` **in the same commit**, sorted by key. The table is the migration guide; a removed name with no row gets the generic near-miss answer. |
-| An error message hands back `ts.<something>` | It must **resolve**. `ts.fixed_points(system)` no longer runs, so a message offering it is worse than one offering nothing. Gate: `test_polish_standards.py::test_errgate_remedy_lines_resolve`. |
+| An error message hands back `ts.<something>` | It must **resolve**. `ts.fixed_points(system)` no longer runs, so a message offering it is worse than one offering nothing. Gate: `test_polish_standards.py::test_errgate_remedy_lines_resolve`, whose must-shrink table went 5 rows → 1 in round 9 (the four `analysis/dimensions` messages now say `ts.analysis.…`). |
+| A teaching `AttributeError` ends in someone else's guess | Seal it with `errors.taught(err, name)`. CPython augments any `AttributeError` escaping a `__getattr__` and prints `Did you mean: …?` from `dir(obj)` — measured, it answered `lorenz.lyapunov_spectrum` with the **private** `_lyapunov_spectrum` and `traj.dims` with `dim`, an integer. Every message builder (`_absent_name_error`, `_discovery.attribute_error`, `plot_seam_error`, `Trajectory._miss`) seals; gate: `tests/test_visibility_restorations.py`. |
+| You hid a name and something still prints it | Then it is not hidden, it is broken. A remedy line, a repr and a docstring are all discovery surfaces; if one names `x.y`, `y` belongs in `dir(x)`. See CONTRACT §11 and the `Geometry.parts` row. |
 | `system.integrate(...)` / `.iterate(...)` / `.trajectory(...)` | **Gone** (v6) — `run` is the one trajectory verb; the `AttributeError` prints the replacement line. |
 | `run(method="rk45")` | **`solver=`** since v6: `solver=` picks a numerical kernel, `method=` picks an *estimator* on an analysis. |
 | A keyword your `run` silently ignored | It no longer can — every family's signature is closed (`families/_kwargs.py`) and the message states why that word belongs to a different family. |

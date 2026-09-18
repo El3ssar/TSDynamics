@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from ..._visibility import listing_dir
 from ...producers import autostyle_enabled, autostyle_line
 from ...spec import PlotKind, PlotSpec
 from ...style import Theme, normalize_style
@@ -40,6 +41,8 @@ if TYPE_CHECKING:
     import plotly.graph_objects as go
 
 __all__ = ["MARK_DISPATCH_3D", "build_3d_traces", "is_three_d", "render_3d", "scene_layout"]
+
+__dir__ = listing_dir(__all__)
 
 
 def is_three_d(spec: PlotSpec) -> bool:

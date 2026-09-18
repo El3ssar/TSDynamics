@@ -656,6 +656,294 @@ def test_no_all_entry_is_shadowed(pkg_name):
     )
 
 
+# ── §11.1's enforcement clause: every public MODULE curates its own listing ──────
+#
+# The three sweeps above cover packages, and modules a package *advertises*.
+# Neither reaches a public module a curated listing does not mention — and that
+# is most of them: ``dir(tsdynamics.engine)`` is four names, so
+# ``tsdynamics.engine.events`` was invisible to the gate while offering ``math``,
+# ``np``, ``dataclass``, ``field``, ``Any``, ``Problem`` and two tolerance
+# constants next to its four real ones.  ``import tsdynamics.engine.events`` is a
+# line a user can type, so its listing is a listing.
+#
+# The mechanism is the contract's, stated once: **a module that declares
+# ``__all__`` MUST define ``__dir__`` returning ``sorted(__all__)``.**  ``__all__``
+# alone governs only ``from X import *``; it has zero effect on ``dir()``, which
+# is what tab completion reads.  Measured before this gate: 44 public modules
+# leaked 523 names between them, every one of them by that single omission.
+#
+# Note what is *not* asserted: that a listed name is defined locally.  A module
+# may legitimately re-export (``engine.run`` is documented as re-exporting every
+# name its five split-out submodules own).  Foreign names are excluded by
+# construction instead — ``np`` can only reach ``dir()`` if someone writes
+# ``"np"`` into ``__all__``, which is a decision, not a leak.
+
+
+def _public_modules() -> list[str]:
+    """Every module in the tree whose dotted path is public end to end.
+
+    Packages included: a package is a module.  ``_``-prefixed components are
+    skipped at any depth, so ``viz.render.mpl._anim`` is out while
+    ``viz.render.mpl`` is in.
+    """
+    found = [
+        m.name
+        for m in pkgutil.walk_packages(ts.__path__, "tsdynamics.", onerror=_note_import_failure)
+        if not any(part.startswith("_") for part in m.name.split("."))
+    ]
+    return ["tsdynamics", *sorted(n for n in found if n not in _IMPORT_FAILURES)]
+
+
+def _note_import_failure(name: str) -> None:
+    _IMPORT_FAILURES[name] = repr(sys.exc_info()[1])
+
+
+def _listing_defect(mod: types.ModuleType) -> str | None:
+    """Why *mod* does not curate its own listing, or ``None`` when it does."""
+    listed = vars(mod).get("__all__")
+    if not isinstance(listed, list):
+        return "no __all__" if listed is None else f"__all__ is a {type(listed).__name__}"
+    if not all(isinstance(n, str) for n in listed):
+        return "__all__ holds non-strings"
+    if "__dir__" not in vars(mod):
+        return "no __dir__"
+    if dir(mod) != sorted(listed):
+        return "dir() != sorted(__all__)"
+    return None
+
+
+#: The modules that do **not** curate their own listing yet, each with the slot
+#: that owns the file.  Two gates read it, and the split is deliberate: the fast
+#: tier refuses a **new** offender (:func:`test_the_uncurated_module_backlog_admits_no_new_offender`)
+#: and the ``full`` tier refuses a **stale row** (:func:`test_the_uncurated_module_backlog_is_self_cleaning`),
+#: exactly like the doctest exemptions.  So the list can only shrink, without a
+#: sibling slot landing its half turning the fast tier red for everyone else.
+#:
+#: The fix is always the same five lines — ``__all__`` after the imports if the
+#: module has none, then::
+#:
+#:     def __dir__() -> list[str]:
+#:         """Expose only the curated public API (``__all__``) to ``dir()``."""
+#:         return sorted(__all__)
+#:
+#: The catalogue modules are the highest-harm rows: ``chaotic_attractors``
+#: currently offers 58 names for 51 systems, and the seven extras are symengine's
+#: ``sin`` / ``cos`` / ``exp`` / ``sign`` / ``np`` / ``ClassVar``, which *look*
+#: like library helpers.
+_UNCURATED_MODULE_LISTINGS: dict[str, str] = {
+    # ── the 16 catalogue modules, owned by the SYSTEMS slot ──────────────────
+    # These are the highest-harm rows in the tree and the reason the row count
+    # is worth keeping visible: a catalogue module's public names are supposed
+    # to be *system classes*, and every one of them also offers the symengine
+    # functions its kernels are written with.
+    "tsdynamics.systems.continuous.chaotic_attractors": "SYSTEMS · 58 names for 51 systems",
+    "tsdynamics.systems.continuous.chem_bio_systems": "SYSTEMS · 27 names for 21 systems",
+    "tsdynamics.systems.continuous.climate_geophysics": "SYSTEMS · 20 names for 14 systems",
+    "tsdynamics.systems.continuous.coupled_systems": "SYSTEMS · 24 names for 19 systems",
+    "tsdynamics.systems.continuous.delayed_systems": "SYSTEMS · 9 names for 7 systems",
+    "tsdynamics.systems.continuous.exotic_systems": "SYSTEMS · 23 names for 18 systems",
+    "tsdynamics.systems.continuous.oscillatory_systems": "SYSTEMS · 14 names for 10 systems",
+    "tsdynamics.systems.continuous.physical_systems": "SYSTEMS · 14 names for 9 systems",
+    "tsdynamics.systems.continuous.population_dynamics": "SYSTEMS · 7 names for 6 systems",
+    "tsdynamics.systems.continuous.spatial_fields": "SYSTEMS · has __all__, no __dir__",
+    "tsdynamics.systems.continuous.stochastic_systems": "SYSTEMS · 4 names for 3 systems",
+    "tsdynamics.systems.discrete.chaotic_maps": "SYSTEMS · 11 names for 10 maps",
+    "tsdynamics.systems.discrete.exotic_maps": "SYSTEMS · 9 names for 8 maps",
+    "tsdynamics.systems.discrete.geometric_maps": "SYSTEMS · 6 names for 5 maps",
+    "tsdynamics.systems.discrete.polynomial_maps": "SYSTEMS · 5 names for 4 maps",
+    "tsdynamics.systems.discrete.population_maps": "SYSTEMS · 5 names for 4 maps",
+}
+
+
+def test_the_module_sweep_actually_finds_modules():
+    """Guard the guard: a discovery that collapsed would certify an empty set."""
+    mods = _public_modules()
+    assert len(mods) >= 100, mods
+    assert not _IMPORT_FAILURES, f"public modules that fail to import: {_IMPORT_FAILURES}"
+    assert {
+        "tsdynamics.engine.events",
+        "tsdynamics.solvers.explicit",
+        "tsdynamics.utils.tolerances",
+        "tsdynamics.viz.compose",
+    } <= set(mods)
+
+
+@pytest.mark.parametrize(
+    "mod_name", [m for m in _public_modules() if m not in _UNCURATED_MODULE_LISTINGS]
+)
+def test_every_public_module_curates_its_own_listing(mod_name):
+    """``__all__`` **and** ``__dir__``, mirroring, on every public module."""
+    mod = importlib.import_module(mod_name)
+    defect = _listing_defect(mod)
+    assert defect is None, (
+        f"{mod_name}: {defect}.  A module that declares __all__ must define\n"
+        "    def __dir__() -> list[str]:\n"
+        '        """Expose only the curated public API (``__all__``) to ``dir()``."""\n'
+        "        return sorted(__all__)\n"
+        "or every import it makes is offered to the next person who tab-completes it."
+    )
+    missing = [n for n in mod.__all__ if not hasattr(mod, n)]
+    assert not missing, f"{mod_name}.__all__ advertises names that do not resolve: {missing}"
+    internals = sorted(set(mod.__all__) & _NEVER_PUBLIC)
+    assert not internals, f"{mod_name} lists internals: {internals}"
+
+
+def _measured_uncurated() -> dict[str, str]:
+    """``module -> defect`` for every public module that does not curate itself."""
+    return {
+        name: defect
+        for name in _public_modules()
+        if (defect := _listing_defect(importlib.import_module(name))) is not None
+    }
+
+
+def test_the_uncurated_module_backlog_admits_no_new_offender():
+    """The anti-rot half: a module may not ship without a curated listing.
+
+    This is the direction that has to hold on every commit, and it is safe under
+    a concurrent tree — a sibling slot fixing one of the rows below only makes
+    the measured set *smaller*.
+    """
+    measured = _measured_uncurated()
+    new = sorted(f"{n} ({d})" for n, d in measured.items() if n not in _UNCURATED_MODULE_LISTINGS)
+    assert not new, (
+        f"public modules leaking their imports into dir(): {new}.  Add __all__ and the "
+        "three-line __dir__; do not add a row to _UNCURATED_MODULE_LISTINGS, which may "
+        "only shrink."
+    )
+    assert _UNCURATED_MODULE_LISTINGS, "the backlog went empty — delete it and this test"
+
+
+@pytest.mark.full
+def test_the_uncurated_module_backlog_is_self_cleaning():
+    """The shrink half: a row that starts passing must be deleted.
+
+    In the ``full`` tier for the reason the doctest exemptions are: the
+    "fixed one, delete the row" failure is a *bookkeeping* failure, and firing it
+    in the fast tier makes one slot's correct change break every other slot's
+    green run.  Nightly is soon enough for bookkeeping; never is not.
+    """
+    fixed = sorted(set(_UNCURATED_MODULE_LISTINGS) - set(_measured_uncurated()))
+    assert not fixed, (
+        "these modules now curate their listing — delete their rows from "
+        f"_UNCURATED_MODULE_LISTINGS: {fixed}"
+    )
+
+
+#: The listings this ruling created, transcribed.  ``engine.run`` re-exports
+#: every one of these names, so the split-out seams stay reachable exactly as
+#: before (:func:`test_the_split_out_engine_seams_are_still_reachable_through_run`);
+#: what changed is that ``dir()`` on the seam itself no longer offers ``math``,
+#: ``np``, ``dataclass`` and the two tolerance constants as if they were its API.
+#:
+#: The three empty ones are the honest answer, not an oversight: those modules'
+#: entry points are all ``_``-prefixed (``engine.reference``, ``engine.run_methods``)
+#: or they exist purely for the import side effect that registers their kernels
+#: (the three ``solvers`` spec modules).  Declaring ``__all__ = []`` says so;
+#: omitting it offered ``SolverSpec`` / ``SolverCaps`` / ``register`` from three
+#: more addresses than the one that owns them.
+_CURATED_MODULE_LISTINGS: dict[str, list[str]] = {
+    "tsdynamics.engine.events": ["Event", "EventSolution", "crossings", "integrate_events"],
+    "tsdynamics.engine.reference": [],
+    "tsdynamics.engine.run_methods": [],
+    "tsdynamics.engine.sde_run": ["sde_ensemble_final", "sde_integrate_dense"],
+    "tsdynamics.engine.stepper": ["make_ode_stepper", "step_advance", "step_advance_to_event"],
+    "tsdynamics.solvers.explicit": [],
+    "tsdynamics.solvers.implicit": [],
+    "tsdynamics.solvers.stochastic": [],
+    "tsdynamics.utils.escape": [
+        "ESCAPE_GROWTH",
+        "ESCAPE_SCALE",
+        "Unbounded",
+        "detect_unbounded",
+        "escaped",
+    ],
+    "tsdynamics.utils.plot_namespace": ["PlotNamespace", "plot_namespace", "plot_seam_error"],
+    "tsdynamics.utils.tolerances": [
+        "BASIN_ATOL",
+        "BASIN_RTOL",
+        "DDE_ATOL",
+        "DDE_LYAPUNOV_ATOL",
+        "DDE_LYAPUNOV_RTOL",
+        "DDE_RTOL",
+        "DEFAULT_ATOL",
+        "DEFAULT_RTOL",
+    ],
+}
+
+
+@pytest.mark.parametrize("mod_name", sorted(_CURATED_MODULE_LISTINGS))
+def test_the_curated_module_listing_is_exactly_the_contract(mod_name):
+    """The eleven listings this ruling wrote, pinned name for name.
+
+    The generic sweep above proves a module *has* a curated listing; this proves
+    it is still the one that was reviewed.  A listing that silently regrows — the
+    failure this whole stream exists to make impossible — fails here by name.
+    """
+    mod = importlib.import_module(mod_name)
+    assert dir(mod) == _CURATED_MODULE_LISTINGS[mod_name]
+
+
+def test_the_split_out_engine_seams_are_still_reachable_through_run():
+    """Hiding is a DISCOVERY change, never a REACHABILITY one (§11.1).
+
+    ``engine/run.py`` re-exports the five split-out seams' names — including the
+    ``_``-prefixed ones — so ``tsdynamics.engine.run.<X>`` keeps working for every
+    ``X``.  Curating the seams' own ``dir()`` must not touch that, and the private
+    names are the half a ``__all__`` edit could plausibly have broken.
+    """
+    from tsdynamics.engine import run
+
+    for name in (
+        # public, now listed on the seam that owns them
+        "Event",
+        "EventSolution",
+        "crossings",
+        "integrate_events",
+        "sde_integrate_dense",
+        "sde_ensemble_final",
+        "make_ode_stepper",
+        "step_advance",
+        "step_advance_to_event",
+        # private, listed nowhere and reachable all the same
+        "_reference_ode",
+        "_reference_map",
+        "_reference_ensemble",
+        "_scipy_method",
+        "_resolve_method_for",
+        "_recommend_method",
+        "_resolve_method_and_prepare",
+        "_engine_events",
+        "_normalize_event_direction",
+    ):
+        assert hasattr(run, name), f"engine.run lost its re-export of {name}"
+
+
+def test_the_standard_library_does_not_resolve_on_the_top_level():
+    """``ts.importlib`` / ``ts.textwrap`` / ``ts.Any`` were never a decision.
+
+    A module's own imports land in its namespace, so ``import importlib`` at the
+    top of ``tsdynamics/__init__.py`` made ``from tsdynamics import importlib``
+    work — measured, it did.  ``dir(ts)`` is curated, which is exactly why this
+    went unnoticed for so long: the leak is invisible until someone types the
+    name.  The bindings are ``_``-prefixed now; the corresponding failure is a
+    plain teaching ``AttributeError``, because there is no replacement to name.
+    """
+    for name in ("importlib", "textwrap", "Any"):
+        assert not hasattr(ts, name), f"ts.{name} resolves again"
+        with pytest.raises(ImportError):
+            exec(f"from tsdynamics import {name}", {})  # noqa: S102
+    # ...and the one registry that has its own ``__getattr__`` answers the same.
+    assert not hasattr(ts.analysis, "Any"), "ts.analysis.Any resolves again"
+    assert ts._INTERNAL_SUBMODULES, "the sanctioned bindings table went empty"
+    leaked = sorted(
+        n
+        for n in vars(ts)
+        if not n.startswith("_") and n not in ts.__all__ and n not in ts._INTERNAL_SUBMODULES
+    )
+    assert not leaked, f"tsdynamics binds undeclared public names: {leaked}"
+
+
 # ── the internal submodules: demoted, never removed ──────────────────────────────
 
 

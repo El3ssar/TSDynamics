@@ -21,6 +21,12 @@ from typing import Any
 
 from .problem import DDEProblem, MapProblem, ODEProblem, Problem
 
+#: ``method=`` resolution exports **nothing**: all three entry points are
+#: underscored and reached as ``tsdynamics.engine.run.<name>``.  Declared (rather
+#: than omitted) so ``dir()`` says so instead of offering the four ``Problem``
+#: classes as if this module owned them.
+__all__: list[str] = []
+
 
 def _recommend_method(problem: Problem) -> Any:
     """Resolve ``method="auto"`` to a kernel by a-priori auto-stiffness selection.
@@ -152,3 +158,8 @@ def _resolve_method_and_prepare(
             system_or_problem, with_jacobian=True, **rebuild_extra, **build_kwargs
         )
     return resolution.name, problem
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

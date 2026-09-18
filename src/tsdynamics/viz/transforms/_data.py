@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from .._frames import FrameSpace, OverlayRole
+from .._visibility import listing_dir
 from ..spec import PlotKind
 from ._base import Geometry, Part, Presentation, make_frame
 from ._registry import plot_transform
@@ -51,6 +52,8 @@ __all__ = [
     "spatial_field",
     "time_series",
 ]
+
+__dir__ = listing_dir(__all__)
 
 
 # ---------------------------------------------------------------------------
@@ -420,7 +423,7 @@ def time_series(
         make_frame(FrameSpace.TIME, ("t",)),
         parts,
         axis_labels=("t", y_label),
-        primitive="points" if is_discrete else "line",
+        chosen_primitive="points" if is_discrete else "line",
         title=_title(source),
         color_label=_color_label(color_by) if coloured else None,
         legend=bool(legend) and len(parts) > 1,
@@ -537,7 +540,7 @@ def phase_portrait(
         channels=channels,
         axis_labels=labels,
         kind=PlotKind.PHASE_PORTRAIT_3D if want_3d else PlotKind.PHASE_PORTRAIT_2D,
-        primitive=primitive,
+        chosen_primitive=primitive,
         # A 3-component orbit is a space curve: the 2-D primitives would silently
         # drop z (and `density` would bin a projection while the spec still called
         # itself a 3-D portrait), so they are narrowed away for this geometry.
@@ -1423,7 +1426,7 @@ def spatial_field(
         channels={"x": np.arange(final.shape[0], dtype=float), "y": final, "frames": frames},
         label="u(x)",
         axis_labels=("x", "u"),
-        primitive="line",
+        chosen_primitive="line",
         primitives=("line", "points"),
         title=title,
         meta=meta,

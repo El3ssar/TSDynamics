@@ -45,6 +45,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from ._frames import check_overlay, force_requested, role_of
+from ._visibility import listing_dir
 from .spec import (
     Animation,
     Annotation,
@@ -60,6 +61,8 @@ from .spec import (
 )
 
 __all__ = ["plot"]
+
+__dir__ = listing_dir(__all__)
 
 #: Panel arrangements (``layout=``) that build a :data:`PlotKind.COMPOSITE`.
 _COMPOSITE_MODES: frozenset[str] = frozenset({"stack", "row", "grid", "frames"})
@@ -118,8 +121,8 @@ def plot(
         raising.  Only meaningful for ``layout="overlay"``.
 
         .. versionchanged:: 6.0
-           Was ``on="force"``, whose whole domain was one string and whose name
-           read as *"on which panel"*.  ``on=`` raises now, naming ``force=``.
+            Was ``on="force"``, whose whole domain was one string and whose name
+            read as *"on which panel"*.  ``on=`` raises now, naming ``force=``.
     animate : bool or dict or Animation, optional
         Animate the **whole figure**.  A composite plays every panel in lockstep on
         one shared clock (each panel keeps its own per-kind head default); an
@@ -132,9 +135,9 @@ def plot(
         ``"stack"`` / ``"row"`` (whose shape is fixed by the mode).
 
         .. versionadded:: 6.0
-           :class:`~tsdynamics.viz.spec.Layout` always had these fields, but
-           ``plot()`` had no way to set them, so a 4-panel grid was stuck on the
-           auto-derived 2x2 and a 2x3 could not be asked for at all.
+            :class:`~tsdynamics.viz.spec.Layout` always had these fields, but
+            ``plot()`` had no way to set them, so a 4-panel grid was stuck on the
+            auto-derived 2x2 and a 2x3 could not be asked for at all.
     share_x, share_y : bool, optional
         Force shared x / y axes across the panels.  ``None`` keeps the
         conservative auto-default (a *stack* of time-series panels naming the
@@ -362,10 +365,10 @@ def _plot_spec_of(thing: Any) -> Any:
     plottable answer to it and to nothing else.
 
     .. versionchanged:: 6.0
-       Also consulted ``to_plot_spec``, which was the public spelling of the same
-       thing.  One room, one door: ``ts.plot(x)`` hands back the
-       :class:`~tsdynamics.viz.spec.Plot` without drawing it, which is the whole
-       reason the readable name existed.
+        Also consulted ``to_plot_spec``, which was the public spelling of the same
+        thing.  One room, one door: ``ts.plot(x)`` hands back the
+        :class:`~tsdynamics.viz.spec.Plot` without drawing it, which is the whole
+        reason the readable name existed.
     """
     return getattr(thing, "__plot_spec__", None)
 
@@ -404,11 +407,11 @@ def split_presentation(kw: dict[str, Any]) -> tuple[dict[str, Any], dict[str, An
     of :data:`~tsdynamics.viz.spec.FIGURE_KEYS`.
 
     .. versionchanged:: 6.0
-       This module carried its own five-name copy of the figure vocabulary, so
-       ``ts.plot(traj, xlim=(0, 1))`` answered ``kind='phase_portrait_3d' does
-       not accept keyword(s) ['xlim']`` while ``traj.plot(xlim=(0, 1))`` worked
-       — **12 of the 17 failed at one door and none at the other**.  There is now
-       one definition, in ``viz/spec.py``, and every door imports it.
+        This module carried its own five-name copy of the figure vocabulary, so
+        ``ts.plot(traj, xlim=(0, 1))`` answered ``kind='phase_portrait_3d' does
+        not accept keyword(s) ['xlim']`` while ``traj.plot(xlim=(0, 1))`` worked
+        — **12 of the 17 failed at one door and none at the other**.  There is now
+        one definition, in ``viz/spec.py``, and every door imports it.
     """
     from .style import style_names
 

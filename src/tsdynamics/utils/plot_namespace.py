@@ -54,12 +54,17 @@ def plot_seam_error(owner: str, subject: str) -> AttributeError:
     AttributeError
         Raise it; do not return it.
     """
-    return AttributeError(
-        f"{owner!r} object has no attribute 'to_plot_spec': building a plot without "
-        f"drawing it is what ts.plot({subject}) already does.\n"
-        f"    ts.plot({subject})     # the Plot object — nothing is rendered\n"
-        f"    {subject}.plot()       # the same thing, styled at the door\n"
-        f"    (the seam itself is the dunder {subject}.__plot_spec__, not a verb you type)"
+    from tsdynamics.errors import taught
+
+    return taught(
+        AttributeError(
+            f"{owner!r} object has no attribute 'to_plot_spec': building a plot without "
+            f"drawing it is what ts.plot({subject}) already does.\n"
+            f"    ts.plot({subject})     # the Plot object — nothing is rendered\n"
+            f"    {subject}.plot()       # the same thing, styled at the door\n"
+            f"    (the seam itself is the dunder {subject}.__plot_spec__, not a verb you type)"
+        ),
+        "to_plot_spec",
     )
 
 
@@ -144,3 +149,8 @@ class plot_namespace:  # noqa: N801 — a descriptor reads as an attribute, not 
         if obj is None:
             return self._impl
         return PlotNamespace(obj, self._impl.__get__(obj, objtype))
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

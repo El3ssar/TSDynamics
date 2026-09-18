@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, ClassVar
 
 import numpy as np
 
@@ -48,12 +48,35 @@ class ReturnMap(AnalysisResult):
     Result of :func:`return_map`.
 
     An :class:`~tsdynamics.analysis._result.AnalysisResult`, so it carries
-    ``.meta`` / the readout ``repr`` / ``.to_dict()`` / the ``.plot`` seam.  The recorded
-    observable values are :attr:`values`; the return map itself is the pair
-    (:attr:`current`, :attr:`successor`) = :math:`(v_n, v_{n+1})`.  Iterate for
+    ``.meta`` / the readout ``repr`` / ``.to_dict()`` / the ``.plot`` seam.  Iterate for
     ``(current, successor)`` pairs, or use :meth:`flat` for the scatter-ready
     arrays.
+
+    Attributes
+    ----------
+    current, successor : ndarray
+        **The return map itself** — :math:`(v_n, v_{n+1})`, the pair you plot.
+    values : ndarray
+        **The raw observable series** the map was built from: every recorded
+        :math:`v_n` in time order, including the last one (which has no
+        successor and so appears in :attr:`current` for no pair).  It is the
+        *input* to the map, not the map.  (``values`` is the one name in the
+        result layer that means different things on different classes: the
+        *answer* on a spectrum or an embedding, the swept parameter on
+        :class:`~tsdynamics.analysis.results.OrbitDiagram` and
+        :class:`~tsdynamics.analysis.results.ContinuationResult`, this series
+        here.)
+    times : ndarray
+        When each entry of :attr:`values` was recorded.
+    kind : str
+        ``"max"``, ``"min"`` or ``"poincare"`` — how successive values were
+        picked off the orbit.
     """
+
+    #: R1 — ``observable`` is the component INDEX the caller asked to record,
+    #: echoed back; the repr's title already names it in words.  The measured
+    #: series is :attr:`values` and the map itself is ``current`` / ``successor``.
+    _HIDDEN_ATTRIBUTES: ClassVar[frozenset[str]] = frozenset({"observable"})
 
     current: np.ndarray = field(default_factory=lambda: np.empty(0), compare=False)  # v_n
     successor: np.ndarray = field(default_factory=lambda: np.empty(0), compare=False)  # v_{n+1}

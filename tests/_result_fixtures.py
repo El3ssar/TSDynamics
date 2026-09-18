@@ -339,7 +339,7 @@ def build() -> dict[str, AnalysisResult]:
             boundary_dimension=1.339,
             state_dimension=2,
             epsilons=np.array([0.01, 0.02, 0.04, 0.08]),
-            f=np.array([0.10, 0.16, 0.25, 0.40]),
+            uncertain_fractions=np.array([0.10, 0.16, 0.25, 0.40]),
             r_squared=0.968,
             meta={"analysis": "uncertainty_exponent"},
         ),

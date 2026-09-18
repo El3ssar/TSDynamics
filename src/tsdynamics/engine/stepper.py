@@ -29,6 +29,9 @@ import numpy as np
 
 from tsdynamics.errors import ConvergenceError
 
+#: The resumable stepper's public API.
+__all__ = ["make_ode_stepper", "step_advance", "step_advance_to_event"]
+
 
 def make_ode_stepper(
     tape_arrays: tuple[Any, ...],
@@ -178,3 +181,8 @@ def step_advance_to_event(
             "non-finite values before the span end."
         )
     return bool(found), float(t_cross), u_cross, int(dir_)
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

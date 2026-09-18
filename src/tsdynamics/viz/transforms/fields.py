@@ -34,11 +34,14 @@ import numpy as np
 import tsdynamics.analysis.planar as _planar
 
 from .._frames import FrameSpace, OverlayRole
+from .._visibility import listing_dir
 from ..spec import PlotKind
 from ._base import Geometry, Presentation, make_frame
 from ._registry import plot_transform
 
 __all__ = ["escape_time", "ftle", "invariant_density", "transient_time"]
+
+__dir__ = listing_dir(__all__)
 
 
 # ---------------------------------------------------------------------------
@@ -533,7 +536,7 @@ def invariant_density(
             label=f"density of {labels[0]}",
             axis_labels=(labels[0], "density"),
             kind=PlotKind.DIAGNOSTIC_CURVE,
-            primitive="histogram",
+            chosen_primitive="histogram",
             primitives=("histogram", "line", "steps"),
             aspect="auto",
             meta=meta,
@@ -548,7 +551,7 @@ def invariant_density(
         channels={"x": xs, "y": ys, "z": density2d, "c": density2d.ravel()},
         axis_labels=(labels[0], labels[1]),
         kind=PlotKind.PHASE_PORTRAIT_2D,
-        primitive="image",
+        chosen_primitive="image",
         primitives=("image", "contour", "surface3d"),
         aspect="equal",
         color_label="density",

@@ -43,7 +43,7 @@ from tsdynamics.errors import (
 from tsdynamics.families import ContinuousSystem, DiscreteMap
 
 from .._common import reject_data
-from .._result import AnalysisResult
+from .._result import AnalysisResult, _build_meta
 from .._result_json import _sig
 from .._tangent import flow_fns, map_fns, rk4_state, rk4_variational
 from . import _common as _c
@@ -182,10 +182,46 @@ class GALIResult(AnalysisResult):
         return None
 
     def is_chaotic(self, *, threshold: float = 1e-6) -> bool:
-        """Whether the final GALI value collapsed below ``threshold`` (chaotic).
+        r"""Whether GALI\ :sub:`k` collapsed below **your** threshold by the end.
 
-        The tunable form of :attr:`chaotic`, which is this test at the shipped
-        threshold and returns ``None`` when the curve does not support a verdict.
+        **This is the one thing :attr:`chaotic` cannot do, and the reason a
+        second spelling of one verdict is allowed to exist here.**  Everywhere
+        else in the library a classification has exactly one name (contract §4.2
+        rule 10) and that name answers with the library's own judgement.  But
+        GALI\ :sub:`k` is a *decay* test, and how far the index must fall before
+        you call an orbit chaotic depends on how long you integrated and how
+        cleanly the system separates — so the threshold is genuinely the
+        caller's to set, and a closed-vocabulary property has nowhere to put it.
+
+        Prefer :attr:`chaotic` (which knows about :attr:`applicable` and hedges
+        with ``None`` in the undecided band) and reach for this only when you
+        are sweeping the threshold or reproducing a published cut::
+
+            gali = ts.analysis.gali(system, k=2, final_time=500)
+            gali.chaotic                      # the library's verdict, or None
+            gali.is_chaotic(threshold=1e-8)   # yours, on the same curve
+
+        Unlike :attr:`chaotic` this always returns a plain ``bool``: you asked a
+        sharp question, so it gives a sharp answer and does not consult
+        :attr:`applicable`.  On a curve that never resolved, that answer is
+        ``False`` because nothing collapsed — check :attr:`applicable` first if
+        that distinction matters.
+
+        Parameters
+        ----------
+        threshold : float, default 1e-6
+            Collapse level for :attr:`final`.  Keyword-only, so the call always
+            reads as ``is_chaotic(threshold=...)``.
+
+        Returns
+        -------
+        bool
+            ``True`` when ``final < threshold``.
+
+        See Also
+        --------
+        chaotic : the verdict at the shipped thresholds, hedging when undecided.
+        decay_rate : the fitted exponential rate the collapse happened at.
         """
         return self.final < threshold
 
@@ -425,7 +461,7 @@ def gali(
             times=times,
             values=values,
             is_discrete=discrete,
-            meta=AnalysisResult.build_meta(system, analysis="gali", k=k),
+            meta=_build_meta(system, analysis="gali", k=k),
         )
 
     # GALI characterises a *specific* orbit.  When the caller pins the initial

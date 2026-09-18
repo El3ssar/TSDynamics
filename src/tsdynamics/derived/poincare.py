@@ -12,8 +12,9 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 from tsdynamics.engine.events import _DIRECTION_WORDS  # noqa: F401  # re-export for back-compat
 from tsdynamics.engine.events import _normalize_event_direction as _normalize_direction
-from tsdynamics.errors import ConvergenceError, invalid_value
+from tsdynamics.errors import ConvergenceError, InvalidParameterError, invalid_value, remedy
 from tsdynamics.families import Trajectory
+from tsdynamics.families._hidden import hide
 
 from . import _crossings
 from ._base import DerivedSystem, _reject_wrapper_keywords
@@ -318,8 +319,8 @@ def _refuse_a_family_with_no_section(system: Any, name: str) -> None:
             "crossings of a *continuous* orbit through a surface, and a map jumps rather than "
             "crossing. It is already the discrete view a section would produce."
             + remedy(
-                f"ts.orbit_diagram({name.lower()}, 'a', values)",
-                f"ts.fixed_points({name.lower()})",
+                f"ts.analysis.orbit_diagram({name.lower()}, 'a', values)",
+                f"ts.analysis.fixed_points({name.lower()})",
                 lead="Analyse the map directly:",
             )
         )
@@ -506,6 +507,7 @@ class PoincareSection(Trajectory):
         }
 
 
+@hide("plane_auto")
 class PoincareMap(DerivedSystem):
     """
     Present a flow as the discrete map of its crossings through a hyperplane.
@@ -561,8 +563,8 @@ class PoincareMap(DerivedSystem):
     >>> section.y.shape
     (500, 3)
     >>> pmap = PoincareMap(Lorenz())           # no plane named → one is chosen
-    >>> pmap.plane_auto                        # ...and the choice is recorded
-    True
+    >>> pmap.plane                             # ...and the choice is readable
+    (2, ...)
     """
 
     def __init__(
@@ -575,7 +577,12 @@ class PoincareMap(DerivedSystem):
         max_time: float = 1e4,
     ) -> None:
         super().__init__(system)
-        #: Whether :attr:`plane` was chosen by :func:`auto_plane` rather than named.
+        # Whether the plane was chosen by ``auto_plane`` rather than named.
+        # Off the tab surface (``CONTRACT.md`` §11, T2): the fact is already
+        # reported where a reader meets it — ``repr(section)`` says "plane chosen
+        # automatically", and ``section.meta["plane_auto"]`` carries it into any
+        # record — so a third spelling on the object is one more name to scroll
+        # past.  Still bound, still readable.
         self.plane_auto = plane is None
         # The plane **as the user typed it**, kept beside the resolved
         # ``(index, offset)`` for the repr and for ``_rebuild``.  Private: two
@@ -585,7 +592,7 @@ class PoincareMap(DerivedSystem):
         self._plane_given = plane
         plane, direction = _resolve_section_plane(system, plane, direction)
         normal, offset = self._parse_plane(system.dim, plane)
-        self.plane = plane
+        self._plane = plane
         self._normal = normal
         self._offset = offset
         self.direction = direction
@@ -599,6 +606,53 @@ class PoincareMap(DerivedSystem):
         self._u_cross: np.ndarray | None = None
         self._t_cross: float | None = None
         self._n_cross = 0
+
+    @property
+    def plane(self) -> tuple[Any, ...]:
+        """The section this map actually marches — **read-only**.
+
+        The resolved reading: ``(component_index, offset)`` for an axis-aligned
+        section, or ``(normal_vector, offset)`` for an arbitrary normal.  A
+        direction word given inside the constructor's ``plane`` argument has been
+        peeled off into :attr:`direction`, and ``repr(section)`` renders the whole
+        thing back in the words it was asked for (``y = 0 up``).
+
+        Read-only because writing it was a **provenance lie**
+        (``CONTRACT.md`` §11.6 defect 1): the unit normal and offset the marcher
+        actually uses are derived from this tuple at construction, so
+        ``pmap.plane = ("z", 27.0)`` relabelled a section it never crossed —
+        every later ``run()`` kept returning crossings of the *old* plane, under
+        the new plane's name.  To section somewhere else, build the map you mean::
+
+            pmap = system.poincare("z", 27.0)
+
+        Returns
+        -------
+        tuple
+            ``(index, offset)`` or ``(normal, offset)``.
+        """
+        return self._plane
+
+    @plane.setter
+    def plane(self, value: Any) -> None:
+        """Refuse the write, and name the line that does what was meant.
+
+        Python's own message for a setter-less property (*"property 'plane' ...
+        has no setter"*) says what is forbidden, never what to do — and this is a
+        case where the reader plainly has a section in mind.
+        """
+        line = (
+            f"pmap = system.poincare(*{value!r})"
+            if isinstance(value, tuple) and len(value) in (2, 3)
+            else "pmap = system.poincare('z', 27.0)"
+        )
+        raise InvalidParameterError(
+            f"PoincareMap.plane is read-only, got {value!r}. The marcher's normal and "
+            "offset are derived from it at construction, so assigning would rename the "
+            "section without moving it — every later run() would return crossings of "
+            "the old plane under the new plane's name."
+            + remedy(line, lead="build the map you mean:")
+        )
 
     @staticmethod
     def _parse_plane(dim: int, plane: tuple[Any, ...]) -> tuple[np.ndarray, float]:
@@ -963,6 +1017,8 @@ class PoincareMap(DerivedSystem):
             "plane": self.plane,
             # Recorded so an auto-chosen section is never a silent choice (the
             # same contract orbit_diagram keeps for its auto discrete view).
+            # This ``meta`` key is the *public* reading of the fact; the
+            # attribute behind it is off the tab surface (§11, T2).
             "plane_auto": self.plane_auto,
             "direction": self.direction,
             "dt": self.dt,

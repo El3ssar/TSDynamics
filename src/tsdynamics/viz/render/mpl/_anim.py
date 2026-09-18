@@ -89,6 +89,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from ..._visibility import listing_dir
 from ...spec import Animation, PlotKind, PlotSpec
 from .. import normalize_kind
 from ._core import (
@@ -107,6 +108,8 @@ if TYPE_CHECKING:
     from matplotlib.figure import Figure
 
 __all__ = ["render_animation"]
+
+__dir__ = listing_dir(__all__)
 
 #: Truthy ⇒ never blit; every frame is drawn the unoptimised way.  The bypass that
 #: proves WITH-compositor == WITHOUT-compositor, mirroring

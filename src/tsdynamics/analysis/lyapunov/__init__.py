@@ -18,7 +18,7 @@ from tsdynamics.utils.escape import escaped
 
 from .._common import reject_data, reject_system
 from .._discovery import register as _register
-from .._result import AnalysisResult, ArrayResult, ScalarResult
+from .._result import ArrayResult, ScalarResult, _build_meta
 from .._result_json import _vector
 from .from_data import LyapunovFromData, ScalingRegionWarning, lyapunov_from_data
 
@@ -759,7 +759,7 @@ def lyapunov_spectrum(
             fwd["atol"] = atol
     estimate = method_fn(**fwd)
     exponents = np.asarray(estimate, dtype=float)
-    meta = AnalysisResult.build_meta(
+    meta = _build_meta(
         system,
         analysis="lyapunov_spectrum",
         k=int(exponents.size),
@@ -1041,7 +1041,7 @@ def _two_trajectory_spectrum(
                 "lyapunov_spectrum: the reference clock did not advance — a continuous "
                 "system must report elapsed time through time(); pass an explicit dt."
             )
-    meta = AnalysisResult.build_meta(
+    meta = _build_meta(
         system,
         analysis="lyapunov_spectrum",
         k=1,

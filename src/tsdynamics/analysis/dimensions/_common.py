@@ -125,7 +125,7 @@ def require_min_points(points: np.ndarray, *, analysis: str, reason: str) -> Non
             ),
             hint="Point sets are (n_samples, n_components)."
             + remedy(
-                f"ts.{analysis}(data.T)",
+                f"ts.analysis.{analysis}(data.T)",
                 lead="Transpose it:",
             ),
         )
@@ -137,7 +137,7 @@ def require_min_points(points: np.ndarray, *, analysis: str, reason: str) -> Non
         + "."
         + remedy(
             "traj = system.run(final_time=500.0, dt=0.01)",
-            f"ts.{analysis}(traj)",
+            f"ts.analysis.{analysis}(traj)",
             lead="Measure the attractor for longer:",
         ),
     )
@@ -476,14 +476,14 @@ class DimensionResult(ScalingResult):
     fitted slope of a log--log curve — so it inherits the canonical ``estimate`` /
     ``abscissa`` / ``ordinate`` / ``fit_region`` schema, the result surface
     (``.meta`` / the readout ``repr`` / ``.to_dict()`` / the ``.plot`` seam) and behaves
-    as the dimension number (``float(result)`` and comparisons).  Domain-named
-    ``@property`` aliases (:attr:`dimension`, :attr:`x`, :attr:`y`,
-    :attr:`fit_slice`) preserve the original field names.
+    as the dimension number (``float(result)`` and comparisons).  The
+    domain-named :attr:`dimension` is the spelling for the number.
 
     Attributes
     ----------
-    estimate : float
-        The estimated dimension (the fitted slope).  Aliased :attr:`dimension`.
+    dimension : float
+        The estimated dimension (the fitted slope).  ``float(result)`` returns
+        it; it is the domain name for the inherited ``estimate`` field.
     stderr : float
         Standard error of the slope over the selected scaling region.
     kind : str
@@ -492,19 +492,29 @@ class DimensionResult(ScalingResult):
     abscissa, ordinate : ndarray
         The log--log curve the slope was fitted to (log-radius vs log-C for the
         correlation sum; log-scale vs partition ordinate for the generalized
-        dimensions; mean-log-radius vs log-mass for fixed mass).  Aliased
-        :attr:`x`, :attr:`y`.
+        dimensions; mean-log-radius vs log-mass for fixed mass).
     fit_region : tuple[int, int]
-        Inclusive ``(lo, hi)`` indices of the selected scaling region.  Aliased
-        :attr:`fit_slice`.
+        Inclusive ``(lo, hi)`` indices of the selected scaling region.
     intercept : float
         Intercept of the fitted line.
     q : float or None
         Rényi order, for the generalized dimensions (``2.0`` for the correlation
         sum, ``None`` for fixed mass).
+
+    .. versionchanged:: 6.0
+        ``fit_slice`` is **gone** — it was a measured exact duplicate of
+        :attr:`fit_region` (both answered ``(6, 23)`` on the same result), and a
+        reader who met both had to discover they were one thing.  ``x`` / ``y``
+        remain readable but are off ``dir()``: they alias :attr:`abscissa` /
+        :attr:`ordinate`, and a single letter ``x`` on a phase-space library is
+        one keystroke from a state component.
     """
 
     _repr_fields: ClassVar[tuple[str, ...]] = ("kind", "dimension", "stderr", "q")
+
+    #: R2 — ``x`` / ``y`` alias :attr:`abscissa` / :attr:`ordinate` (they stay
+    #: readable, so ``res.x`` in older code keeps working).
+    _HIDDEN_ATTRIBUTES: ClassVar[frozenset[str]] = frozenset({"x", "y"})
 
     kind: str = ""
     q: float | None = None
@@ -557,11 +567,6 @@ class DimensionResult(ScalingResult):
         return self.ordinate
 
     @property
-    def fit_slice(self) -> tuple[int, int]:
-        """The selected scaling region (alias of :attr:`fit_region`)."""
-        return self.fit_region
-
-    @property
     def local_slopes(self) -> np.ndarray:
         """Pointwise local slope of the log--log curve (the diagnostic plateau)."""
         return local_slopes(self.x, self.y)
@@ -569,7 +574,7 @@ class DimensionResult(ScalingResult):
     @property
     def scaling_window(self) -> tuple[float, float]:
         """The ``(x_lo, x_hi)`` abscissa span of the selected scaling region."""
-        lo, hi = self.fit_slice
+        lo, hi = self.fit_region
         return float(self.x[lo]), float(self.x[hi])
 
     def __plot_spec__(self, kind: str | None = None) -> Any:
@@ -610,7 +615,7 @@ class DimensionResult(ScalingResult):
             kind,
             x,
             y,
-            fit_region=self.fit_slice,
+            fit_region=self.fit_region,
             slope=self.dimension,
             intercept=self.intercept,
             curve_label=ylabel,

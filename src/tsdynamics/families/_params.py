@@ -17,15 +17,31 @@ Subclassing ``dict`` *adds* five mutators the wrapper never had — ``pop``,
 ``popitem``, ``clear``, ``setdefault``, ``update`` — and every one of them can
 add or remove a key.  All five are overridden here to route through the same key
 check as ``__setitem__``, so the fixed-key contract survives the change.
+
+Three of those five — ``pop`` / ``popitem`` / ``clear`` — can only ever *raise*
+on a fixed-key mapping, and a sixth, the inherited ``dict.fromkeys``, is
+uncallable in any spelling (it reaches ``ParamSet.__init__``, whose ``data``
+argument the classmethod does not supply).  All four are therefore withheld from
+``dir()`` by :func:`~tsdynamics.families._hidden.hide` — ``params.<TAB>`` is the
+one place a user looks, and offering four names that cannot work is the exact
+overwhelm v6 §11 exists to remove.  ``setdefault`` and ``update`` stay listed
+because they *do* something: both update declared values in place.
+
+The overrides themselves are untouched, and so is reachability: ``dir()`` is not
+the lookup path, so ``p.pop("sigma")`` still raises the teaching
+``InvalidInputError`` rather than silently re-keying a system's parameters.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
+from ._hidden import hide
+
 __all__ = ["ParamSet"]
 
 
+@hide("clear", "fromkeys", "pop", "popitem")
 class ParamSet(dict[str, Any]):
     """Ordered, fixed-key parameter container (a ``dict`` you cannot re-key).
 
@@ -177,3 +193,8 @@ class ParamSet(dict[str, Any]):
 
         s = json.dumps(list(self.items()), default=str)
         return int(hashlib.md5(s.encode()).hexdigest()[:16], 16)
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

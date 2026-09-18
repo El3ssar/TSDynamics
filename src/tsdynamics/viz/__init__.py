@@ -17,6 +17,7 @@ The whole surface, in one screen
 
     ts.viz.transforms.names()                    # what can be drawn FROM something
     ts.viz.primitives.names()                    # ...and HOW it can be drawn
+    ts.viz.transforms.allow("psd", "stem")       # ...admit YOUR primitive to a row
     ts.viz.renderers.find(writes=".svg")         # ...and by whom
     ts.viz.themes.use("publication")             # ...in what look
     ts.viz.styles                                # the style vocabulary, printed
@@ -42,24 +43,28 @@ and returns a :class:`~tsdynamics.viz.spec.Plot`, so they nest::
 A one-row grid **is** a row: ``ts.viz.grid(a, b, cols=2)`` and ``a | b`` build
 the same arrangement.
 
-Thirteen names, and the shape repeats
+Fourteen names, and the shape repeats
 -------------------------------------
 Four registries (``transforms`` / ``primitives`` / ``renderers`` / ``themes``)
 answer to the **same four verbs** — ``register`` / ``names`` / ``find`` / ``get``
 — so learning one teaches the rest: each is callable (``ts.viz.transforms()`` is
 its listing), each ``names()`` is sorted, and each ``find(text, /, **filters)``
 takes free text and returns **names** (``get(name)`` is how you reach a record).
-:data:`styles` answers the same listing verbs and deliberately refuses
-``register``: it is a contract with the backends, not an extension point.
+``transforms`` carries a fifth verb that lives nowhere else —
+:func:`~tsdynamics.viz.transforms.allow`, which admits a primitive *you*
+registered into a shipped transform's row.  :data:`styles` answers the same
+listing verbs and deliberately refuses ``register``: it is a contract with the
+backends, not an extension point.
 
 Two drawing doors (:func:`plot`, :func:`draw`), one panel arranger
 (:func:`grid`), one received type (:class:`~tsdynamics.viz.spec.Plot`), the
 arrays escape hatch (:func:`geometry`), the matrix (:func:`compatibility`), the
-style table (:data:`styles`), the loader (:func:`load`), and the IR one dot away
-(:mod:`~tsdynamics.viz.spec`).
+style table (:data:`styles`), the loader (:func:`load`), the warning you catch
+(:class:`~tsdynamics.viz.render.caps.VisualizationDegraded`), and the IR one dot
+away (:mod:`~tsdynamics.viz.spec`).
 
 Everything else still exists — importable, reachable, tested.  It just stops
-shouting: the 19 IR nouns live at :mod:`ts.viz.spec <tsdynamics.viz.spec>`, and a
+shouting: the 18 IR nouns live at :mod:`ts.viz.spec <tsdynamics.viz.spec>`, and a
 name that moved says where it went instead of raising a bare ``AttributeError``.
 
 Out-of-tree renderers register through the ``tsdynamics.renderers`` entry-point
@@ -67,12 +72,15 @@ group and out-of-tree plot transforms through ``tsdynamics.plot_transforms``;
 :func:`discover_plugins` loads both at import.
 """
 
-import os
-from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any
+import os as _os
+from collections.abc import Sequence as _Sequence
+from typing import TYPE_CHECKING as _TYPE_CHECKING
+from typing import Any as _Any
 
 from .. import registry as _registry
-from ..plugins import PLOT_TRANSFORMS_GROUP, register_entry_points
+from ..plugins import PLOT_TRANSFORMS_GROUP as _PLOT_TRANSFORMS_GROUP
+from ..plugins import register_entry_points as _register_entry_points
+from ._visibility import listing_dir as _listing_dir
 
 # Bound but off the tab surface (see ``_INTERNAL_NAMES``).  The redundant ``as``
 # form marks these as deliberate re-exports rather than unused imports.
@@ -171,7 +179,7 @@ from .transforms import (
     plot_transform as plot_transform,
 )
 
-if TYPE_CHECKING:  # pragma: no cover - typing only
+if _TYPE_CHECKING:  # pragma: no cover - typing only
     from .render import renderers as renderers
 
 
@@ -191,10 +199,10 @@ class _PrimitiveRegistry:
         ts.viz.primitives.find(requires="z")
 
     .. note::
-       ``register`` is the extension door for a **new** primitive and is owned by
-       :mod:`tsdynamics.viz.transforms._primitives`; until it lands this facade
-       forwards to whatever that module exposes, so the verb starts working the
-       moment it exists rather than needing an edit here.
+        ``register`` is the extension door for a **new** primitive and is owned by
+        :mod:`tsdynamics.viz.transforms._primitives`; until it lands this facade
+        forwards to whatever that module exposes, so the verb starts working the
+        moment it exists rather than needing an edit here.
     """
 
     __slots__ = ()
@@ -209,7 +217,7 @@ class _PrimitiveRegistry:
 
         return sorted(primitive_names())
 
-    def get(self, name: str) -> Any:
+    def get(self, name: str) -> _Any:
         """Return one primitive record (its ``requires`` / ``marks`` declaration)."""
         from .transforms import get_primitive
 
@@ -248,14 +256,14 @@ class _PrimitiveRegistry:
         name: str,
         /,
         *,
-        requires: Sequence[str] = (),
-        marks: Sequence[Any] = (),
-        frames: Sequence[Any] | None = None,
-        options: Sequence[str] = (),
-        emits_frame: Any = None,
+        requires: _Sequence[str] = (),
+        marks: _Sequence[_Any] = (),
+        frames: _Sequence[_Any] | None = None,
+        options: _Sequence[str] = (),
+        emits_frame: _Any = None,
         doc: str = "",
         replace: bool = False,
-    ) -> Any:
+    ) -> _Any:
         """Register a **new way of drawing** — one decorator, zero private imports.
 
         ::
@@ -315,7 +323,7 @@ RENDERERS_GROUP = "tsdynamics.renderers"
 #:
 #:     [project.entry-points."tsdynamics.plot_transforms"]
 #:     my_plot = "my_pkg.transforms:MY_TRANSFORM"
-TRANSFORMS_GROUP = PLOT_TRANSFORMS_GROUP
+TRANSFORMS_GROUP = _PLOT_TRANSFORMS_GROUP
 
 #: Names bound here but kept **off** ``__all__`` / ``dir()``.  Each stays
 #: reachable — ``ts.viz.SCHEMA_VERSION``, ``from tsdynamics.viz import
@@ -325,6 +333,16 @@ TRANSFORMS_GROUP = PLOT_TRANSFORMS_GROUP
 #: ``PlotTransform`` / ``T`` / ``make_frame``) are listed one dot away, at
 #: :mod:`ts.viz.spec <tsdynamics.viz.spec>`, which is where a renderer author
 #: reads them and where nobody else has to look.
+#:
+#: **This table is checked against reality**, by
+#: ``tests/test_viz_visibility.py::test_every_public_name_bound_on_ts_viz_is_declared``:
+#: a public name bound on this module and named by neither :data:`__all__` nor
+#: this tuple fails the build.  It used to be decorative, and drifted — eleven
+#: names (``os``, ``Any``, ``Sequence``, ``TYPE_CHECKING``,
+#: ``register_entry_points``, the ``compose`` / ``export`` / ``style``
+#: submodules, and the three entry-point group constants) were bound here and
+#: declared nowhere, so ``from tsdynamics.viz import os`` worked and nobody had
+#: decided that.  The imports are underscored now; the rest are named below.
 _INTERNAL_NAMES: tuple[str, ...] = (
     "Animation",
     "Annotation",
@@ -338,10 +356,14 @@ _INTERNAL_NAMES: tuple[str, ...] = (
     "PlotTransform",
     "Plottable",
     "Presentation",
+    # The two entry-point group constants a plugin author declares against.  They
+    # are strings in a ``pyproject.toml``, not names anyone types in Python.
+    "RENDERERS_GROUP",
     "SCHEMA_VERSION",
     "STYLE_KEYS",
     "T",
     "THEMES",
+    "TRANSFORMS_GROUP",
     "Theme",
     "discover_plugins",
     "from_dict_envelope",
@@ -351,10 +373,21 @@ _INTERNAL_NAMES: tuple[str, ...] = (
     "normalize_style",
     "plot_transform",
     "register_theme",
+    # ``render`` and ``spec`` are submodules resolved by ``__getattr__`` on first
+    # touch (``_LAZY_SUBMODULES``); ``spec`` is listed in ``__all__``, ``render``
+    # is not.  Listed here so the table covers the name once it is cached.
     "render",
     "set_theme",
     "to_dict_envelope",
     "to_json",
+    # Submodules bound as a side effect of the ``from .X import ...`` lines above
+    # (Python binds the submodule on the parent package).  Nothing imports them
+    # through ``ts.viz``; they are reachable at their own dotted path.
+    "compose",
+    "export",
+    "producers",
+    "style",
+    "transforms",
 )
 
 #: Submodules of :mod:`tsdynamics.viz` resolved on demand by :func:`__getattr__`,
@@ -369,6 +402,7 @@ _LAZY_SUBMODULES = frozenset({"render", "spec"})
 #: through :func:`__getattr__` while appearing in ``dir()`` like any other.
 _LAZY_ATTRS: dict[str, tuple[str, str]] = {
     "renderers": (".render", "renderers"),
+    "VisualizationDegraded": (".render", "VisualizationDegraded"),
 }
 
 #: ``old name -> the sentence naming the working spelling``.  Only names that
@@ -384,8 +418,20 @@ _MOVED: dict[str, str] = {
     ),
 }
 
+#: ``ts.viz`` — fourteen names (contract §2, §11.3 T3).
+#:
+#: .. versionchanged:: 6.0
+#:    :class:`~tsdynamics.viz.render.caps.VisualizationDegraded` was **promoted**
+#:    (13 → 14).  It is the warning this layer emits when a backend cannot fully
+#:    honor a plot — 34 mentions across the documentation, 120 uses across the
+#:    suite — and its only address was the internal ``ts.viz.render``, so
+#:    ``docs/visualization/styling.md`` caught it by comparing
+#:    ``w[0].category.__name__`` to the *string* ``"VisualizationDegraded"``.
+#:    A name users are told to catch is a name they must be able to type;
+#:    v6 promoted six exception classes to the top level on that same argument.
 __all__ = [
     "Plot",
+    "VisualizationDegraded",
     "compatibility",
     "draw",
     "geometry",
@@ -401,7 +447,7 @@ __all__ = [
 ]
 
 
-def grid(*plots: Any, rows: int | None = None, cols: int | None = None, **options: Any) -> Plot:
+def grid(*plots: _Any, rows: int | None = None, cols: int | None = None, **options: _Any) -> Plot:
     """Arrange finished plots into a panel grid, and return the composite :class:`Plot`.
 
     The named spelling of ``plot(..., layout="grid")``, for the case the owner
@@ -490,7 +536,7 @@ def _grid_mode(
     return "grid", rows, cols
 
 
-def load(source: str | os.PathLike[str]) -> Plot:
+def load(source: str | _os.PathLike[str]) -> Plot:
     """Read a :class:`~tsdynamics.viz.spec.Plot` back from a ``.json`` file or JSON text.
 
     The read half of the round trip whose write half is
@@ -511,13 +557,11 @@ def load(source: str | os.PathLike[str]) -> Plot:
     -------
     Plot
     """
-    import os
-
     # ``.save`` accepts a ``pathlib.Path``, so ``load`` must too — the sniff used
     # to call ``.lstrip()`` on the argument unconditionally and answered a Path
     # with ``AttributeError: 'PosixPath' object has no attribute 'lstrip'``.
-    text = source if isinstance(source, str) else os.fspath(source)
-    if not text.lstrip().startswith(("{", "[")) and os.path.exists(text):
+    text = source if isinstance(source, str) else _os.fspath(source)
+    if not text.lstrip().startswith(("{", "[")) and _os.path.exists(text):
         with open(text, encoding="utf-8") as fh:
             text = fh.read()
     return from_json(text)
@@ -542,8 +586,8 @@ def discover_plugins(*, strict: bool = False) -> list[str]:
     list[str]
         The names newly registered by this call (renderers first, then transforms).
     """
-    found = register_entry_points(_registry.renderers, RENDERERS_GROUP, strict=strict)
-    found += register_entry_points(_registry.plot_transforms, TRANSFORMS_GROUP, strict=strict)
+    found = _register_entry_points(_registry.renderers, RENDERERS_GROUP, strict=strict)
+    found += _register_entry_points(_registry.plot_transforms, TRANSFORMS_GROUP, strict=strict)
     return found
 
 
@@ -555,7 +599,7 @@ def discover_plugins(*, strict: bool = False) -> list[str]:
 discover_plugins()
 
 
-def __getattr__(name: str) -> Any:
+def __getattr__(name: str) -> _Any:
     """Resolve the lazy names, then teach a name that moved.
 
     Three ordered cases, mirroring the top-level package's:
@@ -586,10 +630,7 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-def __dir__() -> list[str]:
-    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete.
-
-    The IR nouns, the envelope helpers and the validation plumbing
-    (:data:`_INTERNAL_NAMES`) stay bound and importable, just off the tab surface.
-    """
-    return sorted(__all__)
+#: Expose only the curated public API (:data:`__all__`) to ``dir()`` /
+#: autocomplete.  The IR nouns, the envelope helpers and the validation plumbing
+#: (:data:`_INTERNAL_NAMES`) stay bound and importable, just off the tab surface.
+__dir__ = _listing_dir(__all__)

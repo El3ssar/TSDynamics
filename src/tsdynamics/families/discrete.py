@@ -26,6 +26,10 @@ from .base import (
     resolve_transient,
 )
 
+#: What this module *defines* — see the sibling note in ``continuous.py``.  Ten
+#: of the 22 names ``dir()`` used to offer here were re-exported imports.
+__all__ = ["DiscreteMap"]
+
 #: ``DiscreteMap.run``'s keywords, in signature order.
 _MAP_RUN_KEYWORDS = ("steps", "ic", "transient", "backend", "seed", "max_retries")
 
@@ -529,8 +533,8 @@ class DiscreteMap(SystemBase, ABC):
               the engine is validated against.
 
             .. versionchanged:: 6.0
-               The default moved from ``"interp"`` to ``"jit"``, once the v6
-               compiled-evaluator cache removed the JIT's per-call recompile.
+                The default moved from ``"interp"`` to ``"jit"``, once the v6
+                compiled-evaluator cache removed the JIT's per-call recompile.
 
             Every backend lowers ``_step`` to the engine IR, so it requires a
             map whose step traces symbolically (see
@@ -741,7 +745,7 @@ class DiscreteMap(SystemBase, ABC):
             the oracle, not for production use).
 
             .. versionchanged:: 6.0
-               Default moved from ``"interp"`` to ``"jit"`` (see :meth:`run`).
+                Default moved from ``"interp"`` to ``"jit"`` (see :meth:`run`).
 
         Returns
         -------
@@ -769,3 +773,8 @@ class DiscreteMap(SystemBase, ABC):
             backend=backend,
             orbit_peak=orbit_peak(tangent),
         )
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

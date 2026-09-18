@@ -124,9 +124,16 @@ is an ABI, not a choice), :mod:`~tsdynamics.data`, :mod:`~tsdynamics.derived`,
 ``import tsdynamics`` pulls in no plotting library.
 """
 
-import importlib
-import textwrap
-from typing import Any
+# Underscored on purpose.  A module's own imports land in its namespace, so a
+# plain ``import importlib`` here makes ``ts.importlib`` resolve and
+# ``from tsdynamics import importlib`` work — measured, both did.  ``dir(ts)`` is
+# curated by ``__dir__`` and never showed them, which is precisely why nobody
+# noticed: the leak is invisible until a user types the name.  Nothing in the
+# library decided to re-export the standard library, so the binding goes private
+# rather than the listing growing a carve-out (§11.3 T4).
+import importlib as _importlib
+import textwrap as _textwrap
+from typing import Any as _Any
 
 from . import (
     analysis as analysis,
@@ -267,6 +274,15 @@ _PUBLIC_HOMES = (
     "analysis.results",
     "data",
     "derived",
+    # The four names a user reaches for when they WRITE against the library
+    # rather than call it — ``System`` (the runtime Protocol you annotate and
+    # ``isinstance``-check), ``SystemBase`` (the class you subclass to add a
+    # family), ``ParamSet`` and ``MetaStore``.  Without this row they were the
+    # only public-home names with no forwarding address: ``ts.System`` answered
+    # with three classes that are not it (``DerivedSystem`` /
+    # ``TangentSystem`` / ``WrappedSystem``) and the other three fell through to
+    # the generic "tab-complete a registry" line, which cannot find a type.
+    "families",
     "viz",
     "viz.spec",
 )
@@ -291,7 +307,7 @@ def _wrap(text: str, prefix: str) -> list[str]:
     or ``"tsdynamics.errors.MovedInV6: "``), so it gets that much less width.
     """
     pad = " " * len(prefix)
-    lines = textwrap.wrap(text, width=_WIDTH, initial_indent=pad)
+    lines = _textwrap.wrap(text, width=_WIDTH, initial_indent=pad)
     if lines:
         lines[0] = lines[0][len(pad) :]
     return lines
@@ -313,29 +329,44 @@ def _public_names(home: str) -> tuple[str, ...]:
     ``TypeError`` from a half-installed plotting backend.
     """
     try:
-        module = importlib.import_module(f"{__name__}.{home}")
+        module = _importlib.import_module(f"{__name__}.{home}")
     except Exception:  # noqa: BLE001 - see the docstring; this is the error path
         return ()
     return tuple(getattr(module, "__all__", ()))
 
 
-def _listing_size(home: str) -> int:
-    """How many *things* a home's tab listing offers, not counting submodules.
+#: The four verbs every curated registry namespace answers (``ts.systems``,
+#: ``ts.analysis``, ``ts.viz.transforms``, …).  They are listed beside the
+#: catalogue but they are not *of* it, so :func:`_catalogue_size` discounts them.
+_REGISTRY_VERBS = frozenset({"find", "get", "names", "register"})
 
-    ``ts.systems.__all__`` carries the two category packages alongside the 177
-    system classes, so ``len(__all__)`` would advertise "179 built-in systems"
-    and be wrong by exactly the names that are not systems.
+
+def _catalogue_size(home: str) -> int:
+    """How many CATALOGUE ENTRIES a home offers — systems, or analyses.
+
+    Not ``len(__all__)``: a registry namespace lists its own verbs and its
+    result namespace beside the entries, and the sentence this number lands in
+    says *"built-in systems"* or *"quantifiers"*, which those are not.  Measured
+    before the discount, the same error message advertised **"the 180 built-in
+    systems"** (177 + ``names``/``find``/``get``) and **"the 51 quantifiers"**
+    (49 + ``find``/``register``), so two of the three counts a lost user was
+    shown in one message were wrong, on a surface whose whole pitch is that the
+    listing is the contract.
+
+    Submodules are discounted for the same reason (``ts.analysis.results`` is a
+    namespace of result classes, not a quantifier).
     """
     import types
 
     try:
-        module = importlib.import_module(f"{__name__}.{home}")
+        module = _importlib.import_module(f"{__name__}.{home}")
     except Exception:  # noqa: BLE001 - the error path; see _public_names
         return 0
     return sum(
         1
         for name in getattr(module, "__all__", ())
-        if not isinstance(getattr(module, name, None), types.ModuleType)
+        if name not in _REGISTRY_VERBS
+        and not isinstance(getattr(module, name, None), types.ModuleType)
     )
 
 
@@ -495,8 +526,8 @@ def _attribute_error(name: str) -> AttributeError:
     comment = " # ...or search by what it does"
     body += [
         "Tab-complete a registry, or search:",
-        f"    ts.systems.<TAB>             # the {_listing_size('systems')} built-in systems",
-        f"    ts.analysis.<TAB>            # the {_listing_size('analysis')} quantifiers",
+        f"    ts.systems.<TAB>             # the {_catalogue_size('systems')} built-in systems",
+        f"    ts.analysis.<TAB>            # the {_catalogue_size('analysis')} quantifiers",
         # A pathologically long guess must not push the last line past the wrap.
         # The comment is the first thing to go, because the call is the payload.
         search.ljust(32) + comment if len(search) + len(comment) <= _WIDTH else search,
@@ -504,7 +535,7 @@ def _attribute_error(name: str) -> AttributeError:
     return AttributeError("\n".join(body))
 
 
-def __getattr__(name: str) -> Any:
+def __getattr__(name: str) -> _Any:
     """Resolve ``viz`` / ``plot`` lazily, and teach every other miss.
 
     The ordered ladder, and why the order is the order:
@@ -537,11 +568,11 @@ def __getattr__(name: str) -> Any:
     if name == "viz":
         # import_module loads the submodule through the import machinery without
         # re-entering this __getattr__ (a plain ``from . import viz`` recurses).
-        module = importlib.import_module(f"{__name__}.viz")
+        module = _importlib.import_module(f"{__name__}.viz")
         globals()["viz"] = module  # cache: subsequent access skips __getattr__
         return module
     if name in _VIZ_FRONT_DOOR:
-        module = importlib.import_module(f"{__name__}.viz")
+        module = _importlib.import_module(f"{__name__}.viz")
         for attr in _VIZ_FRONT_DOOR:
             globals()[attr] = getattr(module, attr)
         return globals()[name]

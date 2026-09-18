@@ -108,6 +108,7 @@ __all__ = [
     "TSDynamicsError",
     "invalid_value",
     "remedy",
+    "taught",
 ]
 
 
@@ -270,6 +271,61 @@ def remedy(*lines: str, lead: str | None = None) -> str:
     """
     body = "\n".join(f"    {line}" for line in lines)
     return f"\n{lead}\n{body}" if lead else f"\n{body}"
+
+
+class _NoSuggestions:
+    """A stand-in ``obj`` for a taught ``AttributeError``, advertising no names.
+
+    CPython computes *"Did you mean: …?"* from ``dir(exc.obj)`` when it prints an
+    ``AttributeError``.  Handing it this object means the suggester finds nothing
+    to offer, which is the point: our message already **is** the answer.
+    """
+
+    __slots__ = ()
+
+    def __dir__(self) -> list[str]:
+        """Advertise nothing, so no suggestion can be computed."""
+        return []
+
+
+_NO_SUGGESTIONS = _NoSuggestions()
+
+
+def taught(err: AttributeError, name: str) -> AttributeError:
+    """Stop CPython appending its own guess to an ``AttributeError`` we wrote.
+
+    Since 3.10 CPython augments an ``AttributeError`` that escapes a
+    ``__getattr__`` with ``name`` and ``obj``, then prints
+    *"Did you mean: 'x'?"* from ``dir(obj)`` — and it does that only when **both**
+    are still unset, so setting them here suppresses it.
+
+    This is not cosmetic.  Measured on this branch, the suggester contradicted
+    four of the library's most carefully written migration messages by offering
+    the caller a **private** name it had just been told not to use::
+
+        ts.analysis.find(system)   # all 20 that take a flow.
+        Did you mean: '_lyapunov_spectrum'?
+
+    and it told a reader looking for the ``System`` protocol to try ``systems``,
+    the catalogue.  A message whose last word is a wrong answer is worse than no
+    last word.
+
+    Parameters
+    ----------
+    err : AttributeError
+        The error we built.  Returned unchanged apart from ``name`` / ``obj``.
+    name : str
+        The attribute that was asked for, preserved so ``except AttributeError as
+        e: e.name`` still reads correctly.
+
+    Returns
+    -------
+    AttributeError
+        *err*, sealed.
+    """
+    err.name = name
+    err.obj = _NO_SUGGESTIONS
+    return err
 
 
 def invalid_value(

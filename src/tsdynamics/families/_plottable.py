@@ -118,12 +118,12 @@ class SystemPlottable:
         the integration keywords.
 
         .. versionchanged:: 6.0
-           Returns the :class:`~tsdynamics.viz.spec.PlotSpec` rather than the
-           backend figure, so ``system.plot()`` and ``ts.plot(system)`` are the
-           same kind of thing; and every keyword that is not plot-shaping or a
-           tweak now reaches the integration (previously the renderer's
-           ``**kwargs`` swallowed it, so ``lor.plot(final_time=2.0)`` silently
-           drew the default 100-time-unit trajectory).
+            Returns the :class:`~tsdynamics.viz.spec.PlotSpec` rather than the
+            backend figure, so ``system.plot()`` and ``ts.plot(system)`` are the
+            same kind of thing; and every keyword that is not plot-shaping or a
+            tweak now reaches the integration (previously the renderer's
+            ``**kwargs`` swallowed it, so ``lor.plot(final_time=2.0)`` silently
+            drew the default 100-time-unit trajectory).
 
         Parameters
         ----------
@@ -188,3 +188,8 @@ class SystemPlottable:
         from tsdynamics.viz.spec import _notebook_mimebundle
 
         return _notebook_mimebundle(lambda: self.__plot_spec__().render(), include, exclude)
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

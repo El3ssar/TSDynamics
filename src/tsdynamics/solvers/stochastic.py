@@ -19,6 +19,13 @@ from __future__ import annotations
 
 from . import SolverCaps, SolverSpec, register
 
+#: A spec module exports **nothing**: importing it registers the diagonal-Itô SDE
+#: kernels into :data:`tsdynamics.solvers.SOLVERS` as a side effect, and the
+#: specs are read back through that registry (``ts.solvers.get(name)``), never
+#: from here.  Declared (rather than omitted) so ``dir()`` says so instead of
+#: re-advertising the parent's ``SolverSpec`` / ``SolverCaps`` / ``register``.
+__all__: list[str] = []
+
 _SDE = frozenset({"sde"})
 
 #: ``name -> (description, needs_jacobian)`` for the diagonal-Itô family.  Strong
@@ -36,3 +43,8 @@ for _name, (_desc, _needs_jac) in _SDE_KERNELS.items():
             description=_desc,
         )
     )
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

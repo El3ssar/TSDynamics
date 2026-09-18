@@ -285,7 +285,7 @@ def dde_lyapunov_spectrum(
         DDE integrator), matching DDE integration.
 
         .. versionchanged:: 6.0
-           Default moved from ``"interp"`` to ``"jit"``.
+            Default moved from ``"interp"`` to ``"jit"``.
     rtol, atol : float
         Engine integration tolerances.  Default
         :data:`~tsdynamics.utils.tolerances.DDE_LYAPUNOV_RTOL` /

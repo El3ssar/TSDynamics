@@ -227,8 +227,8 @@ def resolve_backend(backend: str) -> str:
     uses by default, so ``backend="auto"`` and ``backend=None`` agree.
 
     .. versionchanged:: 6.0
-       ``"auto"`` resolved to ``"interp"`` before v6.  It follows the family
-       default, which the compiled-evaluator cache moved to ``"jit"``.
+        ``"auto"`` resolved to ``"interp"`` before v6.  It follows the family
+        default, which the compiled-evaluator cache moved to ``"jit"``.
 
     Parameters
     ----------
@@ -520,9 +520,9 @@ def integrate(
         intended for production use).
 
         .. versionchanged:: 6.0
-           Default moved from ``"interp"`` to ``"jit"``, matching every concrete
-           family's ``_default_backend``.  Before v6 the JIT recompiled the tape
-           on every call; the v6 compiled-evaluator cache removed that.
+            Default moved from ``"interp"`` to ``"jit"``, matching every concrete
+            family's ``_default_backend``.  Before v6 the JIT recompiled the tape
+            on every call; the v6 compiled-evaluator cache removed that.
     history : callable, optional
         For a DDE only — ``h(s) -> sequence`` defining the past for ``s <= 0``;
         ``None`` is a constant past equal to the resolved initial state.

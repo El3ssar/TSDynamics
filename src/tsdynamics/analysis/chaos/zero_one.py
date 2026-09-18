@@ -36,7 +36,7 @@ import numpy as np
 
 from tsdynamics.errors import InvalidParameterError
 
-from .._result import AnalysisResult, ScalarResult
+from .._result import ScalarResult, _build_meta
 from .._result_json import _sig
 from . import _common as _c
 
@@ -502,7 +502,7 @@ def zero_one_test(
     idx_rep = int(np.argmin(np.abs(k_c - k)))
     p_rep = p_all[:, idx_rep]
     q_rep = q_all[:, idx_rep]
-    meta = AnalysisResult.build_meta(system, analysis="zero_one_test")
+    meta = _build_meta(system, analysis="zero_one_test")
     meta["samples_per_oscillation"] = float(spo)
     meta["stride"] = int(stride)
     meta["n_samples"] = int(n_pts)

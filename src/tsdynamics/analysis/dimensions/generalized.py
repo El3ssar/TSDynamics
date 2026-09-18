@@ -345,9 +345,9 @@ def _coerce_q(q: Any, *, analysis: str, param: str = "q") -> float:
             f"{param} is the Renyi order of the dimension (a number: 0 for "
             f"box-counting, 1 for information, 2 for correlation), got {q!r}."
             + remedy(
-                f"ts.{analysis}(data, {param}=[0.0, 1.0, 2.0])"
+                f"ts.analysis.{analysis}(data, {param}=[0.0, 1.0, 2.0])"
                 if param == "qs"
-                else f"ts.{analysis}(data, {param}=2.0)"
+                else f"ts.analysis.{analysis}(data, {param}=2.0)"
             )
         ) from err
     if not np.isfinite(value):

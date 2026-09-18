@@ -485,14 +485,14 @@ def is_stiff(
     conservatively when the Jacobian cannot be formed or has no decaying mode.
 
     .. note::
-       Only **decay (real-part) stiffness** is detected — a wide spread of
-       negative real parts.  **Oscillatory stiffness** (eigenvalues with a large
-       imaginary part but a small real part, e.g. a fast-rotating but barely
-       damped mode that still bounds an explicit step by stability) is *not*
-       flagged: the ratio is built from real parts only, so such a spectrum
-       reports ``False`` here.  The engine's runtime rejected-step detector
-       remains authoritative for those cases — pass an explicit stiff
-       ``method=`` (e.g. ``"bdf"``) if you know the RHS is oscillatorily stiff.
+        Only **decay (real-part) stiffness** is detected — a wide spread of
+        negative real parts.  **Oscillatory stiffness** (eigenvalues with a large
+        imaginary part but a small real part, e.g. a fast-rotating but barely
+        damped mode that still bounds an explicit step by stability) is *not*
+        flagged: the ratio is built from real parts only, so such a spectrum
+        reports ``False`` here.  The engine's runtime rejected-step detector
+        remains authoritative for those cases — pass an explicit stiff
+        ``method=`` (e.g. ``"bdf"``) if you know the RHS is oscillatorily stiff.
 
     Parameters
     ----------

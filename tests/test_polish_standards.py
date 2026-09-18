@@ -1809,19 +1809,14 @@ _NOT_A_USER_CALL = ("_", "tsdynamics.analysis._", "self.", "<")
 #: the row has to be deleted.  :func:`test_errgate_remedy_lines_resolve` is the
 #: gate the whole table exists to be measured against.
 _ERRGATE_NOT_QUALIFIED: dict[str, str] = {
-    # ── found by the token check as well ──
-    "too-short-series-for-a-dimension": "S3: analysis/dimensions names ts.analysis.correlation_dimension",
-    "too-short-series-for-fixed-mass": "S3: analysis/dimensions names ts.analysis.fixed_mass_dimension",
-    "transposed-point-set": "S3: analysis/dimensions names ts.analysis.correlation_dimension",
-    # a different shape of gap: the message is complete prose and hands back
+    # The four ``analysis/dimensions`` rows were deleted in v6 round 9: the
+    # messages now say ``ts.analysis.correlation_dimension`` /
+    # ``…fixed_mass_dimension`` / ``…generalized_dimension``, which resolve.
+    # The table shrank from 5 rows to 1, and this is the one left.
+    #
+    # A different SHAPE of gap: the message is complete prose and hands back
     # nothing at all.  S1 · RUN owns families/_kwargs.py.
     "map-given-a-flow-keyword": "S1: families/_kwargs.py hands back no runnable line",
-    # ── found ONLY by the resolve check, which is why it exists ──
-    # This one passed the literal-token check — the token it was written against
-    # happened to be a substring of the unqualified line — and hands back a name
-    # that does not resolve.  A string check cannot see that; walking the
-    # attribute path can.
-    "non-numeric-renyi-order": "S3: analysis/dimensions names ts.analysis.generalized_dimension",
 }
 
 #: The subset of :data:`_ERRGATE_NOT_QUALIFIED` whose *literal token* also no
@@ -1829,9 +1824,6 @@ _ERRGATE_NOT_QUALIFIED: dict[str, str] = {
 #: because a strict xfail must not be attached to a test that passes.
 _ERRGATE_TOKEN_STALE = frozenset(
     {
-        "too-short-series-for-a-dimension",
-        "too-short-series-for-fixed-mass",
-        "transposed-point-set",
         "map-given-a-flow-keyword",
     }
 )

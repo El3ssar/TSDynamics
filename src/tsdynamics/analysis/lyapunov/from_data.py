@@ -156,35 +156,29 @@ class LyapunovFromData(ScalingResult):
     fractal dimension and embedding diagnostic share — so it inherits the canonical
     ``estimate`` / ``abscissa`` / ``ordinate`` / ``fit_region`` schema, the result
     surface (``.meta`` / the readout ``repr`` / ``.to_dict()`` / the ``.plot`` seam) and
-    ``float(result)`` (the exponent).  Domain-named ``@property`` aliases
-    (:attr:`lyapunov`, :attr:`times`, :attr:`divergence`) preserve the original
-    field names.
+    ``float(result)`` (the exponent).  The domain names for the curve are
+    :attr:`lyapunov`, :attr:`times` and :attr:`divergence`.
 
     Attributes
     ----------
-    estimate : float
+    lyapunov : float
         Estimated maximal Lyapunov exponent (per unit time), the slope of
-        ``ordinate`` against ``abscissa`` over ``fit_region``.  Aliased
-        :attr:`lyapunov`.  ``float(result)`` returns it.
-    abscissa : numpy.ndarray
-        Relative times ``k * dt`` for ``k = 0 … k_max``.  Aliased :attr:`times`.
-    ordinate : numpy.ndarray
-        The stretching curve ``S(k)`` — mean log divergence after ``k`` samples.
-        Aliased :attr:`divergence`.  Inspect ``abscissa`` vs ``ordinate`` to
-        choose a scaling region and refine with an explicit ``fit=(lo, hi)``.
+        :attr:`divergence` against :attr:`times` over ``fit_region``.  The domain
+        name for the inherited ``estimate`` field; ``float(result)`` returns it.
+    times : numpy.ndarray
+        Relative times ``k * dt`` for ``k = 0 … k_max`` — the domain name for
+        the inherited ``abscissa`` field.
+    divergence : numpy.ndarray
+        The stretching curve ``S(k)`` — mean log divergence after ``k`` samples;
+        the domain name for the inherited ``ordinate`` field.  Inspect
+        :attr:`times` vs :attr:`divergence` to choose a scaling region and refine
+        with an explicit ``fit=(lo, hi)``.
     fit_region : tuple[int, int]
         Inclusive index range into the curve used for the slope.
     embedding_dim, delay, theiler : int
         Reconstruction parameters actually used.
-    n_reference : int
-        Number of reference points that contributed (had a usable neighbour).
     method : str
         ``"kantz"`` or ``"rosenstein"``.
-    decorrelation : int
-        The series' **own** decorrelation lag, in samples — the first lag whose
-        autocorrelation has fallen to ``1/e``, measured from the data and not
-        chosen by the caller.  It is what keeps :attr:`independent_windows`
-        honest (see there).  ``0`` when it could not be measured.
     trusted : bool
         ``False`` when the estimate is not a reading of a scaling region.  Four
         ways to lose it, and the repr says **which**:
@@ -204,9 +198,24 @@ class LyapunovFromData(ScalingResult):
         ``fit=(lo, hi)`` takes ownership of the *region*; it does not take
         ownership of the record length or of the window's width, so those two
         still apply.
+
+    Notes
+    -----
+    Four further quantities are carried and readable but kept off ``dir()``
+    (contract §11.3): ``abscissa`` / ``ordinate`` (R2 — :attr:`times` and
+    :attr:`divergence` are the names this estimator's curve is known by, and the
+    ones the docs use), and ``n_reference`` / ``decorrelation``, the two
+    estimator-internal counts whose readable combination is the public
+    :attr:`independent_windows`.  All four remain in ``to_dict()``.
     """
 
     _repr_fields: ClassVar[tuple[str, ...]] = ("lyapunov", "method")
+
+    #: R2 for the curve pair, R1-adjacent for the two counts — see the class
+    #: Notes.  Every name here still resolves and still exports.
+    _HIDDEN_ATTRIBUTES: ClassVar[frozenset[str]] = frozenset(
+        {"abscissa", "ordinate", "n_reference", "decorrelation"}
+    )
 
     embedding_dim: int = 0
     delay: int = 0

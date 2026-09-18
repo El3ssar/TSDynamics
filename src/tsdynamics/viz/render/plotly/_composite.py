@@ -40,6 +40,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from ..._visibility import listing_dir
 from ...spec import PlotSpec
 from . import _threed
 from ._core import _build_2d_layout, _theme_layout, build_2d_traces
@@ -50,6 +51,8 @@ if TYPE_CHECKING:
     from ...spec import Layout
 
 __all__ = ["render_composite"]
+
+__dir__ = listing_dir(__all__)
 
 
 def _composite_grid(layout: Layout | None, n: int) -> tuple[int, int]:

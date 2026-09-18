@@ -33,6 +33,11 @@ from tsdynamics.utils.tolerances import DEFAULT_ATOL, DEFAULT_RTOL
 
 from .problem import ODEProblem, Problem
 
+#: The event seam's public API.  Everything else in this module is an
+#: implementation detail of the two paths (``_engine_events`` / ``_reference_events``)
+#: and stays reachable, underscored, as ``tsdynamics.engine.run.<name>``.
+__all__ = ["Event", "EventSolution", "crossings", "integrate_events"]
+
 
 def crossings(
     problem: Problem,
@@ -827,3 +832,8 @@ def _reference_events(
         terminated=terminated,
         events=evs,
     )
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

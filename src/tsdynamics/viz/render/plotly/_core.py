@@ -38,6 +38,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from ..._visibility import listing_dir
 from ...producers import autostyle_enabled, autostyle_line
 from ...spec import Annotation, Axis, Layer, PlotKind, PlotSpec
 from ...style import Theme, normalize_style
@@ -48,6 +49,8 @@ if TYPE_CHECKING:
 
 
 __all__ = ["MARK_DISPATCH", "build_2d_traces", "render"]
+
+__dir__ = listing_dir(__all__)
 
 
 # ---------------------------------------------------------------------------

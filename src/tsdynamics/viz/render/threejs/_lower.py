@@ -197,6 +197,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from ..._resample import resample_arclength, uniform_subsample_indices
+from ..._visibility import listing_dir
 from ...export import SCHEMA_VERSION
 from ...spec import PlotKind
 from ...style import normalize_style
@@ -207,6 +208,8 @@ if TYPE_CHECKING:
     from ...style import Theme
 
 __all__ = ["DEFAULT_DECIMALS", "DEFAULT_MAX_POINTS", "lower_spec"]
+
+__dir__ = listing_dir(__all__)
 
 #: Default ceiling on the vertices of any single geometry.  40 000 vertices of a
 #: line is a cheap ``THREE.Line`` and — resampled by **arc length** — holds the

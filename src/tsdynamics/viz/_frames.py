@@ -43,6 +43,8 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
     from .spec import PlotSpec
 
+from ._visibility import dir_without, listing_dir
+
 __all__ = [
     "ANY_AXIS",
     "FRAME_SPACES",
@@ -56,6 +58,15 @@ __all__ = [
     "role_of",
     "space_arity",
 ]
+
+__dir__ = listing_dir(__all__)
+
+#: The overlay algebra and the envelope round trip a :class:`Frame` carries —
+#: run by ``ts.plot`` on every composition, typed by nobody.  Hidden from
+#: ``dir()`` only; all five stay public, importable and tested.
+_FRAME_ALGEBRA: frozenset[str] = frozenset(
+    {"compatible_with", "from_dict", "is_free", "merge", "to_dict"}
+)
 
 #: The accepted values of the ``on=`` frame-check escape.
 ON_VALUES: frozenset[str] = frozenset({"force"})
@@ -329,6 +340,21 @@ class Frame:
                 f"name(s), got {len(self.axes)}: {list(self.axes)}. Axes are required at "
                 "construction — a frame that names no axes would overlay onto anything."
             )
+
+    def __dir__(self) -> list[str]:
+        """Expose what a frame *says*: ``space`` ``ndim`` ``axes`` ``describe``.
+
+        ``g.frame`` answers one question — *what do these axes mean?* — and
+        :meth:`describe` is its one-line rendering (``"state2(x, y)"``), which is
+        what the overlay error message prints.
+
+        :meth:`compatible_with` and :meth:`merge` are the overlay **algebra**:
+        the library runs them for you on every ``a + b``, and a caller who ran
+        them by hand would be re-deciding something ``ts.plot`` has already
+        decided.  :attr:`is_free` is the one-bit special case of ``space``, and
+        ``to_dict`` / ``from_dict`` are the envelope's.  All five stay public.
+        """
+        return dir_without(self, _FRAME_ALGEBRA)
 
     @property
     def is_free(self) -> bool:

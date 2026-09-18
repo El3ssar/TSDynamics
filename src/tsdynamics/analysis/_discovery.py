@@ -8,9 +8,14 @@ sampling choice).  What replaces those bound methods is *discovery*, and it has
 to be genuinely good or the capability is unreachable:
 
 ``ts.analysis.<TAB>``
-    50 analyses, flat and sorted, generated from :data:`tsdynamics.registry.analyses`.
+    every registered analysis, flat and sorted, generated from
+    :data:`tsdynamics.registry.analyses` — plus ``find`` / ``register`` /
+    ``results``.  The count is deliberately not written here: it is read live
+    everywhere it is printed, because a hand-typed total goes stale the first
+    time an analysis is added or retired (this line said 50 when the registry
+    said 49).
 ``ts.analysis.__doc__``
-    the same 50, grouped by **what you are holding** (:func:`grouped_map`).
+    the same list, grouped by **what you are holding** (:func:`grouped_map`).
 :func:`find`
     ``find(traj)`` — what can I measure on THIS?  ``find("chaotic")`` — who
     answers THIS question?
@@ -621,10 +626,17 @@ def wrong_subject(name: str, cls: str, held: str, *, has_system: bool = True) ->
 
 
 def attribute_error(name: str, cls: str, held: str, *, has_system: bool = True) -> AttributeError:
-    """Build the object door's error — same body as the free-function door's."""
+    """Build the object door's error — same body as the free-function door's.
+
+    Sealed with :func:`~tsdynamics.errors.taught`: the message already names the
+    free function to call, and CPython's own suggester was appending a *private*
+    helper of the same name after it.
+    """
+    from tsdynamics.errors import taught
+
     clause, *lines = teach(name, held=held, has_system=has_system)
     head = f"{cls!r} object has no attribute {name!r}: {clause}"
-    return AttributeError(_render(head, lines, len("AttributeError: ")))
+    return taught(AttributeError(_render(head, lines, len("AttributeError: "))), name)
 
 
 def near_miss(name: str, known: Iterable[str]) -> str | None:
@@ -717,6 +729,22 @@ def register(
             cite=cite,
             doi=doi,
         )
+        # Six things are promised above and three of them are the *package*
+        # surface, not the registry: the name in ``ts.analysis.__all__``, the row
+        # in ``ts.analysis.__doc__``, and the attribute the line ``find`` prints
+        # tells you to call.  Without this refresh an out-of-tree registration
+        # got all three wrong at once — ``find(traj)`` listed the analysis and
+        # printed ``ts.analysis.<name>(data, ...)``, and that exact line raised
+        # ``AttributeError`` whose own suggestion was the name it had refused.
+        # In-tree analyses register while ``tsdynamics.analysis`` is still
+        # executing its imports, so ``_refresh_surface`` does not exist yet and
+        # this is a no-op for them; the module's own call at the bottom of
+        # ``__init__.py`` does their work.
+        import sys as _sys
+
+        _refresh = getattr(_sys.modules.get("tsdynamics.analysis"), "_refresh_surface", None)
+        if _refresh is not None:
+            _refresh()
         return target
 
     return _apply if func is None else _apply(func)

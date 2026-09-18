@@ -34,7 +34,7 @@ from tsdynamics.errors import ConvergenceError, InvalidInputError, remedy
 from tsdynamics.families import ContinuousSystem, DiscreteMap
 
 from .._common import reject_data, reject_system
-from .._result import AnalysisResult, CollectionResult, ScalarResult, _ArrayBacked
+from .._result import AnalysisResult, CollectionResult, ScalarResult, _ArrayBacked, _build_meta
 from .._result_json import _sig, _state
 from . import _common as _c
 from .fixed import _build_seeds, _eigenvalue_plane_spec, _stabilising_matrices
@@ -306,21 +306,39 @@ class OrbitSet(CollectionResult):
 
     @property
     def is_stable(self) -> np.ndarray:
-        """Boolean mask over the members."""
+        """A boolean **mask** over the members — one ``bool`` each, in order.
+
+        Not a filtered set: this is the ``(n,)`` array you index the other
+        vectorised columns with, e.g. ``orbits.periods[orbits.is_stable]`` for
+        the periods of the stable orbits alone.  :attr:`stable` is the other half
+        of the pair and returns the narrowed :class:`OrbitSet` itself.
+
+        Returns
+        -------
+        numpy.ndarray
+            Shape ``(n,)``, ``dtype=bool``.
+        """
         return np.array([bool(o.stable) for o in self.items], dtype=bool)
 
     @property
     def stable(self) -> OrbitSet:
-        """The stable orbits, as an :class:`OrbitSet`.
+        """The stable members, as an **:class:`OrbitSet` of their own**.
 
-        Filtering keeps the result surface (v6): it used to hand back a plain
-        ``list``, so the repr, ``to_frame()`` and ``.plot`` were lost.
+        Not a mask: the narrowed *set*, so the repr, ``to_frame()`` and
+        ``.plot()`` all still work on it.  (Before v6 it handed back a plain
+        ``list`` and all of that was lost the moment you narrowed.)
+        :attr:`is_stable` is the other half of the pair and gives the boolean
+        mask instead.
+
+        Returns
+        -------
+        OrbitSet
         """
         return self._select(stable=True)
 
     @property
     def unstable(self) -> OrbitSet:
-        """The unstable orbits, as an :class:`OrbitSet`."""
+        """The unstable members, as an :class:`OrbitSet` (the complement of :attr:`stable`)."""
         return self._select(stable=False)
 
     def _select(self, *, stable: bool) -> OrbitSet:
@@ -665,9 +683,7 @@ def periodic_orbits(
     orbits.sort(key=lambda o: tuple(np.asarray(o.points)[0]))
     return OrbitSet(
         items=tuple(orbits),
-        meta=AnalysisResult.build_meta(
-            system, analysis="periodic_orbits", period=int(period), method=method
-        ),
+        meta=_build_meta(system, analysis="periodic_orbits", period=int(period), method=method),
     )
 
 
@@ -906,7 +922,7 @@ def _flow_periodic_orbits(
 
     multipliers, eigenvectors = np.linalg.eig(monodromy)
     stable = _flow_orbit_stable(multipliers, eigenvectors, rhs(x0, 0.0))
-    meta = AnalysisResult.build_meta(system, analysis="periodic_orbits", period=float(t_period))
+    meta = _build_meta(system, analysis="periodic_orbits", period=float(t_period))
     return OrbitSet(
         items=(
             PeriodicOrbit(

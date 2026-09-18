@@ -26,6 +26,7 @@ from typing import Any
 import numpy as np
 
 from .._frames import FrameSpace
+from .._visibility import listing_dir
 from ..spec import Layer, PlotKind
 from ._base import Geometry, Part, Primitive, parts_from_return
 
@@ -36,6 +37,8 @@ __all__ = [
     "primitive_names",
     "register_primitive",
 ]
+
+__dir__ = listing_dir(__all__)
 
 
 # ---------------------------------------------------------------------------
@@ -589,6 +592,15 @@ def register_primitive(
     **No new** :class:`~tsdynamics.viz.spec.PlotKind` **is ever needed**: marks
     are coerced from the words you already use (:func:`as_mark`), which is what
     lets the compatibility matrix grow without touching a renderer.
+
+    **One piece per THING, not one piece per datum.**  Every returned piece
+    becomes a layer, and an unstyled layer takes the next colour from the theme
+    palette — which is correct for a three-component time series and wrong for
+    sixty stems of one series, where it reads as sixty unrelated curves.  Two
+    ways out, both shown above: return **one** piece holding every segment,
+    separated by ``np.nan`` (the ``stem`` example does exactly this, and it is
+    also far faster to draw), or stamp ``"style": {"color": ...}`` on each piece
+    so the palette is never consulted.
 
     Parameters
     ----------

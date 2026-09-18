@@ -23,6 +23,10 @@ import numpy as np
 
 from .problem import SDEProblem
 
+#: The SDE seam's public API — the two entry points
+#: :class:`~tsdynamics.families.stochastic.StochasticSystem` calls.
+__all__ = ["sde_ensemble_final", "sde_integrate_dense"]
+
 
 def sde_integrate_dense(
     problem: SDEProblem,
@@ -53,7 +57,7 @@ def sde_integrate_dense(
         pure-Python reference lives in the family).
 
         .. versionchanged:: 6.0
-           Default moved from ``"interp"`` to ``"jit"``.
+            Default moved from ``"interp"`` to ``"jit"``.
 
     Returns
     -------
@@ -145,3 +149,8 @@ def sde_ensemble_final(
         backend == "jit",
     )
     return np.asarray(y, dtype=np.float64)
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

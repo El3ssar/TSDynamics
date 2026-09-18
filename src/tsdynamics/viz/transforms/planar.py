@@ -38,6 +38,7 @@ import numpy as np
 import tsdynamics.analysis.planar as _planar
 
 from .._frames import FrameSpace, OverlayRole
+from .._visibility import listing_dir
 from ..spec import PlotKind
 from ._base import Geometry, Part, Presentation, make_frame
 from ._registry import plot_transform
@@ -49,6 +50,8 @@ __all__ = [
     "trace_determinant",
     "vector_field",
 ]
+
+__dir__ = listing_dir(__all__)
 
 
 # ---------------------------------------------------------------------------

@@ -417,3 +417,480 @@ class TestTheSystemProtocol:
         assert {"run", "family", "dim", "step", "state", "time", "reinit"} <= (
             System.__protocol_attrs__
         )
+
+
+# --- CONTRACT.md §11 — the visibility ruling ------------------------------ #
+#
+# Round 9 (`hide-what-is-not-typed`).  The rule under every assertion below:
+#
+#     Hiding is a DISCOVERY change, never a REACHABILITY change.
+#
+# So each listing test has a twin that reads the hidden name back.  A surface
+# cannot silently regrow (the listing tests fail), and a "simplification" cannot
+# silently cost capability (the reachability tests fail) — guardrails G1 and G2
+# are both mechanical here, not editorial.
+
+
+def _wrapped_system() -> object:
+    """A live ``WrappedSystem`` — the adapter door, built the way a user builds it."""
+    return ts.families.WrappedSystem(lambda u, dt: np.asarray(u, dtype=float) * 0.99, dim=2)
+
+
+def _every_object_that_has_a_tab_surface() -> dict[str, object]:
+    """One live instance of everything ``families/`` · ``data/`` · ``derived/`` hands back.
+
+    Built once per test rather than at import: a module-level fixture that
+    integrates would make collection cost a run.
+    """
+    from tsdynamics.derived import ProjectedSystem, TangentSystem
+
+    lor = ts.systems.Lorenz()
+    ros = ts.systems.Rossler()
+    band = lor.ensemble([[1.0, 1.0, 1.0], [1.001, 1.0, 1.0]])
+    pmap = ros.poincare("y", 0.0)
+    return {
+        "ContinuousSystem": lor,
+        "DiscreteMap": ts.systems.Henon(),
+        "DelaySystem": ts.systems.MackeyGlass(),
+        "StochasticSystem": ts.systems.OrnsteinUhlenbeck(),
+        "WrappedSystem": _wrapped_system(),
+        "Trajectory": lor.run(final_time=1.0, dt=0.1, ic=[1.0, 1.0, 1.0]),
+        "PoincareMap": pmap,
+        "StroboscopicMap": ts.systems.Duffing().poincare(period=4.488),
+        "TangentSystem": TangentSystem(lor, k=2),
+        "Ensemble": band,
+        "ProjectedSystem": ProjectedSystem(lor, ["x", "z"]),
+        "TrajectoryBatch": band.run(final_time=0.3, dt=0.1),
+        "EnsembleSamples": band.collect(2),
+        "ParamSet": lor.params,
+        "SystemInfo": lor.info,
+    }
+
+
+#: Every tab surface this slot owns, measured.  Re-measure, never nudge.
+#:
+#: The five family rows and ``Trajectory`` are UNCHANGED by the visibility
+#: ruling — §11 found nothing to hide on a system or a trajectory, which is the
+#: finding, not an omission: the overwhelm was one dot down, on the wrappers and
+#: the records.  The four that moved are marked.
+TAB_SURFACES: dict[str, tuple[str, ...]] = {
+    # --- unchanged by §11 (pinned so a future round cannot drift them) ---
+    "ContinuousSystem": CORE_19,
+    "DiscreteMap": tuple(sorted(set(CORE_19) - {"poincare", "jacobian_sym"})),
+    "DelaySystem": tuple(sorted(set(CORE_19) - {"set_state", "jacobian", "jacobian_sym"})),
+    "StochasticSystem": tuple(sorted(set(CORE_19) - {"jacobian_sym"})),
+    "WrappedSystem": (
+        "copy",
+        "dim",
+        "ensemble",
+        "family",
+        "plot",
+        "poincare",
+        "reinit",
+        "run",
+        "set_state",
+        "state",
+        "step",
+        "time",
+        "variables",
+    ),
+    "Trajectory": (
+        "after",
+        "component",
+        "dim",
+        "dt",
+        "meta",
+        "minmax",
+        "n_steps",
+        "neighbors",
+        "plot",
+        "set_distance",
+        "shape",
+        "standardize",
+        "system",
+        "t",
+        "to_frame",
+        "unbounded",
+        "unpack",
+        "variables",
+        "y",
+    ),
+    "StroboscopicMap": (
+        "copy",
+        "dim",
+        "family",
+        "params",
+        "period",
+        "plot",
+        "reinit",
+        "run",
+        "set_state",
+        "state",
+        "step",
+        "system",
+        "time",
+        "variables",
+        "with_params",
+    ),
+    # --- moved by §11 T2 ---
+    "PoincareMap": (  # 21 -> 20   (- plane_auto)
+        "as_events",
+        "copy",
+        "crossing_count",
+        "dim",
+        "direction",
+        "dt",
+        "family",
+        "max_time",
+        "params",
+        "plane",
+        "plot",
+        "reinit",
+        "run",
+        "set_state",
+        "state",
+        "step",
+        "system",
+        "time",
+        "variables",
+        "with_params",
+    ),
+    "TangentSystem": (  # 19 -> 17   (- convergence, - growths)
+        "copy",
+        "deviations",
+        "dim",
+        "exponents",
+        "family",
+        "k",
+        "params",
+        "plot",
+        "reinit",
+        "run",
+        "set_state",
+        "state",
+        "step",
+        "system",
+        "time",
+        "variables",
+        "with_params",
+    ),
+    "Ensemble": (  # 16 -> 14   (- states, - set_states; template -> system)
+        "collect",
+        "dim",
+        "family",
+        "members",
+        "params",
+        "plot",
+        "reinit",
+        "run",
+        "size",
+        "state",
+        "step",
+        "system",
+        "time",
+        "variables",
+    ),
+    "ProjectedSystem": (  # 16 -> 15   (- complete)
+        "components",
+        "copy",
+        "dim",
+        "family",
+        "params",
+        "plot",
+        "reinit",
+        "run",
+        "set_state",
+        "state",
+        "step",
+        "system",
+        "time",
+        "variables",
+        "with_params",
+    ),
+    "TrajectoryBatch": ("diverged", "final", "plot", "t", "to_frame", "y"),  # 8 -> 6
+    "EnsembleSamples": ("states", "times"),  # 4 -> 2
+    "ParamSet": (  # 14 -> 10   (- clear, - fromkeys, - pop, - popitem)
+        "as_dict",
+        "as_tuple",
+        "copy",
+        "get",
+        "items",
+        "keys",
+        "param_hash",
+        "setdefault",
+        "update",
+        "values",
+    ),
+    "SystemInfo": (  # 15 -> 14   (- of)
+        "default_ic",
+        "defaults",
+        "dim",
+        "doi",
+        "equations",
+        "family",
+        "field_labels",
+        "field_shape",
+        "known_lyapunov",
+        "name",
+        "parameters",
+        "qualname",
+        "reference",
+        "variables",
+    ),
+}
+
+
+class TestEveryTabSurfaceIsPinned:
+    """``<TAB>`` on anything this slot hands back is an exact, measured listing."""
+
+    def test_every_listing_is_exactly_what_was_measured(self):
+        live = _every_object_that_has_a_tab_surface()
+        assert set(live) == set(TAB_SURFACES), "a new returned type needs a pinned listing"
+        actual = {name: tuple(public(obj)) for name, obj in live.items()}
+        expected = {name: tuple(sorted(cols)) for name, cols in TAB_SURFACES.items()}
+        assert actual == expected
+
+    def test_the_family_core_and_the_trajectory_did_not_shrink(self):
+        # The §11 finding, asserted as a finding: hiding cost the five family
+        # rows and the Trajectory nothing at all.
+        live = _every_object_that_has_a_tab_surface()
+        assert len(public(live["ContinuousSystem"])) == 19
+        assert len(public(live["Trajectory"])) == 19
+
+
+class TestHidingNeverUnbinds:
+    """G1, mechanically: every name §11 withheld is still reachable and still works."""
+
+    def test_the_registry_covers_this_slot(self):
+        from tsdynamics.families._hidden import HIDDEN_NAMES
+
+        owners = {key.rsplit(".", 1)[-1] for key in HIDDEN_NAMES}
+        assert {
+            "ParamSet",
+            "SystemInfo",
+            "PoincareMap",
+            "TangentSystem",
+            "Ensemble",
+            "ProjectedSystem",
+            "TrajectoryBatch",
+            "EnsembleSamples",
+        } <= owners
+
+    def test_every_hidden_name_still_resolves_on_a_live_object(self):
+        from tsdynamics.families._hidden import HIDDEN_NAMES
+
+        by_class = {key.rsplit(".", 1)[-1]: names for key, names in HIDDEN_NAMES.items()}
+        live = _every_object_that_has_a_tab_surface()
+        checked = 0
+        for cls_name, obj in live.items():
+            for name in by_class.get(cls_name, ()):
+                assert name not in public(obj), f"{cls_name}.{name} is listed after all"
+                assert hasattr(obj, name), f"{cls_name}.{name} was UNBOUND, not hidden"
+                touch(obj, name)  # the read a user would do
+                checked += 1
+        assert checked >= 12, "the sweep stopped finding the hidden population"
+
+    def test_the_hidden_callables_still_compute_the_same_answers(self):
+        # Not merely bound — still *correct*.  These four are the ones with
+        # live callers outside this slot (viz.transforms.spectra drives
+        # `convergence`; docs/analysis/lyapunov.md runs `growths()`), which is
+        # why renaming them to `_name` was the wrong mechanism.
+        from tsdynamics.derived import TangentSystem
+
+        hen = ts.systems.Henon()
+        times, est = TangentSystem(hen, k=2).convergence(steps=100, ic=[0.1, 0.1])
+        fresh = TangentSystem(hen, k=2).run(steps=100, ic=[0.1, 0.1]).unpack()
+        np.testing.assert_array_equal(times, fresh[0])
+        np.testing.assert_array_equal(est, fresh[1])
+
+        tang = TangentSystem(hen, k=2)
+        tang.reinit([0.1, 0.1])
+        tang.step()
+        assert tang.growths().shape == (2,)
+
+        band = ts.systems.Lorenz().ensemble([[1.0, 1.0, 1.0], [1.001, 1.0, 1.0]])
+        np.testing.assert_array_equal(band.states(), band.state())
+        band.set_states([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]])
+        np.testing.assert_array_equal(band.states()[0], [0.0, 0.0, 0.0])
+
+        assert ts.systems.Rossler().poincare("y", 0.0).plane_auto is False
+
+    def test_a_fixed_key_mapping_still_refuses_the_hidden_mutators(self):
+        # `dir()` is not the lookup path — the teaching error still fires.
+        params = ts.systems.Lorenz().params
+        for call in (lambda: params.pop("sigma"), params.popitem, params.clear):
+            with pytest.raises(ts.InvalidInputError, match="fixed-key"):
+                call()
+
+    def test_hiding_composes_with_a_base_that_already_curates_its_listing(self):
+        # Load-bearing: ``SystemBase.__dir__`` drops the ``Absent`` slots, so a
+        # decorated subclass that jumped straight to ``object.__dir__`` would
+        # silently re-advertise names that *cannot work* on that family — the
+        # exact lie ``Absent`` exists to prevent.  The decorator therefore
+        # delegates along the MRO, which this pins.
+        from tsdynamics.families._hidden import hide
+
+        class Curated:
+            def __dir__(self):
+                return ["kept", "curated_only"]
+
+        @hide("kept")
+        class Narrowed(Curated):
+            pass
+
+        assert dir(Narrowed()) == ["curated_only"]
+
+
+class TestTheRenamedAndTheReadOnly:
+    """§11 T2's one rename and one write-guard, both with the message that teaches."""
+
+    def test_an_ensemble_names_its_inner_system_the_way_every_view_does(self):
+        band = ts.systems.Lorenz().ensemble([[1.0, 1.0, 1.0]])
+        assert isinstance(band.system, ts.ContinuousSystem)
+        with pytest.raises(AttributeError, match=r"band\.system"):
+            touch(band, "template")
+
+    def test_the_inner_system_has_one_spelling_across_every_wrapper(self):
+        live = _every_object_that_has_a_tab_surface()
+        wrappers = [
+            "PoincareMap",
+            "StroboscopicMap",
+            "TangentSystem",
+            "Ensemble",
+            "ProjectedSystem",
+        ]
+        assert all("system" in public(live[name]) for name in wrappers)
+
+    def test_a_section_plane_cannot_be_relabelled_after_the_march(self):
+        pmap = ts.systems.Rossler().poincare("y", 0.0)
+        with pytest.raises(InvalidParameterError, match="read-only"):
+            pmap.plane = ("z", 27.0)
+        assert pmap.plane == (1, 0.0)  # and the section is untouched
+
+    def test_the_refusal_hands_back_a_line_that_builds_the_section_meant(self):
+        pmap = ts.systems.Rossler().poincare("y", 0.0)
+        with pytest.raises(InvalidParameterError) as excinfo:
+            pmap.plane = ("z", 27.0)
+        assert "system.poincare(" in str(excinfo.value)
+
+    def test_the_v5_class_alias_is_bound_but_unlisted(self):
+        import tsdynamics.derived as derived
+
+        assert derived.EnsembleSystem is derived.Ensemble
+        assert "EnsembleSystem" not in derived.__all__
+        assert "EnsembleSystem" not in dir(derived)
+
+
+class TestEveryModuleDeclaresItsOwnSurface:
+    """§11's enforcement clause, swept over this slot's three packages.
+
+    ``__all__`` alone buys nothing a user sees: it governs ``import *`` and has
+    **zero** effect on ``<TAB>``.  A module that declares one must therefore also
+    define ``__dir__``, or the listing it curated is not the listing anyone gets.
+    """
+
+    @staticmethod
+    def _modules() -> list[object]:
+        import importlib
+        import pkgutil
+
+        mods = []
+        for pkg_name in ("tsdynamics.families", "tsdynamics.data", "tsdynamics.derived"):
+            pkg = importlib.import_module(pkg_name)
+            mods.append(pkg)
+            mods += [
+                importlib.import_module(f"{pkg_name}.{sub.name}")
+                for sub in pkgutil.iter_modules(pkg.__path__)
+            ]
+        return mods
+
+    def test_every_module_declares_all_and_mirrors_it_in_dir(self):
+        missing = [
+            m.__name__
+            for m in self._modules()
+            if not hasattr(m, "__all__") or "__dir__" not in vars(m)
+        ]
+        assert missing == []
+
+    def test_no_module_offers_a_name_from_outside_the_library(self):
+        # 55 names leaked across 9 modules before §11 T4 — `np`, `math`,
+        # `weakref`, `OrderedDict`, `abstractmethod`, `annotations`, `Any`,
+        # `cast`, ... — none of which says anything about the module offering it.
+        #
+        # This is deliberately phrased over `dir()` *and* resolved ownership
+        # rather than over `vars()`: `from typing import Any` at the top of a
+        # module is ordinary Python and is not the defect.  The defect is a
+        # module whose **listing** hands those names to a reader, which is what
+        # happens the moment `__all__`/`__dir__` is missing or wrong.
+        import types
+        import typing
+
+        def is_ours(value: object) -> bool:
+            """Was *value* defined inside this library?
+
+            A ``X | Y`` alias (``data.Region``) reports ``__module__ ==
+            'typing'`` however library-owned its members are, so a union is
+            judged by its arguments.
+            """
+            args = typing.get_args(value)
+            if args:
+                return all(is_ours(arg) for arg in args)
+            owner = (
+                value.__name__
+                if isinstance(value, types.ModuleType)
+                else getattr(value, "__module__", None)
+            )
+            return owner is None or owner.startswith("tsdynamics")
+
+        foreign = {}
+        for m in self._modules():
+            offered = sorted(
+                name
+                for name in dir(m)
+                if not name.startswith("_") and not is_ours(getattr(m, name))
+            )
+            if offered:
+                foreign[m.__name__] = offered
+        assert foreign == {}
+
+    def test_dir_is_exactly_the_sorted_listing(self):
+        assert all(dir(m) == sorted(m.__all__) for m in self._modules())
+
+
+class TestNothingPublicIsUndocumented:
+    """§11.6 defect 2, swept: ``help()`` on a public member must answer.
+
+    ``help(DerivedSystem.dim)`` printed three blank lines and ``help(pmap.dim)``
+    printed ``int([x]) -> integer`` — the builtin's reference, about a different
+    subject.  ``help(traj.y)`` printed NumPy's, ``help(traj.meta)`` ``dict()``'s.
+    20 members, all in this slot; the sweep now finds none.
+    """
+
+    def test_every_public_member_of_every_returned_type_has_a_docstring(self):
+        import inspect
+
+        undocumented = []
+        for cls_name, obj in _every_object_that_has_a_tab_surface().items():
+            cls = type(obj)
+            for name in public(obj):
+                member = inspect.getattr_static(cls, name, None)
+                if member is None:  # a plain instance attribute carries no doc slot
+                    continue
+                if isinstance(member, property):
+                    doc = member.__doc__
+                elif isinstance(member, staticmethod | classmethod):
+                    doc = member.__func__.__doc__
+                else:
+                    doc = inspect.getdoc(member)
+                if not (doc or "").strip():
+                    undocumented.append(f"{cls_name}.{name}")
+        assert undocumented == []
+
+    def test_the_four_trajectory_channels_document_themselves(self):
+        import inspect
+
+        from tsdynamics.data import Trajectory
+
+        for name in ("t", "y", "system", "meta"):
+            doc = inspect.getdoc(getattr(Trajectory, name)) or ""
+            assert len(doc) > 40, f"Trajectory.{name} still has no docstring of its own"

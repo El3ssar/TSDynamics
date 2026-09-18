@@ -55,6 +55,10 @@ import numpy as np
 from tsdynamics.errors import ConvergenceError
 from tsdynamics.utils.tolerances import DEFAULT_ATOL, DEFAULT_RTOL
 
+#: What this module *defines* — ``np``, ``Any`` and the two tolerance constants
+#: it imports are not part of its surface (``CONTRACT.md`` §11, T4).
+__all__ = ["engine_eligible", "plane_event_tape", "section_crossings"]
+
 #: The first span to probe, in time units, before the crossing rate is known.
 _INITIAL_SPAN_TIME: float = 50.0
 
@@ -220,3 +224,8 @@ def section_crossings(
     all_times = np.concatenate(times_chunks)[:need]
     all_states = np.concatenate(states_chunks, axis=0)[:need]
     return all_times[transient:], all_states[transient:], t_cur, u_cur
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

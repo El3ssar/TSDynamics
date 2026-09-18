@@ -59,7 +59,7 @@ pts = ts.systems.Henon().run(steps=8000, ic=[0.1, 0.1]).y[500:]
 res = ts.analysis.correlation_dimension(pts, n_radii=32, min_window=8)
 float(res)        # 1.171   (the fitted slope D2)
 res.stderr        # 0.002   (slope uncertainty over the window)
-res.fit_slice     # (3, 13) inclusive indices of the fitted region
+res.fit_region    # (3, 13) inclusive indices of the fitted region
 ```
 
 The `.y[500:]` slice drops the transient before the orbit lands on the
@@ -202,7 +202,7 @@ from tsdynamics.analysis.dimensions import local_slopes, fit_scaling_region
 
 res = ts.analysis.correlation_dimension(pts, n_radii=32, min_window=8)
 res.x, res.y            # log r , log C(r)  — the scaling curve
-res.fit_slice           # (lo, hi) indices the dimension was fit over
+res.fit_region          # (lo, hi) indices the dimension was fit over
 
 local_slopes(res.x, res.y)      # point-wise slope: a plateau ⇒ scaling
 fit = fit_scaling_region(res.x, res.y, min_window=6, tol=1.2)

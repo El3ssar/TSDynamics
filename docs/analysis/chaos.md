@@ -194,7 +194,7 @@ ts.analysis.expansion_entropy(ts.systems.Lorenz(), [(-20.0, 20.0), (-25.0, 25.0)
 ```
 
 The `ExpansionEntropyResult` carries `entropy`, `stderr`, the
-`times` / `log_growth` curve, `n_samples`, `n_survivors` and `fit_slice`.
+`times` / `ordinate` curve, `n_samples`, `n_survivors` and `fit_region`.
 As with every scaling estimate, inspect the growth curve and pass
 `fit_range=(lo, hi)` to pin the linear region for a publishable number — a
 short horizon keeps the raw (un-renormalised) tangent product from overflowing,

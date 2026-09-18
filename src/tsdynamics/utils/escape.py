@@ -110,3 +110,8 @@ def escaped(peak: float | None) -> bool:
         return False
     value = float(peak)
     return not np.isfinite(value) or value >= ESCAPE_SCALE
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

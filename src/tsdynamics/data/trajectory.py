@@ -28,9 +28,17 @@ from typing import TYPE_CHECKING, Any, Literal, NamedTuple, cast
 import numpy as np
 
 from tsdynamics.errors import InvalidInputError
+from tsdynamics.errors import taught as _taught
 from tsdynamics.utils.escape import Unbounded, detect_unbounded
 from tsdynamics.utils.plot_namespace import plot_namespace as _plot_namespace
 from tsdynamics.utils.plot_namespace import plot_seam_error as _plot_seam_error
+
+#: What this module *defines*.  ``dir()`` here used to offer ``np``, ``cast``,
+#: ``dataclass``, ``NamedTuple``, ``Literal``, ``Callable``, ``Any``,
+#: ``TYPE_CHECKING`` and ``annotations`` alongside the four names that matter
+#: (``CONTRACT.md`` §11, T4).  ``Unbounded`` / ``detect_unbounded`` are imported
+#: from :mod:`tsdynamics.utils.escape` and listed there, not here.
+__all__ = ["MinMax", "Neighbors", "Trajectory", "as_trajectory"]
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
@@ -380,7 +388,33 @@ class Trajectory:
     ...     pass
     """
 
-    __slots__ = ("t", "y", "system", "meta", "_kdtree", "_unbounded", "_unbounded_checked")
+    #: Declared as a **mapping** rather than a tuple so the four public slots
+    #: carry their own documentation.  ``help(traj.y)`` resolves the *value* and
+    #: printed NumPy's 200-line ``ndarray`` reference; ``help(traj.meta)`` printed
+    #: ``dict()``'s — neither says what the channel means here, and there was no
+    #: other place to ask (``CONTRACT.md`` §11.6 defect 2).  ``help(Trajectory.y)``
+    #: now answers, and the dict form is otherwise identical: membership
+    #: (``name in Trajectory.__slots__``, used by ``__getattr__``) reads the keys,
+    #: and slot enforcement is unchanged.
+    __slots__ = {
+        "t": "Sample times, shape ``(T,)`` — step indices for a discrete map. "
+        "This axis is the source of truth for the sampling interval: "
+        ":attr:`dt` derives from it, so a sliced trajectory reports the step it "
+        "really has rather than the one the run asked for.",
+        "y": "State at each sample, shape ``(T, dim)`` — always 2-D, even for a "
+        "one-component signal. Prefer ``traj['x']`` / :meth:`component` to a raw "
+        "column index: those read the component *names*.",
+        "system": "The system that produced this trajectory, or ``None``. "
+        "**Measured data has no system**, and every consumer in the library "
+        "tolerates that — it is what lets plain arrays reach the analysis layer.",
+        "meta": "Provenance of the run that produced this: system name, "
+        "parameter snapshot, solver, ``dt``, tolerances, ``ic``, library version. "
+        "Preserved verbatim through slicing and :meth:`after`, which is why it "
+        "records what was *asked for* and :attr:`dt` reads the ``t`` axis instead.",
+        "_kdtree": None,
+        "_unbounded": None,
+        "_unbounded_checked": None,
+    }
 
     def __init__(
         self,
@@ -421,11 +455,11 @@ class Trajectory:
                 traj["voltage"]
 
             .. versionadded:: 6.0
-               It used to be reachable only as the undocumented
-               ``meta={"variables": (...)}``, and naming it raised a bare
-               ``TypeError`` — on the one constructor the package docstring
-               points data users at, so everything a measured signal plotted
-               was labelled ``y0``.
+                It used to be reachable only as the undocumented
+                ``meta={"variables": (...)}``, and naming it raised a bare
+                ``TypeError`` — on the one constructor the package docstring
+                points data users at, so everything a measured signal plotted
+                was labelled ``y0``.
 
         Raises
         ------
@@ -533,14 +567,29 @@ class Trajectory:
         ``traj.rqa`` used to be a bare ``AttributeError`` — the one place in the
         library where a wrong guess taught nothing.  Ruling A2 took the analyses
         off the object, so the error **is** the discovery mechanism.
+
+        Every teaching branch is sealed with
+        :func:`~tsdynamics.errors.taught`, because CPython appends its own
+        ``Did you mean: …?`` to an ``AttributeError`` escaping a ``__getattr__``
+        and it was contradicting us: ``traj.dims`` (a retired namespace of four
+        free functions) was answered *"Did you mean: 'dim'?"* — the state-space
+        dimension, an integer — and ``traj.to_plot_spec`` was answered with the
+        dunder the message had just called *"not a verb you type"*.
         """
         if name.startswith("_") or name in Trajectory.__slots__:
             raise AttributeError(name)
+        try:
+            raise self._miss(name)
+        except AttributeError as err:
+            raise _taught(err, name) from None
+
+    def _miss(self, name: str) -> AttributeError:
+        """Build the teaching error for a missing attribute.  See :meth:`__getattr__`."""
         if name == "to_plot_spec":
-            raise _plot_seam_error("Trajectory", "traj")
+            return _plot_seam_error("Trajectory", "traj")
         if name in _DELETED_TRAJECTORY_METHODS:
             why, lines = _DELETED_TRAJECTORY_METHODS[name]
-            raise AttributeError(
+            return AttributeError(
                 f"'Trajectory' object has no attribute {name!r}: {why}.\n"
                 + "\n".join(f"    {line}" for line in lines)
             )
@@ -551,13 +600,13 @@ class Trajectory:
 
             known = set(registry.analyses.names())
         except Exception:  # pragma: no cover - defensive
-            raise AttributeError(name) from None
+            return AttributeError(name)
         has_system = object.__getattribute__(self, "system") is not None
         if name in known:
-            raise _discovery.attribute_error(name, "Trajectory", "data", has_system=has_system)
+            return _discovery.attribute_error(name, "Trajectory", "data", has_system=has_system)
         if name in _DELETED_TRAJECTORY_ACCESSORS:
             members = _DELETED_TRAJECTORY_ACCESSORS[name]
-            raise AttributeError(
+            return AttributeError(
                 f"'Trajectory' object has no attribute {name!r}: the .lyap / .chaos "
                 f"/ .dims / .recurrence namespaces are gone — every member is "
                 f"a free function.\n"
@@ -567,7 +616,7 @@ class Trajectory:
             )
         near = _discovery.near_miss(name, known)
         tail = f"\n    ts.analysis.{near}(traj)" if near else ""
-        raise AttributeError(
+        return AttributeError(
             f"'Trajectory' object has no attribute {name!r}."
             + (f" Did you mean:{tail}" if near else "")
             + "\n    "
@@ -892,11 +941,11 @@ class Trajectory:
         :meth:`plot` (the same thing, styled at the door).
 
         .. versionchanged:: 6.0
-           Was the public ``to_plot_spec``.  ``ts.plot(traj)`` returns the very
-           same object without rendering, so a third public spelling for
-           "build a plot but do not draw it" bought nothing and cost a
-           newcomer a choice.  ``traj.to_plot_spec`` now raises, naming both
-           spellings that work.
+            Was the public ``to_plot_spec``.  ``ts.plot(traj)`` returns the very
+            same object without rendering, so a third public spelling for
+            "build a plot but do not draw it" bought nothing and cost a
+            newcomer a choice.  ``traj.to_plot_spec`` now raises, naming both
+            spellings that work.
 
         Every common view goes through here, so the parameterised
         ``viz.producers`` builders stay an internal detail.
@@ -959,11 +1008,11 @@ class Trajectory:
             trajectory.
 
             .. versionchanged:: 6.0
-               Previously *every* ``PlotKind`` spelling (and even a layer mark
-               like ``"line"``) was accepted and produced a spec **labelled**
-               with the requested kind whose only layer was a plain line —
-               a mislabelled plot; ``kind="composite"`` additionally returned a
-               zero-panel composite, silently discarding the trajectory.
+                Previously *every* ``PlotKind`` spelling (and even a layer mark
+                like ``"line"``) was accepted and produced a spec **labelled**
+                with the requested kind whose only layer was a plain line —
+                a mislabelled plot; ``kind="composite"`` additionally returned a
+                zero-panel composite, silently discarding the trajectory.
         components : int or str or sequence of int/str, optional
             Which state components to draw (names or indices).  ``None`` uses all.
         primitive : str, optional
@@ -1534,11 +1583,11 @@ class Trajectory:
         ``import tsdynamics`` never pulls it in.
 
         .. versionchanged:: 6.0
-           Returns the :class:`~tsdynamics.viz.spec.PlotSpec` instead of the
-           backend figure.  ``ts.plot(traj)`` already returned a spec, so the two
-           spellings of the same word returned two different types and
-           ``traj.plot().save(...)`` raised ``'Figure' object has no attribute
-           'save'``.  Use ``.render(backend, **backend_kw)`` for a figure.
+            Returns the :class:`~tsdynamics.viz.spec.PlotSpec` instead of the
+            backend figure.  ``ts.plot(traj)`` already returned a spec, so the two
+            spellings of the same word returned two different types and
+            ``traj.plot().save(...)`` raised ``'Figure' object has no attribute
+            'save'``.  Use ``.render(backend, **backend_kw)`` for a figure.
         """
         from tsdynamics.viz.compose import apply_labels
         from tsdynamics.viz.spec import reject_positional_transform
@@ -1845,3 +1894,8 @@ def as_trajectory(obj: Any, *, dt: float | None = None) -> Trajectory:
         t = step * np.arange(y.shape[0], dtype=float)
         meta["dt"] = step
     return Trajectory(t, y, None, meta=meta)
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast
 import numpy as np
 
 from tsdynamics.families import ContinuousSystem, DelaySystem, DiscreteMap, Trajectory
+from tsdynamics.families._hidden import hide
 from tsdynamics.utils.tolerances import DEFAULT_ATOL, DEFAULT_RTOL
 
 from ._base import DerivedSystem
@@ -36,16 +37,34 @@ def _qr_growths(w: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return q, np.log(diag)
 
 
+@hide("convergence", "growths")
 class TangentSystem(DerivedSystem):
     """
     Evolve a system together with ``k`` deviation (tangent) vectors.
 
     Each ``step()`` advances the state and the deviation vectors, then
-    QR-reorthonormalises; :meth:`growths` exposes the per-step logarithmic
-    stretch factors ``log |diag R|`` and :meth:`exponents` their running
-    time-average — the Lyapunov spectrum estimate.  :meth:`lyapunov_spectrum`
-    wraps that into the standard burn-in + time-averaged estimate, and is the
-    single implementation every family's ``lyapunov_spectrum`` delegates to.
+    QR-reorthonormalises; :meth:`exponents` is their running time-average — the
+    Lyapunov spectrum estimate — and :meth:`deviations` is the live orthonormal
+    frame.  ``ts.analysis.lyapunov_spectrum`` wraps that into the standard
+    burn-in + time-averaged estimate, and is the single implementation every
+    family's Lyapunov answer delegates to.
+
+    Two members are withheld from ``dir()`` (``CONTRACT.md`` §11, T2) and remain
+    fully callable:
+
+    ``convergence(steps, ...)``
+        The Lyapunov estimates settling over time.  Measured, it returns exactly
+        ``run(steps, ...).unpack()`` — the same two arrays, element-for-element —
+        so it is a second spelling of the one trajectory verb (corollary C3).
+        The picture it exists for has a front door of its own::
+
+            ts.plot(system, "lyapunov_convergence", steps=4000)
+
+    ``growths()``
+        The most recent step's ``log|diag R|``.  A per-step internal of the
+        Benettin accumulation, meaningful only while you are driving ``step()``
+        yourself; the quantity users want is :meth:`exponents`, its running
+        average.
 
     Implementation per family
     -------------------------
@@ -74,8 +93,8 @@ class TangentSystem(DerivedSystem):
         (the pure-Python oracle — not for production use).
 
         .. versionchanged:: 6.0
-           Default moved from ``"interp"`` to ``"jit"``, once the v6
-           compiled-evaluator cache removed the JIT's per-call recompile.
+            Default moved from ``"interp"`` to ``"jit"``, once the v6
+            compiled-evaluator cache removed the JIT's per-call recompile.
 
     Examples
     --------
@@ -492,8 +511,46 @@ class TangentSystem(DerivedSystem):
     def deviations(self) -> np.ndarray:
         """Return the current orthonormal deviation vectors, shape ``(dim, k)``.
 
+        The live tangent frame: column ``j`` is the direction the ``j``-th
+        Lyapunov exponent is currently being measured along, reorthonormalised at
+        every ``step()``.  Columns are ordered by decreasing growth, so
+        ``deviations()[:, 0]`` is the **most unstable direction at this point on
+        the orbit** — the covariant-direction estimate you want in order to
+        perturb a trajectory where it will actually separate, to seed a control
+        scheme, or to see how the stable/unstable splitting turns as the orbit
+        moves.
+
+        This is the only route to that frame, which is why it stays on the tab
+        surface while :meth:`growths` (a per-step scalar of the same accumulation)
+        does not: the spectrum is available from
+        ``ts.analysis.lyapunov_spectrum``, the *directions* are available here and
+        nowhere else.
+
         Available on every supported backend — maps and the ODE engine
         backends both carry the deviation matrix explicitly.
+
+        Returns
+        -------
+        numpy.ndarray
+            Shape ``(dim, k)``, orthonormal columns.  A copy: mutating it cannot
+            corrupt the running estimate.
+
+        Raises
+        ------
+        RuntimeError
+            Before the first :meth:`reinit`, and — in map mode — after a *batch*
+            engine ``lyapunov_spectrum``, whose Rust kernel returns the averaged
+            spectrum without the final frame.  Drive ``reinit()`` + ``step()``
+            yourself (or pass ``backend='reference'``) for a streaming frame.
+
+        Examples
+        --------
+        >>> tang = TangentSystem(Henon(), k=2)      # doctest: +SKIP
+        >>> tang.reinit([0.1, 0.1])                 # doctest: +SKIP
+        >>> for _ in range(100):                    # doctest: +SKIP
+        ...     tang.step()
+        >>> tang.deviations()[:, 0]                 # the unstable direction here
+        ...                                         # doctest: +SKIP
         """
         if self._mode == "map":
             if self._map_engine_stale:

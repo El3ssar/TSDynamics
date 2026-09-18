@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Any
 
 from ... import registry as _registry
 from .._frames import FrameSpace, OverlayRole, space_arity
+from .._visibility import listing_dir
 from ..spec import Plot, PlotKind
 from ._base import (
     PART_KEYS,
@@ -70,6 +71,8 @@ __all__ = [
     "row_option_names",
     "transforms",
 ]
+
+__dir__ = listing_dir(__all__)
 
 
 # ---------------------------------------------------------------------------
@@ -743,7 +746,7 @@ def validate_primitive(
     if geometry is not None and geometry.primitives is not None:
         allowed = allowed & geometry.primitives
     if primitive is None:
-        fallback = geometry.primitive if geometry is not None else None
+        fallback = geometry.chosen_primitive if geometry is not None else None
         primitive = fallback if fallback is not None else transform.default_primitive
     if primitive in allowed:
         return primitive
@@ -757,7 +760,16 @@ def validate_primitive(
 
 
 def _invalid_primitive_message(transform: PlotTransform, primitive: str) -> str:
-    """Compose the "not valid for this transform" message, with the useful hint."""
+    """Compose the "not valid for this transform" message, with the useful hint.
+
+    **The message names** :func:`allow` **whenever the requested primitive is a
+    real, registered one.**  That is the extension point's other half: a
+    primitive a user registers themselves is admitted by *no* shipped row —
+    every one of the 39 was frozen before it existed — so the answer to "why
+    can't I draw with my own primitive?" is one line, and until v6 nothing said
+    it.  The hint is deliberately *not* offered for an unregistered name, where
+    ``allow`` would fail too and ``primitives.register`` is the real answer.
+    """
     valid = ", ".join(sorted(transform.primitives))
     text = f"primitive {primitive!r} is not valid for transform {transform.name!r}; valid: {valid}."
     if primitive not in PRIMITIVES:
@@ -769,12 +781,13 @@ def _invalid_primitive_message(transform: PlotTransform, primitive: str) -> str:
         (t.name for t in _all_records() if t.default_primitive == primitive),
         None,
     )
+    extend = f"\nTo admit it here: ts.viz.transforms.allow({transform.name!r}, {primitive!r})"
     if owner is not None and owner != transform.name:
-        return f"{text} ({primitive!r} is the default primitive of transform {owner!r}.)"
+        return f"{text} ({primitive!r} is the default primitive of transform {owner!r}.){extend}"
     others = sorted(t.name for t in _all_records() if primitive in t.primitives)
     if others:
-        return f"{text} ({primitive!r} is valid for {others}.)"
-    return text
+        return f"{text} ({primitive!r} is valid for {others}.){extend}"
+    return text + extend
 
 
 def _all_records() -> list[PlotTransform]:
@@ -936,6 +949,32 @@ def geometry(subject: Any, name: str, /, **options: Any) -> Geometry:
     The rung researchers actually want: get the numbers, look at them, do your
     own thing with them.  ``ts.viz.draw(g, "image")`` hands one back to the
     library.
+
+    What you do with the geometry, in four reads
+    --------------------------------------------
+    ``g["x"]``
+        The **array** for one channel (``"x"`` ``"y"`` ``"z"`` ``"c"`` ``"u"``
+        ``"v"`` ``"frames"``, whichever this transform carries).  On a
+        multi-part geometry it is stacked over the parts, shape ``(n_parts, …)``.
+        ``np.asarray(g)`` gives the drawn coordinates in axis order.
+    ``g.parts``
+        The drawable pieces in draw order, each with its own ``channels``,
+        ``label``, ``style`` and ``primitive`` — the route to a *per-piece*
+        answer, and what the two "no single array" errors tell you to iterate.
+    ``g.frame`` / ``g.primitives``
+        The coordinate space it lives in, and the primitives allowed to draw it.
+    ``g.meta``
+        What the transform chose on your behalf: the sampled region, the grid
+        resolution, the integration time.
+
+    Examples
+    --------
+    >>> import tsdynamics as ts
+    >>> g = ts.viz.geometry(ts.systems.VanDerPol(), "ftle", grid=9)
+    >>> g["c"].shape                      # one FTLE value per sampled point
+    (81,)
+    >>> len(g.parts)
+    1
 
     Parameters
     ----------
@@ -1182,14 +1221,14 @@ def draw(
                     "line", title="correlation sum")
 
     .. versionchanged:: 6.0
-       Measured before: **all ten style keys and sixteen of the seventeen figure
-       keywords raised**, and the message blamed the primitive — *"primitive
-       'line' does not accept keyword(s) ['color']; it accepts (none)"* — for a
-       word the door had simply never peeled.  Only ``title=`` worked.  The
-       ``kind=`` keyword was **removed**: it was dead by construction (passing it
-       skipped the fallback that supplies a kind, so ``spec_of`` raised before the
-       line that would have used it — *every* value raised), and a picture is
-       named by its transform now, not by a second kind vocabulary.
+        Measured before: **all ten style keys and sixteen of the seventeen figure
+        keywords raised**, and the message blamed the primitive — *"primitive
+        'line' does not accept keyword(s) ['color']; it accepts (none)"* — for a
+        word the door had simply never peeled.  Only ``title=`` worked.  The
+        ``kind=`` keyword was **removed**: it was dead by construction (passing it
+        skipped the fallback that supplies a kind, so ``spec_of`` raised before the
+        line that would have used it — *every* value raised), and a picture is
+        named by its transform now, not by a second kind vocabulary.
 
     Because it returns a :class:`~tsdynamics.viz.spec.Plot`, it **composes with
     everything** — that is closure, and it is why this is a function rather than
@@ -1554,7 +1593,15 @@ class CompatibilityMatrix(dict):  # type: ignore[type-arg]
 
     A plain ``dict`` subclass, so it is programmable (``m["phase_portrait"]``,
     ``pandas.DataFrame(m.rows())``) *and* prints as a table when you just look at
-    it.  Reading marks: ``*`` the default primitive, ``!`` exclusive to this row.
+    it.  Reading marks: ``*`` the default primitive, ``†`` a row whose legal set
+    depends on the geometry you compute.
+
+    .. versionchanged:: 6.0
+        A ``!`` marker (*"exclusive to this row"*) was documented here and in
+        :func:`compatibility`, and the ``exclusive`` field that drove it was
+        measured empty on **all 39** registered transforms — it was not even a
+        parameter of :func:`register`, so no row could ever set one.  Both the
+        field and the ``"exclusive"`` column of :meth:`rows` are gone.
     """
 
     def rows(self) -> list[dict[str, Any]]:
@@ -1566,7 +1613,6 @@ class CompatibilityMatrix(dict):  # type: ignore[type-arg]
                 "space": "/".join(s.value for s in t.frame),
                 "default": t.default_primitive,
                 "primitives": sorted(t.primitives),
-                "exclusive": sorted(t.exclusive),
                 "available": t.available,
                 "requires": t.requires,
                 "doc": t.doc,
@@ -1631,7 +1677,8 @@ def compatibility(name: str | None = None) -> Any:
     needs ``print(ts.viz.compatibility())``.  It is a ``dict`` subclass, so it is
     also programmable (``m["phase_portrait"]``, ``pandas.DataFrame(m.rows())``);
     ``compatibility("phase_portrait")`` is that one row.  Reading marks: ``*``
-    marks the default primitive, ``!`` marks a primitive exclusive to that row.
+    marks the default primitive, ``†`` marks a row whose legal set narrows with
+    the geometry you actually compute.
 
     A transform whose optional dependency is missing is **listed, flagged
     unavailable** — omitting it would read as "that plot does not exist", which

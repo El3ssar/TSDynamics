@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, ClassVar
 
 import numpy as np
 
@@ -149,14 +149,21 @@ class BasinEntropy(AnalysisResult):
         Number of boxes the grid was partitioned into.
     n_boundary_boxes : int
         Number of boxes containing more than one basin.
-    box_size : int
-        Box side length in cells.
-    log_base : float
-        Base of the logarithm (``e`` by default).
     fractal_boundary : bool
         ``True`` when :math:`S_{bb} > \log 2`, the sufficient fractal-boundary
         criterion of Daza et al. (2016).
+
+    Notes
+    -----
+    ``box_size`` (the box side length in cells) and ``log_base`` (the base of the
+    logarithm, ``e`` by default) are the caller's own settings echoed back, so
+    they are carried and exported but kept off ``dir()`` — R1, contract §11.3.
+    Both still resolve and both appear in :meth:`to_dict`.
     """
+
+    #: R1 — inputs echoed back.  The measurements here are the two entropies and
+    #: the two box counts.
+    _HIDDEN_ATTRIBUTES: ClassVar[frozenset[str]] = frozenset({"box_size", "log_base"})
 
     sb: float = 0.0
     sbb: float = 0.0
@@ -218,17 +225,33 @@ class UncertaintyExponent(AnalysisResult):
         State-space (grid) dimension :math:`D`.
     epsilons : ndarray
         Perturbation radii used (in state-space units).
-    f : ndarray
-        Fraction of :math:`\varepsilon`-uncertain cells at each radius.
+    uncertain_fractions : ndarray
+        Fraction of :math:`\varepsilon`-uncertain cells at each radius — the
+        measured curve :math:`f(\varepsilon)` whose slope is :attr:`alpha`.
+        Pairs with :attr:`epsilons`, same length, same order.
     r_squared : float
         Coefficient of determination of the log-log fit.
+
+    .. versionchanged:: 6.0
+        The curve was called ``f``.  A one-letter field on a public result reads
+        as a throwaway local, not as the measurement the exponent is read from,
+        and it sat next to ``epsilons`` — its own abscissa — spelled in full.
+        ``result.f`` now raises, naming :attr:`uncertain_fractions`.
+        ``slope_drift`` is still readable but off ``dir()``: it is the
+        intermediate behind the public :attr:`resolved` verdict.
     """
+
+    #: The readable form of ``slope_drift`` is the :attr:`resolved` verdict,
+    #: which is what the repr prints and what a caller acts on.
+    _HIDDEN_ATTRIBUTES: ClassVar[frozenset[str]] = frozenset({"slope_drift"})
 
     alpha: float = 0.0
     boundary_dimension: float = 0.0
     state_dimension: int = 0
     epsilons: np.ndarray = field(default_factory=lambda: np.empty(0), repr=False, compare=False)
-    f: np.ndarray = field(default_factory=lambda: np.empty(0), repr=False, compare=False)
+    uncertain_fractions: np.ndarray = field(
+        default_factory=lambda: np.empty(0), repr=False, compare=False
+    )
     r_squared: float = 0.0
 
     def __plot_spec__(self, kind: str | None = None) -> Any:
@@ -259,7 +282,7 @@ class UncertaintyExponent(AnalysisResult):
         from .. import _plotbuilder as pb
 
         eps = np.asarray(self.epsilons, dtype=float)
-        f = np.asarray(self.f, dtype=float)
+        f = np.asarray(self.uncertain_fractions, dtype=float)
         positive = (eps > 0.0) & (f > 0.0)
         log_eps = np.log(eps[positive])
         log_f = np.log(f[positive])
@@ -323,7 +346,7 @@ class UncertaintyExponent(AnalysisResult):
             slope is non-positive (the fraction did not grow with the radius).
         """
         eps = np.asarray(self.epsilons, dtype=float)
-        frac = np.asarray(self.f, dtype=float)
+        frac = np.asarray(self.uncertain_fractions, dtype=float)
         keep = (eps > 0.0) & (frac > 0.0)
         eps, frac = eps[keep], frac[keep]
         if eps.size < 3:
@@ -463,10 +486,16 @@ class WadaResult(AnalysisResult):
 
     Attributes
     ----------
-    is_wada : bool
-        ``True`` when there are at least three basins and the fraction of
-        boundary cells seeing *all* basins reaches ``threshold`` at the largest
-        radius (a sufficient grid criterion, not a proof).
+    wada : bool or None
+        The verdict: ``True`` when there are at least three basins and the
+        fraction of boundary cells seeing *all* basins reaches the acceptance
+        threshold at the largest radius (a sufficient grid criterion, not a
+        proof).  ``None`` — never ``False`` — when the test does not
+        :attr:`apply <applicable>`.
+    W : float or None
+        The measured Wada fraction at the largest radius.
+    applicable : bool
+        Whether the test could be run at all (it needs ≥ 3 basins).
     n_basins : int
         Number of attractor basins (colours) considered.
     radii : ndarray
@@ -476,9 +505,19 @@ class WadaResult(AnalysisResult):
         radius (:math:`W` of Daza et al., 2015).
     n_boundary_cells : int
         Number of boundary cells.
-    threshold : float
-        Acceptance fraction at the largest radius.
+
+    .. versionchanged:: 6.0
+        ``is_wada`` (the raw stored flag) and ``threshold`` (the caller's own
+        acceptance fraction) are off ``dir()``.  One verdict had **three**
+        spellings — ``wada``, ``is_wada`` and ``W`` — and only ``wada`` knows
+        about :attr:`applicable`, so ``is_wada`` read ``False`` on an image where
+        nothing had been measured.  Both still resolve; ``is_wada`` is in
+        ``to_dict()`` and ``W`` in ``to_dict(full=True)``.
     """
+
+    #: C-5 + R1: one verdict, one spelling (:attr:`wada`, the applicable-aware
+    #: one), and the acceptance threshold is an input echoed back.
+    _HIDDEN_ATTRIBUTES: ClassVar[frozenset[str]] = frozenset({"is_wada", "threshold"})
 
     is_wada: bool = False
     n_basins: int = 0
@@ -528,8 +567,11 @@ class WadaResult(AnalysisResult):
         """Whether the boundary is Wada — the one adjective-named verdict spelling.
 
         ``None`` — never ``False`` — when the test does not :attr:`apply
-        <applicable>`.  :attr:`is_wada` is the raw field and stays; this is the
-        spelling every other classifying result uses (contract §4.2 rule 10).
+        <applicable>`.  This is **the** spelling: it is the one every other
+        classifying result uses (contract §4.2 rule 10), and the only one that
+        distinguishes a measured *no* from *nothing was measured*.  The raw
+        stored flag ``is_wada`` is still readable (and still exported) but is
+        off ``dir()``, because it answers ``False`` in both cases.
 
         Returns
         -------
@@ -790,7 +832,7 @@ def uncertainty_exponent(
         boundary_dimension=float(dim - alpha),
         state_dimension=dim,
         epsilons=epsilons,
-        f=fractions,
+        uncertain_fractions=fractions,
         r_squared=float(r2),
         meta={
             "analysis": "uncertainty_exponent",

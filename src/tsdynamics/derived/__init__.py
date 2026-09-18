@@ -27,17 +27,22 @@ discrete map; an orbit diagram over it is a bifurcation diagram of the flow.
 """
 
 from ._base import DerivedSystem
-from .ensemble import Ensemble, EnsembleSystem, TrajectoryBatch
+from .ensemble import Ensemble, TrajectoryBatch
+from .ensemble import EnsembleSystem as EnsembleSystem  # v5 spelling: bound, unlisted
 from .poincare import PoincareMap, PoincareSection
 from .projected import ProjectedSystem
 from .stroboscopic import StroboscopicMap
 from .tangent import TangentSystem
 from .wrapped import WrappedSystem  # canonical home: tsdynamics.families.wrapped
 
+# ``EnsembleSystem`` is deliberately absent: it is the *same class object* as
+# ``Ensemble`` (measured, ``Ensemble is EnsembleSystem``), kept bound for the v5
+# spelling.  Listing both would make ``ts.derived.<TAB>`` advertise ten types
+# where there are nine, and invite a reader to look for a distinction that does
+# not exist (corollary C3 — ``CONTRACT.md`` §11, T2).
 __all__ = [
     "DerivedSystem",
     "Ensemble",
-    "EnsembleSystem",
     "PoincareMap",
     "PoincareSection",
     "ProjectedSystem",

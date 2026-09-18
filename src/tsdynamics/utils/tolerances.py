@@ -131,3 +131,8 @@ BASIN_RTOL: float = 1e-6
 
 #: Companion of :data:`BASIN_RTOL`.
 BASIN_ATOL: float = 1e-9
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

@@ -39,6 +39,8 @@ import functools
 from collections.abc import Callable
 from typing import Any, Literal, TypeVar
 
+from ._visibility import listing_dir
+
 __all__ = [
     "SCOPE_ATTR",
     "figure_scoped",
@@ -46,6 +48,8 @@ __all__ = [
     "panel_scoped_custom",
     "tweak_scopes",
 ]
+
+__dir__ = listing_dir(__all__)
 
 #: The attribute each decorator stamps on a tweak method naming its scope
 #: (``"panel"`` / ``"figure"``).  Read by :func:`tweak_scopes` and the gate.

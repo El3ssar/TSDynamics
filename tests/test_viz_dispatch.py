@@ -370,10 +370,13 @@ def test_declared_render_kwargs_match_each_backend_core():
 # v6 — the ts.viz surface, the renderers registry, and the save contract
 # ---------------------------------------------------------------------------
 
-#: The contract's ``ts.viz.<TAB>``, §2.5.  Exact and sorted: a builder who
-#: produces a different listing has failed.
+#: The contract's ``ts.viz.<TAB>``, §2.5 + §11.3 T3.  Exact and sorted: a builder
+#: who produces a different listing has failed.  ``VisualizationDegraded`` was
+#: promoted in v6 round 9 (13 -> 14): it is the warning the docs tell you to
+#: catch, and its only address was the internal ``ts.viz.render``.
 _VIZ_TAB_SURFACE = [
     "Plot",
+    "VisualizationDegraded",
     "compatibility",
     "draw",
     "geometry",
@@ -388,7 +391,11 @@ _VIZ_TAB_SURFACE = [
     "transforms",
 ]
 
-#: The contract's ``ts.viz.spec.<TAB>``, §2.7 — the 19 IR nouns.
+#: The contract's ``ts.viz.spec.<TAB>``, §2.7 + §11.3 T3 — the 18 IR nouns.
+#: The three envelope names left in v6 round 9 (plumbing with no executable use);
+#: the two renderer-declaration types joined, because writing a renderer is one of
+#: the six declared plugin doors and both were an ``AttributeError`` at every
+#: public address.  All five still resolve — see the two tests below.
 _SPEC_TAB_SURFACE = [
     "Animation",
     "Annotation",
@@ -404,16 +411,15 @@ _SPEC_TAB_SURFACE = [
     "PlotKind",
     "PlotTransform",
     "Presentation",
-    "SCHEMA_VERSION",
+    "RenderResult",
+    "RendererCapabilities",
     "T",
-    "from_dict_envelope",
     "make_frame",
-    "to_dict_envelope",
 ]
 
 
 def test_ts_viz_tab_surface_is_the_contract() -> None:
-    """13 names: four registries, two doors, one arranger, one type, and the IR."""
+    """14 names: four registries, two doors, one arranger, one type, one warning, the IR."""
     import tsdynamics as ts
 
     assert sorted(ts.viz.__all__) == _VIZ_TAB_SURFACE
@@ -423,7 +429,7 @@ def test_ts_viz_tab_surface_is_the_contract() -> None:
 
 
 def test_ts_viz_spec_holds_the_ir_and_every_noun_resolves() -> None:
-    """The IR is one dot away — and ten of the nineteen come from sibling modules."""
+    """The IR is one dot away — and twelve of the eighteen come from sibling modules."""
     import tsdynamics as ts
 
     assert sorted(ts.viz.spec.__all__) == _SPEC_TAB_SURFACE
