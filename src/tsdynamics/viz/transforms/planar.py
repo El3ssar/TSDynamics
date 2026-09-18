@@ -152,6 +152,14 @@ def nullclines(
     sit exactly on the crossings, and the two were computed by entirely separate
     code (marching squares over a lattice versus multi-start Newton).
 
+    What correct looks like
+    -----------------------
+    Sample any point of the ``x' = 0`` curve and the first component of the
+    right-hand side there is zero, to the lattice's resolution; likewise the
+    second on ``y' = 0``.  Their crossings are the equilibria: Van der Pol's
+    single crossing is the origin.  Gate:
+    ``tests/test_viz_truth.py::TestNullclinesCrossAtTheEquilibria``.
+
     Parameters
     ----------
     system : ContinuousSystem
@@ -299,6 +307,16 @@ def vector_field(
     flow of any dimension: ``plane=("x", "z")`` with ``at=``
     fixes the off-plane coordinates and samples the field on that plane.
 
+    What correct looks like
+    -----------------------
+    Every arrow is the system's own right-hand side at its tail: with the
+    default ``normalize=True`` the arrow ``(u, v)`` at ``(x, y)`` is a unit
+    vector parallel to ``f(x, y)`` (and exactly zero at an equilibrium, where
+    there is no direction to draw).  A field accidentally transposed, negated
+    or component-swapped renders as a perfectly plausible picture and fails
+    that comparison; gate:
+    ``tests/test_viz_truth.py::TestAFieldPlotIsThePictureOfTheRightHandSide``.
+
     Parameters
     ----------
     system : ContinuousSystem
@@ -406,6 +424,14 @@ def flow_speed(
     near-zero valleys locate the equilibria and the slow branches of a
     relaxation oscillator; its ridges are where the flow is fast.
 
+    What correct looks like
+    -----------------------
+    The image cell at row ``i``, column ``j`` is :math:`\|f\|` at
+    ``(x[j], y[i])`` — rows are ``y``, columns are ``x``.  Its dark valleys
+    must coincide with the crossings of :func:`nullclines`, because an
+    equilibrium is exactly where the speed vanishes; overlay the two and check.
+    Gate: ``tests/test_viz_truth.py::TestAFieldPlotIsThePictureOfTheRightHandSide``.
+
     Parameters
     ----------
     system : ContinuousSystem
@@ -497,6 +523,14 @@ def streamlines(
     Every curve is one ``NaN``-separated layer, so the whole field is one colour
     and one legend entry.
 
+    What correct looks like
+    -----------------------
+    Each curve is everywhere **tangent** to the field: take a step along a
+    drawn streamline and it points the same way as ``f`` at that point (cosine
+    1, not 0 and not -1).  Overlaid on :func:`vector_field` the curves must
+    thread the arrows, never cross them.  Gate:
+    ``tests/test_viz_truth.py::TestAFieldPlotIsThePictureOfTheRightHandSide``.
+
     Parameters
     ----------
     system : ContinuousSystem
@@ -553,6 +587,52 @@ def streamlines(
 # ---------------------------------------------------------------------------
 # trace_determinant
 # ---------------------------------------------------------------------------
+
+
+def _trace_determinant_axis_names(system: Any, plane: Sequence[int | str]) -> tuple[str, str]:
+    r"""Return the ``(tr, det)`` axis labels, naming the slice when one was taken.
+
+    The tr-det plane classifies a **2x2** linearization, so for a flow with more
+    than two coordinates the numbers plotted are the invariants of a 2x2 *block*
+    of the Jacobian — not of :math:`J`.  Measured on Lorenz: the marker sits at
+    :math:`(-11, -270)`, the block ``[[-10, 10], [28, -1]]``, while
+    ``numpy.trace`` / ``numpy.linalg.det`` of the real 3x3 Jacobian at that
+    equilibrium are :math:`(-13.667, +720)` — a different number on both axes and
+    a different **sign** on the determinant, so even "which side of
+    :math:`\Delta = 0`" inverts.  Labelling that pair ``tr J`` / ``det J`` is a
+    false statement about 106 of the catalogue's 3-D flows, so the label carries
+    the slice (``tr J|xy``) whenever the projection is real, and the transform
+    warns once per call.
+
+    Returns
+    -------
+    tuple of str
+        ``("tr J", "det J")`` for a planar flow, ``("tr J|xy", "det J|xy")``
+        (the two component names) when a sub-block was taken.
+    """
+    dim = int(getattr(system, "dim", 2) or 2)
+    if dim <= 2:
+        return ("tr J", "det J")
+    i, j, labels = _planar.resolve_plane(system, plane)
+    names = [str(labels[0]), str(labels[1])]
+    tag = "".join(names)
+    import warnings
+
+    from ..render import VisualizationDegraded
+
+    warnings.warn(
+        f"trace_determinant projected {type(system).__name__} ({dim}-D) onto the "
+        f"({names[0]}, {names[1]}) slice: the trace-determinant plane classifies a "
+        f"2x2 linearization, so the axes are the trace and determinant of J restricted "
+        f"to those two coordinates, NOT of the full {dim}x{dim} J. They are labelled "
+        f"'tr J|{tag}' / 'det J|{tag}' to say so. Choose another slice with "
+        f"plane=('{names[0]}', ...); the full spectrum is "
+        "ts.analysis.fixed_points(system).eigenvalues.",
+        VisualizationDegraded,
+        stacklevel=2,
+    )
+    _ = (i, j)
+    return (f"tr J|{tag}", f"det J|{tag}")
 
 
 def _demo_trace_determinant() -> tuple[Any, dict[str, Any]]:
@@ -612,6 +692,23 @@ def trace_determinant(
     the equilibria grouped by class — so the legend reads *saddle*, *centre*,
     *stable focus*, and each marker's position proves the label.
 
+    What correct looks like
+    -----------------------
+    A marker's coordinates are literally ``numpy.trace`` and
+    ``numpy.linalg.det`` of the Jacobian at that equilibrium, and its legend
+    class agrees with ``numpy.linalg.eigvals`` of the same matrix — Van der
+    Pol's origin is :math:`(\tau, \Delta) = (1, 1)`, above the parabola and
+    right of the vertical axis, hence *unstable focus*.  Gate:
+    ``tests/test_viz_truth.py::TestTheTraceDeterminantPointIsTheJacobiansOwnTraceAndDeterminant``.
+
+    **More than two coordinates?** Then the numbers are the invariants of a 2x2
+    *block*, and the axes say so: they read ``tr J|xy`` / ``det J|xy`` and the
+    call warns once (:class:`~tsdynamics.viz.render.VisualizationDegraded`).
+    Lorenz's origin plots at :math:`(-11, -270)` — the block's pair — where the
+    full 3x3 Jacobian has :math:`(-13.667, +720)`; the *verdict* (saddle) is
+    right, the numbers are the slice's.  The full spectrum is
+    ``ts.analysis.fixed_points(system).eigenvalues``.
+
     Parameters
     ----------
     system : ContinuousSystem
@@ -641,6 +738,7 @@ def trace_determinant(
     names every equilibrium's class instead, which is the information a reader
     actually takes away.
     """
+    axis_names = _trace_determinant_axis_names(system, plane)
     result = _planar.trace_determinant(
         system,
         plane=plane,
@@ -684,9 +782,9 @@ def trace_determinant(
 
     return Geometry(
         "trace_determinant",
-        make_frame(FrameSpace.PARAM2, ("tr J", "det J")),
+        make_frame(FrameSpace.PARAM2, axis_names),
         parts,
-        axis_labels=("tr J", "det J"),
+        axis_labels=axis_names,
         axis_limits=(result.trace_range, (det_lo - 0.05 * span, det_hi + 0.05 * span)),
         legend=True,
         meta=dict(result.meta),

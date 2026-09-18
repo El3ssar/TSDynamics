@@ -87,8 +87,16 @@ TOP_LEVEL: tuple[str, ...] = (
     "viz",
 )
 
-#: §2.2 — ``system.<TAB>``, the 19 names shared by every family.  Nothing adds to
-#: this list; a family only ever *loses* names (:data:`FAMILY_ABSENCES`).
+#: §2.2 — ``system.<TAB>``, the 20 names shared by every family.  A family only
+#: ever *loses* names from here (:data:`FAMILY_ABSENCES`).
+#:
+#: It was 19 through v6 round 10.  ``rhs`` is the twentieth, and it is added
+#: rather than nudged: ``jacobian`` is the derivative of a function this library
+#: would only hand back as ``_rhs_numeric``, and three of the plotting layer's
+#: transforms (``vector_field`` / ``flow_speed`` / ``streamlines``) ARE that
+#: function — so "is this picture right?" had no public answer.  Two independent
+#: readers and a blind tester all reached for the private name, which is the
+#: evidence the contract asks for before a name earns a slot.
 SYSTEM_CORE: tuple[str, ...] = (
     "copy",
     "dim",
@@ -102,6 +110,7 @@ SYSTEM_CORE: tuple[str, ...] = (
     "plot",
     "poincare",
     "reinit",
+    "rhs",
     "run",
     "set_state",
     "state",
@@ -120,10 +129,12 @@ FAMILY_ABSENCES: dict[str, dict[str, str]] = {
         "jacobian": "the RHS reads the state at several past times, so df/du at "
         "one point is not evaluable from (u, t) alone",
         "jacobian_sym": "ditto — there is no single symbolic df/du to hand back",
+        "rhs": "ditto — f(u, t) needs the whole history, not one point",
     },
     "DiscreteMap": {
         "poincare": "a section crosses a CONTINUOUS trajectory; a map has no in-between",
         "jacobian_sym": "a map's kernel is traced numerically, not held as a symbolic tree",
+        "rhs": "a map has no vector field; it advances in whole iterates",
     },
     "StochasticSystem": {
         "jacobian_sym": "a map's/SDE's kernel is traced, not held as a symbolic tree",
@@ -131,6 +142,7 @@ FAMILY_ABSENCES: dict[str, dict[str, str]] = {
     "WrappedSystem": {
         "jacobian": "it wraps an opaque stepper — there is no RHS to differentiate",
         "jacobian_sym": "ditto",
+        "rhs": "ditto — there is no right-hand side to evaluate either",
         # §2.2 renders WrappedSystem at 13; the six further absences are the
         # wrapper's own, measured below rather than asserted here.
     },
@@ -289,7 +301,7 @@ def test_a_name_a_family_cannot_have_does_not_exist_at_all(family: str) -> None:
 def test_the_wrapped_system_surface_is_a_subset_of_the_core() -> None:
     """§2.2 — a ``WrappedSystem`` loses names; it never gains one.
 
-    It is rendered at 13 rather than 19, and the exact absences are the
+    It is rendered at 13 rather than 20, and the exact absences are the
     wrapper's own business.  The invariant worth pinning is the direction: an
     opaque stepper may answer *less* than a system, never something new.
     """

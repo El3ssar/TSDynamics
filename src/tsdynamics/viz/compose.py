@@ -18,6 +18,18 @@ describes **one panel**, :func:`plot` arranges one or more things into a figure:
       py = ts.viz.plot(lor1, lor2, components="y")
       ts.viz.plot(px, py, layout="stack")            # two stacked panels
 
+- The operator spelling of the same thing — ``|`` beside, ``/`` below, ``+``
+  overlaid — is an **algebra that nests**: a sub-expression grouped with the
+  other operator is kept whole, as one nested panel, so the parentheses a user
+  types are the layout they get::
+
+      (plot(a) | plot(b)) / plot(c)                 # a row of two; c spans below
+      (plot(a) | plot(b)) / (plot(c) | plot(d))     # a real 2x2
+      (plot(a) / plot(b)) | plot(c)                 # a column of two beside one
+
+  A chain of the *same* operator stays flat (``a | b | c`` is one row of three,
+  and associates either way), which is :func:`_absorbs`.
+
 **What may share one set of axes (v6).**  Overlay legality is *frame*
 compatibility — the same coordinate space, the same dimension, the same axes
 (:class:`tsdynamics.viz._frames.Frame`) — replacing the hard-coded three-kind
@@ -464,6 +476,20 @@ def _apply_figure_animation(
     animated directly with a head default following its kind.
     """
     from dataclasses import replace
+
+    if not isinstance(animate, bool | dict | Animation):
+        # ``animate="yes"`` / ``animate="reveal"`` used to be read as a bare truthy
+        # flag: the string was discarded in silence and the caller got the plain
+        # defaults, so ``animate="frames"`` produced a *reveal* movie.
+        from tsdynamics.errors import InvalidParameterError
+
+        raise InvalidParameterError(
+            f"animate={animate!r} is not an animation. The three spellings:\n"
+            "    animate=True                       # the defaults\n"
+            '    animate={"fps": 60, "mode": "frames"}   # the knobs you want\n'
+            "    animate=ts.viz.spec.Animation(fps=60)   # a directive you built\n"
+            "Then tune it with .animate() / .trail() / .head() on the result."
+        )
 
     def _make(kind: PlotKind) -> Animation:
         head_default = kind != PlotKind.TIME_SERIES
@@ -993,12 +1019,16 @@ def _transform_tag(spec: PlotSpec) -> str:
 def _common_title(specs: list[PlotSpec]) -> str:
     """Return the shared title if every source agrees, else empty.
 
-    An untitled source is skipped — *unless* it is itself an overlay
-    (``meta["composed"]``), whose empty title is the considered result of this
-    same rule rather than an absence.  Counting it keeps an incremental
-    ``.add()`` chain titled exactly like the one-shot ``plot(...)`` call.
+    An untitled source is skipped — *unless* its empty title is the considered
+    result of this same rule rather than an absence, which is true of an overlay
+    (``meta["composed"]``) **and of a nested composite**.  Counting the overlay
+    keeps an incremental ``.add()`` chain titled exactly like the one-shot
+    ``plot(...)`` call; counting the nested composite is what stops
+    ``(a|b) / c`` hoisting *c*'s title to the whole figure — measured, a
+    ``(portrait | series) / psd`` figure was suptitled "psd", so the page was
+    labelled with the name of one of its three panels.
     """
-    titles = {s.title for s in specs if s.title or s.meta.get("composed")}
+    titles = {s.title for s in specs if s.title or s.meta.get("composed") or s.is_composite}
     return next(iter(titles)) if len(titles) == 1 else ""
 
 
@@ -1095,22 +1125,66 @@ def _warn_if_unified_range_flattens(coloured: list[PlotSpec], union: tuple[float
     )
 
 
-def _composite(specs: list[PlotSpec], mode: str, layout_kw: dict[str, Any]) -> PlotSpec:
-    """Arrange specs into a ``COMPOSITE`` figure (one panel each; composites flattened).
+#: The composite modes that NEST — an arrangement a renderer can place inside one
+#: cell of an enclosing arrangement.  ``"frames"`` is deliberately absent: its
+#: panels are consecutive in *time*, not in space, so it has no spatial extent to
+#: give a cell and is always absorbed (as it always was).
+_NESTABLE_MODES: frozenset[str] = frozenset({"stack", "row", "grid"})
 
-    A child composite is flattened one level.  Flattening used to **discard** the
-    child's ``_theme`` and ``animation``, so ``plot(plot(a, b).theme("dark"), c,
-    layout="stack")`` lost the dark theme without a word; the child's context is
-    now pushed down onto its own panels first (via
+
+def _absorbs(child: PlotSpec, mode: str) -> bool:
+    """Whether a composite ``child`` is flattened into a parent arranged ``mode``.
+
+    The rule that makes the layout algebra associative *within* an operator and
+    nested *across* operators — the property the owner asked for:
+
+    - **Same operator** (``a | b | c``, ``ts.viz.grid(g, p)``): the child's
+      arrangement is the parent's, so absorbing it is what keeps ``(a|b)|c`` and
+      ``a|(b|c)`` the *same one row of three* rather than a row containing a row.
+    - **Different operator** (``(a|b) / c``): the child's arrangement is the
+      information the parentheses carried.  It is kept as a nested panel.
+    - ``"frames"`` on either side is absorbed as before (see
+      :data:`_NESTABLE_MODES`).
+    """
+    child_mode = child.layout.mode if child.layout is not None else "stack"
+    if mode not in _NESTABLE_MODES or child_mode not in _NESTABLE_MODES:
+        return True
+    return child_mode == mode
+
+
+def _leaf_panels(panels: list[PlotSpec]) -> list[PlotSpec]:
+    """Return every drawable (non-composite) panel of a possibly nested tree."""
+    out: list[PlotSpec] = []
+    for panel in panels:
+        out.extend(_leaf_panels(panel.panels) if panel.is_composite else [panel])
+    return out
+
+
+def _composite(specs: list[PlotSpec], mode: str, layout_kw: dict[str, Any]) -> PlotSpec:
+    """Arrange specs into a ``COMPOSITE`` figure, **nesting** across arrangements.
+
+    A child composite arranged the *same* way as the parent is flattened (so
+    ``a | b | c`` stays one row of three — see :func:`_absorbs`); a child arranged
+    *differently* is kept as a nested panel, which is what makes the parentheses
+    a user types the layout they get::
+
+        (plot(a) | plot(b)) / plot(c)     # a row of two, then c spanning below
+
+    Flattening used to **discard** the child's ``_theme`` and ``animation``; an
+    absorbed child's context is pushed down onto its own panels first (via
     :meth:`~tsdynamics.viz.spec.PlotSpec.resolved_panels`, the same inheritance
-    the renderers apply).  Its ``layout`` genuinely cannot survive — a flat panel
-    list has one arrangement — so the dropped modes are recorded in
-    ``meta["flattened_layouts"]`` instead of vanishing.
+    the renderers apply), and the arrangement that genuinely cannot survive
+    absorption is recorded in ``meta["flattened_layouts"]`` instead of vanishing.
+
+    .. versionchanged:: 6.0
+        Nested composition. Before, *every* child was flattened, so
+        ``(a|b)/c`` drew three stacked rows — silently losing the grouping the
+        parentheses expressed.
     """
     panels: list[PlotSpec] = []
     dropped_layouts: list[str] = []
     for spec in specs:
-        if spec.is_composite:
+        if spec.is_composite and _absorbs(spec, mode):
             # Push the child's figure-level context (theme / animation) onto its
             # panels before they are absorbed, then note the arrangement we lose.
             panels.extend(spec.resolved_panels())
@@ -1134,7 +1208,10 @@ def _composite(specs: list[PlotSpec], mode: str, layout_kw: dict[str, Any]) -> P
     )
     share_x = layout_kw["share_x"] if layout_kw["share_x"] is not None else auto_share_x
     if layout_kw["share_color"]:
-        _unify_colour(panels)
+        # Colour unification is about the DRAWN panels, so it reads the leaves of a
+        # nested tree — a nested composite carries no colorbar of its own and would
+        # otherwise hide its children's from the union.
+        _unify_colour(_leaf_panels(panels))
     layout = Layout(
         mode=mode,  # type: ignore[arg-type]
         rows=layout_kw["rows"],

@@ -1030,6 +1030,58 @@ class ContinuousSystem(SystemBase, ABC):
         arg = np.concatenate([np.asarray(u, dtype=float).ravel(), [t], vals])
         return np.asarray(jac_fn(arg), dtype=float).reshape(dim, dim)
 
+    def rhs(self, u: Any, t: float = 0.0) -> np.ndarray:
+        r"""Evaluate the right-hand side :math:`f(u, t)` — the vector field itself.
+
+        The function :meth:`jacobian` is the derivative *of*.  It had no public
+        door until v6: ``system.jacobian(u, t)`` was public while the field it
+        differentiates was reachable only as ``system._rhs_numeric()``, which is
+        a strange split — and a costly one, because three of the plotting
+        layer's transforms (``vector_field``, ``flow_speed``, ``streamlines``)
+        **are** this function, so a user had no sanctioned way to check the
+        picture against the maths.  Two independent readers and a blind tester
+        reached for the private name; that is the definition of a missing door.
+
+        Parameters
+        ----------
+        u : array-like, shape (dim,)
+            State at which to evaluate the field.
+        t : float, optional
+            Time (it matters only for a non-autonomous system).  Default ``0``.
+
+        Returns
+        -------
+        ndarray, shape (dim,)
+            :math:`du/dt` at ``(u, t)``, with the system's **current** parameter
+            values.
+
+        See Also
+        --------
+        jacobian : The matrix of this function's partial derivatives.
+
+        Examples
+        --------
+        >>> import numpy as np, tsdynamics as ts
+        >>> lor = ts.systems.Lorenz()
+        >>> np.round(lor.rhs([1.0, 1.0, 1.0]), 6)
+        array([  0.      ,  26.      , -1.666667])
+
+        The Jacobian is this field's derivative, and a finite difference of one
+        proves the other::
+
+        >>> u = np.array([1.0, 2.0, 3.0])
+        >>> h, col = 1e-6, 1
+        >>> step = np.zeros(3); step[col] = h
+        >>> numeric = (lor.rhs(u + step) - lor.rhs(u - step)) / (2 * h)
+        >>> bool(np.allclose(numeric, lor.jacobian(u)[:, col], atol=1e-6))
+        True
+        """
+        dim = cast(int, self.dim)
+        rhs_fn, _, control_names = self._build_lambdified()
+        vals = [float(self.params[k]) for k in control_names]
+        arg = np.concatenate([np.asarray(u, dtype=float).ravel(), [t], vals])
+        return np.asarray(rhs_fn(arg), dtype=float).reshape(dim)
+
     def _rhs_numeric(self) -> Callable[..., np.ndarray]:
         """
         Return a fast numeric RHS callable ``f(u, t) -> ndarray``.

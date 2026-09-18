@@ -50,7 +50,7 @@ if TYPE_CHECKING:
 
     from ...spec import Layout
 
-__all__ = ["render_composite"]
+__all__ = ["has_nested_panels", "render_composite"]
 
 __dir__ = listing_dir(__all__)
 
@@ -95,6 +95,21 @@ def _panel_has_colorbar(panel: PlotSpec) -> bool:
     the panel's domain (so stacked images do not collide at the figure edge).
     """
     return panel.colorbar is not None and panel.colorbar.show
+
+
+def has_nested_panels(spec: PlotSpec) -> bool:
+    """Whether any panel of ``spec`` is itself a composite (a NESTED arrangement).
+
+    :func:`plotly.subplots.make_subplots` builds one flat grid of typed cells —
+    there is no ``subgridspec`` equivalent, so a nested arrangement has no plotly
+    form.  Drawn anyway it is not merely unstyled but **wrong**: measured on
+    ``(a|b)/c`` plotly produced a two-cell figure carrying **one** of the three
+    curves, the other two silently dropped.  So the backend declines a nested
+    composite (:meth:`~tsdynamics.viz.render.plotly._PlotlyCapabilities.can_render_spec`)
+    and dispatch falls back to matplotlib with a ``VisualizationDegraded``
+    warning naming the drop — the same contract as an animated composite.
+    """
+    return spec.is_composite and any(panel.is_composite for panel in spec.panels)
 
 
 def render_composite(

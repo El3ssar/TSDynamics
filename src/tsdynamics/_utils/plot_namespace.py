@@ -68,6 +68,38 @@ def plot_seam_error(owner: str, subject: str) -> AttributeError:
     )
 
 
+def _bound_transform(subject: Any, name: str) -> Any:
+    """Return ``subject.plot.<name>`` — a function carrying THAT transform's signature.
+
+    The namespace entry used to be a bare :func:`functools.partial`, so
+    ``help(traj.plot.orbit_diagram)`` printed ``ts.plot``'s generic
+    ``(*things, layout, rows, cols, share_x, …)`` — the composition vocabulary,
+    which is the one thing that call is *not* asking about.  The owner went
+    looking for the orbit diagram's ``param=`` / ``values=`` / ``points=`` and
+    found none of them, though all three are real and a *wrong* keyword already
+    listed them back.
+
+    So the entry is a real function with ``__name__``, ``__doc__`` and
+    ``__signature__`` taken from the transform's own ``compute`` — which makes
+    ``help()``, ``inspect.signature`` and IPython's ``?`` all correct, from one
+    source, for every registered transform including one a user wrote this
+    morning.
+    """
+    from tsdynamics.viz import plot as _plot
+    from tsdynamics.viz import transforms as _transforms
+
+    record = _transforms.get(name)
+
+    def bound(**options: Any) -> Any:
+        return _plot(subject, name, **options)
+
+    bound.__name__ = name
+    bound.__qualname__ = f"{type(subject).__name__}.plot.{name}"
+    bound.__doc__ = record.help_text()
+    bound.__signature__ = record.call_signature()  # type: ignore[attr-defined]
+    return bound
+
+
 class PlotNamespace:
     """A bound ``subject.plot`` — callable, and a namespace of transform names."""
 
@@ -94,15 +126,9 @@ class PlotNamespace:
     def __getattr__(self, name: str) -> Any:
         if name.startswith("_"):
             raise AttributeError(name)
-        import functools
-
         names = self._names()
         if name in names:
-            from tsdynamics.viz import plot as _plot
-
-            bound = functools.partial(_plot, self._subject, name)
-            bound.__doc__ = f"ts.plot(subject, {name!r}, **kwargs) — see ts.viz.compatibility()."
-            return bound
+            return _bound_transform(self._subject, name)
 
         import difflib
 

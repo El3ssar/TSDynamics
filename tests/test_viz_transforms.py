@@ -1142,6 +1142,13 @@ def test_a_user_primitive_can_be_applied_to_a_shipped_transform() -> None:
         plt.close("all")
         record = ts.viz.transforms.get("time_series")
         object.__setattr__(record, "primitives", record.primitives - {"stem_gate"})
+        # ...and out of the global primitive table too.  Leaving it there made
+        # `test_viz_compatibility.py::test_every_primitive_is_either_claimed_by_a_
+        # row_or_reserved_on_purpose` fail whenever this file ran first — a real
+        # gate reddened by another file's leftovers.
+        from tsdynamics.viz.transforms._primitives import PRIMITIVES
+
+        PRIMITIVES.pop("stem_gate", None)
 
 
 def test_geometry_hands_back_numbers_not_objects() -> None:
@@ -1163,3 +1170,297 @@ def test_geometry_hands_back_numbers_not_objects() -> None:
     stacked = np.asarray(series)
     assert stacked.dtype == np.float64 and stacked.shape[0] == 2  # (x, y) over 3 parts
     assert series["y"].shape == (3, traj.y.shape[0])  # multi-part channel, stacked
+
+
+# ---------------------------------------------------------------------------
+# Authoring friction — "declare nothing, and it works"
+#
+# The owner drove the plotting layer by hand and asked for exactly this:
+# "Can we let users add more easily their own plots? ... it must be very easy,
+# so there is little friction."  Measured before: `register()` raised
+# `TypeError: missing 'source', 'frame', and 'primitives'`, and `kind` on top —
+# four declarations to get right before a toy plot drew.
+# ---------------------------------------------------------------------------
+
+
+class TestATransformNeedsNoDeclarations:
+    """The three-line transform draws, and is a first-class row afterwards."""
+
+    def test_a_bare_registration_draws_a_real_picture(self, scratch_registry):
+        """The target from the brief, verbatim — and the pixels are not blank."""
+        import matplotlib.pyplot as plt
+        from _pixels import ink_fraction, render
+
+        import tsdynamics as ts
+
+        @scratch_registry()
+        def my_view(traj):
+            """One line about what it shows."""
+            return {"x": traj["x"], "y": traj["y"]}
+
+        traj = ts.systems.Lorenz().run(final_time=20.0, dt=0.01, ic=[1.0, 1.0, 1.0])
+        try:
+            picture = render(ts.plot(traj, "my_view"))
+            # A blank panel is this library's established failure mode, so the
+            # gate measures ink rather than the absence of an exception.  The
+            # Lorenz x-y projection covers ~17% of the panel; the floor is 10x
+            # below that and 100x above an empty one.
+            assert ink_fraction(picture.rgba) > 0.017
+        finally:
+            plt.close("all")
+
+    def test_the_inferred_row_is_indistinguishable_from_a_declared_one(self, scratch_registry):
+        """After the first draw the record reads exactly like a declared transform."""
+        import matplotlib.pyplot as plt
+
+        import tsdynamics as ts
+
+        @scratch_registry()
+        def inferred_view(traj):
+            """An inferred two-channel curve."""
+            return {"x": traj["x"], "y": traj["y"]}
+
+        traj = ts.systems.Lorenz().run(final_time=3.0, dt=0.05, ic=[1.0, 1.0, 1.0])
+        record = ts.viz.transforms.get("inferred_view")
+        assert record.primitives == frozenset()  # nothing inferred yet
+        try:
+            ts.plot(traj, "inferred_view")
+        finally:
+            plt.close("all")
+        record = ts.viz.transforms.get("inferred_view")
+        # Derived from the primitives' OWN declared `requires`, so the row can
+        # never contain a pair the declared path would have refused.
+        assert {"line", "points", "density"} <= record.primitives
+        assert record.default_primitive == "line"
+        assert "inferred_view" in ts.viz.compatibility()
+        assert record.kind is None  # the kind comes from the mark, at draw time
+
+    def test_a_three_dimensional_return_is_inferred_as_a_three_dimensional_frame(
+        self, scratch_registry
+    ):
+        """A ``z`` channel changes the frame, and therefore the row — from the shapes."""
+        import matplotlib.pyplot as plt
+
+        import tsdynamics as ts
+
+        @scratch_registry()
+        def orbit3(traj):
+            """The orbit in three coordinates."""
+            return {"x": traj["x"], "y": traj["y"], "z": traj["z"]}
+
+        traj = ts.systems.Lorenz().run(final_time=3.0, dt=0.05, ic=[1.0, 1.0, 1.0])
+        try:
+            plot = ts.plot(traj, "orbit3")
+            assert plot.ndim == 3
+        finally:
+            plt.close("all")
+        record = ts.viz.transforms.get("orbit3")
+        assert record.frame[0].value == "state3"
+        assert record.default_primitive == "line3d"
+
+    def test_a_declared_transform_infers_nothing(self, scratch_registry):
+        """An author who wants control still declares everything, unchanged."""
+        import tsdynamics as ts
+        from tsdynamics.viz.spec import PlotKind
+
+        @scratch_registry(
+            source="data", frame="time", kind=PlotKind.DIAGNOSTIC_CURVE, primitives=("steps",)
+        )
+        def declared_view(traj):
+            """A fully declared transform."""
+            return {"x": traj.t, "y": traj["x"]}
+
+        record = ts.viz.transforms.get("declared_view")
+        assert record.primitives == frozenset({"steps"})
+        assert record.kind is PlotKind.DIAGNOSTIC_CURVE
+        assert record.frame[0].value == "time"
+
+    def test_an_undrawable_return_names_the_declaration_it_could_not_work_out(
+        self, scratch_registry
+    ):
+        """Inference that cannot succeed says so, and says what to declare."""
+        import numpy as np
+        import pytest
+
+        import tsdynamics as ts
+        from tsdynamics.errors import InvalidParameterError
+
+        @scratch_registry()
+        def nothing_draws_this(traj):
+            """A return no registered primitive claims."""
+            return {"err": np.arange(4.0)}
+
+        traj = ts.systems.Lorenz().run(final_time=1.0, dt=0.1, ic=[1.0, 1.0, 1.0])
+        with pytest.raises(InvalidParameterError, match="cannot be inferred"):
+            ts.plot(traj, "nothing_draws_this")
+
+
+def test_a_primitive_takes_its_name_from_the_function():
+    """``@ts.viz.primitives.register()`` — the same zero-declaration door."""
+    import numpy as np
+
+    import tsdynamics as ts
+    from tsdynamics.viz.transforms._primitives import PRIMITIVES, register_primitive
+
+    @register_primitive(requires=("x", "y"), marks=("points",))
+    def gate_named_primitive(part, **options):
+        """Named by its function, nothing declared."""
+        return {"x": part["x"], "y": np.asarray(part["y"]) * 2.0}
+
+    try:
+        assert "gate_named_primitive" in ts.viz.primitives.names()
+    finally:
+        PRIMITIVES.pop("gate_named_primitive", None)
+
+
+# ---------------------------------------------------------------------------
+# The rest of "declare nothing and it works" — the last three rough edges
+# ---------------------------------------------------------------------------
+
+
+class TestTheZeroDeclarationDoorIsWholeEndToEnd:
+    """A custom primitive, a custom transform, and a figure you would publish.
+
+    Each of these was the last step of a path that otherwise worked, so each
+    failed for a user who had already done everything right.
+    """
+
+    def test_the_public_primitive_door_names_itself_like_every_other_door(self):
+        """``ts.viz.primitives.register()`` raised at the PUBLIC address only.
+
+        The function it forwards to had already learned to take its name from
+        ``fn.__name__``; the facade re-declared ``name`` as required, so the
+        zero-argument spelling raised ``TypeError: register() missing 1
+        required positional argument: 'name'`` at ``ts.viz.primitives.register``
+        while working at ``transforms.register_primitive``.  One door, two
+        answers.
+        """
+        import numpy as np
+
+        import tsdynamics as ts
+        from tsdynamics.viz.transforms._primitives import PRIMITIVES
+
+        @ts.viz.primitives.register(requires=("x", "y"), marks=("points",))
+        def gate_facade_primitive(part, **options):
+            """Registered through the public facade, with nothing declared."""
+            return {"x": part["x"], "y": np.asarray(part["y"])}
+
+        try:
+            assert "gate_facade_primitive" in ts.viz.primitives.names()
+        finally:
+            PRIMITIVES.pop("gate_facade_primitive", None)
+
+    def test_an_allow_made_before_the_first_draw_survives_the_inference(self, scratch_registry):
+        """``allow`` was silently thrown away on exactly the transforms it is for.
+
+        A transform that declares no ``primitives=`` has its row *inferred* from
+        its first geometry — and the inference **replaced** the row rather than
+        widening it, so ``allow(name, "stem")`` called before the first draw
+        vanished.  Since ``allow`` is the only way a custom primitive reaches any
+        transform, that made the two extension doors unusable together.
+        """
+        import numpy as np
+
+        import tsdynamics as ts
+        from tsdynamics.viz.transforms._primitives import PRIMITIVES
+
+        @ts.viz.primitives.register(requires=("x", "y"), marks=("line", "points"))
+        def gate_stem(part, **options):
+            """A drop to the baseline plus a marker."""
+            x, y = np.asarray(part["x"]), np.asarray(part["y"])
+            xs = np.repeat(x, 3)
+            ys = np.empty(3 * y.size)
+            ys[0::3], ys[1::3], ys[2::3] = 0.0, y, np.nan
+            return [{"mark": "line", "x": xs, "y": ys}, {"mark": "points", "x": x, "y": y}]
+
+        @scratch_registry()
+        def gate_allowed_view(traj):
+            """Nothing declared."""
+            return {"x": traj.t, "y": traj["x"]}
+
+        try:
+            ts.viz.transforms.allow("gate_allowed_view", "gate_stem")
+            traj = ts.systems.Lorenz().run(final_time=2.0, dt=0.05, ic=[1.0, 1.0, 1.0])
+            plot = ts.plot(traj, "gate_allowed_view", primitive="gate_stem")
+            assert len(plot.layers) == 2
+            # ...and the inferred row kept the primitives inference found, too.
+            assert "gate_stem" in ts.viz.transforms.get("gate_allowed_view").primitives
+            assert len(ts.viz.transforms.get("gate_allowed_view").primitives) > 1
+        finally:
+            PRIMITIVES.pop("gate_stem", None)
+
+    def test_an_undeclared_transform_names_the_axes_it_can_recognise(self, scratch_registry):
+        """Bare axes were the last rough edge in "declare nothing and it works".
+
+        The labels are a **measurement**, not a guess: a channel that *is* the
+        subject's time column is ``t``, one that *is* a named state component
+        takes that component's name, and anything else stays blank — ``x`` is
+        not a better label than none.
+        """
+        import numpy as np
+
+        import tsdynamics as ts
+
+        @scratch_registry()
+        def gate_drift(traj):
+            """A time series of something derived."""
+            return {"x": traj.t, "y": np.cumsum(traj["x"]) * traj.dt}
+
+        @scratch_registry()
+        def gate_projection(traj):
+            """Two state components, verbatim."""
+            return {"x": traj["x"], "y": traj["z"]}
+
+        traj = ts.systems.Lorenz().run(final_time=2.0, dt=0.05, ic=[1.0, 1.0, 1.0])
+        assert ts.viz.geometry(traj, "gate_drift").axis_labels == ("t", "")
+        assert ts.viz.geometry(traj, "gate_projection").axis_labels == ("x", "z")
+        assert ts.plot(traj, "gate_projection").y.label == "z"
+
+    def test_a_declared_label_still_wins_outright(self, scratch_registry):
+        import tsdynamics as ts
+
+        @scratch_registry(labels=("mine a", "mine b"))
+        def gate_declared_labels(traj):
+            """Declared labels are never second-guessed."""
+            return {"x": traj.t, "y": traj["x"]}
+
+        traj = ts.systems.Lorenz().run(final_time=2.0, dt=0.05, ic=[1.0, 1.0, 1.0])
+        assert ts.viz.geometry(traj, "gate_declared_labels").axis_labels == (
+            "mine a",
+            "mine b",
+        )
+
+
+class TestAGeometryPartReadsLikeTheMappingItIs:
+    """``ts.viz.geometry`` is *sold* as the arrays door, so its payload must open.
+
+    Measured: ``for name, array in part.items()`` raised ``AttributeError:
+    'Part' object has no attribute 'items'`` and named no next step, and the
+    repr (``Part(['x', 'y'], label=None)``) said what was inside without saying
+    how to get it out — the library's own rule (a name you print is a name you
+    can complete) applied one level short.
+    """
+
+    @staticmethod
+    def _part():
+        import tsdynamics as ts
+
+        traj = ts.systems.Lorenz().run(final_time=2.0, dt=0.05, ic=[1.0, 1.0, 1.0])
+        return ts.viz.geometry(traj, "phase_portrait", components=("x", "z")).parts[0]
+
+    def test_items_keys_values_and_iteration_agree_with_the_subscript(self):
+        part = self._part()
+        assert part.keys() == ["x", "y"]
+        assert list(part) == ["x", "y"]
+        assert len(part) == 2
+        for name, array in part.items():
+            assert array is part[name]
+        assert [a is b for a, b in zip(part.values(), [part["x"], part["y"]], strict=True)]
+
+    def test_it_unpacks_as_a_plain_dict(self):
+        assert sorted(dict(self._part())) == ["x", "y"]
+
+    def test_the_repr_names_the_call_that_reads_a_channel(self):
+        text = repr(self._part())
+        assert "'x'" in text
+        assert "part['x']" in text

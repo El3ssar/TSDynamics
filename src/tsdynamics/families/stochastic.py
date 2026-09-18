@@ -364,6 +364,49 @@ class StochasticSystem(SystemBase, ABC):
     #: The one-word family, read by :attr:`SystemBase.family`.
     _family: ClassVar[str] = "sde"
 
+    def rhs(self, u: Any, t: float = 0.0) -> np.ndarray:
+        """Return the **drift** ``f(u, t)`` — the deterministic skeleton's field.
+
+        The twin of :meth:`jacobian`, and named on the same principle: an SDE has
+        two kernels, so "the right-hand side" is ambiguous by itself, and this
+        one is the drift — the field whose Jacobian :meth:`jacobian` returns and
+        whose equilibria the deterministic analyses find.  The diffusion is not a
+        vector field over ``(u, t)`` alone (it multiplies ``dW``), so it has no
+        place here.
+
+        Parameters
+        ----------
+        u : array-like, shape (dim,)
+        t : float, optional
+
+        Returns
+        -------
+        ndarray, shape (dim,)
+
+        Examples
+        --------
+        >>> import tsdynamics as ts
+        >>> ou = ts.systems.OrnsteinUhlenbeck()
+        >>> ou.rhs([1.0]).shape
+        (1,)
+        """
+        import symengine
+
+        from tsdynamics._engine.symbols import state_time_symbols
+
+        dim = int(cast(int, self.dim))
+        y, t_sym = state_time_symbols()
+        names = list(cast(Any, self.params))
+        syms = {k: symengine.Symbol(k) for k in names}
+        f = list(type(self)._drift(y, t_sym, **syms))
+        state = [symengine.Symbol(f"_u{i}") for i in range(dim)]
+        subs = {y(i): state[i] for i in range(dim)}
+        args = state + [t_sym] + [syms[k] for k in names]
+        fn = symengine.Lambdify(args, [symengine.sympify(e).subs(subs) for e in f])
+        vals = [float(self.params[k]) for k in names]
+        arg = np.concatenate([np.asarray(u, dtype=float).ravel(), [t], vals])
+        return np.asarray(fn(arg), dtype=float).reshape(dim)
+
     def jacobian(self, u: Any, t: float = 0.0) -> np.ndarray:
         """Return the **drift** Jacobian ``d f/d u`` at state ``u``.
 

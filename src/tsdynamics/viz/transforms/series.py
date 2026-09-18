@@ -312,6 +312,13 @@ def psd(
     The mean is removed before transforming; that is not a *detrending option*,
     it is the removal of the DC spike that would otherwise dominate the plot.
 
+    What correct looks like
+    -----------------------
+    Feed it a pure sinusoid: the peak sits at that frequency, in **inverse time
+    units** (so doubling ``dt`` halves the reported frequency of the same
+    oscillation).  A two-tone signal peaks at both tones.  Gate:
+    ``tests/test_viz_truth.py::TestASpectrumPeaksWhereTheSignalOscillates``.
+
     Parameters
     ----------
     subject : ndarray, Trajectory, or System
@@ -426,6 +433,13 @@ def autocorrelation(
     also in ``meta`` as ``tau_1_over_e`` / ``tau_first_zero`` (``None`` when the
     curve does not reach them inside ``max_delay`` — an honest answer, not an
     extrapolation).
+
+    What correct looks like
+    -----------------------
+    :math:`C(0) = 1` always.  For a sinusoid of period :math:`T` the curve
+    peaks again at lag :math:`T` — read on the **sample** axis, that is
+    :math:`T/\mathrm{d}t` samples.  White noise falls to the noise floor in one
+    sample.  Gate: ``tests/test_viz_truth.py::TestAutocorrelationFindsThePeriod``.
 
     Parameters
     ----------
@@ -1009,6 +1023,13 @@ def return_time(
     samples, which is why it declares no ``analysis`` — and the crossing times
     themselves are returned in ``meta["return_times"]`` for a caller who wants
     the raw inter-event series (it is what feeds a Hilbert plot, for instance).
+
+    What correct looks like
+    -----------------------
+    A periodic orbit returns after exactly one period, every time: its
+    distribution is one spike and ``meta["mean_return_time"]`` is the period,
+    in **time units**.  Gate:
+    ``tests/test_viz_truth.py::TestReturnTimesOfAPeriodicOrbitAreThePeriod``.
 
     Parameters
     ----------

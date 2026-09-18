@@ -245,6 +245,14 @@ def lyapunov_spectrum(
     dimension implied by the spectrum is put in the title, where it belongs next
     to the numbers it was computed from.
 
+    What correct looks like
+    -----------------------
+    The stem heights are the estimator's own numbers — compare against
+    ``ts.analysis.lyapunov_spectrum(system)`` and they agree to the last bit.
+    For a flow one exponent sits on the zero line (the direction along the
+    orbit); for a dissipative system the sum is negative.  Gate:
+    ``tests/test_viz_truth.py::TestTheSpectrumPlotDrawsTheEstimatorsOwnExponents``.
+
     Parameters
     ----------
     subject : LyapunovSpectrum, array-like, or System

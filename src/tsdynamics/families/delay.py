@@ -336,6 +336,13 @@ class DelaySystem(SystemBase, ABC):
         "ts.analysis.lyapunov_spectrum(system, k=1, dt=0.5)",
     )
 
+    #: ...and for the same reason there is no f(u, t) to evaluate.
+    rhs = Absent(
+        "a delay system's right-hand side reads the state at several past times, "
+        "so f(u, t) at one point is not evaluable without the whole history",
+        "system.run(final_time=200.0, dt=0.5)",
+    )
+
     #: A delay system's state is a whole history function.
     set_state = Absent(
         "a delay system's state is a whole history function on [-tau_max, 0], not "

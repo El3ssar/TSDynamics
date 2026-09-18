@@ -900,3 +900,108 @@ def test_a_recorded_cascade_names_its_observable_at_every_door():
         )
         assert ts.plot(recorded, "orbit_diagram").y.label == expected
         assert ts.plot(recorded).y.label == expected
+
+
+# ---------------------------------------------------------------------------
+# A refused animation knob must leave the plot exactly as it found it
+# ---------------------------------------------------------------------------
+
+
+#: Every animation knob a tester abused, with the value that must be refused.
+#: Eleven of the twelve were already refused by name — the defect was WHERE the
+#: refusal happened relative to the write.
+_BAD_ANIMATION_KNOBS: tuple[tuple[str, str, dict[str, object]], ...] = (
+    ("animate", "fps", {"fps": -5}),
+    ("animate", "duration", {"duration": "2s"}),
+    ("animate", "n_frames", {"n_frames": 0}),
+    ("animate", "loop", {"loop": "yes"}),
+    ("animate", "pingpong", {"pingpong": "sure"}),
+    ("animate", "mode", {"mode": "typo"}),
+    ("trail", "length-unit", {"length": ("whatever", 3.0)}),
+    ("trail", "length-bare", {"length": 3.0}),
+    ("trail", "fade", {"fade": "lots"}),
+    ("trail", "backdrop", {"backdrop": "on"}),
+    ("trail", "backdrop_alpha", {"backdrop_alpha": 3}),
+    ("head", "symbol", {"symbol": "banana"}),
+    ("head", "show", {"show": "yes"}),
+    ("head", "size", {"size": -1}),
+    ("camera", "spin", {"spin": "fast"}),
+)
+
+
+def _animated_plot():
+    traj = ts.systems.Lorenz().run(final_time=4.0, dt=0.02, ic=[1.0, 1.0, 1.0])
+    return ts.plot(traj, animate=True)
+
+
+@pytest.mark.parametrize(
+    ("method", "knob", "kwargs"),
+    _BAD_ANIMATION_KNOBS,
+    ids=[f"{m}-{k}" for m, k, _ in _BAD_ANIMATION_KNOBS],
+)
+def test_a_refused_animation_value_is_never_written(method, knob, kwargs):
+    """Measured before the fix: ``p.animate(fps=-5)`` raised AND stored ``-5``.
+
+    Every later tweak on that plot then re-raised the *old* error, naming a knob
+    the caller had not touched — so a sweep of twelve knobs reported three
+    results about the wrong argument, and in an interactive session one bad
+    value made the plot permanently unusable with misleading messages.
+
+    The messages themselves were already good; they were attached to the wrong
+    call.  A refusal must be a no-op.
+    """
+    plot = _animated_plot()
+    before = plot.animation.to_dict()
+    with pytest.raises(ts.errors.InvalidParameterError):
+        getattr(plot, method)(**kwargs)
+    assert plot.animation.to_dict() == before
+
+
+@pytest.mark.parametrize(
+    ("method", "knob", "kwargs"),
+    _BAD_ANIMATION_KNOBS,
+    ids=[f"{m}-{k}" for m, k, _ in _BAD_ANIMATION_KNOBS],
+)
+def test_the_plot_still_takes_every_other_knob_after_one_was_refused(method, knob, kwargs):
+    """The tail of the same bug: the plot must stay usable, and stay honest."""
+    plot = _animated_plot()
+    with pytest.raises(ts.errors.InvalidParameterError):
+        getattr(plot, method)(**kwargs)
+    plot.animate(fps=24, loop=False).trail(("steps", 40)).head(symbol="s").camera(spin=1.0)
+    assert plot.animation.fps == 24.0
+    assert plot.animation.loop is False
+    assert (plot.animation.trail_kind, plot.animation.trail_length) == ("steps", 40.0)
+    assert plot.animation.head_symbol == "s"
+    assert plot.animation.spin == 1.0
+
+
+def test_a_switch_that_is_not_a_switch_is_refused_and_names_the_two_values():
+    """``loop='yes'`` and ``fade='lots'`` were ACCEPTED as truthy strings.
+
+    They sat beside eight knobs that validate strictly, so a silent accept read
+    as "that was a valid value" — the inconsistency is what misled, not the
+    permissiveness on its own.
+    """
+    plot = _animated_plot()
+    with pytest.raises(ts.errors.InvalidParameterError, match="True or False"):
+        plot.animate(loop="yes")
+    with pytest.raises(ts.errors.InvalidParameterError, match="True or False"):
+        plot.trail(fade="lots")
+    # The real values still work, False included (it is not "unset").
+    assert plot.animate(loop=False).animation.loop is False
+    assert plot.trail(fade=True).animation.trail_fade is True
+
+
+def test_a_duration_that_is_not_a_number_names_the_knob_and_its_unit():
+    """It was the one knob of eleven with no typed message.
+
+    ``ValueError: could not convert string to float: '2s'`` named neither
+    ``duration``, nor the unit, nor a remedy.
+    """
+    plot = _animated_plot()
+    with pytest.raises(ts.errors.InvalidParameterError) as excinfo:
+        plot.animate(duration="2s")
+    message = str(excinfo.value)
+    assert "duration" in message
+    assert "seconds" in message
+    assert "could not convert string to float" not in message

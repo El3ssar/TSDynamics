@@ -6,7 +6,8 @@ Covers the agreed contract:
    compatible things on one set of axes; ``plot(a, b, layout="stack"/"row"/"grid")``
    builds a ``COMPOSITE`` spec with one panel each.
 2. The return type is always a :class:`PlotSpec`, so a ``plot`` result feeds back
-   into ``plot`` (recursion), and composite inputs are flattened into panels.
+   into ``plot`` (recursion); a composite input arranged the same way is absorbed
+   into panels, one arranged differently is NESTED (the layout algebra).
 3. ``build_kw`` (``components`` / per-kind options) is forwarded to each thing.
 4. Composite specs round-trip through ``to_dict`` / ``from_dict`` byte-identical
    and render to a multi-panel matplotlib figure; the spec saves itself.
@@ -362,13 +363,15 @@ def test_layout_keywords_are_rejected_for_an_overlay():
         viz.plot(_lorenz(), _lorenz(), rows=2)
 
 
-def test_flattening_a_child_composite_keeps_its_theme_and_animation():
-    """A flattened child's figure-level context is pushed down, not discarded.
+def test_a_child_arranged_differently_is_nested_and_keeps_everything():
+    """A ``row`` inside a ``stack`` is kept whole — arrangement, theme and clock.
 
-    Before v6 ``plot(plot(a, b).theme("dark"), c, layout="stack")`` silently lost
-    the dark theme: ``_composite`` extended with ``spec.panels`` directly, so the
-    child's ``_theme`` / ``animation`` (which live on the child, not its panels)
-    went nowhere.
+    Before v6 *every* child composite was flattened, so this figure drew three
+    stacked rows and ``meta["flattened_layouts"]`` recorded the arrangement it had
+    dropped.  Nothing is dropped now: the child is one panel of the parent, still
+    a ``row``, still dark, still on its own 15 fps clock.  (Flattening also used
+    to lose the theme outright, which is the older defect this test was written
+    for — see the same-mode case below, where absorption still happens.)
     """
     inner = viz.plot(
         viz.plot(_lorenz(), components="x"),
@@ -377,12 +380,37 @@ def test_flattening_a_child_composite_keeps_its_theme_and_animation():
     ).theme("dark")
     inner.animate(fps=15.0)
     outer = viz.plot(inner, viz.plot(_lorenz(), components="z"), layout="stack")
+    assert len(outer.panels) == 2  # the row, and z — not three peers
+    nested = outer.panels[0]
+    assert nested.is_composite and nested.layout is not None
+    assert nested.layout.mode == "row"
+    assert nested.resolved_theme.name == "dark"
+    assert nested.animation is not None and nested.animation.fps == 15.0
+    # ...and its own children inherit it, one level down.
+    assert all(p.resolved_theme.name == "dark" for p in nested.resolved_panels())
+    assert "flattened_layouts" not in outer.meta
+
+
+def test_absorbing_a_same_mode_child_keeps_its_theme_and_animation():
+    """A child arranged the SAME way is still absorbed, with its context pushed down.
+
+    That is what keeps ``a / b / c`` one column of three.  The context has to
+    survive the absorption: ``_composite`` used to extend with ``spec.panels``
+    directly, so the child's ``_theme`` / ``animation`` (which live on the child,
+    not on its panels) went nowhere and the dark theme vanished without a word.
+    """
+    inner = viz.plot(
+        viz.plot(_lorenz(), components="x"),
+        viz.plot(_lorenz(), components="y"),
+        layout="stack",
+    ).theme("dark")
+    inner.animate(fps=15.0)
+    outer = viz.plot(inner, viz.plot(_lorenz(), components="z"), layout="stack")
     assert len(outer.panels) == 3
+    assert all(not p.is_composite for p in outer.panels)
     inherited = outer.panels[:2]
     assert all(p.resolved_theme.name == "dark" for p in inherited)
     assert all(p.animation is not None and p.animation.fps == 15.0 for p in inherited)
-    # ... and the arrangement it could not keep is recorded, not vanished.
-    assert outer.meta["flattened_layouts"] == ["row"]
 
 
 def test_composite_tweaks_reach_the_panels_end_to_end():

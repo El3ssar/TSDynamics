@@ -66,8 +66,12 @@ class _PlotlyCapabilities(RendererCapabilities):
     """
 
     def can_render_spec(self, spec: PlotSpec) -> bool:
-        """Decline an animated composite / field movie; otherwise defer to the base."""
+        """Decline an animated / NESTED composite and a field movie; else defer to the base."""
+        from ._composite import has_nested_panels
+
         if spec.is_composite and spec.is_animated:
+            return False
+        if has_nested_panels(spec):
             return False
         if spec.is_animated and spec.kind == PlotKind.SPATIAL_FIELD:
             return False

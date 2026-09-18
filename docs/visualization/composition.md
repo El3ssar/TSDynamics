@@ -212,9 +212,16 @@ grid.layout = Layout(mode="grid", rows=2, cols=2, share_x=True, share_y=True)
 
 ## Recursion: spec in, spec out
 
-Because a composite *is* a `Plot`, you can compose composites. When a
-composite is passed into `plot`, its panels are **flattened one level** into the
-new figure — so you build the pieces bottom-up and combine them:
+Because a composite *is* a `Plot`, you can compose composites — and the rule is
+the one the parentheses suggest:
+
+> **A child composite of the *same* arrangement is absorbed; a child of a
+> *different* arrangement becomes a block.**
+
+So a stack of stacks is one taller stack, while a stack placed in a **row**
+stays a column occupying one cell of that row. That is what makes
+`(plot(a) | plot(b)) / plot(c)` draw a row of two with `c` spanning the width
+below, instead of three stacked rows. Build the pieces bottom-up and combine:
 
 ```python
 import tsdynamics as ts
@@ -230,20 +237,29 @@ timeline = ts.plot(px, py, layout="stack")
 # Panel 2: the phase portrait.
 portrait = ts.plot(lz, components=["x", "z"], final_time=40.0, dt=0.01, ic=ic)
 
-# Combine — the stack's two panels flatten in alongside the portrait.
+# Combine — the stack stays a column, beside the portrait.
 figure = ts.plot(timeline, portrait, layout="row")
 ```
 
 ```pycon
 >>> figure.kind, figure.layout.mode
 (<PlotKind.COMPOSITE: 'composite'>, 'row')
->>> len(figure.panels)          # timeline (2 panels, flattened) + portrait
+>>> len(figure.panels)          # the timeline (one block) + the portrait
+2
+>>> figure.panels[0].layout.mode     # ...and the block is still a stack
+'stack'
+```
+
+Pass that same stack into another **stack** and it is absorbed instead, because
+a column inside a column is just a longer column:
+
+```pycon
+>>> len(ts.plot(timeline, portrait, layout="stack").panels)
 3
 ```
 
-The flattening is one level deep, which is what makes the pattern predictable:
-the panels of any composite you pass in become panels of the new figure, never a
-nested sub-figure.
+That one rule — *same arrangement absorbs, different arrangement nests* — is what
+makes `|` and `/` compose the way the brackets read.
 
 ---
 
@@ -311,7 +327,8 @@ See [Styling & themes](styling.md) for the full theme system.
 | `build_kw` (`components=`, `kind=`) with an already-built `Plot` | Raises `InvalidParameterError` — pass build options when you first build the spec. |
 | Passing a plain array / a non-plottable | Raises `InvalidInputError` — wrap it in a `Trajectory` or build a `Plot`. |
 | Two sources with the same title | Legend tags are auto-disambiguated (`Name (1)` / `Name (2)`); relabel a spec's `title` for clearer entries. |
-| Wanting a nested sub-figure | Not supported — composites flatten one level; keep the structure flat. |
+| Wanting a nested sub-figure | Supported — put a composite of the *other* arrangement inside (`(a \| b) / c`). A child of the **same** arrangement is absorbed. |
+| A nested figure on an interactive backend | Plotly declines it and matplotlib draws it, with one `VisualizationDegraded` — its subplot grid is flat, and it used to drop panels silently. |
 | A random-IC system in a snippet | Always pass an explicit `ic=` (see [the front door](plotting.md)) so the panel is deterministic. |
 
 ---

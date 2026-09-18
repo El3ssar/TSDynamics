@@ -25,6 +25,8 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
+
 from ... import registry as _registry
 from .._frames import FrameSpace, OverlayRole, space_arity
 from .._visibility import INHERITED_DICT_METHODS, dir_without, listing_dir
@@ -141,9 +143,9 @@ def _as_tuple(value: Any) -> tuple[Any, ...]:
 
 def register(
     *,
-    source: Source,
-    frame: FrameSpace | str | Sequence[FrameSpace | str],
-    primitives: Iterable[str],
+    source: Source | None = None,
+    frame: FrameSpace | str | Sequence[FrameSpace | str] | None = None,
+    primitives: Iterable[str] | None = None,
     kind: PlotKind | str | None = None,
     name: str | None = None,
     default_primitive: str | None = None,
@@ -161,7 +163,56 @@ def register(
 ) -> Callable[[Callable[..., Geometry]], Callable[..., Geometry]]:
     """Register a geometry-computing function as a named plot transform.
 
-    **Four declarations.  Everything else is derived.**
+    **Declare nothing, and it works.**
+
+    .. code-block:: python
+
+        @ts.viz.transforms.register()
+        def my_view(traj):
+            '''One line about what it shows.'''
+            return {"x": traj["x"], "y": traj["y"]}
+
+        ts.plot(traj, "my_view")
+
+    ``source`` ``frame`` ``kind`` ``primitives`` were all mandatory before v6:
+    four things to get right before a toy plot drew, and a wrong ``kind``
+    registered cleanly and failed on a user's machine.  Each now has a
+    **derived** answer, and the derivations are evidence rather than taste:
+
+    ``primitives``
+        A primitive **declares the channels it needs**
+        (:attr:`~tsdynamics.viz.transforms._base.Primitive.requires`) and the
+        coordinate spaces it draws in.  The inferred row is exactly the set that
+        can draw the channels your ``compute`` returned — the same predicate
+        registration already used to *reject* an impossible declared pair, run
+        forwards instead of backwards.
+    ``frame``
+        From the channel **shapes**: a 2-D ``z`` over 1-D ``x``/``y`` is a
+        lattice (``grid2``), a 1-D ``z`` is a 3-D curve (``state3``), anything
+        else is :data:`~tsdynamics.viz._frames.FrameSpace.FREE` — *"I did not say
+        what space this is"*, which is the honest claim for a frame nobody
+        declared and is what :func:`draw` has always stamped on hand-built
+        arrays.  It overlays with anything, because there is no coordinate claim
+        to violate.
+    ``kind``
+        **Not inferred — derived, at draw time, from the mark the chosen
+        primitive actually emits** (the rule :func:`draw` already applies to
+        hand-built geometry).  Guessing a semantic kind from channel names would
+        be the one derivation with no evidence behind it.
+    ``source``
+        Defaults to ``"data"``, the *wider* category: it admits a trajectory, an
+        array **and** a system.  ``"model"`` is the narrowing — it makes the
+        registry refuse a bare array on the transform's behalf — so defaulting
+        to it would refuse callers a ``data`` transform serves.
+
+    Inference happens **once**, on the first geometry the transform computes,
+    and the filled-in record replaces the deferred one in the registry; from
+    then on it is indistinguishable from a fully declared transform (same repr,
+    same ``compatibility()`` row, same errors).  An author who wants control
+    declares everything, exactly as before, and nothing is inferred.
+
+    Declaring it all
+    ----------------
 
     .. code-block:: python
 
@@ -299,17 +350,32 @@ def register(
     def decorator(fn: Callable[..., Geometry]) -> Callable[..., Geometry]:
         # -- derive what was not declared -----------------------------------
         key = name if name is not None else fn.__name__
-        spaces = tuple(FrameSpace(s) for s in _as_tuple(frame))
-        ordered = tuple(str(p) for p in primitives)
+        # What the author left out is inferred from the first geometry this
+        # transform computes (see the docstring).  Until then the record carries
+        # empty declarations and a ``_deferred`` set naming them, so every check
+        # below that validates a declaration simply has nothing to validate.
+        deferred: set[str] = set()
+        if frame is None:
+            deferred.add("frame")
+        if primitives is None:
+            deferred.add("primitives")
+        if kind is None and frame is None:
+            deferred.add("kind")
+        resolved_source: Any = source if source is not None else "data"
+
+        spaces = tuple(FrameSpace(s) for s in _as_tuple(frame)) if frame is not None else ()
+        ordered = tuple(str(p) for p in primitives) if primitives is not None else ()
         row = frozenset(ordered)
-        chosen_default = default_primitive if default_primitive is not None else ordered[0]
+        chosen_default = (
+            default_primitive if default_primitive is not None else (ordered[0] if ordered else "")
+        )
         arities = (
             tuple(int(n) for n in _as_tuple(ndim))
             if ndim is not None
             else tuple(space_arity(s) for s in spaces)
         )
 
-        if source not in ("data", "model"):
+        if resolved_source not in ("data", "model"):
             raise InvalidParameterError(
                 f"transform {key!r} declares source={source!r}; there are exactly two "
                 "categories — 'data' (computable from the samples you have) and 'model' "
@@ -330,12 +396,12 @@ def register(
                 "transform. See ADMITTED_SERIES_DIAGNOSTICS for the one exception and the "
                 "rule that admits it."
             )
-        if chosen_default not in row:
+        if "primitives" not in deferred and chosen_default not in row:
             raise InvalidParameterError(
                 f"transform {key!r} declares default_primitive={chosen_default!r}, which "
                 f"is not in its row {sorted(row)}."
             )
-        if len(arities) != len(spaces) and len(spaces) != 1:
+        if len(arities) != len(spaces) and len(spaces) != 1 and "frame" not in deferred:
             # One arity per space, or — for the one case ``ndim=`` survives for —
             # several arities within a single space, because the geometry's SHAPE
             # varies there (a spatial field is a 2-D lattice or a 1-D profile).
@@ -383,7 +449,7 @@ def register(
 
         record = PlotTransform(
             name=key,
-            source=source,
+            source=resolved_source,
             compute=fn,
             default_primitive=chosen_default,
             primitives=row,
@@ -399,12 +465,13 @@ def register(
             labels=tuple(str(label) for label in labels),
             aliases=tuple(str(a) for a in aliases),
             _subjects=_validated_subjects(key, subjects),
+            _deferred=frozenset(deferred),
         )
         _registry.plot_transforms.register(
             key,
             record,
             replace=replace,
-            source=source,
+            source=resolved_source,
             default_primitive=chosen_default,
             requires=requires,
         )
@@ -809,6 +876,16 @@ def row_option_names(transform: PlotTransform) -> frozenset[str]:
     the options have already been routed.  Registration rejects a transform whose
     ``compute`` takes a parameter of the same name, so the union is unambiguous.
     """
+    if transform._deferred and not transform.primitives:
+        # The row is inferred from the first geometry, so on that first call
+        # there is none to split by.  Every primitive option that ``compute``
+        # does NOT itself declare is unambiguously the primitive's — which is
+        # the same reasoning the declared path uses, over a wider union.
+        import inspect
+
+        declared = set(inspect.signature(transform.compute).parameters)
+        everything = frozenset().union(*(p.options for p in PRIMITIVES.values()))
+        return everything - declared
     return frozenset().union(*(PRIMITIVES[p].options for p in transform.primitives))
 
 
@@ -997,7 +1074,10 @@ def geometry(subject: Any, name: str, /, **options: Any) -> Geometry:
     transform, _ = resolve(name)
     _check_available(transform)
     expand_domain(transform, options)
-    return _check_geometry(transform, _stamp(transform, _compute(transform, subject, options)))
+    stamped = _stamp(transform, _compute(transform, subject, options), subject)
+    # ``_stamp`` may have resolved a deferred registration (see :func:`register`);
+    # re-read the record so the checks below run against the filled-in one.
+    return _check_geometry(get(transform.name) if transform._deferred else transform, stamped)
 
 
 #: Integration keywords the fallback may forward when it runs a system for a
@@ -1405,7 +1485,11 @@ def build_spec(subject: Any, name: str, /, *, primitive: str | None = None, **op
             "passed; use one spelling."
         )
     wanted = primitive if dotted is None else dotted
-    if wanted is not None:  # fail on an invalid pair *before* doing any work
+    # Fail on an invalid pair *before* doing any work — except for a transform
+    # whose row has not been inferred yet (:func:`register`), which has no row to
+    # check against.  ``lower`` validates the pair after the geometry exists, so
+    # the check is deferred, never skipped.
+    if wanted is not None and not transform._deferred:
         validate_primitive(transform, wanted)
     compute_kw, prim_kw = _split_options(transform, dict(options))
     geom = geometry(subject, transform.name, **compute_kw)
@@ -1426,7 +1510,211 @@ def _check_available(transform: PlotTransform) -> None:
     )
 
 
-def _stamp(transform: PlotTransform, result: Any) -> Any:
+#: Preference order for the **default** primitive among the inferred candidates,
+#: **per coordinate space**.
+#:
+#: The inferred *row* is fully derived (every primitive whose declared
+#: ``requires`` the geometry satisfies and whose declared frames admit the
+#: space).  Which of them is the *default* is the one genuinely free choice here,
+#: so it is made once, in this table, and it has to be read per space: ``image``
+#: requires only a ``z`` channel, so it is a candidate for a 3-D curve too — and
+#: defaulting a 3-D orbit to an image is exactly the plausible-wrong-picture this
+#: layer exists to prevent.  Within a space the order is *draw the thing, not a
+#: summary of it*: a curve before its density, a field before its magnitude.
+_DEFAULT_PRIMITIVE_PREFERENCE: dict[FrameSpace, tuple[str, ...]] = {
+    FrameSpace.GRID2: ("image", "contour", "surface3d"),
+    FrameSpace.STATE3: ("line3d", "points3d", "surface3d"),
+}
+
+#: Used for every other space — a plain 2-D curve, or a vector field.
+_DEFAULT_PRIMITIVE_FALLBACK: tuple[str, ...] = (
+    "quiver",
+    "line",
+    "points",
+    "bars",
+    "histogram",
+    "markers",
+    "image",
+)
+
+
+def _infer_frame(parts: Sequence[Part]) -> tuple[FrameSpace, int]:
+    """Infer ``(space, ndim)`` from the channel **shapes** of the first part.
+
+    Three readings, and they are the only ones the shapes support:
+
+    - a ``z`` channel that is **2-D** over 1-D ``x`` / ``y`` is a lattice —
+      ``grid2``, the space every image transform declares;
+    - a 1-D ``z`` beside ``x`` and ``y`` is a curve through three coordinates —
+      ``state3``;
+    - anything else is :data:`~tsdynamics.viz._frames.FrameSpace.FREE`, *"I did
+      not say what space this is"*.  It is not a fallback dressed as an answer:
+      it is the claim :func:`draw` has always stamped on hand-built arrays, and
+      it overlays with anything precisely because nobody made a claim.
+    """
+    import numpy as np
+
+    first = parts[0]
+    z = first.array("z")
+    if z is not None:
+        if np.ndim(z) >= 2:
+            return FrameSpace.GRID2, 2
+        return FrameSpace.STATE3, 3
+    return FrameSpace.FREE, space_arity(FrameSpace.FREE)
+
+
+def _infer_primitives(parts: Sequence[Part], space: FrameSpace) -> tuple[frozenset[str], str]:
+    """Infer the compatibility row from the channels the geometry carries.
+
+    Registration already owned this predicate — it *rejected* a declared pair
+    whose primitive refuses the space, and :func:`lower` refuses one whose
+    ``requires`` the part does not satisfy.  Running both forwards turns two
+    rejection rules into the row, so an inferred row can never contain a pair
+    the declared path would have refused.
+    """
+    from tsdynamics.errors import InvalidParameterError
+
+    channels = set(parts[0].channels)
+    row = {
+        name
+        for name, prim in PRIMITIVES.items()
+        if prim.requires and prim.requires <= channels and prim.accepts_frame(space)
+    }
+    if not row:
+        raise InvalidParameterError(
+            f"no registered primitive can draw channels {sorted(channels)} in coordinate "
+            f"space {space.value!r}, so the transform's compatibility row cannot be "
+            "inferred. Declare it: register(primitives=(...), frame=..., kind=...) — "
+            f"the registered primitives are {list(primitive_names())}."
+        )
+    order = _DEFAULT_PRIMITIVE_PREFERENCE.get(space, _DEFAULT_PRIMITIVE_FALLBACK)
+    default = next((p for p in order if p in row), sorted(row)[0])
+    return frozenset(row), default
+
+
+def _resolve_deferred(transform: PlotTransform, parts: Sequence[Part]) -> PlotTransform:
+    """Fill in a deferred transform's declarations from its first geometry, **once**.
+
+    The filled-in record replaces the deferred one in the registry, so every
+    later call — and ``compatibility()``, ``find()``, the record's own repr —
+    sees a transform indistinguishable from a fully declared one.
+    """
+    from dataclasses import replace as _replace
+
+    space, ndim = (
+        _infer_frame(parts) if "frame" in transform._deferred else (transform.frame[0], -1)
+    )
+    if ndim < 0:
+        ndim = transform.ndim[0]
+    if "primitives" in transform._deferred:
+        row, default = _infer_primitives(parts, space)
+        # A declared ``default_primitive=`` with an undeclared row is the one
+        # half-declaration here, and the author's word wins over the preference.
+        if transform.default_primitive:
+            row = row | {transform.default_primitive}
+            default = transform.default_primitive
+        # ...and so does an explicit ``allow`` made before the first draw, which
+        # is written onto the record's row: inference must WIDEN what the author
+        # already said, never replace it.  Overwriting it made
+        # ``allow(name, "stem")`` a silent no-op on exactly the transforms a
+        # custom primitive is written for.
+        row = row | transform.primitives
+    else:
+        row, default = transform.primitives, transform.default_primitive
+    filled = _replace(
+        transform,
+        frame=(space,),
+        ndim=(ndim,),
+        primitives=row,
+        default_primitive=default,
+        _deferred=frozenset(),
+    )
+    _registry.plot_transforms.register(
+        filled.name,
+        filled,
+        replace=True,
+        source=filled.source,
+        default_primitive=filled.default_primitive,
+        requires=filled.requires,
+    )
+    return filled
+
+
+def _resolve_deferred_from_geometry(transform: PlotTransform, geom: Geometry) -> PlotTransform:
+    """Fill a deferred record from a :class:`Geometry` the transform built itself."""
+    from dataclasses import replace as _replace
+
+    row, default = (
+        _infer_primitives(geom.parts, geom.frame.space)
+        if "primitives" in transform._deferred
+        else (transform.primitives, transform.default_primitive)
+    )
+    # An ``allow`` made before the first draw widens the inferred row (see
+    # :func:`_resolve_deferred`).
+    row = row | transform.primitives
+    filled = _replace(
+        transform,
+        frame=(geom.frame.space,) if "frame" in transform._deferred else transform.frame,
+        ndim=(geom.frame.ndim,) if "frame" in transform._deferred else transform.ndim,
+        primitives=row,
+        default_primitive=default,
+        _deferred=frozenset(),
+    )
+    _registry.plot_transforms.register(
+        filled.name,
+        filled,
+        replace=True,
+        source=filled.source,
+        default_primitive=filled.default_primitive,
+        requires=filled.requires,
+    )
+    return filled
+
+
+#: The channels a stamped geometry's axes are read from, in axis order.
+_AXIS_CHANNELS: tuple[str, ...] = ("x", "y", "z")
+
+
+def _derived_labels(subject: Any, parts: Sequence[Part], width: int) -> tuple[str, ...]:
+    """Name a stamped geometry's axes by **recognising** the arrays it was given.
+
+    A transform that declares no ``labels=`` used to draw bare axes, which is a
+    figure nobody would put in a paper — the one rough edge left in "declare
+    nothing and it works".  So the axes are named where the answer is a
+    *measurement* rather than a guess: if a channel's array **is** the subject's
+    time column it is ``t``, and if it **is** one of the subject's named state
+    components it takes that component's name.  Anything else is left blank,
+    because ``x`` is not a better label than none.
+
+    Declaring ``labels=`` on the registration still wins outright, and a
+    transform that builds its own :class:`Geometry` never reaches here.
+    """
+    time = getattr(subject, "t", None)
+    if time is None or not parts:
+        return ()
+    names = list(getattr(subject, "variables", ()) or ())
+    columns: list[tuple[str, np.ndarray]] = [("t", np.asarray(time, dtype=float))]
+    for index, name in enumerate(names):
+        try:
+            columns.append((str(name), np.asarray(subject[str(name)], dtype=float)))
+        except Exception:  # pragma: no cover - a subject that will not index by name
+            _ = index
+            break
+    out: list[str] = []
+    for channel in _AXIS_CHANNELS[:width]:
+        array = parts[0].array(channel)
+        found = ""
+        if array is not None:
+            flat = np.asarray(array, dtype=float).ravel()
+            for label, column in columns:
+                if flat.shape == column.shape and np.array_equal(flat, column):
+                    found = label
+                    break
+        out.append(found)
+    return () if not any(out) else tuple(out)
+
+
+def _stamp(transform: PlotTransform, result: Any, subject: Any = None) -> Any:
     """Wrap a plain channel mapping — or a **list** of them — in a :class:`Geometry`.
 
     ``name``, the coordinate space, the axis count and the axis labels are all
@@ -1445,20 +1733,27 @@ def _stamp(transform: PlotTransform, result: Any) -> Any:
     """
     parts = parts_from_return(result)
     if parts is None:
+        if transform._deferred and isinstance(result, Geometry):
+            # A deferred transform that builds its own Geometry has *declared*
+            # its frame after all, in the only place it could — the return.
+            _resolve_deferred_from_geometry(transform, result)
         return result
     from tsdynamics.errors import InvalidParameterError
 
+    if transform._deferred:
+        transform = _resolve_deferred(transform, parts)
     if len(transform.frame) != 1 or len(transform.ndim) != 1:
         raise InvalidParameterError(
             f"transform {transform.name!r} declares coordinate space(s) "
             f"{[s.value for s in transform.frame]} with ndim {list(transform.ndim)}, so a plain "
             "channel mapping cannot say which it produced — return a Geometry naming the frame."
         )
+    labels = transform.labels or _derived_labels(subject, parts, transform.ndim[0])
     return Geometry(
         transform=transform.name,
-        frame=make_frame(transform.frame[0], transform.labels, transform.ndim[0]),
+        frame=make_frame(transform.frame[0], labels, transform.ndim[0]),
         parts=parts,
-        axis_labels=transform.labels,
+        axis_labels=labels,
     )
 
 
@@ -1638,6 +1933,12 @@ class CompatibilityMatrix(dict):  # type: ignore[type-arg]
                 "available": t.available,
                 "requires": t.requires,
                 "doc": t.doc,
+                # The DataFrame-able form is where the option list belongs: the
+                # printed table is 39 rows already and a per-row option list
+                # doubles it, which is how a reference becomes unreadable.  Here
+                # the width is free, so `pandas.DataFrame(m.rows())` answers
+                # "what can I steer" across every transform at once.
+                "options": list(t.options),
             }
             for t in transforms()
         ]
@@ -1688,6 +1989,12 @@ class CompatibilityMatrix(dict):  # type: ignore[type-arg]
             "ts.plot(subject, 'name')              draw it",
             "ts.plot(subject, 'name.primitive')    ...drawn another way",
             "ts.viz.transforms.find(subject=x)     what can I draw from THIS?",
+            # The matrix says WHICH plots exist and how they may be drawn; it
+            # deliberately does not list each row's options (39 rows x an option
+            # list is no longer a table you read).  These two lines are the route
+            # to them, and both print the real signature.
+            "help(subject.plot.name)               ...and what can I steer?",
+            "ts.viz.transforms.get('name')         the record, options included",
         ]
         return "\n".join(lines)
 

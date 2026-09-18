@@ -94,6 +94,14 @@ def recurrence(subject: Any, *, recurrence_rate: float = 0.05, **kwargs: Any) ->
     parameter, ``primitive="contour"`` for the level sets of a thresholded
     distance field).
 
+    What correct looks like
+    -----------------------
+    The fraction of the matrix that is set equals the ``recurrence_rate`` you
+    asked for — ask for 5 % and count 5 %, not 14 %.  The main diagonal is
+    always recurrent, and a periodic orbit shows diagonals spaced by its
+    period.  Gate:
+    ``tests/test_viz_truth.py::TestARecurrencePlotDrawsTheRateItWasAsked``.
+
     Parameters
     ----------
     subject : Trajectory or array
@@ -238,12 +246,20 @@ def orbit_diagram(
     components: int = 0,
     **kwargs: Any,
 ) -> Geometry:
-    """Sweep a parameter and draw the asymptotic orbit at each value.
+    r"""Sweep a parameter and draw the asymptotic orbit at each value.
 
     The picture the library is *for*, and it had no transform: the result class
     could draw itself, so a cascade could not be overlaid on anything, gridded
     beside anything, or drawn as a density (which is what a three-million-point
     diagram needs — as markers it is a black rectangle).
+
+    What correct looks like
+    -----------------------
+    Sweep the logistic map's ``r``: the single branch splits in two at exactly
+    :math:`r = 3` and into four at :math:`r = 1 + \sqrt{6} \approx 3.4495`.
+    Those two constants are the calibration for any orbit diagram this draws.
+    Gate:
+    ``tests/test_viz_truth.py::TestTheOrbitDiagramPutsTheCascadeWhereTheTextbookDoes``.
 
     Parameters
     ----------

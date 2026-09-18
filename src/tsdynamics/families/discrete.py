@@ -298,6 +298,13 @@ class DiscreteMap(SystemBase, ABC):
         "ts.analysis.orbit_diagram(system, 'a', values)",
     )
 
+    #: A map advances in whole iterates; there is no du/dt to evaluate.
+    rhs = Absent(
+        "a map has no vector field — it advances in whole iterates, so the thing "
+        "to evaluate is the next state x_{n+1} = f(x_n), not a rate of change",
+        "system.step(1)   # one iterate from the live state",
+    )
+
     #: A map's kernel is traced numerically, not held as a symbolic tree.
     jacobian_sym = Absent(
         "a map's kernel is traced numerically, not held as a symbolic tree",

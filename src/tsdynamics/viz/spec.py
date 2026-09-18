@@ -55,9 +55,10 @@ References
 from __future__ import annotations
 
 import functools
+import math
 import warnings
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self, cast, get_args
 
@@ -1061,6 +1062,15 @@ class Layout:
     and one :class:`Layout` saying how to tile them.  Like every other piece of the
     IR it is backend-neutral data: a renderer maps ``mode`` to its own subplot grid.
 
+    **A panel may itself be a composite**, which is how the layout algebra keeps
+    the grouping a user typed: ``(a|b)/c`` is a ``"stack"`` of two panels, the
+    first of which is a ``"row"`` of two.  The structure is unchanged — the
+    nesting lives in ``panels``, not in a new field — so
+    :meth:`Plot.to_dict` / :meth:`Plot.from_dict` already round-trip it and
+    :meth:`grid` still answers for *this* level only.  The matplotlib renderer
+    places a nested level by subdividing its cell
+    (``gridspec[i, j].subgridspec(...)``).
+
     Parameters
     ----------
     mode : {"stack", "row", "grid"}, optional
@@ -1163,6 +1173,97 @@ class Layout:
 # ---------------------------------------------------------------------------
 
 
+def _count_leaf_panels(spec: Plot) -> int:
+    """How many DRAWN panels a (possibly nested) composite has, at any depth."""
+    if not spec.is_composite:
+        return 1
+    return sum(_count_leaf_panels(panel) for panel in spec.panels)
+
+
+def _camera_angle(field: str, value: Any) -> float:
+    """Read one :meth:`Plot.camera` number, naming the argument when it is not one.
+
+    ``camera(spin="fast")`` used to escape as a bare
+    ``ValueError: could not convert string to float: 'fast'`` — true, and it
+    names neither ``camera`` nor ``spin``.
+    """
+    from tsdynamics.errors import InvalidParameterError
+
+    means = (
+        "a count of full turns over the movie (0 holds the camera still)"
+        if field == "spin"
+        else "an angle in degrees"
+    )
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise InvalidParameterError(
+            f"camera({field}={value!r}) is not a number: {field} is {means}."
+        ) from None
+    if not math.isfinite(number):
+        raise InvalidParameterError(f"camera({field}={value!r}) must be finite.")
+    return number
+
+
+def _only_given(**kwargs: Any) -> dict[str, Any]:
+    """Drop the keywords the caller did not pass (``None`` means "leave it alone").
+
+    The animation tweaks are *partial* updates — ``p.animate(fps=60)`` must not
+    reset ``loop`` — so the change set handed to :meth:`Animation.updated` is
+    only the keywords that were actually named.
+    """
+    return {k: v for k, v in kwargs.items() if v is not None}
+
+
+def _trail_pair(length: Any) -> tuple[str, float]:
+    """Read :meth:`Plot.trail`'s ``length=`` into a ``(unit, value)`` pair.
+
+    The argument names a **unit** as well as a number, because the two readings
+    of "a trail of 4" differ by whatever ``dt`` happens to be.  A bare number
+    therefore has no honest reading, and guessing one silently is the defect this
+    refuses: before v6 ``trail(length=3.0)`` raised the raw
+    ``TypeError: cannot unpack non-iterable float object`` — matplotlib's
+    unpacking, leaking out of the library, naming neither the argument nor a
+    remedy.
+
+    Raises
+    ------
+    InvalidParameterError
+        If ``length`` is not a ``(unit, value)`` pair (the unit word itself is
+        checked by :meth:`Animation.validate`, so both doors give one message).
+    """
+    from tsdynamics.errors import InvalidParameterError
+
+    remedy = (
+        "It takes a (unit, value) pair, because 4 samples and 4 time units are "
+        "different tails:\n"
+        "    .trail(length=('time', 4))     # 4 units of the system's own time\n"
+        "    .trail(length=('steps', 4))    # 4 samples of the stored series\n"
+        "    .trail(length=None)            # persistent — the curve never erases"
+    )
+    if isinstance(length, str) or not isinstance(length, Sequence) or len(length) != 2:
+        raise InvalidParameterError(f"trail(length={length!r}) is not a length. {remedy}")
+    unit, value = length
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise InvalidParameterError(
+            f"trail(length={length!r}) has a non-numeric length {value!r}. {remedy}"
+        ) from None
+    return str(unit), number
+
+
+#: The marker symbols :attr:`Animation.head_symbol` may name — matplotlib's
+#: single-character marker codes, which is the vocabulary the renderers pass
+#: straight through (``ax.plot([], [], anim.head_symbol, ...)``).  Spelled here
+#: rather than read off ``matplotlib.lines.Line2D.markers`` because ``spec.py`` is
+#: the backend-neutral IR and must not import a plotting library.
+_HEAD_SYMBOLS: frozenset[str] = frozenset(
+    {".", ",", "o", "v", "^", "<", ">", "1", "2", "3", "4", "8", "s", "p", "P",
+     "*", "h", "H", "+", "x", "X", "D", "d", "|", "_", ""}
+)  # fmt: skip
+
+
 @dataclass
 class Animation:
     """How an animated :class:`Plot` plays — a backend-neutral directive.
@@ -1260,6 +1361,160 @@ class Animation:
     spin: float = 0.0
     clock: bool = False
     clock_format: str = "t = {t:.2f}"
+
+    def __post_init__(self) -> None:
+        """Validate the directive at construction (see :meth:`validate`)."""
+        self.validate()
+
+    def validate(self) -> None:
+        """Refuse a knob whose value the renderers would silently ignore.
+
+        The signatures already declare the closed vocabularies
+        (``Literal["time", "steps"]``, ``Literal["reveal", "frames"]``) — nothing
+        enforced them at runtime, so ``trail(length=("whatever", 3.0))`` was
+        accepted, stored verbatim and behaved as ``"time"``, and
+        ``animate(mode="typo")`` as ``"reveal"``.  A typed contract nothing
+        enforces is a contract that silently gives you a different picture.
+
+        The chainable tweaks (:meth:`Plot.animate`, :meth:`Plot.trail`,
+        :meth:`Plot.head`, :meth:`Plot.camera`) set fields one at a time on a live
+        directive, so they call this after the write rather than relying on
+        ``__post_init__``; that keeps **one** vocabulary for every door — the
+        dataclass, the ``animate={...}`` dict, ``from_dict``, and the methods.
+
+        Raises
+        ------
+        InvalidParameterError
+            If a word is not in its vocabulary, or a number cannot describe a
+            playable movie (a non-positive ``fps``, a ``n_frames`` below 1, an
+            opacity outside ``[0, 1]``, …).
+        """
+        from tsdynamics.errors import InvalidParameterError
+
+        def _word(shown: str, noun: str, value: Any, allowed: tuple[str, ...], means: str) -> None:
+            if value not in allowed:
+                raise InvalidParameterError(
+                    f"{shown} is not {noun} this library knows. "
+                    f"The values that work: {', '.join(repr(a) for a in allowed)} — {means}"
+                )
+
+        def _flag(door: str, value: Any, *, means: str) -> None:
+            # ``bool(value)`` accepts every object in Python, so ``loop='yes'``
+            # and ``trail(fade='lots')`` used to be swallowed as truthy and land
+            # as ``True`` — next to eight knobs that validate strictly, which is
+            # what made the silent accept read as a valid value.
+            if not isinstance(value, bool | np.bool_):
+                shown = door.format(value=repr(value))
+                raise InvalidParameterError(
+                    f"{shown} is a switch, so it is True or False — "
+                    f"got {type(value).__name__}. {means}"
+                )
+
+        _flag(
+            "animate(loop={value})",
+            self.loop,
+            means="True replays the movie, False stops at the end.",
+        )
+        _flag(
+            "animate(pingpong={value})",
+            self.pingpong,
+            means="True plays forward then backward each cycle.",
+        )
+        _flag("trail(fade={value})", self.trail_fade, means="True fades the tail's opacity.")
+        _flag(
+            "trail(backdrop={value})",
+            self.backdrop,
+            means="True draws the whole curve faintly under the comet.",
+        )
+        _flag("head(show={value})", self.head, means="True draws the moving head marker.")
+        _flag("clock(show={value})", self.clock, means="True draws the live time readout.")
+
+        _word(
+            f"animate(mode={self.mode!r})",
+            "a frame model",
+            self.mode,
+            ("reveal", "frames"),
+            "'reveal' sweeps a comet along data that is already there, "
+            "'frames' plays a stack of whole fields (a spatial-field movie).",
+        )
+        if self.trail_kind is not None:
+            _word(
+                f"trail(length=({self.trail_kind!r}, ...))",
+                "a tail unit",
+                self.trail_kind,
+                ("time", "steps"),
+                "trail(length=('time', 4)) is 4 units of the system's own time, "
+                "trail(length=('steps', 4)) is 4 samples of the stored series.",
+            )
+        if self.head_symbol not in _HEAD_SYMBOLS:
+            raise InvalidParameterError(
+                f"head(symbol={self.head_symbol!r}) is not a marker any backend draws; "
+                "matplotlib would raise from inside .save() hundreds of frames later. "
+                f"The symbols that work: {', '.join(repr(s) for s in sorted(_HEAD_SYMBOLS))}"
+            )
+
+        def _positive(door: str, value: Any, *, floor: float, unit: str) -> None:
+            if value is None:
+                return
+            # A raw ``float("2s")`` used to escape as ValueError: could not
+            # convert string to float: '2s' — naming neither the knob, nor the
+            # unit, nor a remedy, on the ONE knob of eleven with no typed
+            # message.  Coercion belongs here, with the vocabulary.
+            if isinstance(value, bool) or not isinstance(value, int | float | np.number):
+                raise InvalidParameterError(
+                    f"{door.format(repr(value))} is {unit}, so it needs a number — got "
+                    f"{type(value).__name__}. Pass it as a plain number, in {unit.split(' of ')[-1]}."
+                )
+            if not math.isfinite(float(value)) or float(value) < floor:
+                raise InvalidParameterError(
+                    f"{door.format(repr(value))} cannot describe a playable movie: it is {unit}, "
+                    f"so it must be finite and at least {floor:g}."
+                )
+
+        _positive("animate(fps={})", self.fps, floor=1e-6, unit="frames per second")
+        _positive("animate(duration={})", self.duration, floor=1e-6, unit="seconds of playback")
+        _positive("animate(n_frames={})", self.n_frames, floor=1, unit="a count of frames")
+        _positive("head(size={})", self.head_size, floor=0.0, unit="a marker size in points")
+        _positive("trail(length=(unit, {}))", self.trail_length, floor=0.0, unit="a tail length")
+        _positive("camera(spin={})", self.spin, floor=0.0, unit="full turns over the movie")
+        _positive("trail(backdrop_alpha={})", self.backdrop_alpha, floor=0.0, unit="an opacity")
+        if not 0.0 <= float(self.backdrop_alpha) <= 1.0:
+            raise InvalidParameterError(
+                f"trail(backdrop_alpha={self.backdrop_alpha!r}) is an opacity, so it must be "
+                "between 0 (invisible) and 1 (opaque)."
+            )
+        # Canonicalise only once every value has passed: a directive that
+        # survives validation is stored in the renderers' own types.
+        self.fps = float(self.fps)
+        self.duration = None if self.duration is None else float(self.duration)
+        self.n_frames = None if self.n_frames is None else int(self.n_frames)
+        self.head_size = float(self.head_size)
+        self.trail_length = None if self.trail_length is None else float(self.trail_length)
+        self.spin = float(self.spin)
+        self.backdrop_alpha = float(self.backdrop_alpha)
+
+    def updated(self, **changes: Any) -> Animation:
+        """Return a **validated copy** carrying ``changes``; ``self`` is untouched.
+
+        The one door every chainable tweak writes through, and the reason it
+        exists is an ordering bug with a long tail: the tweaks used to assign
+        first and call :meth:`validate` after, so ``p.animate(fps=-5)`` raised
+        *and left* ``p.animation.fps == -5``.  Every later tweak on that plot
+        then re-raised the **old** error, naming a knob the caller had not
+        touched — so in the interactive session where animation knobs are
+        actually tuned, one bad value made the plot unusable and reported it
+        under the wrong argument's name.
+
+        Building the candidate through :func:`dataclasses.replace` runs
+        ``__post_init__`` → :meth:`validate` on the copy, so a refusal happens
+        before anything of the caller's is modified.
+
+        Returns
+        -------
+        Animation
+            A new directive, validated and canonicalised.
+        """
+        return replace(self, **changes)
 
     def __dir__(self) -> Iterable[str]:
         """List the directive's knobs plus the two frame sums documentation reads.
@@ -2502,11 +2757,33 @@ class Plot:
         return self._compose(other, layout="overlay")
 
     def __or__(self, other: Any) -> Plot:
-        """Put ``b`` beside ``a`` (a one-row grid) — the ``a | b`` spelling."""
+        """Put ``b`` beside ``a`` (a row) — the ``a | b`` spelling.
+
+        Chains stay flat, so ``a | b | c`` is one row of three (and
+        ``(a|b)|c`` and ``a|(b|c)`` are the same figure).  A ``/``-grouped
+        operand nests — see :meth:`__truediv__`.
+        """
         return self._compose(other, layout="row")
 
     def __truediv__(self, other: Any) -> Plot:
-        """Put ``b`` below ``a`` (a one-column stack) — the ``a / b`` spelling."""
+        """Put ``b`` below ``a`` (a column) — the ``a / b`` spelling.
+
+        **The parentheses are the layout.**  A sub-expression grouped with the
+        *other* operator is kept whole, as one nested panel, so the arrangement
+        you typed is the arrangement you get::
+
+            (plot(a) | plot(b)) / plot(c)    # a row of two; c spans below
+            plot(a) / (plot(b) | plot(c))    # one on top; two below
+            (plot(a) | plot(b)) / (plot(c) | plot(d))    # a real 2x2
+            (plot(a) / plot(b)) | plot(c)    # a column of two beside a single
+
+        to any depth.  A chain of the *same* operator stays flat (``a / b / c``
+        is one column of three), which is what keeps the algebra associative.
+
+        Nesting is matplotlib-only for now: ``make_subplots`` has no
+        ``subgridspec``, so plotly declines a nested composite and dispatch falls
+        back with a ``VisualizationDegraded``.
+        """
         return self._compose(other, layout="stack")
 
     def _compose(self, other: Any, *, layout: str) -> Plot:
@@ -2855,18 +3132,10 @@ class Plot:
             ``self``, for chaining.
         """
         a = self._ensure_animation()
-        if fps is not None:
-            a.fps = float(fps)
-        if duration is not None:
-            a.duration = float(duration)
-        if n_frames is not None:
-            a.n_frames = int(n_frames)
-        if loop is not None:
-            a.loop = bool(loop)
-        if pingpong is not None:
-            a.pingpong = bool(pingpong)
-        if mode is not None:
-            a.mode = mode
+        changes = _only_given(
+            fps=fps, duration=duration, n_frames=n_frames, loop=loop, pingpong=pingpong, mode=mode
+        )
+        self.animation = a.updated(**changes)
         return self
 
     @_mutates
@@ -2912,18 +3181,15 @@ class Plot:
             ts.plot(traj, animate=True).trail(("time", 4), backdrop=False)
         """
         a = self._ensure_animation()
+        changes = _only_given(trail_fade=fade, backdrop=backdrop, backdrop_alpha=backdrop_alpha)
         if length is not _UNSET:
             if length is None:
-                a.trail_kind, a.trail_length = None, None
+                changes["trail_kind"] = changes["trail_length"] = None
             else:
-                kind, value = length
-                a.trail_kind, a.trail_length = kind, float(value)
-        if fade is not None:
-            a.trail_fade = bool(fade)
-        if backdrop is not None:
-            a.backdrop = bool(backdrop)
-        if backdrop_alpha is not None:
-            a.backdrop_alpha = float(backdrop_alpha)
+                kind, value = _trail_pair(length)
+                changes["trail_kind"] = cast('Literal["time", "steps"]', kind)
+                changes["trail_length"] = value
+        self.animation = a.updated(**changes)
         return self
 
     @_mutates
@@ -2955,14 +3221,9 @@ class Plot:
             ``self``, for chaining.
         """
         a = self._ensure_animation()
-        if show is not None:
-            a.head = bool(show)
-        if size is not None:
-            a.head_size = float(size)
-        if color is not None:
-            a.head_color = color
-        if symbol is not None:
-            a.head_symbol = symbol
+        self.animation = a.updated(
+            **_only_given(head=show, head_size=size, head_color=color, head_symbol=symbol)
+        )
         return self
 
     # ``elev`` / ``azim`` are a *panel*'s viewing angle (each 3-D axes has its
@@ -2995,15 +3256,18 @@ class Plot:
         Plot
             ``self``, for chaining.
         """
+        # Read EVERY angle before writing ANY of them: a call that refuses must
+        # leave the plot exactly as it found it (see :meth:`Animation.updated`).
+        camera = dict(self.meta.get("camera", {}))
+        if elev is not None:
+            camera["elev"] = _camera_angle("elev", elev)
+        if azim is not None:
+            camera["azim"] = _camera_angle("azim", azim)
+        turns = None if spin is None else _camera_angle("spin", spin)
         if elev is not None or azim is not None:
-            camera = dict(self.meta.get("camera", {}))
-            if elev is not None:
-                camera["elev"] = float(elev)
-            if azim is not None:
-                camera["azim"] = float(azim)
             self.meta["camera"] = camera
-        if spin is not None:
-            self._ensure_animation().spin = float(spin)
+        if turns is not None:
+            self.animation = self._ensure_animation().updated(spin=turns)
         return self
 
     @_mutates
@@ -3048,10 +3312,10 @@ class Plot:
                     'Pass it once: p.clock("t = {t:.1f}").'
                 )
             fmt, show = show, True
-        a = self._ensure_animation()
-        a.clock = bool(show)
+        changes: dict[str, Any] = {"clock": show}
         if fmt is not None:
-            a.clock_format = _validated_clock_format(fmt)
+            changes["clock_format"] = _validated_clock_format(fmt)
+        self.animation = self._ensure_animation().updated(**changes)
         return self
 
     # -- color / legend completeness ---------------------------------------
@@ -3670,6 +3934,22 @@ class Plot:
             rows, cols = layout.grid(n_panels)
             arrangement = f"a {rows}x{cols} {layout.mode}"
             body = f"{n_panels} panel{'s' if n_panels != 1 else ''} in {arrangement}"
+            # A nested arrangement must SAY it is nested: "2 panels in a 2x1
+            # stack" is true of ``(a|b)/c`` and describes a figure with two
+            # curves in it, when there are three.  Naming the nested rows (and
+            # the leaf total) is the difference between a repr that answers the
+            # question and one that misleads about the picture on screen.
+            nested = [
+                (p.layout.mode if p.layout is not None else "stack")
+                for p in self.panels
+                if p.is_composite
+            ]
+            if nested:
+                leaves = _count_leaf_panels(self)
+                body += (
+                    f" (nesting {' + '.join(f'a {mode}' for mode in nested)}"
+                    f" — {leaves} panels in all)"
+                )
         else:
             n = len(self.layers)
             body = f"{n} layer{'s' if n != 1 else ''}"

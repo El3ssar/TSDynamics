@@ -144,21 +144,22 @@ needs no manual edit there. **Since v6 `ts.Lorenz` no longer resolves** — see 
 and the redirect ladder below; the `MovedInV6` it raises names
 `ts.systems.Lorenz()`.
 
-**`tsdynamics.__all__` is exactly SEVENTEEN names** (measured — re-measure, never
+**`tsdynamics.__all__` is exactly ELEVEN names** (measured — re-measure, never
 nudge, if you change it), sorted, one per line:
 
 ```
-BackendError           DiscreteMap             StochasticSystem       plot
-ContinuousSystem       InvalidInputError       StepBudgetError        systems
-ConvergenceError       InvalidParameterError   TSDynamicsError        viz
-DelaySystem            Trajectory              WrappedSystem          __version__
-                                               analysis
+ContinuousSystem       StochasticSystem       plot
+DelaySystem            Trajectory             systems
+DiscreteMap            WrappedSystem          viz
+                       __version__            analysis
 ```
 
 Five classes you subclass · one type you receive and annotate · one plotting verb
-· three registries · **six names you type inside `except`** (promoted from
-`ts.errors.<Name>`, because catching is ordinary work and the module dot was pure
-toll) · `__version__`.
+· three registries · `__version__`.  The six typed exceptions were promoted to
+the top level and then **demoted again** — see "The six typed exceptions left
+`__all__`" below: the hierarchy is additive, so `except ValueError` already
+catches them and nothing a user writes requires this library's spelling.  They
+live at `ts.errors.<Name>`.
 
 `errors` (the module) **left `__all__` and stays bound forever**: the Rust bridge
 does `py.import("tsdynamics.errors")` at `crates/tsdyn-core/src/lib.rs` when it
@@ -494,16 +495,29 @@ plot. If you add a reader, read `_<name>`.
 
 ### `SystemBase` (`families/base.py`)
 
-**The v6 tab surface is exactly 19 names** (ruling A5), per family:
+**The v6 tab surface is exactly 20 names** (ruling A5), per family:
 
 ```
-ContinuousSystem  19  copy dim ensemble family ic info jacobian jacobian_sym params plot
-                      poincare reinit run set_state state step time variables with_params
-DiscreteMap       17  (- poincare, - jacobian_sym)
-StochasticSystem  18  (- jacobian_sym)
-DelaySystem       16  (- set_state, - jacobian, - jacobian_sym)
-WrappedSystem     13  (- jacobian, - jacobian_sym, - ic, - info, - params, - with_params)
+ContinuousSystem  20  copy dim ensemble family ic info jacobian jacobian_sym params plot
+                      poincare reinit rhs run set_state state step time variables with_params
+DiscreteMap       17  (- poincare, - jacobian_sym, - rhs)
+StochasticSystem  19  (- jacobian_sym)
+DelaySystem       16  (- set_state, - jacobian, - jacobian_sym, - rhs)
+WrappedSystem     13  (- jacobian, - jacobian_sym, - rhs, - ic, - info, - params, - with_params)
 ```
+
+It was **19** through round 10.  **`rhs(u, t=0.0)`** is the twentieth and the
+only name ever *added* to the core: `jacobian` is public and is the derivative of
+a function the library would hand back only as `_rhs_numeric`, and three of the
+plotting layer's transforms (`vector_field` / `flow_speed` / `streamlines`) **are**
+that function — so "is this picture right?" had no public answer, and a blind
+tester had to finite-difference `reinit`/`step` to check one.  Two builders and
+that tester independently typed the private name, which is exactly the evidence
+the membership rule asks for.  On a `StochasticSystem` it is the **drift**, named
+as such, matching `jacobian` (already the drift Jacobian).  The three families
+with no `f(u, t)` declare an `Absent` that states why: a DDE's field needs the
+whole history, a map has no vector field (`step(1)` is the analogue), a
+`WrappedSystem` holds an opaque stepper.  Gate: `tests/test_families_rhs.py`.
 
 An absent name is bound to a `base.Absent` **descriptor**, so `hasattr` is
 `False`, `dir()` omits it, and reading it raises an `AttributeError` stating the
@@ -589,6 +603,21 @@ import Trajectory` are the same object.
   `traj.plot.psd()` == `ts.plot(traj, "psd")`. It is the discovery route ruling
   A2 promised in exchange for taking the analyses off the object — a
   module-level registry cannot be tab-completed from the thing in your hand.
+  **Since v6 round 11 each entry carries that transform's OWN signature.** It was
+  a bare `functools.partial`, so `help(traj.plot.psd)` printed `ts.plot`'s generic
+  composition signature `(*things, layout, rows, cols, share_x, …)` — the owner's
+  complaint ("I would like to choose the parameter I want, the resolution of the
+  sweep") was about knobs that were **real and invisible**: `orbit_diagram` has
+  taken `param=` / `values=` / `points=` / `transient=` / `bins=` all along, and a
+  *wrong* keyword was already answered well. Each namespace entry is now a real
+  function carrying the transform's `__name__` / `__doc__` / `__signature__`,
+  generated from its `compute`, so `help(logistic.plot.orbit_diagram)` prints
+  `orbit_diagram(*, param='r', values=None, points=100, transient=500,
+  components=0, primitive='points', **style)` plus what may draw it. The same
+  source feeds the registry record's repr (`ts.viz.transforms.get("orbit_diagram")`
+  prints its options) and the DataFrame-able `compatibility().rows()`. The printed
+  **matrix** deliberately stays option-free: 39 rows x an option list is not a
+  table anyone reads.
 - `meta` carries provenance (system, params, solver, dt, tolerances, ic,
   version); preserved through slicing/`after()`.
 - **Plotting front door — `traj.plot(...)`, and the seam under it is the dunder
@@ -1747,9 +1776,36 @@ Nothing else in the library learns a new name when one is added.
   sentence).  And **`nearest_keyword` never offers back the word that was
   typed** — a shared suggestion pool spanning doors produced
   `labels= — did you mean labels=?`, which reads as a bug in the library.
-- **Writing one is FOUR DECLARATIONS and nothing else (v6).**
-  `@ts.viz.transforms.register(source=, frame=, kind=, primitives=)` over a
-  function returning a channel mapping. Everything else is **derived**: `name`
+- **Writing one is ZERO DECLARATIONS (v6 round 11); four is what you write when
+  you want CONTROL.** `@ts.viz.transforms.register()` over a function returning a
+  channel mapping draws, and `source` / `frame` / `kind` / `primitives` are each
+  *inferred from the first geometry* if you leave them out (`_registry.py`:
+  `_infer_frame` / `_infer_primitives` / `_resolve_deferred*`). Every default is
+  **derived, never guessed**: the compatibility row from the primitives' own
+  declared `requires` (the predicate registration already used to reject an
+  impossible pair, run forwards), the frame from the channel shapes (2-D `z` = a
+  lattice, 1-D `z` = a 3-D curve, else `FREE` — *"I did not say what space this
+  is"*, exactly what `draw()` stamps on hand-built arrays), the kind from the
+  mark the chosen primitive emits, and `source="data"` because that is the wider
+  category. Inference runs **once**, on the first geometry, and the filled-in
+  record replaces the deferred one — afterwards it is indistinguishable from a
+  declared transform. **An `allow()` made before the first draw WIDENS the
+  inferred row** rather than being replaced by it; it used to be thrown away
+  silently, which made the two extension doors unusable together (a custom
+  primitive reaches a transform *only* through `allow`). And a transform that
+  declares no `labels=` now names the axes it can **recognise** —
+  `_registry._derived_labels`: a channel that *is* the subject's time column is
+  `t`, one that *is* a named state component takes that name, anything else stays
+  blank, because `x` is not a better label than none. Declared labels win
+  outright and a transform returning its own `Geometry` never reaches it.
+  Caveat, and it is real: an **inferred row is permissive where a declared one is
+  curated** — the derivation is a channel test, not a taste test, so a lattice
+  transform's inferred row admits `bars` as well as `image`. Every cell is
+  structurally legal and the *default* is right; declare `primitives=` for a
+  curated row.
+  Writing all four is the same as it ever was:
+  `@ts.viz.transforms.register(source=, frame=, kind=, primitives=)`.
+  Everything else is **derived**: `name`
   ← `fn.__name__`, `doc` ← the docstring's first line, **`ndim` ← the frame's
   arity** (`_frames.space_arity`; measured, 33 of the 35 in-tree transforms
   already declared exactly that, and the 2 exceptions were frame
@@ -1771,10 +1827,15 @@ Nothing else in the library learns a new name when one is added.
   `make_frame`, `Presentation` are all public. `plot_transform` is the same
   function under its pre-v6 name.
 - **A new primitive is one decorator too** —
-  `@ts.viz.primitives.register("stem", requires=("x","y"), marks=("line","points"))`
+  `@ts.viz.primitives.register(requires=("x","y"), marks=("line","points"))`
   over a function taking a `Part` (`part["x"]` is the array) and returning the
   **same mapping convention transforms use**, each piece optionally naming its
-  `mark`. Marks are coerced from the words an author already uses
+  `mark`. The name is `fn.__name__` unless you pass one — the *facade* on
+  `ts.viz.primitives` re-declared `name` as required long after the function it
+  forwards to had stopped requiring it, so the zero-argument spelling raised
+  `TypeError: register() missing 1 required positional argument` at the public
+  address while working at the private one. Marks are coerced from the words an
+  author already uses
   (`_primitives.as_mark`), so **no new `PlotKind` is ever needed to add a way of
   drawing** — the invariant that keeps the matrix growable.
 - **`ts.viz.transforms` is FIVE names** — the four shared registry verbs
@@ -1794,9 +1855,27 @@ Nothing else in the library learns a new name when one is added.
   shape-dependent rows, and the three calls to make next.
 - **Gates.** `tests/test_viz_compatibility.py` renders every declared cell on
   matplotlib and refuses every undeclared one; `tests/test_viz_transforms.py`
-  pins the substrate and the PSD admission rule;
+  pins the substrate, the PSD admission rule and the zero-declaration door;
   `tests/test_viz_gallery.py` pins the gallery against the registry (and, in the
   slow tier, renders every cell and fails on a blank figure).
+- **The TRUTH layer (round 11): `tests/test_viz_truth.py`.** The owner could not
+  tell whether the plots were *correct*, and no existing gate answered that:
+  `test_viz_pixels.py` proves a transform **drew something**,
+  `test_viz_compatibility.py` proves it **drew without raising**, and neither can
+  tell a correct vector field from one rotated ninety degrees. This one checks the
+  **numbers behind the picture** against oracles that never touch the viz layer —
+  analytic signals whose answer is written down, the system's own `rhs` and
+  `jacobian`, `numpy.linalg`, textbook constants (the logistic onsets at 3 and
+  1+√6), and the `tsdynamics.analysis` estimator each adapter claims to adapt.
+  **No transform turned out to be wrong**; the deliverable is the proof plus a
+  *"What correct looks like"* section in each of those transforms' docstrings,
+  naming the test that proves it, printed by `help(traj.plot.<name>)`. The module
+  docstring enumerates the 19 of 39 with **no independent oracle** and why (the
+  Hilbert family — the curve is its own definition; the four lattice-integration
+  field analyses, whose only oracle is the same integration; and the adapters
+  whose numerics are tested where they live). Teeth are shown by mutation (a
+  transposed `flow_speed` image is caught at 2.01 max error), not by a regression
+  it happened to find.
 - **The PIXEL layer (round 8): `tests/_pixels.py` + `tests/test_viz_pixels.py`.**
   Every other viz gate inspects the *description* of a figure — the `Plot`, the
   layers, the recorded keyword — and never the figure, so almost every wrong
@@ -2002,9 +2081,20 @@ Nothing else in the library learns a new name when one is added.
     a portrait, or 2-D vs 3-D) raise — use a panelled layout instead.
   - `layout="stack"/"row"/"grid"` builds a `PlotKind.COMPOSITE` spec carrying
     child `panels` (each a single-panel `PlotSpec`) and a `Layout` (`mode` +
-    `rows`/`cols`/`share_x`/`share_y`). Composite inputs are **flattened** one
-    level, so `plot(plot(...), plot(...), layout="stack")` composes (input type ==
-    output type == `PlotSpec` → fully recursive).
+    `rows`/`cols`/`share_x`/`share_y`). Input type == output type == `PlotSpec`,
+    so composition is fully recursive.
+  - **The layout ALGEBRA nests (v6 round 11).** `a | b` is a row, `a / b` is a
+    column, and **a chain of the same operator stays flat while a group carrying
+    the other one nests** — so `a | b | c` is one row of three, and
+    `(plot(a) | plot(b)) / plot(c)` is a row of two with `c` spanning the width
+    below, which is the picture the parentheses describe. It used to *flatten
+    every* nesting: measured, `(a|b)/c` gave `panels=3, mode='stack'` — three
+    stacked rows — and `a/(b|c)`, `(a|b)/(c|d)` and `(a/b)|c` all lost their
+    structure the same way. Rendering is a **nested matplotlib GridSpec**; the
+    JSON round trip already carried nesting. A nested group's untitled state used
+    to read as an absence, so `(portrait | series) / psd` was suptitled `"psd"` —
+    the whole page labelled with the name of one of its three panels — and the
+    repr said "2 panels" when there were three.
   The returned spec **renders itself**: `PlotSpec` has `.plot()` (inline-tweak +
   render), `.render(backend=)`, `.save(path)` (raster/vector → matplotlib, `.html`
   → plotly, by extension), and a notebook `_repr_mimebundle_`.
@@ -2022,8 +2112,12 @@ Nothing else in the library learns a new name when one is added.
     collide. `.save("fig.html")` on a composite therefore yields one interactive
     multi-panel page. The capability check recurses into `panels`
     (`RendererCapabilities.can_render_spec`), so plotly still falls back to mpl
-    when a panel uses a kind it declines. (Plotly **declines** only `COMPOSITE`
-    *animations* for now — `viz/render/plotly/_anim.py` is single-panel.)
+    when a panel uses a kind it declines. Plotly declines `COMPOSITE`
+    *animations* (`viz/render/plotly/_anim.py` is single-panel) **and nested
+    composites** (`make_subplots` is one flat grid): a nested tree drew a
+    genuinely wrong picture there — measured, `(a|b)/c` came out as a two-cell
+    figure carrying **one** of the three curves — so it now declines and falls
+    back to matplotlib with the usual `VisualizationDegraded`.
 - **Writing a movie blits (v6, `viz/render/mpl/_anim.py`).** The frame drivers
   always *mutated* artists rather than rebuilding them, but **writing** a frame
   still cost a whole figure: matplotlib's `Animation.save` draws through
@@ -2089,6 +2183,27 @@ Nothing else in the library learns a new name when one is added.
     renderer read that in preference to the composite's, so `.animate(duration=2)`
     wrote the 360-frame default — `_lockstep` now takes fps/duration/n_frames/
     loop/pingpong from the master and leaves head/trail/spin to the panel).
+- **Every `Animation` knob is validated, and a refusal is a NO-OP (v6 round 11).**
+  One `Animation.validate()` serves every door — the dataclass, the
+  `animate={...}` dict, `from_dict`, and the four chainable tweaks — and every
+  tweak writes through **`Animation.updated(**changes)`**, which builds the
+  candidate with `dataclasses.replace` (so `__post_init__` validates the *copy*)
+  and assigns only on success. The signatures had DECLARED their vocabularies as
+  `Literal`s since v6 and nothing checked them at runtime, so
+  `trail(length=('whatever', 3.0))`, `animate(mode='typo')`,
+  `head(symbol='banana')`, `fps=-5`, `n_frames=0`, `camera(spin='fast')`,
+  `backdrop_alpha=3`, `loop='yes'` and `trail(fade='lots')` were all accepted and
+  quietly did something else; a **switch** takes `True`/`False` only (`bool(x)`
+  accepts every object, which is what made the truthy string look valid beside
+  eight strict knobs) and a **number** is refused by name rather than escaping as
+  `ValueError: could not convert string to float: '2s'`. The *ordering* was the
+  subtle half: the tweaks assigned first and validated after, so
+  `p.animate(fps=-5)` raised **and stored `-5`**, and every later tweak on that
+  plot re-raised the old error naming a knob the caller had not touched —
+  unusable plot, misleading message, in the interactive session where these knobs
+  are tuned. `camera` and `clock` read every argument before writing any.
+  Gates: `tests/test_viz_frictions.py::test_a_refused_animation_value_is_never_written`
+  and its siblings (15 knobs, parametrized).
 - **Animation — an orthogonal modifier (`viz/spec.py::Animation`,
   `PlotSpec.animation`):** any spec of any `PlotKind` (single-panel or composite)
   becomes a movie by carrying an `Animation`; the semantic `kind` is unchanged and
@@ -2510,7 +2625,7 @@ systems/analyses join the sweeps with zero test edits:
 - **The API contract gate — `tests/test_api_contract.py`.** The single file that
   pins the v6 public surface, so `planning/api-v6/CONTRACT.md` §2's "every listing
   is a contract" has teeth. Six invariants, each the inverse of a way the surface
-  eroded: the **listings** (`ts.__all__` = 17; `system.<TAB>` = the 19-name core
+  eroded: the **listings** (`ts.__all__` = 11; `system.<TAB>` = the 20-name core
   minus each family's declared absences; `ts.analysis` = 52 (49 analyses + `find`
   + `register` + `results`); `ts.viz` = 14;
   `dir(M) == sorted(M.__all__)` over the 14 declared public packages); **one
@@ -2879,6 +2994,14 @@ Two layers now cover them:
 | Reading `meta["dt"]` off a sliced trajectory | Correct since round 8 — row selection re-derives `dt`/`t0`/`ic` from the rows in hand, and *drops* `dt` when the slice has no uniform step. `traj.dt` remains the reading the library itself uses. |
 | `basin_fractions(n=…)` / `continuation(n=…)` | **`n_seeds=`** since round 8 — the word every sibling already used. A typo in the `**fsm` passthrough is answered by name, never by naming `_AttractorMapper`. |
 | `ts.plot(a, b, label=[...])` | The word is `labels=` (one per subject) and every plotting door now suggests it. It used to answer `did you mean zlabel=?` — an *axis* name — at the one door whose pool omitted it. |
+| `(plot(a) \| plot(b)) / plot(c)` drew three stacked rows | Fixed in round 11: the algebra **nests**. A chain of one operator stays flat (`a\|b\|c` is one row of three); a group carrying the other one nests, so that expression is a row of two with `c` spanning the width below. Nesting is matplotlib-only — plotly declines and falls back with a warning, because `make_subplots` is one flat grid and it drew a genuinely wrong picture. |
+| A rejected animation value keeps coming back | It cannot since round 11: `Animation.updated()` validates a **copy** and assigns only on success, so `p.animate(fps=-5)` raises and leaves the plot untouched. It used to store the bad value, and every later tweak re-raised the *old* error naming a knob you had not touched. |
+| `p.animate(loop="yes")` / `p.trail(fade="lots")` were accepted | Refused by name now — a switch is `True`/`False`. `bool(x)` accepts every object, which is what let a truthy string look valid next to eight strict knobs. |
+| `help(traj.plot.psd)` shows `(*things, layout, rows, cols, …)` | Fixed: every `subject.plot.<name>` entry carries the transform's own `__name__` / `__doc__` / `__signature__`, so `help` prints that plot's real knobs. The options were always there; nothing surfaced them. |
+| `ts.plot(lorenz, "trace_determinant")` labels its axes `tr J` / `det J` | Only for a **planar** flow. Above two coordinates the plane classifies a 2x2 *block*, so the axes read `tr J\|xy` and the call warns once. Measured: Lorenz's origin plots at `(-11, -270)` where the full 3x3 `J` has `(-13.667, +720)` — a different number and a different SIGN on the determinant. The verdict (*saddle*) is right; the numbers are the slice's. `plane=` picks the block; the full spectrum is `ts.analysis.fixed_points(system).eigenvalues`. |
+| You want the vector field itself, to check a picture | `system.rhs(u, t=0.0)` — public since round 11, next to the `jacobian` that is its derivative. `_rhs_numeric` is still the fast pre-bound callable the internals use. |
+| `for name, array in part.items()` on a `ts.viz.geometry` part | Works — `Part` reads like the mapping it is (`keys` / `values` / `items` / `in` / `len` / `dict(part)`), and its repr names `part['x']` as the way in. |
+| `ts.viz.transforms.allow(mine, "stem")` seemed to do nothing | Fixed: on a transform that declares no `primitives=`, the inferred row now **widens** what `allow` wrote instead of replacing it. Since `allow` is the only route from a custom primitive to any transform, that made both extension doors unusable together. |
 | A field over a big box with the axes zoomed in | Pass both: `ts.plot(sys, "vector_field", domain=[(-6,6),(-6,6)], xlim=(-3,3))`. `domain=` is the evaluation window, `xlim=` only the axes; naming `domain=` sends a *shared* `xlim=` back to its figure job. Both inside one transform's own option dict is still the genuine clash and still raises. |
 | `ts.plot(map, "cobweb")` is a solid block | Fixed: a cobweb draws `_COBWEB_DEFAULT_STEPS` (50) orbit steps, not the map's whole 1000-step default run, so the parabola and the diagonal it is read against are visible. `steps=` picks another count; `steps=0` draws the lot. |
 | `_equations` writes `y[0]` **or** `x, y, z = u` | The ODE/SDE state is an **accessor**, not a vector: read it by CALLING it (`u(0)`, `u(1)`, …), which is also what makes a DDE's `u(0, t - tau)` expressible. A `DiscreteMap._step` **does** take a plain vector — that is the one place the families differ, and it is why a map author writes the unpack in an ODE. Both spellings are diagnosed by name, with the corrected line echoed back (`_subscripted_accessor_hint`). |
@@ -2901,7 +3024,7 @@ Two layers now cover them:
 | A movie renders differently from its still, or you suspect the blitting | `TSDYNAMICS_NO_BLIT=1` writes every frame the unoptimised way; if that changes the picture it is a bug, not a setting — the compositor bit-compares probe frames and disables itself on any difference. |
 | A new animated artist is mutated per frame | Declare it on the `_LayerDriver` that mutates it, at the same site. An undeclared artist freezes at its first frame (it lands in the cached background); a declared one that the drivers do *not* mutate only costs a redraw. And the driver must be a pure function of the frame index — the compositor restores the frame it calibrated on, and `pingpong`/`loop` replay frame 0. |
 | `set_state` on a DDE | **Does not exist** (v6) — the state is a history function; use `reinit(u)` for a constant past or `run(history=...)`. |
-| `ts.Lorenz` / `ts.correlation_dimension` / `ts.Box` stopped resolving | Deliberate (C5). The top level is 17 names; everything else lives at one address, and the `MovedInV6` prints it: `ts.systems.Lorenz()` / `ts.analysis.correlation_dimension` / `ts.data.Box`. |
+| `ts.Lorenz` / `ts.correlation_dimension` / `ts.Box` stopped resolving | Deliberate (C5). The top level is 11 names; everything else lives at one address, and the `MovedInV6` prints it: `ts.systems.Lorenz()` / `ts.analysis.correlation_dimension` / `ts.data.Box`. |
 | Removing or renaming a public name | Add its row to `src/tsdynamics/_redirects.py` **in the same commit**, sorted by key. The table is the migration guide; a removed name with no row gets the generic near-miss answer. |
 | An error message hands back `ts.<something>` | It must **resolve**. `ts.fixed_points(system)` no longer runs, so a message offering it is worse than one offering nothing. Gate: `test_polish_standards.py::test_errgate_remedy_lines_resolve`, whose must-shrink table went 5 rows → 1 in round 9 (the four `analysis/dimensions` messages now say `ts.analysis.…`). |
 | A teaching `AttributeError` ends in someone else's guess | Seal it with `errors.taught(err, name)`. CPython augments any `AttributeError` escaping a `__getattr__` and prints `Did you mean: …?` from `dir(obj)` — measured, it answered `lorenz.lyapunov_spectrum` with the **private** `_lyapunov_spectrum` and `traj.dims` with `dim`, an integer. Every message builder (`_absent_name_error`, `_discovery.attribute_error`, `plot_seam_error`, `Trajectory._miss`) seals; gate: `tests/test_visibility_restorations.py`. |

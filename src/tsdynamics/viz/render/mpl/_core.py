@@ -1721,6 +1721,105 @@ def _composite_grid(layout: Any, n: int) -> tuple[int, int]:
     return n, 1  # "stack" (default): one column
 
 
+def _leaf_extent(spec: PlotSpec) -> tuple[int, int]:
+    """Return ``(rows, cols)`` of a nested composite measured in LEAF panels.
+
+    The default figure size is ``(cols * 5.0, rows * 3.2)``; reading that off the
+    *top-level* grid of a nested tree sizes a 2x2 built as ``(a|b)/(c|d)`` — whose
+    top-level grid is 2x1 — as a two-row single-column page, so every panel is
+    drawn squeezed into half the width it needs.  Measuring the leaves gives the
+    2x2 the page a 2x2 wants.
+    """
+    if not spec.is_composite:
+        return (1, 1)
+    rows, cols = _composite_grid(spec.layout, len(spec.panels))
+    extents = [_leaf_extent(p) for p in spec.panels]
+    heights = [
+        max((extents[i][0] for i in range(len(extents)) if i // cols == r), default=1)
+        for r in range(rows)
+    ]
+    widths = [
+        max((extents[i][1] for i in range(len(extents)) if i % cols == c), default=1)
+        for c in range(cols)
+    ]
+    return (sum(heights), sum(widths))
+
+
+def _place_composite(
+    fig: Figure,
+    cell: Any,
+    spec: PlotSpec,
+    inherited_theme: Theme,
+) -> list[Axes]:
+    """Draw one composite level into ``cell``, recursing into nested composites.
+
+    ``cell`` is the enclosing :class:`~matplotlib.gridspec.SubplotSpec` this
+    arrangement occupies, or ``None`` for the whole figure.  A panel that is
+    itself a composite gets its cell subdivided
+    (``cell.subgridspec(rows, cols)``) and is placed by a recursive call, which
+    is what makes the parentheses a user typed the layout they get: in
+    ``(a|b)/c`` the outer stack is 2x1, its first cell holds a 1x2 row, and ``c``
+    occupies the whole second cell — **spanning the full width**, as a single
+    panel on a row of its own should.
+
+    ``share_x`` / ``share_y`` / ``share_color`` are honoured **per arrangement**:
+    each composite shares within its own subtree, against its own anchor, because
+    that is the arrangement the caller asked the question of.
+
+    Returns
+    -------
+    list of Axes
+        Every drawable axes created for this subtree, in layout order.
+    """
+    from . import _threed
+
+    theme = spec._theme if spec._theme is not None else inherited_theme
+    panels = spec.panels
+    layout = spec.layout
+    rows, cols = _composite_grid(layout, len(panels))
+    gs = fig.add_gridspec(rows, cols) if cell is None else cell.subgridspec(rows, cols)
+
+    share_x = bool(getattr(layout, "share_x", False))
+    share_y = bool(getattr(layout, "share_y", False))
+    share_color = bool(getattr(layout, "share_color", False))
+    anchor: Axes | None = None
+    flat: list[Axes] = []
+    shared_mappable: ScalarMappable | None = None
+    shared_colorbar: Colorbar | None = None
+    for i, panel in enumerate(panels):
+        # Resolve the effective theme LOCALLY (panel theme > composite theme).
+        # Do NOT write it back onto the panel spec — rendering must never mutate
+        # its input, so a re-render under a different composite theme stays
+        # correct and a caller's ``panel._theme is None`` survives the render.
+        effective_theme = panel._theme if panel._theme is not None else theme
+        sub = gs[i // cols, i % cols]
+        if panel.is_composite:
+            flat.extend(_place_composite(fig, sub, panel, effective_theme))
+            continue
+        threed = _threed.is_three_d(panel)
+        sub_kw: dict[str, Any] = {}
+        if not threed and anchor is not None:
+            if share_x:
+                sub_kw["sharex"] = anchor
+            if share_y:
+                sub_kw["sharey"] = anchor
+        ax = fig.add_subplot(sub, projection=("3d" if threed else None), **sub_kw)
+        flat.append(ax)
+        if threed:
+            _threed._draw_3d_panel(fig, ax, panel, effective_theme)
+        else:
+            produced = _draw_2d_panel(fig, ax, panel, effective_theme, colorbar=not share_color)
+            if share_color and panel.colorbar is not None and produced is not None:
+                shared_mappable = shared_mappable or produced
+                shared_colorbar = shared_colorbar or panel.colorbar
+            if anchor is None:
+                anchor = ax
+    if share_color and shared_mappable is not None and shared_colorbar is not None:
+        _apply_shared_colorbar(fig, flat, shared_mappable, shared_colorbar)
+    _hide_inner_tick_labels(flat, share_x=share_x, share_y=share_y)
+    return flat
+
+
 def _render_composite(spec: PlotSpec, *, figsize: tuple[float, float] | None) -> Figure:
     """Tile a ``COMPOSITE`` spec's ``panels`` into one figure per its ``layout``.
 
@@ -1733,13 +1832,10 @@ def _render_composite(spec: PlotSpec, *, figsize: tuple[float, float] | None) ->
     """
     from mpl_toolkits import mplot3d  # noqa: F401 — registers the "3d" projection
 
-    from . import _threed
-
     # Inherit composite theme onto panels that have no own theme
     composite_theme = _resolve_theme(spec)
 
     panels = spec.panels
-    layout = spec.layout
     if not panels:
         # A 0-panel COMPOSITE used to render as a blank figure — a silent no-op
         # that told the caller nothing while looking like a successful plot (it
@@ -1750,7 +1846,7 @@ def _render_composite(spec: PlotSpec, *, figsize: tuple[float, float] | None) ->
             "cannot render a COMPOSITE spec with no panels: build it with "
             "tsdynamics.viz.plot(..., layout=...), which always attaches panels."
         )
-    rows, cols = _composite_grid(layout, len(panels))
+    rows, cols = _leaf_extent(spec)
     # Explicit figsize > spec.meta["figsize"] > theme.figsize > the grid-derived
     # default.  (A theme's figsize is a *panel-independent* page size, so it is
     # deliberately allowed to win over the grid heuristic but not over an
@@ -1765,40 +1861,7 @@ def _render_composite(spec: PlotSpec, *, figsize: tuple[float, float] | None) ->
     if composite_theme.background is not None:
         fig.patch.set_facecolor(composite_theme.background)
 
-    share_x = bool(getattr(layout, "share_x", False))
-    share_y = bool(getattr(layout, "share_y", False))
-    share_color = bool(getattr(layout, "share_color", False))
-    anchor: Axes | None = None
-    flat: list[Axes] = []
-    shared_mappable: ScalarMappable | None = None
-    shared_colorbar: Colorbar | None = None
-    for i, panel in enumerate(panels):
-        # Resolve the effective theme LOCALLY (panel theme > composite theme).
-        # Do NOT write it back onto the panel spec — rendering must never mutate
-        # its input, so a re-render under a different composite theme stays
-        # correct and a caller's ``panel._theme is None`` survives the render.
-        effective_theme = panel._theme if panel._theme is not None else composite_theme
-        threed = _threed.is_three_d(panel)
-        sub_kw: dict[str, Any] = {}
-        if not threed and anchor is not None:
-            if share_x:
-                sub_kw["sharex"] = anchor
-            if share_y:
-                sub_kw["sharey"] = anchor
-        ax = fig.add_subplot(rows, cols, i + 1, projection=("3d" if threed else None), **sub_kw)
-        flat.append(ax)
-        if threed:
-            _threed._draw_3d_panel(fig, ax, panel, effective_theme)
-        else:
-            produced = _draw_2d_panel(fig, ax, panel, effective_theme, colorbar=not share_color)
-            if share_color and panel.colorbar is not None and produced is not None:
-                shared_mappable = shared_mappable or produced
-                shared_colorbar = shared_colorbar or panel.colorbar
-            if anchor is None:
-                anchor = ax
-    if share_color and shared_mappable is not None and shared_colorbar is not None:
-        _apply_shared_colorbar(fig, flat, shared_mappable, shared_colorbar)
-    _hide_inner_tick_labels(flat, share_x=share_x, share_y=share_y)
+    _place_composite(fig, None, spec, composite_theme)
     if spec.title:
         title_kw: dict[str, Any] = {}
         if composite_theme.foreground is not None:

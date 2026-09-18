@@ -21,7 +21,12 @@ from tsdynamics.families.protocol import System
 
 # --- CONTRACT.md §2.2 — the exact listings -------------------------------- #
 
-CORE_19 = (
+#: The shared core.  It was nineteen through v6 round 10; ``rhs`` is the
+#: twentieth — the vector field ``jacobian`` is the derivative OF, which had no
+#: public door at all (only ``_rhs_numeric``) while its derivative did.  Three
+#: readers reached for the private spelling, which is the evidence the contract
+#: asks for.  See ``tests/test_families_rhs.py``.
+CORE_20 = (
     "copy",
     "dim",
     "ensemble",
@@ -34,6 +39,7 @@ CORE_19 = (
     "plot",
     "poincare",
     "reinit",
+    "rhs",
     "run",
     "set_state",
     "state",
@@ -55,22 +61,24 @@ def public(obj: object) -> list[str]:
 
 
 class TestTheTabListing:
-    """``system.<TAB>`` is 19 names, every one a verb or a fact (ruling A5)."""
+    """``system.<TAB>`` is 20 names, every one a verb or a fact (ruling A5)."""
 
-    def test_continuous_system_is_exactly_the_core_nineteen(self):
-        assert public(ts.systems.Lorenz()) == sorted(CORE_19)
+    def test_continuous_system_is_exactly_the_core_twenty(self):
+        assert public(ts.systems.Lorenz()) == sorted(CORE_20)
 
     def test_a_map_drops_poincare_and_jacobian_sym(self):
         # A section is the crossing of a CONTINUOUS trajectory; a map's kernel is
         # traced numerically rather than held as a symbolic tree.
-        assert public(ts.systems.Henon()) == sorted(set(CORE_19) - {"poincare", "jacobian_sym"})
+        assert public(ts.systems.Henon()) == sorted(
+            set(CORE_20) - {"poincare", "jacobian_sym", "rhs"}
+        )
 
     def test_a_stochastic_system_drops_jacobian_sym_only(self):
-        assert public(ts.systems.OrnsteinUhlenbeck()) == sorted(set(CORE_19) - {"jacobian_sym"})
+        assert public(ts.systems.OrnsteinUhlenbeck()) == sorted(set(CORE_20) - {"jacobian_sym"})
 
     def test_a_delay_system_drops_set_state_and_both_jacobians(self):
         assert public(ts.systems.MackeyGlass()) == sorted(
-            set(CORE_19) - {"set_state", "jacobian", "jacobian_sym"}
+            set(CORE_20) - {"set_state", "jacobian", "jacobian_sym", "rhs"}
         )
 
     def test_a_wrapped_system_is_thirteen(self):
@@ -475,10 +483,10 @@ def _every_object_that_has_a_tab_surface() -> dict[str, object]:
 #: the records.  The four that moved are marked.
 TAB_SURFACES: dict[str, tuple[str, ...]] = {
     # --- unchanged by §11 (pinned so a future round cannot drift them) ---
-    "ContinuousSystem": CORE_19,
-    "DiscreteMap": tuple(sorted(set(CORE_19) - {"poincare", "jacobian_sym"})),
-    "DelaySystem": tuple(sorted(set(CORE_19) - {"set_state", "jacobian", "jacobian_sym"})),
-    "StochasticSystem": tuple(sorted(set(CORE_19) - {"jacobian_sym"})),
+    "ContinuousSystem": CORE_20,
+    "DiscreteMap": tuple(sorted(set(CORE_20) - {"poincare", "jacobian_sym", "rhs"})),
+    "DelaySystem": tuple(sorted(set(CORE_20) - {"set_state", "jacobian", "jacobian_sym", "rhs"})),
+    "StochasticSystem": tuple(sorted(set(CORE_20) - {"jacobian_sym"})),
     "WrappedSystem": (
         "copy",
         "dim",
@@ -654,7 +662,7 @@ class TestEveryTabSurfaceIsPinned:
         # The §11 finding, asserted as a finding: hiding cost the five family
         # rows and the Trajectory nothing at all.
         live = _every_object_that_has_a_tab_surface()
-        assert len(public(live["ContinuousSystem"])) == 19
+        assert len(public(live["ContinuousSystem"])) == 20
         assert len(public(live["Trajectory"])) == 19
 
 

@@ -253,7 +253,7 @@ class _PrimitiveRegistry:
 
     def register(
         self,
-        name: str,
+        name: str | None = None,
         /,
         *,
         requires: _Sequence[str] = (),
@@ -268,11 +268,16 @@ class _PrimitiveRegistry:
 
         ::
 
-            @ts.viz.primitives.register("stem", requires=("x", "y"),
-                                        marks=("line", "points"))
+            @ts.viz.primitives.register()          # the name is the function's
             def stem(part, **options):
                 '''A vertical drop to the baseline plus a marker at each point.'''
                 ...
+
+        ``name`` is optional — omitted, it is ``fn.__name__``, exactly as a
+        transform's is.  (This facade re-declared it as *required*, so the
+        zero-argument spelling the underlying function had already grown raised
+        ``TypeError: register() missing 1 required positional argument: 'name'``
+        at the public address while working at the private one.)
 
         See :func:`tsdynamics.viz.transforms.register_primitive` — this facade is
         the same function under the registry's shared verb name, with the same

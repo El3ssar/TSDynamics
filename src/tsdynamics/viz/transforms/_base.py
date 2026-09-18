@@ -33,7 +33,7 @@ is right on every backend.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from types import MappingProxyType
@@ -323,8 +323,54 @@ class Part:
         """Whether this part carries a channel of that name."""
         return name in self.channels
 
-    def __repr__(self) -> str:  # noqa: D105
-        return f"Part({sorted(self.channels)}, label={self.label!r})"
+    def keys(self) -> list[str]:
+        """Return the channel names this part carries, sorted.
+
+        A part is the arrays door's payload, so it reads like the mapping it is:
+        ``keys`` / :meth:`values` / :meth:`items` / ``in`` / ``[]`` all mean what
+        they mean on a dict.  (``for name, array in part.items()`` used to raise
+        ``AttributeError: 'Part' object has no attribute 'items'`` and name no
+        next step, on the object ``ts.viz.geometry`` is *sold* as handing back.)
+        """
+        return sorted(self.channels)
+
+    def values(self) -> list[np.ndarray]:
+        """Return the channel arrays, ordered to match :meth:`keys`."""
+        return [self.channels[name].values for name in self.keys()]
+
+    def items(self) -> list[tuple[str, np.ndarray]]:
+        """Return ``(name, array)`` pairs, ordered to match :meth:`keys`.
+
+        Examples
+        --------
+        >>> import tsdynamics as ts
+        >>> traj = ts.systems.Lorenz().run(final_time=2.0, dt=0.05, ic=[1.0, 1.0, 1.0])
+        >>> part = ts.viz.geometry(traj, "phase_portrait", components=("x", "z")).parts[0]
+        >>> [(name, array.shape) for name, array in part.items()]
+        [('x', (41,)), ('y', (41,))]
+        """
+        return [(name, self.channels[name].values) for name in self.keys()]
+
+    def __iter__(self) -> Iterator[str]:
+        """Iterate the channel names, as a mapping does."""
+        return iter(self.keys())
+
+    def __len__(self) -> int:
+        """Return how many channels this part carries."""
+        return len(self.channels)
+
+    def __repr__(self) -> str:
+        """Name the channels **and** the call that reads one.
+
+        The listing alone (``Part(['x', 'y'], label=None)``) told a reader what
+        was inside and not one thing about how to get it out — which is the
+        library's own rule (a name you print is a name you can complete) applied
+        one level short.
+        """
+        names = sorted(self.channels)
+        shown = ", ".join(repr(n) for n in names)
+        how = f"  ·  part[{names[0]!r}] is the array" if names else ""
+        return f"Part([{shown}], label={self.label!r}){how}"
 
 
 #: The keys a channel mapping may carry that are **not** channels.  Everything
@@ -897,9 +943,16 @@ _TRANSFORM_MACHINERY: frozenset[str] = frozenset(
     {
         "accepts_subject",
         "analysis",
+        "call_signature",
         "compute",
         "describe_primitives",
         "example",
+        "help_text",
+        # ``options`` / ``primitive_options`` are the answer to "what can I pass",
+        # and the route the library PRINTS is ``help(subject.plot.<name>)`` — which
+        # carries them in its signature.  Both stay bound, callable and tested.
+        "options",
+        "primitive_options",
         "labels",
         "ndim",
         "presentation",
@@ -922,6 +975,19 @@ _TRANSFORM_MOVED: dict[str, str] = {
         "primitive)` widens it."
     ),
 }
+
+
+def _parameter_line(param: Any) -> str:
+    """Render one ``compute`` parameter as ``name : annotation = default``."""
+    import inspect
+
+    text = str(param.name)
+    if param.annotation is not inspect.Parameter.empty:
+        ann = param.annotation
+        text += f" : {ann if isinstance(ann, str) else getattr(ann, '__name__', ann)}"
+    if param.default is not inspect.Parameter.empty:
+        text += f" = {param.default!r}"
+    return text
 
 
 @dataclass(frozen=True)
@@ -1011,6 +1077,111 @@ class PlotTransform:
     #: *"derive it from* :attr:`source` *"*, which is what 26 of the 39 in-tree
     #: transforms do.
     _subjects: tuple[str, ...] = ()
+    #: Which of ``frame`` / ``kind`` / ``primitives`` the author did **not**
+    #: declare, and the registry therefore infers from the first geometry this
+    #: transform computes (see
+    #: :func:`~tsdynamics.viz.transforms._registry.register`).  Empty on every
+    #: fully-declared transform, which is all 39 in-tree ones.
+    _deferred: frozenset[str] = frozenset()
+
+    # -- the option surface -------------------------------------------------
+    #
+    # The owner drove the plotting layer by hand, wanted to steer the orbit
+    # diagram (``param=`` ``values=`` ``points=`` ``transient=`` ``bins=``) and
+    # could not find how.  Every one of those keywords was real; nothing
+    # surfaced them.  ``help(traj.plot.orbit_diagram)`` printed ``ts.plot``'s
+    # *generic* ``(*things, layout, rows, cols, …)`` signature, because the
+    # namespace entry was a bare ``functools.partial``.  These three methods are
+    # the one source the namespace, the record's repr and ``compatibility()``
+    # all read, so the successful path is as informative as the failing one
+    # (which already said *"Keywords accepted here: [...]"*).
+
+    def _compute_parameters(self) -> list[Any]:
+        """Return ``compute``'s parameters **after** the subject, in declaration order."""
+        import inspect
+
+        try:
+            params = list(inspect.signature(self.compute).parameters.values())
+        except (TypeError, ValueError):  # pragma: no cover - exotic callables
+            return []
+        return [
+            p
+            for p in params[1:]
+            if p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY) and not p.name.startswith("_")
+        ]
+
+    @property
+    def primitive_options(self) -> tuple[str, ...]:
+        """Keywords the primitives in this transform's row accept, sorted."""
+        from ._primitives import PRIMITIVES
+
+        found: set[str] = set()
+        for prim in self.primitives:
+            if prim in PRIMITIVES:
+                found |= set(PRIMITIVES[prim].options)
+        return tuple(sorted(found))
+
+    @property
+    def options(self) -> tuple[str, ...]:
+        """Every keyword this transform accepts at a plotting door, sorted.
+
+        Its ``compute``'s own parameters plus every option any primitive in its
+        declared row takes — which is exactly the split
+        :func:`~tsdynamics.viz.transforms._registry._split_options` performs, so
+        the list is the truth rather than a second description of it.
+        """
+        own = {p.name for p in self._compute_parameters()}
+        return tuple(sorted(own | set(self.primitive_options)))
+
+    def call_signature(self) -> Any:
+        """Return the signature of ``subject.plot.<name>(…)`` — **this** transform's options.
+
+        ``compute``'s own parameters, keyword-only and with their real defaults
+        and annotations, then ``primitive=`` (defaulted to the row's default),
+        then ``**style`` for the shared style / figure vocabulary every plotting
+        door accepts.
+        """
+        import inspect
+
+        params = [
+            p.replace(kind=inspect.Parameter.KEYWORD_ONLY) for p in self._compute_parameters()
+        ]
+        params.append(
+            inspect.Parameter(
+                "primitive",
+                inspect.Parameter.KEYWORD_ONLY,
+                default=self.default_primitive,
+                annotation="str",
+            )
+        )
+        params.append(inspect.Parameter("style", inspect.Parameter.VAR_KEYWORD, annotation="Any"))
+        return inspect.Signature(params, return_annotation="Plot")
+
+    def help_text(self, subject: str = "subject") -> str:
+        """Return the docstring the namespace entry carries — what ``help()`` prints.
+
+        ``compute``'s own docstring, followed by the three facts a caller asks
+        next: how to spell the call, what may draw it, and what it accepts.
+        """
+        import inspect
+
+        body = inspect.cleandoc(self.compute.__doc__ or self.doc or "")
+        lines = [f"{self.doc or self.name}", ""] if not body else [body, ""]
+        lines += [
+            f"    ts.plot({subject}, {self.name!r}, ...)",
+            f"    {subject}.plot.{self.name}(...)        # the same call",
+            "",
+            f"Drawn by  : {', '.join(self.describe_primitives()) or '(inferred on first use)'}",
+        ]
+        if self.primitive_options:
+            lines.append(f"Primitive options: {', '.join(self.primitive_options)}")
+        own = self._compute_parameters()
+        if own:
+            lines.append("Options   :")
+            lines += [f"    {_parameter_line(p)}" for p in own]
+        lines.append(f"Accepts   : {', '.join(self.subjects)}")
+        lines.append("Style and figure keywords (color=, title=, xlim=, …) are accepted too.")
+        return "\n".join(lines)
 
     @property
     def subjects(self) -> tuple[str, ...]:
@@ -1082,6 +1253,10 @@ class PlotTransform:
         A ``†`` after the row (see :attr:`shape_dependent`) warns that only the
         primitives fitting the geometry you actually computed are legal.
         """
+        if "primitives" in self._deferred:
+            # An empty row reads as "nothing can draw this", which is the
+            # opposite of what a not-yet-inferred registration means.
+            return ("(inferred on first draw)",)
         out = [
             f"{name}*" if name == self.default_primitive else name
             for name in sorted(self.primitives)
@@ -1135,10 +1310,24 @@ class PlotTransform:
             raise AttributeError(f"PlotTransform has no {name!r}. {moved}")
         raise AttributeError(f"{type(self).__name__!r} object has no attribute {name!r}")
 
-    def __repr__(self) -> str:  # noqa: D105
-        return (
+    def __repr__(self) -> str:
+        """Print the declaration **and the options** — the registry is a door, not a label.
+
+        A user who found ``ts.viz.transforms.get("orbit_diagram")`` is asking
+        *how do I steer this*; the repr used to answer with the name, the source
+        and the row, and left ``param=``/``values=``/``points=`` to
+        :mod:`inspect`.
+        """
+        head = (
             f"PlotTransform({self.name!r}, source={self.source!r}, "
             f"primitives={list(self.describe_primitives())})"
+        )
+        opts = self.options
+        shown = ", ".join(opts[:10]) + (" …" if len(opts) > 10 else "")
+        return (
+            f"{head}\n    {self.doc}"
+            + (f"\n    options: {shown}" if opts else "\n    options: (none)")
+            + f"\n    help(subject.plot.{self.name}) for the full signature"
         )
 
 

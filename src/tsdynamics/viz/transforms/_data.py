@@ -377,6 +377,12 @@ def time_series(
 ) -> Geometry:
     """Component value versus time — one :class:`Part` per selected component.
 
+    What correct looks like
+    -----------------------
+    It computes nothing: the drawn ``y`` is bit-for-bit ``traj[name]`` and the
+    drawn ``x`` is ``traj.t``.  Gate:
+    ``tests/test_viz_truth.py::TestAReplotIsTheDataItself``.
+
     Parameters
     ----------
     source : Trajectory
@@ -464,6 +470,12 @@ def phase_portrait(
     triple of names or indices.  A discrete-map orbit defaults to a point cloud
     (it *is* a point sequence, not a connected curve) and a flow to a line; both
     remain drawable as either.
+
+    What correct looks like
+    -----------------------
+    It computes nothing: the two drawn channels are bit-for-bit the two
+    selected columns of the trajectory, in the order named.  Gate:
+    ``tests/test_viz_truth.py::TestAReplotIsTheDataItself``.
 
     Parameters
     ----------
@@ -592,6 +604,14 @@ def delay_embedding(
     is converted through its ``dt``.  Give exactly one.  The old ``tau`` spelling
     meant samples on one front door and time units on the other, so it now raises
     and names both.
+
+    What correct looks like
+    -----------------------
+    The second channel is the first shifted by exactly ``delay`` samples.  With
+    a well-chosen delay the reconstruction has the *shape* of the attractor —
+    measurably so: the correlation dimension of the reconstruction matches that
+    of an honest two-coordinate projection to within a few tenths.  Gate:
+    ``tests/test_viz_truth.py::TestADelayEmbeddingRebuildsTheAttractor``.
 
     Parameters
     ----------

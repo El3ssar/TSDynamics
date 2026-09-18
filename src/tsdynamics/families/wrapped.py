@@ -127,6 +127,12 @@ class WrappedSystem(DeriveMixin, SystemPlottable):
         "ts.analysis.lyapunov_spectrum(system, k=1, ic=[0.3])",
     )
 
+    #: ... and nothing to evaluate it at, either.
+    rhs = Absent(
+        "a WrappedSystem wraps an opaque stepper, so there is no right-hand side to evaluate",
+        "system.step(0.01)   # ask the stepper itself",
+    )
+
     #: ... and no symbolic tree either.
     jacobian_sym = Absent(
         "a WrappedSystem wraps an opaque stepper, so there is no right-hand side to differentiate",

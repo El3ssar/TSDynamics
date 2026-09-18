@@ -2407,6 +2407,41 @@ def _call_blocks(lines: list[str]) -> list[tuple[int, str]]:
 _PLOT_EXAMPLE_PENDING = frozenset({"direction_field", "speed"})
 
 
+#: ``@…register(…)`` — any spelling of the transform-registration decorator.
+_REGISTER_DECORATOR = re.compile(r"@\s*(?:[\w.]+\.)?(?:register|plot_transform)\s*\(")
+
+
+def _registered_in_the_same_example(text: str) -> set[str]:
+    """Return every name a ``@register(...)`` decorator defines in this file.
+
+    The extension door's own worked example must plot the transform it just
+    created::
+
+        @ts.viz.transforms.register()
+        def my_view(traj): ...
+
+        ts.plot(traj, "my_view")
+
+    ``my_view`` is not in the live registry, and *should* not be — it is the
+    reader's, two lines from now.  The exception is structural (the file has to
+    contain the registration), never a curated name, so it cannot be used to
+    grandfather a genuinely dead example in.
+    """
+    out: set[str] = set()
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        if not _REGISTER_DECORATOR.search(line):
+            continue
+        for offset in range(1, 5):
+            if index + offset >= len(lines):
+                break
+            match = re.match(r"\s*def\s+([a-z_][a-z_0-9]*)\s*\(", lines[index + offset])
+            if match:
+                out.add(match.group(1))
+                break
+    return out
+
+
 def test_plot_examples_name_registered_transforms() -> None:
     """No documented ``ts.plot(...)`` example names a transform that does not exist.
 
@@ -2424,7 +2459,14 @@ def test_plot_examples_name_registered_transforms() -> None:
     offenders: list[str] = []
     root = pathlib.Path(ts.__file__).parent
     for path in sorted(root.rglob("*.py")):
-        for lineno, block in _call_blocks(path.read_text().splitlines()):
+        text = path.read_text()
+        # An example that REGISTERS a transform two lines up and then plots it is
+        # the extension door's own worked example: the name is not in the live
+        # registry precisely because the reader is about to create it.  This is
+        # the only honest exception, and it is structural rather than curated —
+        # the same block has to contain the registration.
+        known |= _registered_in_the_same_example(text)
+        for lineno, block in _call_blocks(text.splitlines()):
             for name in _transform_names_in(block):
                 if not re.fullmatch(r"[a-z_][a-z_0-9.]*", name):
                     continue  # a path, a title, a colour word — not a name-shaped token

@@ -557,7 +557,7 @@ def as_mark(mark: PlotKind | str) -> PlotKind:
 
 
 def register_primitive(
-    name: str,
+    name: str | None = None,
     /,
     *,
     requires: Sequence[str] = (),
@@ -604,9 +604,13 @@ def register_primitive(
 
     Parameters
     ----------
-    name : str
+    name : str, optional
         The spelling used in ``primitive="…"``, in ``"transform.name"`` sugar,
-        and in a transform's declared row.
+        and in a transform's declared row.  **Defaults to the decorated
+        function's** ``__name__``, so ``@ts.viz.primitives.register()`` over a
+        function called ``stem`` registers ``"stem"`` — the same zero-declaration
+        door :func:`~tsdynamics.viz.transforms._registry.register` offers, for
+        the same reason: the author already wrote the name once.
     requires : sequence of str, optional
         The channels a part must carry for this primitive to draw it.  Checked
         before ``build`` is called, so a missing channel is a message rather than
@@ -639,9 +643,10 @@ def register_primitive(
     from tsdynamics.errors import InvalidParameterError
 
     def decorator(fn: Any) -> Any:
-        if name in PRIMITIVES and not replace:
+        key = name if name is not None else fn.__name__
+        if key in PRIMITIVES and not replace:
             raise InvalidParameterError(
-                f"primitive {name!r} is already registered ({PRIMITIVES[name].doc!r}); "
+                f"primitive {key!r} is already registered ({PRIMITIVES[key].doc!r}); "
                 "pass replace=True to override it deliberately."
             )
         kinds = frozenset(as_mark(m) for m in marks) or frozenset({PlotKind.LINE})
@@ -652,7 +657,7 @@ def register_primitive(
             pieces = parts_from_return(fn(part, **dict(opts)))
             if pieces is None:
                 raise InvalidParameterError(
-                    f"primitive {name!r} returned "
+                    f"primitive {key!r} returned "
                     f"{type(fn(part, **dict(opts))).__name__}, not a channel mapping "
                     "({'x': …, 'y': …}) nor a list of them."
                 )
@@ -668,8 +673,8 @@ def register_primitive(
                 for piece in pieces
             ]
 
-        PRIMITIVES[name] = Primitive(
-            name=name,
+        PRIMITIVES[key] = Primitive(
+            name=key,
             build=build,
             marks=kinds,
             requires=frozenset(requires),
