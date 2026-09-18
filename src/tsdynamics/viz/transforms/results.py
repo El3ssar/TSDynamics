@@ -269,12 +269,21 @@ def orbit_diagram(
     from tsdynamics.analysis.results import OrbitDiagram
     from tsdynamics.errors import InvalidInputError
 
+    observable: str | None = None
     if isinstance(subject, OrbitDiagram):
         # The result this transform exists FOR: §6.8 added it so a cascade could
         # be overlaid and gridded, and it used to refuse the very object it was
         # written to draw (``'OrbitDiagram' object has no attribute 'params'``).
         result, swept = subject, np.asarray(subject.values, dtype=float)
         param = str(subject.meta.get("param", param))
+        # A recorded cascade has ALREADY selected its observable (its rows are
+        # ``(points, 1)``), and it remembers which one — so the column to read is
+        # 0 whatever the signature's default says, and the y axis is named from
+        # ``meta["observable"]``.  Measured before this: ``ts.plot(od,
+        # "orbit_diagram")`` labelled the axis ``x0`` — a made-up index name,
+        # *identical* for ``components=0`` and ``components="z"``, which is the
+        # very defect the same label was fixed for at the system door.
+        components, observable = 0, str(subject.meta.get("observable") or "") or None
     else:
         if param not in subject.params:
             # ``param`` defaults to ``"r"`` (the logistic map's), so every system
@@ -325,7 +334,7 @@ def orbit_diagram(
         "orbit_diagram",
         make_frame(FrameSpace.PARAM1, (param,)),
         channels={"x": xs[finite], "y": ys[finite]},
-        axis_labels=(param, _observable_label(subject, components)),
+        axis_labels=(param, observable or _observable_label(subject, components)),
         style={"markersize": 0.5, "alpha": 0.5},
         meta={"param": param, "points_per_value": int(points), "transient": int(transient)},
     )

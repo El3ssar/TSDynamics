@@ -48,7 +48,7 @@ use tsdyn_ir::Evaluator;
 use tsdyn_solvers::{Solver, SolverState, StepOutcome};
 
 use crate::integrate::{
-    classify_escape, trial_step, IntegrateConfig, IntegrateError, OVERFLOW_SCALE,
+    classify_escape, trial_step, IntegrateConfig, IntegrateError, StallGuard, OVERFLOW_SCALE,
 };
 use crate::interrupt::Poller;
 
@@ -385,8 +385,16 @@ pub fn advance_to_event(
     // same interrupt cadence: a Poincaré section over a long span is one of the
     // engine calls most likely to be waiting on a Ctrl-C.
     let mut poll = Poller::new();
+    // A Poincaré march is a step march, and gets the same O(1) stall guard as
+    // the grid integrator: a section over a diverging orbit must not cost the
+    // whole step budget to refuse either (see `integrate::HOPELESS_STEPS`).
+    let mut stall = StallGuard::new(cfg, t1 - st.t);
+    let stall_floor = stall.floor();
 
     while st.t < t1 {
+        if *h < stall_floor {
+            stall.trip(*h, st.t, &st.u)?;
+        }
         if steps >= cfg.max_steps {
             return Err(IntegrateError::StepLimit { t: st.t, steps });
         }
@@ -589,10 +597,16 @@ pub fn integrate_events(
     // each hit's owned `u` is a single copy of the identical refined state.
     let mut u_cross = vec![0.0; dim];
     let mut steps = 0usize;
-    // Same cadence and same escape guard as the single-event march above.
+    // Same cadence, same escape guard and same stall guard as the single-event
+    // march above.
     let mut poll = Poller::new();
+    let mut stall = StallGuard::new(cfg, t1 - t0);
+    let stall_floor = stall.floor();
 
     while st.t < t1 {
+        if h < stall_floor {
+            stall.trip(h, st.t, &st.u)?;
+        }
         if steps >= cfg.max_steps {
             return Err(IntegrateError::StepLimit { t: st.t, steps });
         }

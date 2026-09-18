@@ -86,6 +86,48 @@ class TrajectoryBatch(Sequence["Trajectory"]):
         return np.array([np.asarray(t.y)[-1] for t in self._members], dtype=float)
 
     @property
+    def diverged(self) -> np.ndarray:
+        """Which members left the building, as an ``(n,)`` boolean mask.
+
+        A member has diverged when its **end state** is non-finite or past the
+        library's one escape scale (:data:`~tsdynamics.utils.escape.ESCAPE_SCALE`
+        — the same number :attr:`~tsdynamics.data.Trajectory.unbounded` and the
+        Lyapunov verdict use, so a batch and a single run cannot disagree about
+        what "diverged" means).
+
+        Measured before v6 round 8: a twelve-member batch of ``dx/dt = x² - a``
+        came back with **five NaN rows**, printed ``TrajectoryBatch  12
+        trajectories``, warned nothing, and exposed no ``diverged`` / ``status``
+        / ``n_diverged`` of any kind — so ``np.mean(batch.final, axis=0)`` was
+        ``nan`` and ``np.nanmean`` was a survivor-biased mean over an unflagged
+        58% subsample.  Every sibling result in the library (``basins``,
+        ``attractors``, ``basin_fractions``) reports its diverged share; an
+        ensemble is precisely where a user aggregates and cannot inspect each
+        member by hand.
+
+        Returns
+        -------
+        ndarray of bool, shape (n,)
+
+        Examples
+        --------
+        >>> import numpy as np, tsdynamics as ts
+        >>> band = ts.systems.Lorenz().ensemble([[1, 1, 1], [1.01, 1, 1]])
+        >>> band.run(final_time=1.0, dt=0.1).diverged
+        array([False, False])
+        """
+        from tsdynamics.utils.escape import ESCAPE_SCALE
+
+        end = self.final
+        if not end.size:
+            return np.zeros(len(self._members), dtype=bool)
+        magnitude = np.abs(end)
+        return np.asarray(
+            ~np.all(np.isfinite(magnitude), axis=1) | np.any(magnitude >= ESCAPE_SCALE, axis=1),
+            dtype=bool,
+        )
+
+    @property
     def t(self) -> np.ndarray:
         """The shared time axis, shape ``(T,)`` — every member runs one window."""
         if not self._members:
@@ -122,14 +164,24 @@ class TrajectoryBatch(Sequence["Trajectory"]):
         return _plot(*self, *transforms, **kwargs)
 
     def __repr__(self) -> str:
-        """State what the batch holds, and the one attribute most callers want."""
+        """State what the batch holds, what went wrong in it, and what to read next.
+
+        The divergence clause appears **only when there is one** — a count of
+        zero is decoration, and a reader learns to skip decoration.
+        """
         if not self._members:
             return "TrajectoryBatch(empty)"
         rows, dim = np.asarray(self._members[0].y).shape
+        n = len(self._members)
+        lost = int(self.diverged.sum())
+        line = f"TrajectoryBatch  {n} trajectories   ·  {rows} samples  ·  {dim}-D states"
+        if lost:
+            line += (
+                f"\n    ⚠ {lost} of {n} diverged — batch.diverged is the mask; "
+                f"an average over batch.final is over the {n - lost} that survived"
+            )
         return (
-            f"TrajectoryBatch  {len(self._members)} trajectories"
-            f"   ·  {rows} samples  ·  {dim}-D states"
-            "\n    batch.final   # the (n, dim) end states   ·   batch[i]   ·   batch.plot()"
+            line + "\n    batch.final   # the (n, dim) end states   ·   batch[i]   ·   batch.plot()"
         )
 
 

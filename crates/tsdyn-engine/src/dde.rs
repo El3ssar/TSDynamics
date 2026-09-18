@@ -397,6 +397,9 @@ pub fn integrate_dde_grid(
     // `advance_to` once per output point, often for a single step, so a
     // per-segment poller would reset before it ever reached a poll stride.
     let mut poll = crate::interrupt::Poller::new();
+    // Relative to the whole grid's span, exactly as the ODE integrator does —
+    // and ONE guard for the whole grid, for the same reason the poller is one.
+    let mut stall = crate::integrate::StallGuard::new(cfg, t_eval[t_eval.len() - 1] - t_eval[0]);
     for (k, &target) in t_eval.iter().enumerate() {
         if k == 0 {
             continue;
@@ -414,6 +417,7 @@ pub fn integrate_dde_grid(
             target,
             tau_min,
             cfg,
+            &mut stall,
             &mut dy,
             &mut poll,
         )?;
@@ -439,6 +443,7 @@ fn advance_to(
     t_end: f64,
     tau_min: f64,
     cfg: &IntegrateConfig,
+    stall: &mut crate::integrate::StallGuard,
     dy: &mut [f64],
     poll: &mut crate::interrupt::Poller,
 ) -> Result<(), IntegrateError> {
@@ -446,8 +451,14 @@ fn advance_to(
         h.is_finite() && *h > 0.0,
         "first step must be finite and positive, got {h}"
     );
+    let stall_floor = stall.floor();
     let mut steps = 0usize;
     while st.t < t_end {
+        // The natural step, before the `tau_min` cap — a delay-capped step is a
+        // forced-short one, not a stalled one, exactly as a landing step is not.
+        if *h < stall_floor {
+            stall.trip(*h, st.t, &st.u)?;
+        }
         if steps >= cfg.max_steps {
             return Err(IntegrateError::StepLimit { t: st.t, steps });
         }

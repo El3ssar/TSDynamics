@@ -136,17 +136,57 @@ def _build_steps(geometry: Geometry, part: Part, options: Mapping[str, Any]) -> 
     return [_layer(geometry, part, PlotKind.LINE, {"x": xs, "y": ys})]
 
 
+#: The largest and smallest square bin grid a density will choose for itself.
+#: The ceiling is the pre-v6.8 fixed value — the resolution the million-point
+#: orbit diagram wants and the cap this must never exceed.  The floor is what
+#: keeps a handful of points from becoming four fat squares.
+_DENSITY_MAX_BINS = 400
+_DENSITY_MIN_BINS = 16
+
+#: Points per bin the automatic grid aims for.  A 2-D histogram is a density
+#: estimate, and the standard rule for one is ``bins ~ sqrt(n)`` **per axis** for
+#: ``n`` samples in 1-D; in 2-D that is ``sqrt(n)`` bins *total*, i.e.
+#: ``n ** 0.25`` per axis, which is far too coarse to show structure.  So the
+#: rule here is stated as occupancy instead: choose the square grid whose average
+#: occupancy is this many points per occupied bin, which for a set concentrated
+#: on a low-dimensional attractor leaves the ink where the attractor is.
+_DENSITY_POINTS_PER_BIN = 4.0
+
+
+def _density_bins(n_points: int) -> int:
+    """Choose a square bin count for ``n_points``, between the floor and the cap.
+
+    ``sqrt(n / points_per_bin)`` bins per axis, clamped.  At the million-point
+    orbit diagram the cap binds and the answer is the historical ``400``, so that
+    picture is unchanged; at the few-hundred-point examples the transforms ship,
+    the answer is tens and the panel has ink in it.
+    """
+    if n_points <= 0:
+        return _DENSITY_MIN_BINS
+    wanted = int(np.sqrt(n_points / _DENSITY_POINTS_PER_BIN))
+    return int(np.clip(wanted, _DENSITY_MIN_BINS, _DENSITY_MAX_BINS))
+
+
 def _build_density(geometry: Geometry, part: Part, options: Mapping[str, Any]) -> list[Layer]:
     """Bin an ``(x, y)`` point cloud into an ``IMAGE`` — the anti-overdraw primitive.
 
     A 3.2-million-point orbit diagram drawn as markers is a black rectangle; the
-    same points binned onto a grid are a bifurcation diagram.  Bins default to
-    ``(400, 400)``; pass ``bins=(nx, ny)`` (or one int) to change it.
+    same points binned onto a grid are a bifurcation diagram.
+
+    **The bin count follows the sample count** (:func:`_density_bins`); pass
+    ``bins=(nx, ny)`` (or one int) to fix it yourself.  It used to be a flat
+    ``400 x 400`` for everything, which is right for the million-point diagram
+    above and **blank** for anything smaller: 200 points spread over 160 000 bins
+    occupy 0.125 % of them, and after the panel downsample nothing survives.
+    Measured at three transforms' own shipped examples, the rendered ink was
+    ``phase_portrait`` 0.0000, ``delay_embedding`` 0.0008, ``poincare_section``
+    0.0005 — three matrix cells that every existing test called green, because an
+    artist can carry finite data and still be invisible.
     """
     x, y = _xy(part)
-    bins = options.get("bins", 400)
     finite = np.isfinite(x) & np.isfinite(y)
     x, y = x[finite], y[finite]
+    bins = options.get("bins") or _density_bins(x.size)
     counts, xedges, yedges = np.histogram2d(x, y, bins=bins)
     image = counts.T  # (ny, nx) — rows are y, as an IMAGE expects
     centres_x = 0.5 * (xedges[:-1] + xedges[1:])

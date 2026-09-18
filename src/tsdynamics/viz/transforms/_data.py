@@ -910,8 +910,8 @@ def phase_portrait_field(
 # ---------------------------------------------------------------------------
 
 
-def _map_graph(series: Any, lo: float, hi: float, n: int = 400) -> Part | None:
-    """Return the ``y = f(x)`` curve of a 1-D map, or ``None`` when there is none.
+def _map_kernel(series: Any) -> Any:
+    """Return a scalar ``f(x)`` for a 1-D map's subject, or ``None``.
 
     The subject of a ``data`` transform may be a bare series (no ``f`` exists) or
     a trajectory that remembers the system it came from (``traj.system``).  Only
@@ -927,20 +927,215 @@ def _map_graph(series: Any, lo: float, hi: float, n: int = 400) -> Part | None:
     params = getattr(system, "params", None)
     if step is None or params is None:
         return None
-    # Exactly the orbit's own span: padding it would put the curve outside the
-    # data range every other layer agrees on, and a composite that unions the
-    # panels' limits would then draw a frame wider than anything in it.
-    gx = np.linspace(lo, hi, int(n))
     values = np.asarray(params.as_tuple(), dtype=float)
-    try:
-        gy = np.array(
-            [float(np.asarray(step(np.array([v]), *values)).ravel()[0]) for v in gx], dtype=float
+
+    def f(grid: np.ndarray) -> np.ndarray:
+        return np.array(
+            [float(np.asarray(step(np.array([v]), *values)).ravel()[0]) for v in grid], dtype=float
         )
+
+    return f
+
+
+def _map_graph(series: Any, lo: float, hi: float, n: int = 400) -> Part | None:
+    """Return the ``y = f(x)`` curve of a 1-D map over ``[lo, hi]``, or ``None``.
+
+    The curve spans **the axis range** — whatever window the cobweb settled on —
+    so the graph is never clipped shorter than the box it is drawn in.
+    """
+    f = _map_kernel(series)
+    if f is None:
+        return None
+    gx = np.linspace(lo, hi, int(n))
+    try:
+        gy = f(gx)
     except Exception:  # pragma: no cover - a kernel that refuses a scalar probe
         return None
     if not np.all(np.isfinite(gy)):
         return None
     return Part({"x": gx, "y": gy}, label="f(x)")
+
+
+#: Resolution of the probe grid :func:`_natural_domain` reads the map's shape off.
+_DOMAIN_PROBE = 1024
+
+
+def _natural_domain(series: Any, lo: float, hi: float) -> tuple[float, float] | None:
+    """Return the interval a 1-D map's cobweb belongs in, or ``None``.
+
+    **The orbit's bounding box is the wrong default and it was the shipped one.**
+    A cobweb exists to show that the staircase's corners land on the graph and
+    that the diagonal crosses the hump — and an orbit converging onto a fixed
+    point never visits the hump, so the picture routinely omitted the one feature
+    it is drawn for.  ``ts.plot(Logistic(r=2.8).run(steps=30), "cobweb")`` drew
+    ``f`` over ``[0.2, 0.69]``: no critical point, no second fixed point, no
+    reason for anything on the canvas.
+
+    A 1-D map does not declare a domain, but it *is* one — so this reads it off
+    the kernel, in three widenings of the orbit's own span, each of which only
+    ever adds structure the picture needs:
+
+    1. out to the nearest **fixed point** (where ``f`` crosses the diagonal) and
+       the nearest **turning point** (the hump) on either side;
+    2. out to the **image** ``f(window)``, so every horizontal leg of the
+       staircase has somewhere to land;
+    3. out to the connected component of ``{x : f(x) ∈ window}`` around the
+       orbit — the largest interval the map keeps inside the box — **only when
+       that component is bounded** inside the probe bracket.  This is the step
+       that recovers the unit square for the logistic map (``f ≥ 0`` exactly on
+       ``[0, 1]``) while leaving a map whose graph is bounded everywhere
+       (``Gauss``) on its tight window instead of expanding to the probe edge.
+
+    Returns ``None`` for a bare series, a multi-dimensional map, or a kernel that
+    refuses a scalar probe — in which case the caller keeps the orbit's span.
+    """
+    f = _map_kernel(series)
+    if f is None:
+        return None
+    probe = _probe(f, lo, hi)
+    if probe is None:
+        return None
+    bracket, values = probe
+
+    # (1) out to the nearest fixed point AND the nearest turning point each side.
+    #     Taking only the *nearest feature of either sort* stops at the hump and
+    #     leaves the second fixed point — which is what anchors the staircase —
+    #     off the canvas, so each kind is followed separately and the farther wins.
+    for edge in (_roots(bracket, values - bracket), _turning_points(bracket, values)):
+        below, above = edge[edge <= lo], edge[edge >= hi]
+        lo = min(lo, float(below.max())) if below.size else lo
+        hi = max(hi, float(above.min())) if above.size else hi
+
+    # (2) the image, so the staircase's horizontal legs land inside the box.
+    inside = (bracket >= lo) & (bracket <= hi)
+    if inside.any():
+        lo = min(lo, float(values[inside].min()))
+        hi = max(hi, float(values[inside].max()))
+
+    # (3) the largest interval the map keeps inside the box, when it is bounded.
+    kept = (values >= lo) & (values <= hi)
+    run = _component_containing(kept, bracket, lo, hi, values=values, level=(lo, hi))
+    if run is not None:
+        lo, hi = min(lo, run[0]), max(hi, run[1])
+    return (lo, hi) if hi > lo else None
+
+
+def _leaves_at(
+    grid: np.ndarray, values: np.ndarray, inside: int, outside: int, bounds: Any
+) -> float:
+    """Where between two samples ``values`` crosses the bound it violates.
+
+    Sub-grid, because the answer is *read* — ``(0.0, 1.0)`` for the logistic map
+    is the unit square, and ``(4e-07, 0.9987)`` is the probe's resolution showing
+    through the picture.
+    """
+    lo, hi = bounds
+    level = lo if values[outside] < lo else hi
+    span = values[outside] - values[inside]
+    if span == 0.0:
+        return float(grid[inside])
+    t = (level - values[inside]) / span
+    t = min(max(float(t), 0.0), 1.0)
+    return float(grid[inside] + t * (grid[outside] - grid[inside]))
+
+
+def _probe(f: Any, lo: float, hi: float) -> tuple[np.ndarray, np.ndarray] | None:
+    """Sample ``f`` around ``[lo, hi]``, clipped to where it is finite.
+
+    A kernel is entitled to be undefined outside its domain — ``Chebyshev``'s
+    ``arccos`` is ``NaN`` off ``[-1, 1]`` — and that is *information*, not a
+    failure: the finite run containing the orbit IS the domain.  The probe is
+    silenced (``np.errstate`` plus a warning filter) because it deliberately
+    evaluates out of range, and a plotting default must not turn the map's own
+    ``RuntimeWarning`` into the caller's problem.
+    """
+    import warnings
+
+    width = max(hi - lo, 0.5 * (abs(lo) + abs(hi)))
+    if not np.isfinite(width) or width <= 0:
+        width = 1.0
+    bracket = np.linspace(lo - width, hi + width, _DOMAIN_PROBE)
+    try:
+        with np.errstate(all="ignore"), warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            values = f(bracket)
+    except Exception:  # pragma: no cover - a kernel that refuses a scalar probe
+        return None
+    finite = np.isfinite(values)
+    if finite.all():
+        return bracket, values
+    run = _component_containing(finite, bracket, lo, hi)
+    if run is None:
+        return None
+    keep = (bracket >= run[0]) & (bracket <= run[1])
+    return bracket[keep], values[keep]
+
+
+def _roots(grid: np.ndarray, values: np.ndarray) -> np.ndarray:
+    """Return the sign-change roots of ``values``, refined by linear interpolation.
+
+    The refinement is what makes the logistic map's answer read ``(0.0, 1.0)``
+    rather than ``(-0.0057, 1.0004)``: a bare sign-change index names the sample
+    *before* the root, which is outside the domain by one grid step.
+    """
+    idx = np.flatnonzero(np.sign(values[:-1]) * np.sign(values[1:]) < 0)
+    if not idx.size:
+        return np.empty(0)
+    lo_v, hi_v = values[idx], values[idx + 1]
+    t = lo_v / (lo_v - hi_v)
+    return np.asarray(grid[idx] + t * (grid[idx + 1] - grid[idx]), dtype=float)
+
+
+def _turning_points(grid: np.ndarray, values: np.ndarray) -> np.ndarray:
+    """Return where ``values`` changes direction — the humps, at sample resolution."""
+    slope = np.diff(values)
+    idx = np.flatnonzero(np.diff(np.sign(slope)) != 0) + 1
+    return grid[idx] if idx.size else np.empty(0)
+
+
+def _component_containing(
+    kept: np.ndarray,
+    grid: np.ndarray,
+    lo: float,
+    hi: float,
+    *,
+    values: np.ndarray | None = None,
+    level: Any = None,
+) -> tuple[float, float] | None:
+    """Return the ``[a, b]`` run of ``kept`` around ``[lo, hi]``, or ``None`` if unbounded.
+
+    ``None`` when the run reaches either end of the probe bracket: an interval
+    that runs off the probe is not a domain the library measured, it is the probe
+    running out, and widening to it would be an invented answer.
+
+    With ``values``/``level`` the endpoints are refined to where ``values``
+    actually leaves the band, instead of the last sample that happened to be in.
+    """
+    seed = np.flatnonzero(kept & (grid >= lo) & (grid <= hi))
+    if not seed.size:
+        return None
+    start = int(seed[0])
+    while start > 0 and kept[start - 1]:
+        start -= 1
+    stop = int(seed[-1])
+    while stop < kept.size - 1 and kept[stop + 1]:
+        stop += 1
+    if start == 0 or stop == kept.size - 1:
+        return None
+    if values is None or level is None:
+        return (float(grid[start]), float(grid[stop]))
+    return (
+        _leaves_at(grid, values, start, start - 1, level),
+        _leaves_at(grid, values, stop, stop + 1, level),
+    )
+
+
+#: Orbit steps a cobweb draws when the caller does not say.  Chosen to be legible
+#: rather than complete: a map's default run is 1000 steps, and a 1000-step
+#: staircase is a solid block over the parabola and the diagonal it exists to be
+#: read against.  Fifty shows a period-doubling settle in full and gives a
+#: chaotic orbit enough corners to look chaotic.
+_COBWEB_DEFAULT_STEPS = 50
 
 
 @plot_transform(
@@ -963,6 +1158,7 @@ def cobweb(
     components: int | str = 0,
     label: str = "x",
     domain: tuple[float, float] | None = None,
+    steps: int | None = None,
 ) -> Geometry:
     """Compute the staircase geometry of a 1-D map orbit.
 
@@ -984,13 +1180,23 @@ def cobweb(
 
             ts.plot(logistic_orbit, "cobweb", domain=(0, 1))
 
-        Default ``None`` = the span the orbit actually visited.  That default is
-        deliberate (a wider frame than the data would break the limit union a
-        composite takes) but it is the wrong *picture* for a converging orbit:
-        the whole point is that the staircase's corners land on the hump, and an
-        orbit settling onto a fixed point never visits it, so the hump ends up
-        off-screen.  A 1-D map has no domain the library can read off it, so this
-        is a keyword rather than a guess.
+        Default ``None`` = **the map's own domain**, read off the kernel by
+        :func:`_natural_domain` (the unit square for the logistic map, whatever
+        ``r`` and whatever the orbit did).  It used to be the span the orbit
+        actually visited, which is the wrong picture for any converging orbit:
+        the point of a cobweb is that the staircase's corners land on the hump,
+        and an orbit settling onto a fixed point never visits it.  A bare series
+        — which has no ``f`` to read — still falls back to the orbit's span.
+    steps : int, optional
+        How many orbit steps to **draw**.  ``None`` uses
+        :data:`_COBWEB_DEFAULT_STEPS`; pass ``0`` for the whole orbit.
+
+        A cobweb is a teaching picture and nothing else, and the default was
+        burying it: ``ts.plot(logistic, "cobweb")`` ran the map its default 1000
+        steps and drew all of them, so the parabola and the diagonal — the two
+        curves the staircase is supposed to be read against — came out under a
+        solid green block.  Drawing the *first* steps rather than the last is
+        deliberate: the walk-in is the part that teaches.
 
     Returns
     -------
@@ -1015,6 +1221,9 @@ def cobweb(
     x = _scalar_series(series, components)
     if x.shape[0] < 2:
         raise ValueError("a cobweb needs at least two orbit points.")
+    drawn = _COBWEB_DEFAULT_STEPS if steps is None else int(steps)
+    if drawn > 0:
+        x = x[: drawn + 1]
     # Staircase vertices: (x0,x0) -> (x0,x1) -> (x1,x1) -> (x1,x2) -> ...
     stair_x = np.empty(2 * (x.shape[0] - 1) + 1, dtype=float)
     stair_y = np.empty_like(stair_x)
@@ -1037,6 +1246,9 @@ def cobweb(
     else:
         lo = float(min(x.min(), stair_y.min()))
         hi = float(max(x.max(), stair_y.max()))
+        natural = _natural_domain(series, lo, hi)
+        if natural is not None:
+            lo, hi = natural
     diag = np.array([lo, hi], dtype=float)
     labels = (f"{label}_n", f"{label}_(n+1)")
     parts = [Part({"x": diag, "y": diag}, label="y = x")]
@@ -1049,7 +1261,11 @@ def cobweb(
         make_frame(FrameSpace.STATE2, labels),
         parts,
         axis_labels=labels,
-        axis_limits=() if domain is None else ((lo, hi), (lo, hi)),
+        # The axes ARE the domain — the box the map lives in — whether it was
+        # named or read off the kernel.  Leaving them unset let matplotlib
+        # autoscale to the orbit, which put the graph's own ends outside the
+        # frame it was computed for.
+        axis_limits=((lo, hi), (lo, hi)),
         title=_title(series),
         meta=_meta(series),
     )

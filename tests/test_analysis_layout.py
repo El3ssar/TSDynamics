@@ -33,7 +33,6 @@ from tsdynamics import analysis, plugins, registry
 #: ``ts.analysis.<name>`` — because the top level is 17 names (CONTRACT §2.1).
 _PUBLIC = [
     "lyapunov_spectrum",
-    "max_lyapunov",
     "kaplan_yorke_dimension",
     "fixed_points",
     "orbit_diagram",
@@ -133,7 +132,6 @@ def test_canonical_symbols_live_at_definition_sites():
     from tsdynamics.analysis.lyapunov import (
         kaplan_yorke_dimension,
         lyapunov_spectrum,
-        max_lyapunov,
     )
     from tsdynamics.analysis.orbits.orbit_diagram import OrbitDiagram, orbit_diagram
     from tsdynamics.analysis.orbits.poincare import poincare_section
@@ -141,7 +139,6 @@ def test_canonical_symbols_live_at_definition_sites():
     assert fixed_points is ts.analysis.fixed_points
     assert FixedPoint is ts.analysis.FixedPoint
     assert lyapunov_spectrum is ts.analysis.lyapunov_spectrum
-    assert max_lyapunov is ts.analysis.max_lyapunov
     assert kaplan_yorke_dimension is ts.analysis.kaplan_yorke_dimension
     assert orbit_diagram is ts.analysis.orbit_diagram
     assert OrbitDiagram is ts.analysis.OrbitDiagram

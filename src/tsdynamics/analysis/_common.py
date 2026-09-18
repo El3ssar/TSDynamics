@@ -17,13 +17,13 @@ answer with the same actionable :class:`~tsdynamics.errors.InvalidInputError`.
 The **mirror-image** mistake is just as common and was just as badly served:
 handing measured data to a *system-first* analysis, which until v6 produced::
 
-    >>> ts.analysis.max_lyapunov(traj["x"])                   # doctest: +SKIP
+    >>> ts.analysis.lyapunov_spectrum(traj["x"])              # doctest: +SKIP
     AttributeError: 'numpy.ndarray' object has no attribute 'is_discrete'
 
 :func:`reject_data` is its counterpart.  Both guards obey the same rule: name
 what was passed, and end with the line to type instead — which for a
 system-first analysis is usually its *data-first sibling*
-(``max_lyapunov`` → ``lyapunov_from_data``), because "you need a model" is a
+(``lyapunov_spectrum`` → ``lyapunov_from_data``), because "you need a model" is a
 dead end for someone who only has a measurement.
 
 The ``System`` is **duck-typed** against the runtime protocol
@@ -37,6 +37,7 @@ it.)
 
 from __future__ import annotations
 
+import warnings
 from typing import Any
 
 import numpy as np
@@ -46,6 +47,77 @@ __all__: list[str] = []
 #: The ``System`` runtime protocol's method set (``families/protocol.py``).  An
 #: object that implements *all* of these is a system, not a measured series.
 _SYSTEM_METHODS = ("step", "state", "reinit", "run")
+
+#: The meta key an estimator stamps when the data it measured had escaped.  Read
+#: by :meth:`~tsdynamics.analysis.results.ScalingResult.runaway`, which is ANDed
+#: into every ``trusted`` flag downstream of it.
+RUNAWAY_KEY = "unbounded"
+
+
+class RunawayOrbitWarning(UserWarning):
+    """The measured data is a **runaway orbit**, so there is no attractor in it.
+
+    A run that blows up without reaching the engine's hard ``1e150`` guard comes
+    back finite and entirely meaningless — measured, ``Chua().run(ic=[500, 0,
+    0])`` peaks at ``1.6e9`` with no exception — and every quantity taken from it
+    then looks exactly like an honest one.  ``Trajectory.unbounded`` has detected
+    this since v6 and the repr printed it in red; what it did **not** do was
+    reach the estimators, so ``correlation_dimension`` answered ``D = 0.48954``
+    with ``R² = 0.9976`` and ``trusted = True``, and ``lyapunov_from_data``
+    called a monotone blow-up ``chaotic (λ > 0)`` to four significant figures.
+
+    The check lives here — in the analysis layer's shared guard module, beside
+    :func:`reject_system` — and it reads the **coerced data**, not the
+    ``Trajectory`` flag, so ``lyapunov_from_data(traj["x"][::10])`` is caught
+    too: indexing a runaway trajectory hands back a bare array, and an escape
+    that a slice can launder is an escape that gets through.
+    """
+
+
+def runaway_meta(points: Any, *, analysis: str) -> dict[str, str]:
+    """Return the escape stamp for ``points``, warning once, or ``{}``.
+
+    The one check every data-first estimator makes on its already-coerced input.
+    Merged into the result's ``meta``, it is what
+    :meth:`~tsdynamics.analysis.results.ScalingResult.runaway` reads, which in
+    turn forces ``trusted`` to ``False`` and puts the escape line in the repr's
+    warning slot — the same shape as the single-coordinate guard next door.
+
+    Parameters
+    ----------
+    points : array-like
+        The coerced point set (``(N, dim)``) or series the estimator will
+        measure.  A 1-D series is read as one column.
+    analysis : str
+        The public function's name, used to open the warning.
+
+    Returns
+    -------
+    dict
+        ``{"unbounded": <the escape line>}`` when the data left the building,
+        else an empty dict (which merges into a meta dict harmlessly).
+    """
+    from tsdynamics.utils.escape import detect_unbounded
+
+    block = np.asarray(points, dtype=float)
+    if block.ndim == 1:
+        block = block[:, None]
+    escape = detect_unbounded(block)
+    if escape is None:
+        return {}
+    line = str(escape)
+    warnings.warn(
+        f"{analysis} was given a RUNAWAY orbit. {line}\n"
+        "    Every quantity read off an escaping orbit describes the escape, not a "
+        "system: the result is returned but marked untrusted.\n"
+        "    Start from a state that stays bounded — the system's own default is "
+        "one — or cut the run before it leaves:\n"
+        "        traj = system.run(final_time=100.0, dt=0.01)   # the declared IC\n"
+        "        traj.unbounded is None                         # check before measuring",
+        RunawayOrbitWarning,
+        stacklevel=3,
+    )
+    return {RUNAWAY_KEY: line}
 
 
 def is_system(obj: Any) -> bool:
@@ -243,11 +315,11 @@ def reject_data(system: Any, *, analysis: str, sibling: str | None = None) -> No
     >>> from tsdynamics.analysis._common import reject_data
     >>> from tsdynamics.errors import InvalidInputError
     >>> try:
-    ...     reject_data(np.zeros(100), analysis="max_lyapunov",
+    ...     reject_data(np.zeros(100), analysis="lyapunov_spectrum",
     ...                 sibling="ts.analysis.lyapunov_from_data({data})")
     ... except InvalidInputError as err:
     ...     print(str(err))
-    max_lyapunov() needs a system, and got measured data (ndarray): it is
+    lyapunov_spectrum() needs a system, and got measured data (ndarray): it is
     a property of the equations, not of a point set.
         ts.analysis.lyapunov_from_data(traj)
         ts.analysis.find(traj)   # the 24 that take a trajectory

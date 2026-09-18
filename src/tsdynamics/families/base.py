@@ -339,7 +339,15 @@ _SUBCLASS_CONTRACT: dict[Any, tuple[str, tuple[str, ...]]] = {
 
 
 def _subclass_contract_error(cls: type, missing: frozenset[str]) -> TypeError:
-    """Build the "you are missing the kernel" error, with the skeleton to write."""
+    """Build the "you are missing the kernel" error, with the skeleton to write.
+
+    The last line is always ``help(ts.<Base>)  # the subclass contract``, in
+    both branches.  A bare ``help(ts.ContinuousSystem)`` hanging under a code
+    block reads as part of the skeleton — one more line to copy — rather than as
+    the thing to type *next*, and the comment is what distinguishes them.  It is
+    also the one line here that keeps working when the skeleton above it is not
+    what this author needs.
+    """
     base = next(
         (b.__name__ for b in cls.__mro__ if b.__module__.startswith("tsdynamics.families")),
         "SystemBase",
@@ -350,11 +358,12 @@ def _subclass_contract_error(cls: type, missing: frozenset[str]) -> TypeError:
         f"{cls.__name__} cannot be instantiated: it does not define {named}, "
         f"the kernel that says what the dynamics ARE."
     )
+    see = f"    help(ts.{base})   # the subclass contract"
     if entry is None:
-        return TypeError(f"{head}\n    help(ts.{base})   # the subclass contract")
+        return TypeError(f"{head}\n{see}")
     why, skeleton = entry
     body = "\n".join(f"    {line}" if line else "" for line in skeleton)
-    return TypeError(f"{head}  In this family {why}.\n\n{body}\n\n    help(ts.{base})")
+    return TypeError(f"{head}  In this family {why}.\n\n{body}\n\n{see}")
 
 
 def _reject_state_as_params(cls_name: str, params: Any, declared: Mapping[str, Any]) -> None:
@@ -516,7 +525,7 @@ _MOVED_IN_V6: dict[str, tuple[str, tuple[str, ...]]] = {
 #: The four analysis namespaces deleted by ruling A2, and the free functions that
 #: replace each one's headline member.
 _DELETED_ACCESSORS: dict[str, tuple[str, ...]] = {
-    "lyap": ("lyapunov_spectrum", "max_lyapunov"),
+    "lyap": ("lyapunov_spectrum", "lyapunov_from_data"),
     "chaos": ("gali", "zero_one_test"),
     "dims": ("correlation_dimension", "generalized_dimension"),
     "recurrence": ("recurrence_matrix", "rqa"),

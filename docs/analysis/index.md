@@ -82,7 +82,7 @@ adaptive / implicit solver families, automatic stiffness selection, and the
 
 The average exponential separation rate — the defining quantifier of chaos.
 
-- [**Lyapunov spectra**](lyapunov.md) — full spectra for flows / maps / DDEs, the Jacobian-free `max_lyapunov`, `lyapunov_from_data` (Kantz / Rosenstein), and the Kaplan–Yorke dimension.
+- [**Lyapunov spectra**](lyapunov.md) — full spectra for flows / maps / DDEs, `lyapunov_from_data` (Kantz / Rosenstein), and the Kaplan–Yorke dimension.
 
 ### Orbits, bifurcations & sections
 

@@ -62,7 +62,7 @@ class WrappedSystem(DeriveMixin, SystemPlottable):
     >>> sysm = WrappedSystem(step, dim=1, family="map", ic=[0.5])
     >>> traj = sysm.run(500)
     >>> import tsdynamics as ts
-    >>> ts.analysis.max_lyapunov(sysm, ic=[0.3]) > 0   # chaotic
+    >>> float(ts.analysis.lyapunov_spectrum(sysm, k=1, ic=[0.3])[0]) > 0   # chaotic
     True
     """
 
@@ -124,13 +124,13 @@ class WrappedSystem(DeriveMixin, SystemPlottable):
     #: A wrapper holds an opaque stepper, so there is no right-hand side.
     jacobian = Absent(
         "a WrappedSystem wraps an opaque stepper, so there is no right-hand side to differentiate",
-        "ts.analysis.max_lyapunov(system, ic=[0.3])",
+        "ts.analysis.lyapunov_spectrum(system, k=1, ic=[0.3])",
     )
 
     #: ... and no symbolic tree either.
     jacobian_sym = Absent(
         "a WrappedSystem wraps an opaque stepper, so there is no right-hand side to differentiate",
-        "ts.analysis.max_lyapunov(system, ic=[0.3])",
+        "ts.analysis.lyapunov_spectrum(system, k=1, ic=[0.3])",
     )
 
     def __dir__(self) -> list[str]:

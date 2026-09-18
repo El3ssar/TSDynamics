@@ -33,6 +33,106 @@ from .._common import reject_system
 
 __all__: list[str] = []
 
+#: Half-width given to a pinned axis in the runnable line the flat-box error
+#: hands back.  A number, not a guess at the dynamics: the point of the line is
+#: that it *runs*, and the caller then widens it to whatever their system needs.
+_FLAT_AXIS_HALF_WIDTH = 1.0
+
+
+def _widened_box_lines(lo: Any, hi: Any, counts: Any) -> tuple[str, ...]:
+    """Build the runnable ``basins(...)`` line for the caller's OWN box.
+
+    The message used to end in a hand-written three-axis template, so a 4-D
+    system was handed a line that fails on dimension the moment it is pasted —
+    in an error whose whole virtue is that the line runs.  This writes one
+    ``(lo, hi)`` pair per component, widening exactly the flat axes.
+    """
+    low = np.asarray(lo, dtype=float)
+    high = np.asarray(hi, dtype=float)
+    cells = tuple(int(c) for c in counts)
+    seeds = ", ".join(f"({low[i]:g}, {high[i]:g}, {cells[i]})" for i in range(low.size))
+    widened = []
+    for i in range(low.size):
+        a, b = float(low[i]), float(high[i])
+        if b <= a:
+            a, b = a - _FLAT_AXIS_HALF_WIDTH, b + _FLAT_AXIS_HALF_WIDTH
+        widened.append(f"({a:g}, {b:g})")
+    return (
+        f"res = basins(system, [{seeds}],",
+        f"             recurrence=[{', '.join(widened)}])",
+    )
+
+
+def reject_unknown_fsm(options: dict[str, Any], *, analysis: str) -> None:
+    """Reject a keyword no recurrence-FSM door accepts, **before** it is forwarded.
+
+    ``basins`` / ``attractors`` / ``basin_fractions`` / ``continuation`` each end
+    in ``**fsm`` and hand the leftovers to the private ``_AttractorMapper``, so
+    any typo in this family surfaced as ``TypeError:
+    _AttractorMapper.__init__() got an unexpected keyword argument 'n_seeds'`` —
+    a class the caller cannot import, in an exception with no remedy.  One guard
+    at the four doors, so the answer names the words that work.
+    """
+    unknown = sorted(set(options) - _FSM_KEYWORDS)
+    if not unknown:
+        return
+    from tsdynamics.viz.spec import nearest_keyword
+
+    for bad in unknown:
+        if bad in _RENAMED_KEYWORDS:
+            now = _RENAMED_KEYWORDS[bad]
+            raise InvalidParameterError(
+                f"{analysis}({bad}=) is now {analysis}({now}=) — one concept, one "
+                f"spelling: {now}= is what attractors / fixed_points / "
+                f"periodic_orbits have always called the number of initial "
+                f"conditions drawn."
+                + remedy(f"ts.analysis.{analysis}(system, region, {now}={options[bad]!r})")
+            )
+    hints = ""
+    for bad in unknown:
+        near = nearest_keyword(bad, sorted(_FSM_KEYWORDS | _DOOR_KEYWORDS))
+        if near:
+            hints += f"\n    {bad}= — did you mean {near}=?"
+    raise InvalidParameterError(
+        f"{analysis}() does not accept keyword(s) {unknown}.{hints}"
+        f"\nThe recurrence thresholds it takes are: {sorted(_FSM_KEYWORDS)}."
+    )
+
+
+#: Words this family used to take, and what they are called now.  ``n`` was the
+#: odd one out: ``attractors`` / ``fixed_points`` / ``periodic_orbits`` all spell
+#: the seed count ``n_seeds``, and ``basin_fractions``'s own docstring conceded
+#: it ("the same quantity ... spell ``n_seeds``") while accepting only ``n``.
+_RENAMED_KEYWORDS = {"n": "n_seeds"}
+
+
+#: The recurrence finite-state-machine thresholds ``_AttractorMapper`` accepts.
+#: Declared here rather than introspected, so the message is the same whichever
+#: door raised it and a new threshold is a deliberate, one-line addition.
+_FSM_KEYWORDS = frozenset(
+    {
+        "attractor_locate_steps",
+        "attractor_revisits",
+        "basin_revisits",
+        "consecutive_recurrences",
+        "lost_steps",
+    }
+)
+
+#: The words on the basin doors' own signatures — never forwarded to the FSM,
+#: but a near miss has to be able to suggest them.
+_DOOR_KEYWORDS = frozenset(
+    {
+        "dt",
+        "max_steps",
+        "merge_tol",
+        "n_seeds",
+        "recurrence",
+        "resolution",
+        "seed",
+    }
+)
+
 
 # ---------------------------------------------------------------------------
 # State-space tessellation
@@ -79,8 +179,7 @@ class _CellGrid:
                 "real width — it is the seed region, not this one, that pins a "
                 "slice axis with a count of 1."
                 + remedy(
-                    "res = basins(system, [(-2.0, 2.0, 60), (-2.0, 2.0, 60), (0.0, 0.0, 1)],",
-                    "             recurrence=[(-3.0, 3.0), (-3.0, 3.0), (-1.0, 1.0)])",
+                    *_widened_box_lines(self.lo, self.hi, self.counts),
                     lead="Give the free axis width in recurrence=:",
                 )
             )

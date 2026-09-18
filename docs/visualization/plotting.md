@@ -69,25 +69,26 @@ as a *spacetime field*, never as a misleading 3-D portrait of its first three
 coordinates. A discrete-map orbit is drawn with a `SCATTER` mark (a point
 sequence), not a joined line, because successive iterates are not continuous.
 
-You override the auto-dispatch with `kind=` (any member of the closed
-`PlotKind` vocabulary, plus the `"field"` recipe) and you pick *which* channels
-with `components=`. The next sections walk every default view; then come the
-named transforms, the primitives, and how to add your own.
+You override the auto-dispatch by **naming a transform positionally** —
+`ts.plot(traj, "time_series")` — and you pick *which* channels with
+`components=`. (On the method doors, `traj.plot(...)` and `system.plot(...)`,
+`kind=` names any member of the closed `PlotKind` vocabulary directly.) The next
+sections walk every default view; then come the named transforms, the
+primitives, and how to add your own.
 
 ---
 
 ## Time series
 
-One or more components against time. With `kind=None` you get this whenever a
-single component is selected; passing `kind="time_series"` overlays *every*
-selected component as its own line (a legend appears automatically for two or
-more).
+One or more components against time. You get this automatically whenever a
+single component is selected; naming `"time_series"` overlays *every* selected
+component as its own line (a legend appears automatically for two or more).
 
 ```python
 ros = ts.systems.Rossler(ic=[1.0, 1.0, 1.0]).run(final_time=200.0, dt=0.05)
 
 # all three components, x(t) / y(t) / z(t), overlaid with a legend
-ts.plot(ros, kind="time_series").save("rossler-ts.pdf")
+ts.plot(ros, "time_series").save("rossler-ts.pdf")
 
 # just one channel
 ts.plot(ros, components="x").save("rossler-x.pdf")
@@ -208,7 +209,7 @@ mg = ts.systems.MackeyGlass()
 traj = mg.run(final_time=500.0, dt=0.5,
                     history=lambda s: [1.0 + 0.1 * np.sin(0.2 * s)])
 
-ts.plot(traj, kind="delay", delay_time=17.0).save("mackey-glass-delay.pdf")
+ts.plot(traj, "delay_embedding", delay_time=17.0).save("mackey-glass-delay.pdf")
 ```
 
 <figure markdown>
@@ -229,15 +230,15 @@ optimal delay from data.
 ## Spatial field
 
 The field of a spatially-extended system (a method-of-lines PDE) drawn on its
-**spatial grid** — a 1-D profile as a line, a 2-D field as a heatmap. Use
-`kind="field"`; the spatial layout comes from the system's `_field_shape`, so
+**spatial grid** — a 1-D profile as a line, a 2-D field as a heatmap. Name
+`"spatial_field"`; the spatial layout comes from the system's `_field_shape`, so
 you never pass a `shape` by hand.
 
 ```python
 # a 2-D reaction–diffusion field → heatmap of the activator
 gs = ts.systems.GrayScott().run(final_time=2000.0, dt=5.0)
-ts.plot(gs, kind="field").save("gray-scott.pdf")           # last field, imshow
-ts.plot(gs, kind="field", components="v").save("gs-v.pdf")  # pick a field block
+ts.plot(gs, "spatial_field").save("gray-scott.pdf")          # last field, imshow
+ts.plot(gs, "spatial_field", components="v").save("gs-v.pdf")  # pick a field block
 ```
 
 A multi-block field (Gray–Scott packs an activator `u` and inhibitor `v`)
@@ -304,7 +305,7 @@ ts.analysis.recurrence_matrix(traj, recurrence_rate=0.05).plot()
 !!! warning "A delay in *time units* needs a real `dt`"
     `delay=` is a lag in **samples** and always works; `delay_time=` is in
     **time units**, and an index-time trajectory has no clock to convert it. So
-    `ts.plot(signal, kind="delay", delay_time=0.5)` raises and names both fixes
+    `ts.plot(signal, "delay_embedding", delay_time=0.5)` raises and names both fixes
     — pass `dt=`, or give the lag in samples — rather than silently treating
     `0.5` as half a sample.
 

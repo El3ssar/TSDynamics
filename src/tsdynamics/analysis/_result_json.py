@@ -145,11 +145,25 @@ def _content_fields(item: Any) -> tuple[str, ...] | None:
     since v6: a singular member used to tabulate its booleans and drop its
     coordinates while its plural tabulated them properly — the same information,
     two answers.
+
+    A result that carries its answer somewhere **other** than a dataclass field
+    falls through to the display fields.  This is not a stylistic preference: a
+    :class:`~tsdynamics.analysis.results.CountResult` subclasses ``int`` and
+    exposes the count as a *property*, so its inherited dataclass fields are
+    ``('meta',)`` and nothing else.  Measured, that made
+    ``ts.analysis.optimal_delay(x).to_frame()`` a one-column table reading
+    ``unit / samples`` — the unit of a number that was not in the table.  The
+    empty tuple and :data:`None` therefore have to mean the same thing here
+    ("this object declares no content fields"), which is exactly the
+    distinction the old ``if`` collapsed.
     """
     import dataclasses
 
+    named: tuple[str, ...] = ()
     if dataclasses.is_dataclass(item) and not isinstance(item, type):
-        return tuple(f.name for f in dataclasses.fields(item) if f.name != "meta")
+        named = tuple(f.name for f in dataclasses.fields(item) if f.name != "meta")
+    if named:
+        return named
     display = getattr(item, "_display_fields", None)
     return tuple(display()) if callable(display) else None
 

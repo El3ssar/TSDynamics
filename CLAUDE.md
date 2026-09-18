@@ -97,7 +97,7 @@ src/tsdynamics/
 │   ├── _result_viz.py        # the .plot accessor seam (_PlotAccessor / VisualizationNotInstalled)
 │   ├── _result_json.py       # to_dict / repr helpers (_jsonify / _is_frame_scalar / _fmt) + the repr formatters (_sig / _state / _vector / _pct)
 │   ├── orbits/               # A-ORBIT: orbit_diagram + OrbitDiagram (+ periods/bifurcation_points; orbit_diagram.py); poincare_section (poincare.py); return_map + ReturnMap (first-return/next-amplitude map; return_map.py); self-registers into registry.analyses
-│   ├── lyapunov/             # A-LYAP: lyapunov_spectrum, max_lyapunov, kaplan_yorke_dimension + lyapunov_from_data (Kantz/Rosenstein, from_data.py); self-registers into registry.analyses
+│   ├── lyapunov/             # A-LYAP: lyapunov_spectrum (one door: tangent frame, or two-trajectory when there is no Jacobian), kaplan_yorke_dimension + lyapunov_from_data (Kantz/Rosenstein, from_data.py); self-registers into registry.analyses
 │   ├── fixedpoints/          # A-FP: fixed_points/FixedPoint (maps+flow equilibria, Newton/SD/DL + rigorous Krawczyk method="interval" in _interval.py — fixed.py), periodic_orbits/PeriodicOrbit (map orbits AND a flow's limit cycle, one verb → one OrbitSet) + estimate_period (periodic.py), shared primitives (_common.py); self-registers
 │   ├── dimensions/           # A-DIM: correlation/generalized-Rényi/fixed-mass fractal dims + scaling-region fit
 │   ├── chaos/               # A-CHAOS: GALI_k (Skokos) + 0–1 test (Gottwald–Melbourne) + expansion entropy (Hunt–Ott); maps via _jacobian, flows via self-contained RK4 variational core (no engine/compile)
@@ -209,7 +209,7 @@ one dot down, and the exception a wrong guess raises prints that address:
   typed — `ts.bifurcation_diagram` / `ts.analysis.bifurcation_diagram` now
   redirect; `PlotKind.BIFURCATION_DIAGRAM`, the *picture*, is a different concept
   and is untouched), `OrbitDiagram`, `poincare_section`,
-  `return_map`/`ReturnMap`, `lyapunov_spectrum`, `max_lyapunov`,
+  `return_map`/`ReturnMap`, `lyapunov_spectrum`,
   `kaplan_yorke_dimension`, `lyapunov_from_data`/`LyapunovFromData`,
   `fixed_points`/`FixedPoint`, `periodic_orbits`/`PeriodicOrbit` (the flow's limit
   cycle was absorbed here in v6 — one verb, one return type: an `OrbitSet`),
@@ -224,7 +224,7 @@ one dot down, and the exception a wrong guess raises prints that address:
   `resilience`, `Attractor`, `AttractorSet`, `BasinsResult`, `BasinFractions`,
   `BasinEntropy`, `UncertaintyExponent`, `WadaResult`, `ContinuationResult`.
   Canonical home `ts.analysis.*` — since v6 the **only** home (see "The analysis
-  door" below): `ts.analysis.__dir__` is **flat** and mirrors its **53-name**
+  door" below): `ts.analysis.__dir__` is **flat** and mirrors its **52-name**
   `__all__`, which is *generated from `registry.analyses`*, never hand-written.
 - The **derived wrappers** `PoincareMap` / `StroboscopicMap` / `TangentSystem` /
   `Ensemble` / `ProjectedSystem` → `ts.derived.*`. **Since v6 exactly TWO of them
@@ -235,7 +235,15 @@ one dot down, and the exception a wrong guess raises prints that address:
   arguments, one verb, two return types (both at once raises naming the choice;
   neither on a forced flow infers the drive period, on an autonomous one chooses
   a plane) — and `sys.ensemble(states)` → an `Ensemble` *system* whose `.run(...)`
-  returns a `TrajectoryBatch` carrying `.final`.
+  returns a `TrajectoryBatch` carrying `.final` **and `.diverged`** (the `(n,)`
+  boolean mask, new in round 8; the repr prints `⚠ 5 of 12 diverged` when there
+  is something to print and stays silent when there is not). A batch used to
+  return NaN rows with no count and no attribute of any kind, so
+  `np.mean(batch.final, axis=0)` was `nan` and `np.nanmean` a survivor-biased
+  mean over an unflagged subsample — on precisely the call where a user
+  aggregates and cannot inspect each member. "Diverged" is the **one** escape
+  scale (`utils.escape.ESCAPE_SCALE`) the trajectory repr and the Lyapunov
+  verdict already use, read off the end state.
   `stroboscope`, `project`, `tangent` and `copies` are **gone from the object**
   (census: no user callers); each `AttributeError` names the replacement —
   `ts.derived.ProjectedSystem(sys, [0, 2])` / `traj["x", "z"]`,
@@ -815,7 +823,7 @@ mathematical reason and gives the line to type.
 
 - **`method=` became `solver=`** on `run` *and* `reinit`: `solver=` selects a
   numerical kernel, `method=` selects an *estimator* on an analysis
-  (`max_lyapunov(method="kantz")`).  A `method=` at `run()` raises naming
+  (`lyapunov_from_data(method="kantz")`).  A `method=` at `run()` raises naming
   `solver=`.  (`n` likewise became `steps` — one concept, one spelling.)
   **`traj.meta` records the kernel under BOTH `solver` and `method`**, the same
   value: `meta` is provenance a user reads back, and recording only the word the
@@ -965,6 +973,27 @@ horizon`. That fixes `Lorenz` at `final_time=20` (was *hyperchaotic*),
 system that was called **chaotic** at every horizon. It is a **repr-only** rule
 with no estimator change; a σ-carrying estimator is a v6.1 ticket.
 
+**A quantity read off a RUNAWAY ORBIT is untrusted, however clean the fit**
+(round 8). `Trajectory.unbounded` detected an escaping orbit from v6 and the
+repr printed it in red; what it did *not* do was reach the estimators, so
+`correlation_dimension` of a Chua run that peaked at `1.6e9` answered
+`D_corr = 0.48954` over `log r ∈ [8.93, 10.4]` with `R² = 0.9976` and
+`trusted = True`, and `lyapunov_from_data` called a monotone blow-up
+`chaotic (λ > 0)` to four significant figures with a `7e-5` standard error and
+zero warnings. Three pieces, one reading each:
+`analysis/_common.py::runaway_meta` (the guard: warns `RunawayOrbitWarning` and
+returns `{"unbounded": <line>}`), `ScalingResult.runaway` (reads that key), and
+`ScalingResult.trusted`, which ANDs it in — so it also reaches the two
+subclasses that declare `trusted` as a field. **It reads the COERCED DATA, not
+the `Trajectory` flag**, which is what catches `lyapunov_from_data(tr["x"][::10])`:
+indexing a runaway hands back a bare array, and an escape a slice can launder is
+an escape that gets through. It **outranks every fit diagnostic** — an escape
+produces the straightest log–log curve in the library — and it is named first in
+both `_details` and the Lyapunov reason clause. The number is still returned
+(refusing outright makes the estimator useless on exactly the systems people
+reach for). Stamped at four sites: the three `DimensionResult` constructions and
+`lyapunov_from_data`. Gate: `tests/test_beta_retest.py::TestAnAnalysisOfARunawayOrbitSaysSo`.
+
 **A result behaves as the plain thing it replaced.** `f"{result:.3f}"` used to
 raise on every numeric result. `np.asarray(fixed_points)` was a `(n,)` array of
 *objects*. `ArrayResult / 2` raised while `ArrayResult * 2` worked. All fixed:
@@ -1074,22 +1103,22 @@ generator. Guessing a removed name is answered by
 
 **Discovery is therefore a first-class deliverable**, and it is generated:
 
-- **`ts.analysis.<TAB>` is exactly 53 names** — 50 analyses plus `find`,
+- **`ts.analysis.<TAB>` is exactly 52 names** — 49 analyses plus `find`,
   `register`, `results` — *computed from `registry.analyses`*
   (`_refresh_surface`), never hand-written, so a registered analysis cannot be
   missing from the tab surface and a listed name cannot be missing from the
   registry. The 32 result classes stay **bound** on `ts.analysis` but live at
   `ts.analysis.results` and appear in no `__all__` (C2).
 - **`ts.analysis.__doc__` is the grouped map**, generated at import
-  (`_discovery.grouped_map`): grouped by *what you are holding* — **21** analyses
+  (`_discovery.grouped_map`): grouped by *what you are holding* — **20** analyses
   take a system, **24** take a trajectory/array, **6** take another analysis's
   result — then by area. A flat sort cannot answer "is this chaotic?"; one of the
   five that can (`zero_one_test`) contains no word a newcomer would search for.
 - **`ts.analysis.find(what, /)`** takes ONE positional: a **string**
   (free-text over name/area/keywords/summary) or a **subject** (a system, a
   `Trajectory`, an array, a result, or any of their classes) or nothing.
-  `find(lorenz)` → 21, `find(henon)` → **14** (a map has no vector field, so the
-  seven `flow`-only field analyses drop out), `find(traj)` → 24, `find()` → 50.
+  `find(lorenz)` → 20, `find(henon)` → **13** (a map has no vector field, so the
+  seven `flow`-only field analyses drop out), `find(traj)` → 24, `find()` → 49.
   Returns an `AnalysisList` of the **functions** whose repr is the grouped table.
   The scorer's weights are in `_discovery.score`; a **frozen `GOLD` table** in
   `tests/test_analysis_discovery.py` fails a build, not a user's REPL, when a new
@@ -1319,29 +1348,29 @@ subpackages).
   `n_positive=1`), `interp`==`jit` bit-for-bit. (The original Rust-vs-`jitcdde`
   parity gate ran before JiTCDDE was removed.) `backend="reference"` raises (no
   pure-Python DDE integrator); `"interp"`/`"jit"` only.
-- `max_lyapunov` (Benettin two-trajectory) needs `set_state` → raises for DDEs.
-  Its continuous normalization divides by the **measured elapsed `time()`** of
-  the reference run (not a guessed step-size attribute), so it is correct for
-  any continuous system including `WrappedSystem` stepped with `dt=None`.
-  **Since v6 a map is answered by CALLING `lyapunov_spectrum(k=1)`** — one
-  machine, so the two doors cannot drift. They had: measured on Hénon from
+- **`max_lyapunov` is GONE; `lyapunov_spectrum(k=1)` is the one spelling.** Two
+  doors onto one question answered it with two numbers: measured on Hénon from
   `ic=[0.1, 0.1]`, `max_lyapunov(n=20000)` returned `0.41973…` and
   `lyapunov_spectrum(k=1, n=20000)[0]` returned `0.41599…`, because `n` counted
   *rescaling cycles of ten iterates* at one door and *iterations* at the other —
-  ten times the work for one nominal horizon. Handed the same start state and no
-  burn-in the two are now **the same float**; what remains between them is only
-  `max_lyapunov`'s own IC policy (burn in, then delegate from the landed state).
-  99 lines of duplicate QR machinery are gone, and `steps_per` is **refused by
-  name** on a map rather than silently reinterpreted. The **flow** path keeps the
-  two-trajectory estimator, because it is genuinely a different machine: it never
-  forms a Jacobian, so it is the only one available for a non-smooth RHS or a
-  `WrappedSystem` — and the delegation is conditional on the system actually
-  having a spectrum to delegate to, so a stepper-only `WrappedSystem` map keeps
-  its loop. *Behaviour change a user can feel:* `max_lyapunov(map, n=N)` now does
-  `N` iterations where it used to do `N * steps_per`.
+  ten times the work for one nominal horizon. The better half moved in (the
+  burn-in, and the Jacobian-free two-trajectory machine) and the second door
+  closed; `ts.analysis.max_lyapunov` raises `MovedInV6` naming this one. That
+  takes `registry.analyses` from 50 to **49** and `ts.analysis.__all__` from 53
+  to **52** — re-measure, never nudge.
+  The **Benettin two-trajectory** estimator survives as the branch
+  `lyapunov_spectrum` takes when the system has no right-hand side to
+  differentiate (a `WrappedSystem` around an external stepper, a non-smooth map):
+  it needs `set_state`, so it still raises for DDEs, and its continuous
+  normalization divides by the **measured elapsed `time()`** of the reference run
+  (not a guessed step-size attribute), so it is correct for any continuous system
+  including a `WrappedSystem` stepped with `dt=None`. Its two knobs `d0=` and
+  `steps_per=` are **refused by name** on a system that does have a Jacobian,
+  which is the whole point: there is nothing perturbed and nothing rescaled on
+  that path.
 - **Units are stated at the door, and enforced.** `transient` was TIME at four
   Lyapunov doors and a COUNT at two, for the same subject:
-  `max_lyapunov(lorenz, transient=500)` discarded ~10 time units where
+  the two-trajectory door discarded ~10 time units where
   `lyapunov_spectrum(lorenz, transient=500)` discarded 500 — 50× apart, sibling
   functions, one word. It is time-for-a-flow / iterations-for-a-map everywhere
   now, every shipped default is bit-identical, and an `int >= 100` on a flow is
@@ -1361,14 +1390,23 @@ subpackages).
   `lyapunov_from_data(traj)` answers **per unit time** and compares directly with
   `lyapunov_spectrum`, while a bare array (no time axis) keeps `dt = 1.0`, i.e.
   per sample / per iteration. **Since v6 the `t` AXIS is the source, not
-  `meta["dt"]`** — `meta` records what the *run* asked for and slicing carries it
-  verbatim, so a decimated trajectory reported the undecimated step: measured,
-  `tr[::5]` of a Lorenz run at `dt=0.01` still said `meta["dt"] == 0.01` while
-  `np.diff(t)[0] == 0.05`, and the exponent came back **9.809 where the truth is
-  1.962**, off by exactly the decimation factor with no exception. The reader
-  prefers `traj.dt` (the `Trajectory`'s own axis-derived reading) and falls back
-  to `meta["dt"]` only when there is no usable axis. An explicit `dt=` always
-  wins; a non-uniform `t` axis raises rather than being averaged into one.
+  `meta["dt"]`** — `meta` used to record what the *run* asked for while slicing
+  carried it verbatim, so a decimated trajectory reported the undecimated step:
+  measured, `tr[::5]` of a Lorenz run at `dt=0.01` still said
+  `meta["dt"] == 0.01` while `np.diff(t)[0] == 0.05`, and the exponent came back
+  **9.809 where the truth is 1.962**, off by exactly the decimation factor with
+  no exception. The reader prefers `traj.dt` (the `Trajectory`'s own axis-derived
+  reading) and falls back to `meta["dt"]` only when there is no usable axis. An
+  explicit `dt=` always wins; a non-uniform `t` axis raises rather than being
+  averaged into one. **Round 8 closed the other half**: selecting rows now
+  re-derives the three `meta` keys that describe the *rows* rather than the run
+  (`data/trajectory.py::_ROW_DERIVED_META` = `dt`/`t0`/`ic`, applied once in
+  `Trajectory._rows`, which `__getitem__` and `after` both go through), because
+  `meta` is public and a user reading `meta["dt"]` to convert a per-sample
+  exponent got a 5x wrong factor handed over on request. A slice with no uniform
+  step **drops** `dt` rather than reporting a wrong one; everything else in
+  `meta` (system, params, solver, tolerances) is still true of a slice and is
+  carried verbatim.
 - `fixed_points` (A-FP) finds map fixed points (`f(x)=x`) **and** flow equilibria
   (`f(x)=0`) by multi-start Newton on the analytic Jacobian; `method="sd"`/`"dl"`
   add the Schmelcher–Diakonos/Davidchack–Lai stabilising transformations (maps
@@ -1450,7 +1488,19 @@ subpackages).
   `basins` paints
   a `Grid` (pass a separate `recurrence` box to image a *slice* of a higher-dim
   flow — the magnetic pendulum); `basin_fractions` is Monte-Carlo basin stability
-  (Menck 2013). The metrics read a label image (no integration, fast tier):
+  (Menck 2013). **The seed count is `n_seeds=` at every door in this family**
+  (round 8): `basin_fractions` and `continuation` alone spelled it `n`, which
+  `basin_fractions`'s own docstring conceded, and `n=` now raises naming
+  `n_seeds=`. The four `**fsm` doors (`basins` / `attractors` /
+  `basin_fractions` / `continuation`) validate their leftovers through
+  `basins/_common.py::reject_unknown_fsm` **before** forwarding, so a typo here
+  is answered by name instead of surfacing as
+  `TypeError: _AttractorMapper.__init__() got an unexpected keyword argument` —
+  a private class, in an exception with no remedy. The flat-recurrence-box error
+  builds its runnable line from the **caller's own box** (`_widened_box_lines`);
+  it used to end in a hand-written three-axis template, so a 4-D system was
+  handed a line that fails on dimension the moment it is pasted.
+  The metrics read a label image (no integration, fast tier):
   `basin_entropy` (Daza 2016 `Sb`/`Sbb`, `Sbb>ln2` ⇒ fractal), `uncertainty_exponent`
   (Grebogi 1983, `D₀=D−α`; `as_label_array` squeezes degenerate slice axes so the
   dimension is right), `wada_property` (Daza 2015 grid test), `resilience`
@@ -1532,6 +1582,17 @@ Nothing else in the library learns a new name when one is added.
   a renderer or the `PlotKind` enum. A contour's polylines are coloured **by
   level** from the transform's declared colormap (an unstyled layer per level
   would take successive *palette* colours and read as N unrelated series).
+  **`density`'s bin count follows the sample count** (`_density_bins`, round 8,
+  `sqrt(n/4)` per axis clamped to `[16, 400]`). It was a flat `400 × 400` — right
+  for the million-point orbit diagram its docstring cites, and **blank** for
+  everything smaller: 200 points over 160 000 bins is 0.125 % occupancy and
+  nothing survives the panel downsample. Measured ink at each transform's *own
+  shipped example*: `phase_portrait` 0.0000 → 0.193, `delay_embedding`
+  0.0008 → 0.218, `poincare_section` 0.0005 → 0.084. The cap still binds at the
+  orbit diagram, so that picture is unchanged. Three matrix cells rendered blank
+  and `tests/test_viz_compatibility.py` called all three green, because an artist
+  can carry finite data and still be invisible — which is the whole argument for
+  the pixel layer below.
 - **The compatibility matrix is DECLARED, never implicit.**
   `PlotTransform.primitives` **is** the row, given at the definition site; an
   undeclared pair **raises** `InvalidParameterError` naming the valid set (and,
@@ -1679,6 +1740,32 @@ Nothing else in the library learns a new name when one is added.
   pins the substrate and the PSD admission rule;
   `tests/test_viz_gallery.py` pins the gallery against the registry (and, in the
   slow tier, renders every cell and fails on a blank figure).
+- **The PIXEL layer (round 8): `tests/_pixels.py` + `tests/test_viz_pixels.py`.**
+  Every other viz gate inspects the *description* of a figure — the `Plot`, the
+  layers, the recorded keyword — and never the figure, so almost every wrong
+  picture the beta round produced passed every existing test. This one renders to
+  Agg, reads the RGBA array back and **measures** it: `_pixels.py` is the
+  instrument (`render` / `ink` / `changed_pixels` / per-region reads),
+  `test_viz_pixels.py` the 23 tests over 198 items (13.6 s in the fast tier).
+  Seven properties, each named after what a user sees: **not blank** (every
+  transform's default primitive in the fast tier, all 101 declared matrix cells
+  in the slow one), **ink matches the data** (recurrence at 5 % and 20 %),
+  **colour honoured** (2-D, 3-D and images), **limits honoured**, **all 17 figure
+  keywords built AND rendered AND shown to CHANGE the picture**, **animation**
+  (consecutive frames differ; frame count matches, in memory and in a written
+  `.gif`), **composition**. Everything asserted is a robust property — is there
+  ink, did it move, is it roughly this fraction — never a hash and never a golden
+  image, because fonts and layout solvers move pixels and a flaky pixel test is
+  worse than none. Each floor carries its measured margin in its own comment;
+  the thinnest is 2.9x. It found the two wrong pictures fixed in round 8: the
+  `density` blank above, and `viz/render/mpl/_threed.py::_apply_3d_axes` applying
+  the three axis **labels and limits and nothing else**, so `xticks`/`yticks`/
+  `zticks`/`xscale`/`yscale`/`zscale` were honoured on a 2-D axes and silently
+  dropped on a 3-D one — the common axes, for 106 of the catalogue's ODEs.
+  (`_apply_3d_scale_and_ticks` now applies them for all three; `Axes3D` takes
+  `set_zscale`/`set_zticks`/`ax.zaxis` exactly as the flat axes takes their x/y
+  counterparts.) Scales and ticks are applied **before** the limits, because
+  setting a log scale resets the view interval.
 - **The gallery (`docs/visualization/gallery.md` + `docs/_tooling/gallery.py`).**
   The user-facing answer to *"what can this draw?"*, **generated from the
   registry at docs-build time**: one entry per transform (grouped by source
@@ -1993,8 +2080,10 @@ Nothing else in the library learns a new name when one is added.
   that can't animate draws the final field; the mpl renderer plays the stack frame
   by frame (`viz/render/mpl/_anim.py::_field_movie_driver` → `_field_movie_2d` /
   `_field_movie_1d`), consecutive frames carrying genuinely different data. **Front
-  door:** `ts.plot(system, kind="field", animate=True)` — the `"field"` recipe
-  routes via `_KIND_ALIASES`; the spatial layout comes from the **system**, via the
+  door:** `ts.plot(system, "spatial_field", animate=True)` — at `ts.plot` a picture
+  is named POSITIONALLY, by its transform; the method doors (`traj.plot` /
+  `system.plot`) take `kind="field"`, which routes via `_KIND_ALIASES`.
+  The spatial layout comes from the **system**, via the
   optional `_field_shape: tuple[int, ...]` ClassVar (recorded onto
   `traj.meta["field_shape"]` at integration time, so a bare `Trajectory` carries
   it). No `shape` kwarg: a system with no `_field_shape` (or a 1-D one) is a 1-D
@@ -2650,6 +2739,13 @@ Two layers now cover them:
 | Situation | What happens / what to do |
 |---|---|
 | `_equations` uses NumPy or `math` | The engine tape can't lower it. Use `symengine.sin`/`cos`/... |
+| An estimator answers confidently on an orbit that blew up | It doesn't, since round 8: a dimension or `lyapunov_from_data` taken from data whose magnitude escaped warns `RunawayOrbitWarning`, reports `trusted = False`, and says so in the repr. The number is still returned. The check reads the **coerced data**, so `traj["x"][::10]` is caught too. |
+| `batch.final` has NaN rows | `batch.diverged` is the mask, and the repr says `⚠ 5 of 12 diverged`. An average over `.final` is an average over the survivors — `np.nanmean` on an unflagged subsample is the trap this closes. |
+| Reading `meta["dt"]` off a sliced trajectory | Correct since round 8 — row selection re-derives `dt`/`t0`/`ic` from the rows in hand, and *drops* `dt` when the slice has no uniform step. `traj.dt` remains the reading the library itself uses. |
+| `basin_fractions(n=…)` / `continuation(n=…)` | **`n_seeds=`** since round 8 — the word every sibling already used. A typo in the `**fsm` passthrough is answered by name, never by naming `_AttractorMapper`. |
+| `ts.plot(a, b, label=[...])` | The word is `labels=` (one per subject) and every plotting door now suggests it. It used to answer `did you mean zlabel=?` — an *axis* name — at the one door whose pool omitted it. |
+| A field over a big box with the axes zoomed in | Pass both: `ts.plot(sys, "vector_field", domain=[(-6,6),(-6,6)], xlim=(-3,3))`. `domain=` is the evaluation window, `xlim=` only the axes; naming `domain=` sends a *shared* `xlim=` back to its figure job. Both inside one transform's own option dict is still the genuine clash and still raises. |
+| `ts.plot(map, "cobweb")` is a solid block | Fixed: a cobweb draws `_COBWEB_DEFAULT_STEPS` (50) orbit steps, not the map's whole 1000-step default run, so the parabola and the diagonal it is read against are visible. `steps=` picks another count; `steps=0` draws the lot. |
 | `_equations` writes `y[0]` **or** `x, y, z = u` | The ODE/SDE state is an **accessor**, not a vector: read it by CALLING it (`u(0)`, `u(1)`, …), which is also what makes a DDE's `u(0, t - tau)` expressible. A `DiscreteMap._step` **does** take a plain vector — that is the one place the families differ, and it is why a map author writes the unpack in an ODE. Both spellings are diagnosed by name, with the corrected line echoed back (`_subscripted_accessor_hint`). |
 | Variable-dim system without `_structural_params` | Lowering-time `range(N)` fails. Add `_structural_params = frozenset({"N"})`. |
 | Map params order ≠ `_step` signature order | **Raises `TypeError` at import**. |
@@ -2736,12 +2832,12 @@ fps[0]                                      # the point, as a (dim,) ARRAY
 fps.is_stable, fps.eigenvalues              # vectorised, one row per member
 fps.details[0].continuous                   # the record, when you want one member
 ts.analysis.fixed_points(ts.systems.VanDerPol(), region=[(-3, 3), (-3, 3)])  # plain bounds
-ts.analysis.max_lyapunov(h, ic=[0.1, 0.1])  # ≈ 0.42 — n counts ITERATIONS on a map
+ts.analysis.lyapunov_spectrum(h, k=1, ic=[0.1, 0.1])   # ≈ 0.42 — one exponent
 
 # Analyses are FREE FUNCTIONS on their subject (ruling A2) — and they say so
-ts.analysis.find(h)                         # what can I measure on THIS?  (14)
+ts.analysis.find(h)                         # what can I measure on THIS?  (13)
 ts.analysis.find("is this chaotic")         # who answers THIS question?  (6)
-print(ts.analysis.__doc__)                  # the 50, grouped by what you hold
+print(ts.analysis.__doc__)                  # the 49, grouped by what you hold
 
 # Regions: one (lo, hi[, n]) pair PER STATE COMPONENT, everywhere. No type to build.
 ts.analysis.basins(h, [(-2, 2, 60), (-2, 2, 60)])

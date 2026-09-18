@@ -191,7 +191,6 @@ def test_headline_first_args_are_system_or_data() -> None:
         "return_map": "system",
         "orbit_diagram": "system",
         "periodic_orbits": "system",
-        "max_lyapunov": "system",
         "lyapunov_from_data": "data",
     }
     by_name = dict(_REGISTERED)

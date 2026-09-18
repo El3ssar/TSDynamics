@@ -106,11 +106,13 @@ lor.set_state(u + 1e-9)          # overwrite the state in place
     A delay system's instantaneous state is a *history function* over
     $[t - \tau_{\max},\, t]$, not a point, so overwriting it with a single vector
     is not meaningful. `DelaySystem.set_state` raises `NotImplementedError`; use
-    `reinit(u)` to restart from a constant past instead. This is also why
-    `max_lyapunov` (which needs `set_state`) excludes DDEs.
+    `reinit(u)` to restart from a constant past instead. This is also why the
+    Jacobian-free two-trajectory estimator (which needs `set_state`) excludes
+    DDEs.
 
 The protocol is what the rest of the toolkit is written against — orbit diagrams,
-Poincaré maps and `max_lyapunov` are all loops over `step()`. When a prepackaged
+Poincaré maps and the two-trajectory Lyapunov estimator are all loops over
+`step()`. When a prepackaged
 analysis does not fit, you drive it directly; see
 [the Analysis toolkit](index.md#beyond-the-prepackaged-routines).
 

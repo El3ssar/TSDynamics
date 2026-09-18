@@ -50,11 +50,14 @@ def test_wrapped_named_components() -> None:
     np.testing.assert_array_equal(traj["x"], traj.y[:, 0])
 
 
-def test_wrapped_max_lyapunov_chaotic() -> None:
-    # logistic at r=3.9 is chaotic ⇒ positive MLLE, via the protocol only
+def test_wrapped_leading_exponent_is_positive_for_a_chaotic_map() -> None:
+    # logistic at r=3.9 is chaotic ⇒ positive MLLE, via the protocol only.
+    # (Was ``max_lyapunov``; v6 closed that second door — one question, one
+    # spelling — and the two-trajectory machine it named now runs under
+    # ``lyapunov_spectrum(k=1)``.)
     w = ts.WrappedSystem(_logistic_step, dim=1, family="map", ic=[0.5])
-    lam = ts.analysis.max_lyapunov(w, ic=[0.3], n=500, steps_per=2, seed=0)
-    assert lam > 0.3
+    lam = ts.analysis.lyapunov_spectrum(w, k=1, ic=[0.3], n=500, steps_per=2)
+    assert float(lam.values[0]) > 0.3
 
 
 def _expanding_flow(u, dt):
@@ -62,7 +65,7 @@ def _expanding_flow(u, dt):
     return [u[0] * np.exp(0.5 * dt)]
 
 
-def test_wrapped_continuous_max_lyapunov_dt_normalization() -> None:
+def test_wrapped_continuous_leading_exponent_dt_normalization() -> None:
     # Regression: a *continuous* WrappedSystem stepped with dt=None must
     # normalize by the real per-step time advance (its ``default_dt``), not a
     # hardcoded 0.01.  dx/dt = 0.5 x has maximal exponent 0.5; the dt=None call
@@ -72,10 +75,10 @@ def test_wrapped_continuous_max_lyapunov_dt_normalization() -> None:
     # d0 is large (1e-4) on purpose: the flow is exactly linear, so the growth
     # rate is independent of the perturbation size, and a small d0 against a
     # growing reference would lose it to floating-point cancellation.
-    kw = {"n": 100, "steps_per": 2, "transient": 10, "d0": 1e-4, "seed": 0}
+    kw = {"final_time": 10.0, "steps_per": 2, "transient": 10.0, "d0": 1e-4}
     w = ts.WrappedSystem(_expanding_flow, dim=1, family="ode", ic=[1.0], default_dt=0.05)
-    lam_default = ts.analysis.max_lyapunov(w, ic=[1.0], **kw)  # dt=None → steps by 0.05
-    lam_explicit = ts.analysis.max_lyapunov(w, ic=[1.0], dt=0.05, **kw)
+    lam_default = float(ts.analysis.lyapunov_spectrum(w, k=1, ic=[1.0], **kw).values[0])
+    lam_explicit = float(ts.analysis.lyapunov_spectrum(w, k=1, ic=[1.0], dt=0.05, **kw).values[0])
     assert lam_default == pytest.approx(0.5, abs=1e-6)
     assert lam_default == pytest.approx(lam_explicit, rel=1e-9)
 

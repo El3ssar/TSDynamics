@@ -799,6 +799,117 @@ def row_option_names(transform: PlotTransform) -> frozenset[str]:
     return frozenset().union(*(PRIMITIVES[p].options for p in transform.primitives))
 
 
+#: The two keywords a planar ``model`` transform expresses its **evaluation
+#: window** in — the box the right-hand side is sampled over.  They are spelled
+#: like the figure's axis limits because they usually coincide, and that
+#: coincidence is exactly the collision :data:`DOMAIN_KEYWORD` exists to end.
+_WINDOW_KEYWORDS: tuple[str, str] = ("xlim", "ylim")
+
+#: The transform's own, non-colliding word for that box.
+DOMAIN_KEYWORD = "domain"
+
+
+def window_keywords(transform: PlotTransform) -> tuple[str, ...]:
+    """Return the window keywords ``transform`` declares, or ``()``.
+
+    A transform that already takes ``domain=`` itself (a 1-D map's ``cobweb``,
+    whose window is one interval rather than a box) owns the word, so nothing
+    is translated for it.
+    """
+    import inspect
+
+    params = inspect.signature(transform.compute).parameters
+    if DOMAIN_KEYWORD in params:
+        return ()
+    return tuple(key for key in _WINDOW_KEYWORDS if key in params)
+
+
+def domain_aware(transform: PlotTransform) -> bool:
+    """Whether ``domain=`` is a keyword this transform accepts."""
+    import inspect
+
+    return DOMAIN_KEYWORD in inspect.signature(transform.compute).parameters or bool(
+        window_keywords(transform)
+    )
+
+
+def _domain_pairs(value: Any, transform_name: str) -> tuple[tuple[float, float], ...]:
+    """Read ``domain=`` as **one ``(lo, hi)`` pair per axis** — the library's one reading.
+
+    Accepts the two spellings a caller would type and nothing else: two pairs
+    (``((-3, 3), (-8, 8))``) or one pair of scalars (``(0, 1)``, the same
+    interval on both axes — a square).
+    """
+    from tsdynamics.errors import InvalidParameterError, remedy
+
+    def _bad(why: str) -> InvalidParameterError:
+        return InvalidParameterError(
+            f"{transform_name} domain= is the box to evaluate the equations over — one "
+            f"(lo, hi) pair per axis, {why}. Got {value!r}."
+            + remedy(f"ts.plot(system, {transform_name!r}, domain=((-3, 3), (-8, 8)))")
+        )
+
+    def _is_number(item: Any) -> bool:
+        """Return whether ``item`` is a scalar the caller typed, not a ``(lo, hi)`` pair."""
+        if hasattr(item, "__len__"):
+            return False
+        try:
+            float(item)
+        except (TypeError, ValueError):
+            return False
+        return True
+
+    try:
+        items = list(value)
+    except TypeError:
+        raise _bad("not a single number") from None
+    if len(items) == 2 and all(_is_number(i) for i in items):
+        items = [items, items]
+    if len(items) != 2:
+        raise _bad(f"so it needs 2 of them, got {len(items)}")
+    out: list[tuple[float, float]] = []
+    for pair in items:
+        try:
+            lo, hi = (float(pair[0]), float(pair[1]))
+        except (TypeError, IndexError, ValueError):
+            raise _bad("and every entry must be a (lo, hi) pair") from None
+        if not hi > lo:
+            raise _bad("and every pair needs lo < hi")
+        out.append((lo, hi))
+    return tuple(out)
+
+
+def expand_domain(transform: PlotTransform, options: dict[str, Any]) -> None:
+    """Translate ``domain=`` into this transform's own window keywords, **in place**.
+
+    ``domain=`` is the transform's word for *where to evaluate the equations*;
+    ``xlim=``/``ylim=`` is the figure's word for *where to draw*.  They used to be
+    the same word, and the teacher who hit it said the collision cost more time
+    than everything else combined, because it "produced a plausible wrong
+    picture".  One word now means one thing at the front door, and this is the
+    single seam that maps the new word onto the seven planar transforms'
+    existing parameters (so no transform signature had to grow a second
+    spelling).
+    """
+    if DOMAIN_KEYWORD not in options:
+        return
+    keys = window_keywords(transform)
+    if not keys:
+        return  # the transform owns ``domain=`` itself (cobweb), or takes no window
+    from tsdynamics.errors import InvalidParameterError
+
+    clash = sorted(k for k in keys if k in options)
+    if clash:
+        raise InvalidParameterError(
+            f"{transform.name} was given both domain= and {clash} — two spellings of one "
+            "box in one call. domain= is the evaluation window; drop the other, or use "
+            f"{clash} alone if you mean the axes."
+        )
+    pairs = _domain_pairs(options.pop(DOMAIN_KEYWORD), transform.name)
+    for key, pair in zip(keys, pairs, strict=False):
+        options[key] = pair
+
+
 def _split_options(
     transform: PlotTransform, options: dict[str, Any]
 ) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -835,7 +946,10 @@ def geometry(subject: Any, name: str, /, **options: Any) -> Geometry:
         The transform name (the ``"transform.primitive"`` spelling is accepted;
         the primitive part is ignored here, since no drawing happens).
     **options
-        Forwarded to the transform's ``compute``.
+        Forwarded to the transform's ``compute``.  ``domain=`` — one ``(lo, hi)``
+        pair per axis — is the one word that names a ``model`` transform's
+        **evaluation window**, and is translated here into whatever that
+        transform calls it.
 
     Returns
     -------
@@ -843,6 +957,7 @@ def geometry(subject: Any, name: str, /, **options: Any) -> Geometry:
     """
     transform, _ = resolve(name)
     _check_available(transform)
+    expand_domain(transform, options)
     return _check_geometry(transform, _stamp(transform, _compute(transform, subject, options)))
 
 

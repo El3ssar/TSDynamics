@@ -771,3 +771,83 @@ class TestTheScalingWindowKeywordIsCalledFlatness:
         assert "_core_kwargs" not in text
         assert f"{name}() has no 'tol' keyword" in text
         assert f"ts.analysis.{name}(data, flatness=1.2)" in text
+
+
+# ---------------------------------------------------------------------------
+# The whole "trajectory or bare array" group answers a raw channel the same way
+# ---------------------------------------------------------------------------
+
+
+class TestEveryDimensionDoorTreatsARawChannelAlike:
+    """One documented group, one assumption — stated, not silent.
+
+    The tester's words: *"the fact that two neighbours in the same docstring
+    section silently make opposite assumptions is the actual bug."*
+    ``lyapunov_from_data`` auto-embeds a scalar channel and says so in its repr;
+    a dimension estimator cannot embed without inventing a reconstruction the
+    caller did not ask for, so every one of them **warns**, marks itself
+    untrusted where it has a flag, and hands back the line that does it
+    properly.  A door that forgets is a door that answers ``D ~= 1, R2 = 1``
+    to a question nobody asked.
+    """
+
+    #: Every public estimator that takes a point set or a bare series.
+    DOORS = (
+        "correlation_dimension",
+        "correlation_sum",
+        "generalized_dimension",
+        "box_counting_dimension",
+        "information_dimension",
+        "dimension_spectrum",
+        "fixed_mass_dimension",
+    )
+
+    @pytest.fixture(scope="class")
+    def channel(self) -> np.ndarray:
+        traj = ts.systems.Lorenz().run(final_time=120.0, dt=0.01, transient=20.0, ic=[1, 1, 1])
+        return np.asarray(traj["x"])
+
+    @pytest.mark.parametrize("name", DOORS)
+    def test_it_warns_and_names_the_line_that_does_it_properly(
+        self, name: str, channel: np.ndarray
+    ) -> None:
+        fn = getattr(ts.analysis, name)
+        with pytest.warns(dim.UnembeddedSeriesWarning) as caught:
+            result = fn(channel)
+        message = str(caught[0].message)
+        assert "SINGLE coordinate" in message
+        assert f"ts.analysis.{name}(ts.analysis.embed(data))" in message, (
+            "the remedy must name THIS door, not a sibling"
+        )
+        trusted = getattr(result, "trusted", None)
+        if trusted is not None:
+            assert trusted is False, f"{name} answered a raw channel with confidence"
+
+    @pytest.mark.parametrize("name", DOORS)
+    def test_the_remedy_it_hands_back_runs_and_is_silent(
+        self, name: str, channel: np.ndarray
+    ) -> None:
+        """A line a library hands back must RESOLVE and RUN for the subject held.
+
+        Other diagnostics may still fire (an unresolved Renyi spectrum is about
+        the record, not the reconstruction); what must NOT fire again is the
+        single-coordinate alarm the remedy was handed back to silence.
+        """
+        embedded = ts.analysis.embed(channel)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            result = getattr(ts.analysis, name)(embedded)
+        assert not any(issubclass(w.category, dim.UnembeddedSeriesWarning) for w in caught)
+        # ``unembedded`` is the flag THIS remedy clears.  ``trusted`` may still be
+        # False for an unrelated reason (a Renyi spectrum that has not resolved on
+        # a 10k-sample record is a statement about the record), and asserting it
+        # here would make this test about something else.
+        if hasattr(result, "unembedded"):
+            assert result.unembedded is False
+
+    def test_the_sibling_that_embeds_says_so_in_its_own_repr(self, channel: np.ndarray) -> None:
+        """The neighbour whose opposite assumption started this still declares it."""
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            res = ts.analysis.lyapunov_from_data(channel[:6000], dt=0.01)
+        assert "m=" in repr(res) and "τ=" in repr(res)

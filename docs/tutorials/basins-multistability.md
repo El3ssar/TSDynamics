@@ -152,7 +152,7 @@ How predictable is the outcome near the boundary? Three label-image diagnostics
 read the painted grid directly — no further integration:
 
 ```python
-ts.analysis.basin_fractions(sys, region, n=400, dt=0.5, max_steps=2000, seed=0)
+ts.analysis.basin_fractions(sys, region, n_seeds=400, dt=0.5, max_steps=2000, seed=0)
 # BasinFractions({1:0.53, 2:0.47}, diverged=0, n=400)      — basin stability
 
 ts.analysis.basin_entropy(basins)
@@ -215,7 +215,7 @@ Wagemakers, 2023):
 
 ```python
 cont = ts.analysis.continuation(sys, "F", np.linspace(0.0, 0.5, 11), region,
-                       n=300, resolution=40, dt=0.5, max_steps=2000, seed=0)
+                       n_seeds=300, resolution=40, dt=0.5, max_steps=2000, seed=0)
 
 cont.values            # array([0.  , 0.05, 0.1 , ..., 0.5 ])
 cont.fractions[1]      # left well:  [0.51, 0.44, 0.39, ..., 0.06, nan, nan, nan]

@@ -482,7 +482,6 @@ _SYSTEM_FIRST = frozenset(
         "fixed_points",
         "gali",
         "lyapunov_spectrum",
-        "max_lyapunov",
         "orbit_diagram",
         "periodic_orbits",
     }

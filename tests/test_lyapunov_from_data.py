@@ -11,7 +11,11 @@ import numpy as np
 import pytest
 
 import tsdynamics as ts
-from tsdynamics.analysis.lyapunov import LyapunovFromData, lyapunov_from_data
+from tsdynamics.analysis.lyapunov import (
+    LyapunovFromData,
+    ScalingRegionWarning,
+    lyapunov_from_data,
+)
 from tsdynamics.analysis.lyapunov.from_data import _delay_embed
 from tsdynamics.errors import ConvergenceError, InvalidParameterError
 
@@ -437,13 +441,21 @@ class TestSamplingIntervalIsReadFromTheData:
         assert 0.4 < float(per_time) < 1.6
 
     def test_a_decimated_trajectory_reads_its_own_axis_not_the_recorded_dt(self) -> None:
-        """The v6 fix.  ``meta["dt"]`` records what the RUN asked for and slicing
-        carries it verbatim, so ``tr[::5]`` reported the undecimated step and the
-        exponent came back off by exactly the decimation factor — silently."""
+        """The v6 fix.  ``meta["dt"]`` used to record what the RUN asked for and
+        slicing carried it verbatim, so ``tr[::5]`` reported the undecimated step
+        and the exponent came back off by exactly the decimation factor —
+        silently.  Round 8 also re-derives ``meta`` on a row selection, so the
+        stale pair is built by hand here: the *reading rule* (the axis wins, and
+        ``meta`` is only consulted when there is no usable axis) is the contract,
+        and it has to hold for any trajectory however its ``meta`` was set."""
         import tsdynamics as ts
+        from tsdynamics.data import Trajectory
 
         full = ts.systems.Lorenz().run(final_time=60.0, dt=0.01, transient=20.0, ic=[1.0, 1.0, 1.0])
-        sub = full[::5]
+        decimated = full[::5]
+        sub = Trajectory(
+            decimated.t, decimated.y, decimated.system, meta={**decimated.meta, "dt": 0.01}
+        )
         assert sub.meta["dt"] == pytest.approx(0.01)  # stale by construction
         assert float(np.diff(sub.t)[0]) == pytest.approx(0.05)  # the truth
         derived = lyapunov_from_data(sub, dimension=3, fit=(2, 12))
@@ -482,3 +494,131 @@ class TestSamplingIntervalIsReadFromTheData:
         y = np.sin(t)[:, None]
         with pytest.raises(InvalidParameterError, match="not uniformly"):
             lyapunov_from_data(ts.data.Trajectory(t, y), dimension=3, delay=8, k_max=200)
+
+
+# ---------------------------------------------------------------------------
+# `trusted` is a screen, and a verdict is never silence (v6 round 6)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def lorenz_x() -> np.ndarray:
+    """A long, transient-free Lorenz ``x`` series at ``dt = 0.02``."""
+    return np.asarray(
+        ts.systems.Lorenz().run(final_time=500.0, dt=0.02, transient=20.0, ic=[1.0, 1.0, 1.0])["x"]
+    )
+
+
+@pytest.fixture(scope="module")
+def rossler_x() -> np.ndarray:
+    """A long, transient-free Rössler ``x`` series at ``dt = 0.05``."""
+    return np.asarray(
+        ts.systems.Rossler().run(final_time=2000.0, dt=0.05, transient=100.0, ic=[1.0, 1.0, 1.0])[
+            "x"
+        ]
+    )
+
+
+class TestTrustedIsNotBoughtByAStraightLine:
+    """``trusted`` must fold in the record, the fitted window and decorrelation.
+
+    Measured at HEAD before this change, all with ``trusted = True``:
+
+    ======= ======  ====== ======= =========================================
+    series  n       λ      truth   why the old screen passed it
+    ======= ======  ====== ======= =========================================
+    Lorenz  2000    1.2414 0.9056  R² = 0.99872 on a fit anchored at k = 0
+    Lorenz  3000    1.1204 0.9056  22.9 windows cleared a floor of 10
+    Rössler 5000    0.0383 0.0714  long record, clean fit, 0.28 e-folds
+    ======= ======  ====== ======= =========================================
+    """
+
+    def test_a_short_record_is_refused_however_straight_the_fit(self, lorenz_x: np.ndarray) -> None:
+        res = lyapunov_from_data(lorenz_x[:2000], dt=0.02)
+        assert res.r_squared > 0.99, "the fit really is straight — that is the point"
+        assert float(res) > 1.2, "and really is 37% high"
+        assert res.trusted is False
+        assert res.chaotic is None
+
+    def test_a_long_enough_record_is_believed(self, lorenz_x: np.ndarray) -> None:
+        res = lyapunov_from_data(lorenz_x[:5000], dt=0.02)
+        assert res.trusted is True
+        assert res.chaotic is True
+        assert float(res) == pytest.approx(0.9056, rel=0.15)
+
+    def test_a_fit_the_separation_barely_grows_across_is_refused(
+        self, rossler_x: np.ndarray
+    ) -> None:
+        """The case no record-length floor can catch: long record, clean, wrong."""
+        with pytest.warns(ScalingRegionWarning, match="capped at 500"):
+            res = lyapunov_from_data(rossler_x[:5000], dt=0.05)
+        assert res.independent_windows > 25.0, "the record is long"
+        assert res.r_squared > 0.99, "the fit is clean"
+        assert res.fit_efoldings < 0.5, "and the divergence hardly moves across it"
+        assert res.trusted is False
+        assert "e-folds" in repr(res)
+
+    def test_the_same_series_with_more_look_ahead_is_believed(self, rossler_x: np.ndarray) -> None:
+        with pytest.warns(ScalingRegionWarning, match="capped at 500"):
+            res = lyapunov_from_data(rossler_x[:10000], dt=0.05)
+        assert res.trusted is True
+        assert float(res) == pytest.approx(0.0714, rel=0.2)
+
+    def test_shrinking_the_embedding_cannot_buy_back_trust(self, lorenz_x: np.ndarray) -> None:
+        """A remedy that restores RUNNABILITY must not restore CONFIDENCE.
+
+        ``independent_windows`` used to divide by ``(m - 1) * τ`` alone, which is
+        entirely the caller's to choose — so the one line the library hands a
+        reader whose call was refused ("reduce dimension/delay") also flipped the
+        flag: measured, 500 Lorenz samples at ``dimension=2, delay=1`` took the
+        count from 2.2 to **358.0**, a 160x jump in apparent record length bought
+        by shrinking the reconstruction rather than by measuring anything.  The
+        series' own decorrelation time floors the denominator now.
+        """
+        short = lorenz_x[:500]
+        honest = lyapunov_from_data(short, dt=0.02)
+        with pytest.warns(ScalingRegionWarning, match="near-collinear"):
+            gamed = lyapunov_from_data(short, dt=0.02, dimension=2, delay=1)
+        assert honest.trusted is False
+        assert gamed.independent_windows < 60.0, "the decorrelation floor must bind"
+        assert gamed.trusted is False
+        assert gamed.chaotic is None
+
+
+class TestTheVerdictIsHedgedNeverSilent:
+    """Billed as "the one number that says chaotic", it must say something.
+
+    It used to print the failure and nothing about the system — while
+    ``zero_one_test``, which carries no trust flag at all, answered
+    ``chaotic (K ~ 1)`` on the same data.
+    """
+
+    def test_an_untrusted_result_still_names_the_sign(self, lorenz_x: np.ndarray) -> None:
+        res = lyapunov_from_data(lorenz_x[:2000], dt=0.02)
+        text = repr(res)
+        assert "λ > 0" in text, "the measurement must be reported, hedged"
+        assert "INDETERMINATE" in text, "and the hedge must be unmistakable"
+        assert "UNTRUSTED" in text
+
+    def test_the_hedge_is_not_a_branchable_yes(self, lorenz_x: np.ndarray) -> None:
+        """``chaotic`` stays three-valued, so ``if res.chaotic:`` cannot misread it."""
+        assert lyapunov_from_data(lorenz_x[:2000], dt=0.02).chaotic is None
+
+    def test_the_reason_names_the_action_that_would_fix_it(
+        self, lorenz_x: np.ndarray, rossler_x: np.ndarray
+    ) -> None:
+        """Three failures, three different actions — never the wrong one."""
+        short = repr(lyapunov_from_data(lorenz_x[:2000], dt=0.02))
+        assert "measure longer" in short
+        with pytest.warns(ScalingRegionWarning, match="capped at 500"):
+            narrow = repr(lyapunov_from_data(rossler_x[:5000], dt=0.05))
+        assert "larger k_max" in narrow
+        with pytest.warns(ScalingRegionWarning, match="near-collinear"):
+            degenerate = lyapunov_from_data(lorenz_x[:6000], dt=0.02, delay=1, dimension=3)
+        assert "decorrelation time" in repr(degenerate)
+
+    def test_the_diagnostics_reach_to_dict(self, lorenz_x: np.ndarray) -> None:
+        data = lyapunov_from_data(lorenz_x[:5000], dt=0.02).to_dict(full=True)
+        assert data["chaotic"] is True
+        assert data["independent_windows"] > 25.0
+        assert data["fit_efoldings"] >= 0.5

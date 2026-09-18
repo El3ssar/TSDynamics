@@ -146,7 +146,7 @@ gs = ts.systems.GrayScott()
 gtr = gs.run(final_time=4000.0, dt=85.0)     # a 48x48 reaction-diffusion field
 
 spec = (
-    ts.plot(gtr, kind="field", animate=True)   # SPATIAL_FIELD, mode="frames"
+    ts.plot(gtr, "spatial_field", animate=True)   # SPATIAL_FIELD, mode="frames"
     .animate(fps=14)
     .style(cmap="viridis")
     .background("#0B0F14")
@@ -177,7 +177,7 @@ traj = mg.run(
 ).after(150.0)
 
 spec = (
-    ts.plot(traj, kind="delay", components="x", delay_time=17.0, animate=True)
+    ts.plot(traj, "delay_embedding", components="x", delay_time=17.0, animate=True)
     .animate(n_frames=100, fps=25)
     .trail(("time", 120.0), fade=True)
     .head(size=8.0, color="#574FCF")
@@ -455,7 +455,7 @@ reached through the `kind="field"` recipe:
 gs = ts.systems.GrayScott()
 gtr = gs.run(final_time=1500.0, dt=5.0)      # a 48x48 reaction-diffusion field
 
-movie = ts.plot(gtr, kind="field", animate=True)
+movie = ts.plot(gtr, "spatial_field", animate=True)
 movie.kind                 # PlotKind.SPATIAL_FIELD
 movie.animation.mode       # 'frames'  (forced — the field IS the motion)
 movie.animation.head       # False     (no comet, no head marker)
@@ -479,7 +479,7 @@ ks = ts.systems.KuramotoSivashinsky()
 ic = 0.1 * np.cos(np.linspace(0.0, 2.0 * np.pi, ks.dim, endpoint=False))
 ktr = ks.run(final_time=150.0, dt=0.5, ic=ic).after(20.0)
 
-wave = ts.plot(ktr, kind="field", animate=True)
+wave = ts.plot(ktr, "spatial_field", animate=True)
 wave.kind                             # PlotKind.SPATIAL_FIELD
 wave.layers[0].data["frames"].shape   # (T, 32) — a 1-D profile stacked over time
 wave.save("ks-wave.gif")

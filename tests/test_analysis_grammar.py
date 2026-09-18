@@ -6,8 +6,8 @@ is that the rule holds **across** areas -- a keyword that means two things in tw
 sibling functions is the defect, and one function in isolation cannot show it.
 
 - **Redundancy** -- two machines computing one quantity, which is how they came
-  to disagree.  ``max_lyapunov`` on a map is now ``lyapunov_spectrum(k=1)``, by
-  delegation, so they cannot drift.
+  to disagree.  ``max_lyapunov`` is retired: the maximal exponent is
+  ``lyapunov_spectrum(k=1)`` and nothing else, so the two cannot drift.
 - **Units** -- ``transient`` is time for a flow and iterations for a map, at
   every door, and the refusal says so when the wrong one arrives.
 - **Wrong subject** -- handing data to a model analysis (or the reverse) is
@@ -30,7 +30,7 @@ import numpy as np
 import pytest
 
 import tsdynamics as ts
-from tsdynamics.errors import InvalidInputError, InvalidParameterError
+from tsdynamics.errors import ConvergenceError, InvalidInputError, InvalidParameterError
 
 A = ts.analysis
 
@@ -50,48 +50,88 @@ def lorenz() -> object:
 # ---------------------------------------------------------------------------
 
 
-class TestTheTwoLyapunovDoorsCannotDisagree:
-    """``max_lyapunov`` on a map IS ``lyapunov_spectrum(k=1)``.
+class TestTheMaximalExponentHasExactlyOneDoor:
+    """``max_lyapunov`` is gone; ``lyapunov_spectrum(k=1)`` is the one door.
 
-    Measured before the fold, on Hénon from ``ic=[0.1, 0.1]``:
-    ``max_lyapunov(n=20000)`` returned ``0.4197347326911059`` and
+    Measured at HEAD before the retirement, on Hénon from ``ic=[0.1, 0.1]``:
+    ``max_lyapunov(n=20000)`` returned ``0.4232673343379148`` and
     ``lyapunov_spectrum(k=1, n=20000)[0]`` returned ``0.4159988587314602`` --
-    two implementations of one quantity, counting different things under one
-    nominal horizon (``n`` was *cycles* of ``steps_per=10`` iterates at one door
-    and *iterations* at the other).
+    one nominal question, two public functions, two answers, and nothing told
+    the reader which to believe.  The difference was the burn-in, which only one
+    of them did; it is now this door's default.
     """
 
-    def test_identical_to_the_last_bit(self, henon: object) -> None:
-        a = float(A.max_lyapunov(henon, n=20_000, ic=[0.1, 0.1], transient=0))
-        b = float(A.lyapunov_spectrum(henon, k=1, n=20_000, ic=[0.1, 0.1])[0])
-        assert a == b, (a, b)
+    def test_the_second_door_is_closed_and_names_the_first(self) -> None:
+        with pytest.raises(ImportError, match=r"lyapunov_spectrum\(system, k=1\)"):
+            A.max_lyapunov  # noqa: B018 - the attribute access IS the test
 
-    def test_n_counts_iterations_on_a_map_at_both_doors(self, henon: object) -> None:
-        """Doubling ``n`` doubles the work at both doors, not at one of them."""
-        short = float(A.max_lyapunov(henon, n=2_000, ic=[0.1, 0.1], transient=0))
-        same = float(A.lyapunov_spectrum(henon, k=1, n=2_000, ic=[0.1, 0.1])[0])
-        assert short == same
+    def test_the_surviving_number_is_the_better_one(self, henon: object) -> None:
+        """The burnt-in value, not the cold one -- bit for bit."""
+        got = float(A.lyapunov_spectrum(henon, k=1, n=20_000, ic=[0.1, 0.1])[0])
+        assert got == 0.4232673343379148
 
-    def test_steps_per_is_refused_for_a_map_rather_than_ignored(self, henon: object) -> None:
-        with pytest.raises(InvalidParameterError, match="Count iterations with n"):
-            A.max_lyapunov(henon, steps_per=5)
+    def test_a_map_burn_in_can_be_switched_off_by_name(self, henon: object) -> None:
+        cold = float(A.lyapunov_spectrum(henon, k=1, n=20_000, ic=[0.1, 0.1], transient=0)[0])
+        assert cold == 0.4159988587314602
+
+    def test_n_counts_iterations_on_a_map(self, henon: object) -> None:
+        """Doubling ``n`` doubles the work -- ``n`` is iterations, not cycles."""
+        short = float(A.lyapunov_spectrum(henon, k=1, n=2_000, ic=[0.1, 0.1], transient=0)[0])
+        long = float(A.lyapunov_spectrum(henon, k=1, n=20_000, ic=[0.1, 0.1], transient=0)[0])
+        assert short != long
 
     def test_a_flow_keeps_the_jacobian_free_two_trajectory_estimator(self, lorenz: object) -> None:
-        """The flow path is a genuinely different algorithm, so it stays."""
-        lam = float(A.max_lyapunov(lorenz, ic=[1.0, 1.0, 1.0], final_time=60.0, dt=0.05))
-        assert 0.6 < lam < 1.2
-        doc = A.max_lyapunov.__doc__ or ""
-        assert "no usable Jacobian" in doc, "the docstring must say when to choose it"
+        """The Jacobian-free algorithm survived the retirement, behind this door."""
+        doc = A.lyapunov_spectrum.__doc__ or ""
+        assert "two-trajectory" in doc, "the docstring must say the machine is still here"
+        assert "no right-hand side to differentiate" in doc
+
+    def test_the_two_trajectory_knobs_came_with_the_machine(self) -> None:
+        """``d0`` and ``steps_per`` are not formalities — one of them is load-bearing.
+
+        On an exactly-linear expanding flow the growth rate does not depend on
+        the perturbation size, so the default ``d0 = 1e-9`` against a reference
+        that grows without bound loses the separation to floating-point
+        cancellation and the loop reports a collapse.  ``d0=1e-4`` measures
+        ``dx/dt = 0.5 x`` to 1e-6, at ``dt=None`` and at an explicit ``dt``
+        alike — the normalisation regression that keyword exists to pin.
+        """
+
+        def expanding(u: object, dt: float) -> list[float]:
+            return [float(np.asarray(u).ravel()[0]) * float(np.exp(0.5 * dt))]
+
+        w = ts.WrappedSystem(expanding, dim=1, family="ode", ic=[1.0], default_dt=0.05)
+        kw = {"final_time": 10.0, "steps_per": 2, "transient": 10.0, "d0": 1e-4}
+        implicit = float(A.lyapunov_spectrum(w, k=1, ic=[1.0], **kw)[0])
+        explicit = float(A.lyapunov_spectrum(w, k=1, ic=[1.0], dt=0.05, **kw)[0])
+        assert implicit == pytest.approx(0.5, abs=1e-5)
+        assert implicit == explicit, "dt=None must normalise by the real per-step advance"
+
+    @pytest.mark.parametrize("word", ["d0", "steps_per"])
+    def test_a_perturbation_knob_at_a_frame_machine_is_refused_by_name(
+        self, lorenz: object, word: str
+    ) -> None:
+        """Nothing is perturbed when a tangent frame is carried — say so."""
+        with pytest.raises(InvalidParameterError, match="right-hand side to differentiate"):
+            A.lyapunov_spectrum(lorenz, final_time=10.0, **{word: 2})
 
     def test_a_stepper_only_map_still_has_a_machine(self) -> None:
-        """A ``WrappedSystem`` map has no spectrum to delegate to, so it loops."""
+        """A ``WrappedSystem`` map has no tangent tape, so it rescales two orbits.
+
+        Before the fold this raised ``lyapunov_spectrum() needs a system that
+        implements it`` and the only way through was the second door, so
+        retiring that door without folding the machine in would have deleted the
+        capability outright.
+        """
 
         def logistic(x: object, _n: object) -> list[float]:
             v = float(np.asarray(x).ravel()[0])
             return [3.9 * v * (1.0 - v)]
 
         w = ts.WrappedSystem(logistic, dim=1, family="map", ic=[0.5])
-        assert float(A.max_lyapunov(w, ic=[0.3], n=500, steps_per=2, seed=0)) > 0.3
+        spec = A.lyapunov_spectrum(w, k=1, ic=[0.3], n=5_000)
+        assert float(spec[0]) > 0.3
+        assert spec.meta["estimator"] == "two-trajectory"
 
 
 class TestARedundantNameSaysWhyItExists:
@@ -133,17 +173,16 @@ class TestARedundantNameSaysWhyItExists:
 class TestTransientHasOneUnitPerFamily:
     """Time for a flow, iterations for a map, at every door that takes it.
 
-    Measured before the fix: ``max_lyapunov(lorenz, transient=500)`` discarded
-    500 *protocol steps* (~10 time units) while
-    ``lyapunov_spectrum(lorenz, transient=500)`` discarded 500 *time units* --
-    the same word, on the same system, in sibling functions, 50x apart.
+    Measured before the fix: ``lyapunov_spectrum(henon, transient=500)``
+    REFUSED the word outright, so the one family whose estimator needed a
+    burn-in most was the one that could not ask for it -- while the sibling door
+    did it silently and got a different number for the same question.
     """
 
     #: Every public analysis that takes ``transient``, and the unit word its
     #: docstring must contain.  A new door joins the sweep by existing.
     DOORS = (
         "lyapunov_spectrum",
-        "max_lyapunov",
         "gali",
         "zero_one_test",
         "return_map",
@@ -160,21 +199,50 @@ class TestTransientHasOneUnitPerFamily:
         entry = re.sub(r"\s+", " ", doc[start : start + 700]).lower()
         assert "time units" in entry or "iterations" in entry, entry[:200]
 
-    def test_an_ambiguous_step_count_on_a_flow_is_named_not_guessed(self, lorenz: object) -> None:
-        with pytest.raises(InvalidParameterError) as excinfo:
-            A.max_lyapunov(lorenz, transient=500)
-        message = str(excinfo.value)
-        assert "TIME UNITS" in message
-        assert "transient=500.0" in message, "it must offer the time reading explicitly"
-
     def test_a_fractional_iteration_count_on_a_map_is_refused(self, henon: object) -> None:
         with pytest.raises(InvalidParameterError, match="ITERATIONS"):
-            A.max_lyapunov(henon, transient=2.5)
+            A.lyapunov_spectrum(henon, transient=2.5)
 
-    def test_the_default_burn_in_did_not_move(self, lorenz: object) -> None:
-        """``transient=None`` is the historical 500 protocol steps, exactly."""
-        auto = float(A.max_lyapunov(lorenz, ic=[1.0, 1.0, 1.0], final_time=40.0, dt=0.05))
-        assert 0.5 < auto < 1.3
+    def test_a_negative_burn_in_is_refused(self, henon: object) -> None:
+        with pytest.raises(InvalidParameterError, match="ITERATIONS"):
+            A.lyapunov_spectrum(henon, transient=-1)
+
+    def test_an_off_basin_random_draw_is_retried_not_raised(self) -> None:
+        """The burn-in runs BEFORE the family's retry, so it needs its own.
+
+        ``FoldedTowel`` declares no default initial condition and a good
+        fraction of its box is outside the basin.  Measured when the burn-in
+        first landed here with no retry, it failed roughly half its calls with
+        ``ConvergenceError: map diverged at iteration 12`` — a draw the estimator
+        downstream would have simply re-drawn.
+
+        (The FIRST draw is still the family's own unseeded one — that is the
+        documented behaviour of a system with no ``_default_ic`` — so this pins
+        that every call *answers*, not that two calls agree bit for bit.)
+        """
+        towel = ts.systems.FoldedTowel()
+        for _ in range(6):
+            exps = np.asarray(A.lyapunov_spectrum(towel, n=5_000))
+            assert np.all(np.isfinite(exps)), exps
+            # the hyperchaotic folded-towel spectrum, ~(0.43, 0.38, -3.30)
+            assert exps[0] == pytest.approx(0.43, abs=0.05), exps
+
+    def test_an_explicit_ic_that_diverges_is_never_silently_replaced(self) -> None:
+        """A start the caller typed is theirs; re-drawing it would answer elsewhere."""
+        towel = ts.systems.FoldedTowel()
+        with pytest.raises(ConvergenceError):
+            A.lyapunov_spectrum(towel, n=5_000, ic=[50.0, 50.0, 50.0])
+
+    def test_a_map_burns_in_by_default(self, henon: object) -> None:
+        """``transient=None`` is 500 iterations, not nothing.
+
+        The word used to be REFUSED here -- "a map spectrum has nothing to
+        discard" -- which reads the QR frame's reorthonormalisation as if it
+        landed the base orbit on the attractor.  It does not.
+        """
+        assert float(A.lyapunov_spectrum(henon, k=1, n=5_000, ic=[0.1, 0.1])[0]) != float(
+            A.lyapunov_spectrum(henon, k=1, n=5_000, ic=[0.1, 0.1], transient=0)[0]
+        )
 
 
 class TestTheKernelWordIsSolver:
@@ -199,7 +267,6 @@ class TestTheKernelWordIsSolver:
         [
             ({"final_time": 10.0}, "TIME UNITS"),
             ({"dt": 0.1}, "TIME UNITS"),
-            ({"transient": 5.0}, "burn-in"),
             ({"solver": "rk4"}, "numerical kernel"),
         ],
     )
@@ -416,7 +483,6 @@ class TestAnAnsweringDefaultIsReproducible:
     SAMPLING_DOORS = (
         "fixed_points",
         "periodic_orbits",
-        "max_lyapunov",
         "orbit_diagram",
         "poincare_section",
         "return_map",

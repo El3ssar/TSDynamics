@@ -271,8 +271,8 @@ def test_system_quantifiers_agree_chaotic_above_regular():
     """
     chaotic, regular = _chaotic_map(), _regular_map()
 
-    lam_c = float(ts.analysis.max_lyapunov(chaotic, n=3000, ic=_CHAOTIC_IC))
-    lam_r = float(ts.analysis.max_lyapunov(regular, n=3000, ic=_REGULAR_IC))
+    lam_c = float(ts.analysis.lyapunov_spectrum(chaotic, k=1, n=3000, ic=_CHAOTIC_IC).values[0])
+    lam_r = float(ts.analysis.lyapunov_spectrum(regular, k=1, n=3000, ic=_REGULAR_IC).values[0])
     # A positive exponent vs one indistinguishable from zero.
     assert lam_c > 0.3
     assert abs(lam_r) < 0.01

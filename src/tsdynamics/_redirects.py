@@ -90,6 +90,14 @@ RENAMED_IN_V6: dict[str, tuple[str, str]] = {
         "the verb was carrying no information: every analysis finds something, and "
         "what this one returns is the attractors",
     ),
+    "max_lyapunov": (
+        "ts.analysis.lyapunov_spectrum(system, k=1)",
+        "two doors onto one question answered it with two numbers — on Henon at "
+        "one nominal horizon max_lyapunov said 0.4233 and lyapunov_spectrum said "
+        "0.4160 — so the better half (the burn-in, and the Jacobian-free "
+        "two-trajectory machine) moved into lyapunov_spectrum and the second "
+        "door closed",
+    ),
     "periodic_orbit": (
         "ts.analysis.periodic_orbits(system, period_guess, ic=x0)",
         "one verb, one return type: a flow's limit cycle now comes back as an "

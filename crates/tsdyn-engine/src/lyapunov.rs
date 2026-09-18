@@ -352,10 +352,15 @@ fn diverge_msg(e: &IntegrateError) -> String {
 fn classify(e: IntegrateError) -> LyapunovError {
     match e {
         IntegrateError::Interrupted { .. } => LyapunovError::Interrupted,
-        IntegrateError::StepLimit { .. } => LyapunovError::StepBudget(format!(
-            "Lyapunov extended variational integration did not reach the end of a \
-             renormalisation chunk: {e}"
-        )),
+        // `Stalled` is the same condition as `StepLimit`, diagnosed from the step
+        // size instead of after the whole budget, so it lifts to the same error:
+        // a chunk that cannot finish is a solver-settings problem either way.
+        IntegrateError::StepLimit { .. } | IntegrateError::Stalled { .. } => {
+            LyapunovError::StepBudget(format!(
+                "Lyapunov extended variational integration did not reach the end of a \
+                 renormalisation chunk: {e}"
+            ))
+        }
         other => LyapunovError::Diverged(diverge_msg(&other)),
     }
 }

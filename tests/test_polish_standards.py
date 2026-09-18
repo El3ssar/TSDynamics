@@ -369,7 +369,6 @@ def _runtime_cases() -> list[tuple[str, object]]:
         ("mutual_information", lambda: ts.analysis.mutual_information(series, max_delay=20)),
         ("embed", lambda: ts.analysis.embed(series, 3, 1)),
         # -- ScalarResult family --
-        ("max_lyapunov", lambda: ts.analysis.max_lyapunov(_henon(), n=150, ic=[0.1, 0.1])),
         ("kaplan_yorke_dimension", lambda: ts.analysis.kaplan_yorke_dimension([0.42, -1.62])),
         ("estimate_period", lambda: ts.analysis.estimate_period(sine)),
         ("zero_one_test", lambda: ts.analysis.zero_one_test(series)),
@@ -1632,8 +1631,8 @@ _ERRGATE_RUNNABLE: list[_RunnableCase] = [
     # ── wrong shape of call: a model where data belongs, and the reverse ──
     _RunnableCase(
         "system-first-analysis-given-data",
-        lambda: ts.analysis.max_lyapunov(np.asarray(_RUNNABLE_TRAJ.y[:, 0])),
-        "max_lyapunov",
+        lambda: ts.analysis.lyapunov_spectrum(np.asarray(_RUNNABLE_TRAJ.y[:, 0])),
+        "lyapunov_spectrum",
         ("lyapunov_from_data",),
     ),
     _RunnableCase(
@@ -2631,7 +2630,7 @@ def _region_doors() -> list[tuple[str, object]]:
         return ts.analysis.attractors(VanDerPol(), region, n_seeds=4, seed=0, max_steps=200)
 
     def _basin_fractions(region):
-        return ts.analysis.basin_fractions(VanDerPol(), region, n=4, seed=0, max_steps=200)
+        return ts.analysis.basin_fractions(VanDerPol(), region, n_seeds=4, seed=0, max_steps=200)
 
     def _basins(region):
         return ts.analysis.basins(VanDerPol(), region, max_steps=200)

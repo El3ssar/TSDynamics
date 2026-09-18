@@ -328,6 +328,65 @@ def invalid_value(
     return InvalidParameterError(msg)
 
 
+def _nearest(typed: str, candidates: Iterable[str], *, n: int = 3) -> list[str]:
+    """Rank *candidates* as "did you mean" suggestions for what the user *typed*.
+
+    A suggestion that does not resolve is worse than no suggestion, so this
+    applies **two** floors rather than :func:`difflib.get_close_matches`' single
+    similarity cutoff.  Both numbers below were measured against the live solver
+    registry, not chosen by taste:
+
+    * ``difflib`` at its usual ``cutoff=0.5`` answered ``solver="LSODA"`` on a
+      delay system with *"Did you mean: 'ralston'?"* — ratio exactly 0.500, the
+      only suggestion in the sweep under 0.6, and a word sharing no syllable
+      with what was typed.
+    * Raising the cutoff to 0.6 alone then dropped the two *most* useful
+      suggestions in the table, because ``difflib``'s ratio is symmetric in
+      length: ``"euler"`` → ``"euler_maruyama"`` scores 0.526 and ``"mil"`` →
+      ``"milstein"`` 0.545, though each is an exact **prefix** of the name
+      meant.
+
+    So a candidate is offered when it is similar enough (ratio >= 0.6) *or* when
+    one of the two strings is a prefix of the other — an abbreviation or an
+    unfinished name, which is a different kind of near-miss from a typo and is
+    invisible to a symmetric ratio.  Order follows similarity, best first.
+
+    Parameters
+    ----------
+    typed : str
+        What the user actually wrote (compared case-insensitively).
+    candidates : iterable of str
+        The legal names, already scoped to the family that is asking.
+    n : int, default 3
+        Maximum number of suggestions to return.
+
+    Returns
+    -------
+    list of str
+        Up to *n* candidates, best first; empty when nothing is close enough.
+
+    Examples
+    --------
+    >>> _nearest("milstien", ["euler_maruyama", "milstein"])
+    ['milstein']
+    >>> _nearest("mil", ["euler_maruyama", "milstein"])
+    ['milstein']
+    >>> _nearest("LSODA", ["ralston", "rk4", "rk45"])
+    []
+    """
+    import difflib
+
+    low = typed.lower()
+    scored: list[tuple[float, str]] = []
+    for cand in candidates:
+        ratio = difflib.SequenceMatcher(None, low, cand.lower()).ratio()
+        prefix = low.startswith(cand.lower()) or cand.lower().startswith(low)
+        if ratio >= 0.6 or prefix:
+            scored.append((ratio, cand))
+    scored.sort(key=lambda pair: (-pair[0], pair[1]))
+    return [cand for _, cand in scored[:n]]
+
+
 def __dir__() -> list[str]:
     """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
     return sorted(__all__)

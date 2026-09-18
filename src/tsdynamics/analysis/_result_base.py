@@ -74,6 +74,12 @@ _MAX_ITEMS = 10
 #: naming ``str``, a type the caller never typed.
 _NUMERIC_FORMAT_CODES = frozenset("bcdeEfFgGnoxX%")
 
+#: The subset of :data:`_NUMERIC_FORMAT_CODES` that ``float`` cannot render, so
+#: they must be resolved through ``__index__`` (an exact ``int``) instead.
+#: ``n`` is in both — it is locale-aware and accepts either — and is resolved as
+#: an integer here so ``f"{tau:n}"`` prints a delay as ``9``, not ``9.0``.
+_INTEGER_FORMAT_CODES = frozenset("bcdnoxX")
+
 #: The closed vocabulary of **verdict** properties — one adjective-named boolean
 #: per classifying result (contract §4.2 rule 10).  Before v6 the same concept
 #: had six spellings (``chaotic`` / ``is_chaotic(threshold=)`` / ``is_wada`` /
@@ -496,6 +502,86 @@ class AnalysisResult:
             arr = arr.copy()
         return arr
 
+    def __index__(self) -> int:
+        """Return this result as an exact ``int`` — or refuse, never truncate.
+
+        The chaining idiom the library documents and teaches is
+        ``embed(x, dimension=embedding_dimension(x), delay=optimal_delay(x))``:
+        one analysis's answer is the next one's argument.  ``embed`` survived it
+        only because it calls ``int()`` on the way in.  Everywhere Python itself
+        wants a whole number — ``range``, a slice, ``np.zeros``, ``"%d"``, a list
+        index — the interpreter asks for ``__index__`` and nothing else, so
+        measured, ``m = ts.analysis.embedding_dimension(x)`` printed ``m = 4``
+        and ``float(m)``/``int(m)`` both answered ``4`` while ``range(m)`` and
+        ``np.zeros(m)`` raised *"'EmbeddingDimension' object cannot be
+        interpreted as an integer"* — a refusal naming the library's own class
+        for a result that is, to six figures, the integer 4.
+
+        One rule decides, and it is the same shape as :meth:`__array__`'s:
+
+        - a result that **is** a whole number indexes as that number;
+        - a result that is a number but **not** a whole one refuses rather than
+          truncating — ``range(correlation_dimension(traj))`` on :math:`D = 2.06`
+          is not a request for ``range(2)``, it is a units confusion, and
+          silently rounding it is the wrong-answer-with-a-straight-face this
+          library exists to refuse;
+        - a result that is not a number at all refuses, naming the numeric parts
+          it does carry.
+
+        Python's own contract for ``__index__`` is *lossless* conversion, so the
+        integrality test is the specification here, not a house style.
+
+        Returns
+        -------
+        int
+
+        Raises
+        ------
+        TypeError
+            If this result is not a whole number.  The message names the
+            conversion to type instead.
+
+        Examples
+        --------
+        >>> from tsdynamics.analysis.results import CountResult, ScalarResult
+        >>> list(range(CountResult(3)))
+        [0, 1, 2]
+        >>> list(range(ScalarResult(3.0)))        # a whole number, however spelt
+        [0, 1, 2]
+        >>> try:                                  # 2.5 is not, so it refuses
+        ...     range(ScalarResult(2.5))
+        ... except TypeError as err:
+        ...     print(str(err).splitlines()[0])
+        ScalarResult = 2.5 is not a whole number, so it cannot be used as an index, a length or a count (range, a slice and np.zeros all need one).
+        """
+        number = self._as_number()
+        if number is None:
+            carried = self._numeric_field_names()
+            sized = getattr(type(self), "__len__", None)
+            if sized is not None:
+                # A collection's count is its length, and that is almost
+                # certainly what `range(result)` was reaching for.
+                lines = [f"len(result)   # {sized(self)}, how many it found"]
+            elif carried:
+                lines = [f"int(result.{carried[0]})   # index by the part you mean"]
+            else:
+                lines = ["result.to_dict()   # everything it knows"]
+            raise TypeError(
+                f"{type(self).__name__} is not a number, so it cannot be used as an "
+                f"index, a length or a count."
+                + (f"  Its numeric parts are: {', '.join(carried)}." if carried else "")
+                + "".join(f"\n    {line}" for line in lines)
+            )
+        if not float(number).is_integer():
+            raise TypeError(
+                f"{type(self).__name__} = {_fmt(number)} is not a whole number, so it "
+                f"cannot be used as an index, a length or a count "
+                f"(range, a slice and np.zeros all need one)."
+                f"\n    round(result)   # {round(float(number))}, the nearest whole number"
+                f"\n    float(result)   # {_fmt(number)}, the measurement itself"
+            )
+        return int(number)
+
     def __bool__(self) -> bool:
         """Refuse the coin flip — a measurement is not a flag (contract §4.2 rule 7).
 
@@ -571,6 +657,17 @@ class AnalysisResult:
         ``format(str(self), spec)`` and surface ``ValueError: Unknown format code
         'f' for object of type 'str'``, which names ``str`` — a type the caller
         never typed.
+
+        An **integer** presentation code (``d`` / ``x`` / ``b`` / ``o`` / ``c`` /
+        ``n``) is resolved through :meth:`__index__` rather than through the
+        float, for the same reason: :meth:`_as_number` answers in ``float``, so
+        ``f"{embedding_dimension(x):d}"`` on a result printing ``m = 4`` used to
+        raise ``ValueError: Unknown format code 'd' for object of type 'float'``
+        — naming ``float``, another type the caller never typed — while
+        ``"%d" % result`` (which asks ``__index__``) answered ``4``.  Two
+        spellings of one request must not disagree.  A result that is *not* a
+        whole number keeps :meth:`__index__`'s refusal, which explains the
+        mathematics instead of the formatting machinery.
         """
         if not spec:
             return self.headline
@@ -584,6 +681,8 @@ class AnalysisResult:
                     f'\n    Format {pick}, or use f"{{result}}" for the headline.'
                 )
             return format(self.headline, spec)
+        if spec[-1] in _INTEGER_FORMAT_CODES:
+            return format(self.__index__(), spec)
         return format(number, spec)
 
     def _repr_html_(self) -> str:

@@ -41,7 +41,7 @@ IR — so ``import tsdynamics`` stays plot-free (``tsdynamics.viz`` itself is la
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from ._frames import check_overlay, force_requested, role_of
@@ -185,6 +185,7 @@ def plot(
     from tsdynamics.errors import InvalidParameterError
 
     reject_on_keyword(build_kw, "viz.plot()", "ts.plot(a, b, force=True)")
+    reject_kind_keyword(build_kw, "ts.plot()")
     items = unwrap_container(things)
     if not items:
         raise InvalidParameterError("plot() needs at least one thing to plot.")
@@ -262,6 +263,94 @@ def _fresh_copy(spec: PlotSpec) -> PlotSpec:
 def _to_spec(thing: Any, build_kw: dict[str, Any]) -> PlotSpec:
     """Alias of :func:`to_spec` (the name ``Plot.add`` imports)."""
     return to_spec(thing, build_kw)
+
+
+#: ``kind=`` values that name a picture the transform registry spells
+#: differently — the ones a lookup by name could not resolve on its own.  The
+#: three recipes (``"delay"`` / ``"field"``) and the two dimension-suffixed
+#: portraits are the whole of it; everything else in the old vocabulary either
+#: *is* a registered transform name or one of its aliases.
+_KIND_SPELLINGS: dict[str, str] = {
+    "delay": "delay_embedding",
+    "field": "spatial_field",
+    "phase_portrait_2d": "phase_portrait",
+    "phase_portrait_3d": "phase_portrait",
+}
+
+
+def transform_for_kind(value: Any) -> str | None:
+    """Return the transform name that draws what ``kind=value`` used to ask for."""
+    from .transforms import names as transform_names
+
+    word = str(getattr(value, "value", value))
+    if word in _KIND_SPELLINGS:
+        return _KIND_SPELLINGS[word]
+    known = set(transform_names())
+    if word in known:
+        return word
+    try:  # an alias (``"recurrence_plot"`` → ``recurrence``) resolves through get()
+        from .transforms import get as get_transform
+
+        return str(get_transform(word).name)
+    except Exception:
+        return None
+
+
+def reject_kind_keyword(kw: dict[str, Any], door: str, spelling: str | None = None) -> None:
+    """Refuse ``kind=`` at a plotting door, naming the **positional** spelling.
+
+    There were two vocabularies for "which picture", and they disagreed:
+    measured at v6 round 7, ``ts.plot(tr, kind="time_series")`` and
+    ``ts.plot(tr, "time_series")`` both worked, neither warned, and
+    ``a.to_dict() != b.to_dict()`` — the ``kind=`` route built a spec with **no
+    frame** (so it could not be frame-checked for an overlay) and a y axis
+    labelled with the *first* component of a three-component plot.  Two grammars
+    for one argument is the silent-wrong-answer defect, not flexibility
+    (CONTRACT corollary C3), so there is one now: **a picture is named
+    positionally, by its transform.**
+
+    Everything ``kind=`` uniquely served survives under that one spelling —
+    including the two recipes that were never :class:`PlotKind` members
+    (``kind="delay"`` → ``"delay_embedding"``, ``kind="field"`` →
+    ``"spatial_field"``) and their per-kind options (``delay=`` / ``delay_time=``
+    / ``color_by=`` / ``transpose=``), which the transforms accept by the same
+    names.
+
+    Parameters
+    ----------
+    kw : dict
+        The door's leftover keywords.  ``kind`` is popped before raising.
+    door : str
+        How the caller spells this door, ``"ts.plot()"``-style — it opens the
+        message.
+    spelling : str, optional
+        A ``str.format`` template taking ``name``, for the line the message hands
+        back.  Defaults to the front door's ``<door>(subject, 'name')``; an
+        *object* door passes its own (``"traj.plot.{name}()"``), because a method
+        has no positional slot to put a transform in.
+    """
+    if "kind" not in kw:
+        return
+    from tsdynamics.errors import InvalidParameterError, remedy
+
+    value = kw.pop("kind")
+    name = transform_for_kind(value)
+    if name is None:
+        from .transforms import names as transform_names
+
+        tail = (
+            f"{door} names a picture positionally, by its transform — and {value!r} is "
+            f"not one. ts.viz.transforms.names() lists all {len(transform_names())}."
+        )
+        raise InvalidParameterError(f"{door} has no kind= keyword. {tail}")
+    template = spelling if spelling is not None else f"{door[:-2]}(subject, {{name!r}})"
+    raise InvalidParameterError(
+        f"{door} has no kind= keyword (you passed kind={value!r}); a picture is named "
+        f"POSITIONALLY, by its transform — one vocabulary, not two."
+        + remedy(template.format(name=name))
+        + "\nts.viz.transforms.names() lists them all; ts.viz.compatibility() shows how "
+        "each one can be drawn."
+    )
 
 
 def _plot_spec_of(thing: Any) -> Any:
@@ -710,6 +799,65 @@ def _disambiguate_labels(layers: list[Layer]) -> None:
         layer.label = f"{base} ({seen[base]})"
 
 
+def warn_on_offscreen_layers(spec: PlotSpec) -> None:
+    """Warn when a **legended** curve lies entirely outside the axes it is drawn in.
+
+    A legend entry is a claim that the curve is in this picture.  When the axes
+    were framed by something else — a field's evaluation window, an explicit
+    ``xlim=``, a panel sharing limits — a curve can fall off the canvas
+    completely and still be named in the key: the figure then asserts that a
+    curve is somewhere it is not, which is a wrong answer rather than a cosmetic
+    one.  The auto-window now unions over every subject (see
+    ``_frontdoor._window_over_data``), so this is the backstop for the windows
+    the caller chose.
+    """
+    import warnings
+
+    import numpy as np
+
+    from .render.caps import VisualizationDegraded
+
+    if spec.kind is PlotKind.COMPOSITE:
+        for panel in spec.panels:
+            warn_on_offscreen_layers(panel)
+        return
+    bounds = {"x": spec.x.limits if spec.x else None, "y": spec.y.limits if spec.y else None}
+    if not any(bounds.values()):
+        return
+    missing: list[str] = []
+    for layer in spec.layers:
+        if not layer.label:
+            continue
+        for channel, limits in bounds.items():
+            values = layer.data.get(channel)
+            if limits is None or values is None:
+                continue
+            finite = np.asarray(values, dtype=float).ravel()
+            finite = finite[np.isfinite(finite)]
+            lo, hi = float(limits[0]), float(limits[1])
+            # A layer that is CONSTANT on this channel is a datum — a reference
+            # line a transform drew to be measured against (``λ = 0`` on a
+            # convergence plot) — and a datum sitting outside the data's own
+            # scale is the scale choice, not a lost curve.  Only a curve that
+            # actually goes somewhere can be *missing* from the picture.
+            if finite.size < 2 or finite.min() == finite.max():
+                continue
+            if finite.max() < lo or finite.min() > hi:
+                missing.append(
+                    f"{layer.label!r} ({channel} in [{finite.min():.3g}, {finite.max():.3g}])"
+                )
+                break
+    if not missing:
+        return
+    warnings.warn(
+        f"{', '.join(missing)} {'is' if len(missing) == 1 else 'are'} entirely outside the "
+        f"axes (x={bounds['x']}, y={bounds['y']}) but still in the legend — the figure is "
+        "naming a curve you cannot see. Widen the limits, or drop the subject.",
+        VisualizationDegraded,
+        stacklevel=3,
+    )
+
+
 #: Layer marks that paint every pixel of their extent.  Two of them on one axes
 #: means the second hides the first.
 _OPAQUE_MARKS: frozenset[str] = frozenset({"image"})
@@ -755,15 +903,70 @@ def _source_tags(specs: list[PlotSpec]) -> list[str]:
         str(s.meta.get(LABEL_META_KEY) or "") or s.title or _transform_tag(s) or f"series {i + 1}"
         for i, s in enumerate(specs)
     ]
+    settings = _parameter_tags(specs, titles)
     counts: dict[str, int] = {}
     tags: list[str] = []
-    for title in titles:
-        if titles.count(title) > 1:
+    for i, title in enumerate(titles):
+        if settings.get(i):
+            tags.append(settings[i])
+        elif titles.count(title) > 1:
             counts[title] = counts.get(title, 0) + 1
             tags.append(f"{title} ({counts[title]})")
         else:
             tags.append(title)
     return tags
+
+
+def _parameter_tags(specs: list[PlotSpec], titles: list[str]) -> dict[int, str]:
+    """Name colliding curves by **the parameter that differs**, not by ``(1)`` / ``(2)``.
+
+    Overlaying one system at two parameter values is the commonest figure in this
+    field, and the legend read ``VanDerPol (1)`` / ``VanDerPol (2)`` — argument
+    slots, which say nothing about the dynamics and are the wrong way round as
+    soon as you reorder the call.  The values were in ``traj.meta["params"]`` the
+    whole time, so the legend now reads ``mu = 1`` / ``mu = 3``, and the system's
+    name (which every curve shares) stays where it belongs: the title.
+
+    Applied only when it is unambiguous — every colliding spec names the same
+    system, every one records its parameters, and the differing keys give a
+    **distinct** value to each.  Anything else falls back to ``(N)``, because a
+    legend that names two curves the same thing is the defect this exists to fix.
+    """
+    groups: dict[str, list[int]] = {}
+    for i, title in enumerate(titles):
+        groups.setdefault(title, []).append(i)
+    out: dict[int, str] = {}
+    for members in groups.values():
+        if len(members) < 2:
+            continue
+        metas = [specs[i].meta for i in members]
+        systems = {str(m.get("system") or "") for m in metas}
+        params = [m.get("params") for m in metas]
+        if len(systems) != 1 or "" in systems or not all(isinstance(p, Mapping) for p in params):
+            continue
+        keys = sorted(set().union(*(set(p) for p in params)))  # type: ignore[arg-type]
+        differing = [
+            k
+            for k in keys
+            if len({_fmt_param(p.get(k)) for p in params}) > 1  # type: ignore[union-attr]
+        ]
+        if not 1 <= len(differing) <= 2:
+            continue
+        named = {
+            i: ", ".join(f"{k} = {_fmt_param(p.get(k))}" for k in differing)  # type: ignore[union-attr]
+            for i, p in zip(members, params, strict=True)
+        }
+        if len(set(named.values())) == len(members):
+            out.update(named)
+    return out
+
+
+def _fmt_param(value: Any) -> str:
+    """Render a parameter value the way a caption would — ``1`` not ``1.0``."""
+    try:
+        return format(float(value), ".6g")
+    except (TypeError, ValueError):
+        return str(value)
 
 
 #: The provenance stamp ``ts.viz.draw`` puts on hand-built arrays.  It is real

@@ -49,6 +49,7 @@ from ...errors import (
     invalid_value,
     remedy,
 )
+from .._common import runaway_meta
 from ._common import DimensionResult, _as_points, _diameter
 from ._scaling import ScalingFit, fit_scaling_region
 
@@ -492,6 +493,10 @@ def _spectrum_core(
     mask = _informative_mask(occ, n, scales, diam, min_occupancy, min_resolution)
     where = np.nonzero(mask)[0]
 
+    # Read once, outside the loop: every order is measured on the same point
+    # set, so a whole spectrum must warn about a runaway orbit exactly once.
+    escape = runaway_meta(points, analysis=analysis)
+
     out: dict[float, DimensionResult] = {}
     for q in qs:
         y = np.array([_partition_ordinate(c, n, q) for c in occ])
@@ -510,6 +515,7 @@ def _spectrum_core(
                 "kind": "generalized",
                 "q": float(q),
                 "n_components": int(points.shape[1]),
+                **escape,
             },
         )
     return out

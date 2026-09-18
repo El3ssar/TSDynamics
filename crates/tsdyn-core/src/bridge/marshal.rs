@@ -587,9 +587,16 @@ const STEP_BUDGET_ADVICE: &str = "the state is still finite, so this is a stalle
 /// variant and its own advice.
 pub(super) fn integrate_failure(e: IntegrateError) -> EngineError {
     match e {
-        IntegrateError::StepLimit { .. } => EngineError::StepBudget(format!(
-            "integration did not reach the final time: {e} — {STEP_BUDGET_ADVICE}"
-        )),
+        // `Stalled` is `StepLimit` diagnosed early — same condition, same finite
+        // state, same remedy — so it must arrive as the same error with the same
+        // advice. It exists so that advice arrives in milliseconds instead of
+        // after the whole 1e8-step budget; changing what it *says* would trade a
+        // latency fix for a vocabulary regression.
+        IntegrateError::StepLimit { .. } | IntegrateError::Stalled { .. } => {
+            EngineError::StepBudget(format!(
+                "integration did not reach the final time: {e} — {STEP_BUDGET_ADVICE}"
+            ))
+        }
         IntegrateError::Interrupted { .. } => EngineError::Interrupted,
         IntegrateError::AllocFailed(a) => EngineError::OutOfMemory(a.to_string()),
         IntegrateError::NonFinite { .. }

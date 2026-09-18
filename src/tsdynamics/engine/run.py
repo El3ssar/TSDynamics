@@ -540,6 +540,23 @@ def integrate(
     ConvergenceError
         If the integration diverged or the step collapsed before the final time
         (a non-finite result).  Subclasses :class:`RuntimeError`.
+    StepBudgetError
+        If the march could not reach ``final_time`` with the state still finite —
+        a *stalled* run, not a divergence, so the remedy is a solver setting.
+        Subclasses :class:`ConvergenceError`.
+
+        .. versionchanged:: 6.0
+            Raised **promptly**.  The only guard used to be the engine's
+            per-segment step *count* (1e8), so a start whose step collapsed was
+            refused correctly but only after the whole budget had been spent —
+            measured at 33 s on ``LorenzBounded`` from a bad initial condition,
+            and multiplied by every bad value in a parameter sweep.  The engine
+            now also derives a step *floor* from the integration span
+            (``tsdyn_engine::HOPELESS_STEPS``) and reads the same condition off
+            the step size in O(1): the same error, with the same advice, in
+            0.41 s.  A genuine blow-up keeps its :class:`ConvergenceError`
+            divergence diagnosis — the floor grants a bounded grace so the
+            escape guard keeps first refusal.
     EngineNotAvailableError
         For ``"interp"``/``"jit"`` when :mod:`tsdynamics._rust` is not built.
     NotImplementedError

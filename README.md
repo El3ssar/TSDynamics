@@ -162,7 +162,7 @@ print(ts.analysis.fixed_points(ts.systems.Henon()))
 #     [1] x* = [0.6314 0.1894]  unstable  |λ|max = 1.924
 
 # Maximal Lyapunov exponent — no Jacobian needed
-ts.analysis.max_lyapunov(ts.systems.Lorenz(ic=[1, 1, 1]), dt=0.05)        # ≈ 0.90
+ts.analysis.lyapunov_spectrum(ts.systems.Lorenz(), k=1, ic=[1, 1, 1])     # ≈ 0.90
 ```
 
 Plus: **attractors & basins** of any flow or map, correlation/Rényi **fractal

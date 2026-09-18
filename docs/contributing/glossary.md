@@ -125,7 +125,7 @@ naming gate. (The gate-enforceable rules are in §7.)
 - A few flow estimators parametrise their run by a *count of rescaling cycles*
   (canonical `n`, replacing v3's `n_rescale`) rather than `final_time`; there
   `transient` is in **protocol steps**, following the count horizon (e.g.
-  `max_lyapunov`).
+  the Jacobian-free two-trajectory branch of `lyapunov_spectrum`).
 - `transient` **never** means "section crossings." A Poincaré / return view that
   wants to discard the first few section hits uses the dedicated `skip_crossings`
   keyword (§5), so the unit of `transient` stays unambiguous.
@@ -216,12 +216,12 @@ name raises a precise "renamed to *X* in v4.0" error for one release.
 
 | v3 | v4 | Scope |
 |---|---|---|
-| `sys`, `sys_or_traj`, `map_sys`, `source`, `observable` (1st arg) | `system` | `lyapunov_spectrum`, `max_lyapunov`, `orbit_diagram`, `periodic_orbits`, `poincare_section`, `return_map`, `zero_one_test` |
+| `sys`, `sys_or_traj`, `map_sys`, `source`, `observable` (1st arg) | `system` | `lyapunov_spectrum`, `orbit_diagram`, `periodic_orbits`, `poincare_section`, `return_map`, `zero_one_test` |
 | `x`, `series` (1st arg) | `data` | `lyapunov_from_data` |
 | `observable` (kwarg) | `component` | `return_map` |
 | `components` | `component` | `orbit_diagram` |
 | `burn_in` | `transient` | `periodic_orbit` |
-| `steps`, `n_rescale` | `n` *(or `final_time` for flows)* | `gali`, `expansion_entropy`, `max_lyapunov`, `poincare_section`, `return_map` |
+| `steps`, `n_rescale` | `n` *(or `final_time` for flows)* | `gali`, `expansion_entropy`, `lyapunov_spectrum`, `poincare_section`, `return_map` |
 | `tau`, `lag` | `delay` | `embed`, `embedding_dimension`, `lyapunov_from_data` |
 | `max_lag` | `max_delay` | `optimal_delay`, `mutual_information`, `estimate_period`, `autocorrelation` |
 | `m`, `emb_dim` | `dimension` | `embed`, `lyapunov_from_data` |

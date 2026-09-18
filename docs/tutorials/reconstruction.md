@@ -181,7 +181,7 @@ float(res)             # ≈ 0.074   per unit time — positive, so chaotic
 ```python
 # the truth, from the full state and the equations
 ts.analysis.correlation_dimension(full.y[1000:], theiler=tau)                     # ≈ 1.75
-float(ts.analysis.max_lyapunov(ts.systems.Rossler(ic=[1.0, 0.0, 0.0]), dt=0.05, seed=0))  # ≈ 0.062
+ts.analysis.lyapunov_spectrum(ts.systems.Rossler(), k=1, ic=[1.0, 0.0, 0.0])  # ≈ 0.07
 ```
 
 $D_2 = 1.74$ from one channel versus $1.75$ from the full state; $\lambda \approx

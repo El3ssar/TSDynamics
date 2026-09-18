@@ -4,8 +4,8 @@ A2 took every analysis off every object.  What is left is a *namespace* and a
 *search*, and if either is bad the capability is unreachable — so the surface
 itself is the contract:
 
-* ``ts.analysis.<TAB>`` is exactly 53 names, generated from the registry;
-* ``ts.analysis.__doc__`` groups the 50 analyses by what you are holding;
+* ``ts.analysis.<TAB>`` is exactly 52 names, generated from the registry;
+* ``ts.analysis.__doc__`` groups the 49 analyses by what you are holding;
 * ``find()`` answers a question OR a subject, with a frozen ``GOLD`` table that
   fails a build rather than a user's REPL;
 * the ten implementation subpackages stop shadowing, and a guess at a renamed
@@ -24,7 +24,10 @@ from tsdynamics import registry
 from tsdynamics.analysis import _discovery
 from tsdynamics.errors import MovedInV6
 
-# The contract's §2.4 listing, verbatim.  53 names: 50 analyses + find/register/results.
+# The contract's §2.4 listing, verbatim.  52 names: 49 analyses + find/register/results.
+# ``max_lyapunov`` left in v6 round 6: it was a SECOND door onto the maximal
+# exponent and answered with a different number, so it folded into
+# ``lyapunov_spectrum(system, k=1)``.
 CONTRACT_NAMES = sorted(
     [
         "attractors",
@@ -57,7 +60,6 @@ CONTRACT_NAMES = sorted(
         "kaplan_yorke_dimension",
         "lyapunov_from_data",
         "lyapunov_spectrum",
-        "max_lyapunov",
         "mutual_information",
         "nullclines",
         "optimal_delay",
@@ -85,11 +87,11 @@ CONTRACT_NAMES = sorted(
 
 
 class TestTheTabSurface:
-    """``ts.analysis.<TAB>`` is the contract's 53 names, generated."""
+    """``ts.analysis.<TAB>`` is the contract's 52 names, generated."""
 
     def test_all_is_exactly_the_contract_listing(self):
         assert sorted(ts.analysis.__all__) == CONTRACT_NAMES
-        assert len(CONTRACT_NAMES) == 53
+        assert len(CONTRACT_NAMES) == 52
 
     def test_dir_mirrors_all(self):
         assert dir(ts.analysis) == sorted(ts.analysis.__all__)
@@ -103,7 +105,7 @@ class TestTheTabSurface:
         registered = set(registry.analyses.names())
         listed = set(ts.analysis.__all__) - {"find", "register", "results"}
         assert listed == registered
-        assert len(registered) == 50
+        assert len(registered) == 49
 
     def test_the_32_result_classes_are_bound_but_off_the_tab_surface(self):
         """C2 — a type you only ever get *back* lives at one address."""
@@ -125,7 +127,7 @@ class TestTheGroupedMap:
             groups[_discovery.group_of(e.metadata["subjects"])] = (
                 groups.get(_discovery.group_of(e.metadata["subjects"]), 0) + 1
             )
-        assert groups == {"system": 21, "data": 23, "result": 6}
+        assert groups == {"system": 20, "data": 23, "result": 6}
 
     def test_doc_names_every_analysis_and_the_two_ways_in(self):
         doc = ts.analysis.__doc__
@@ -164,7 +166,6 @@ class TestTheGroupedMap:
 GOLD: dict[str, set[str]] = {
     "is this chaotic": {
         "lyapunov_spectrum",
-        "max_lyapunov",
         "zero_one_test",
         "gali",
         "expansion_entropy",
@@ -172,14 +173,13 @@ GOLD: dict[str, set[str]] = {
     },
     "how do I know if it is chaotic": {
         "lyapunov_spectrum",
-        "max_lyapunov",
         "zero_one_test",
         "gali",
         "expansion_entropy",
         "lyapunov_from_data",
     },
-    "chaos": {"lyapunov_spectrum", "max_lyapunov", "zero_one_test", "gali", "expansion_entropy"},
-    "chaotic": {"lyapunov_spectrum", "max_lyapunov", "zero_one_test", "gali", "expansion_entropy"},
+    "chaos": {"lyapunov_spectrum", "zero_one_test", "gali", "expansion_entropy"},
+    "chaotic": {"lyapunov_spectrum", "zero_one_test", "gali", "expansion_entropy"},
     "fractal dimension": {
         "correlation_dimension",
         "box_counting_dimension",
@@ -201,7 +201,7 @@ GOLD: dict[str, set[str]] = {
     },
     "recurrence plot": {"recurrence_matrix", "rqa", "windowed_rqa"},
     "multistability": {"basins", "attractors", "basin_fractions"},
-    "predictability": {"uncertainty_exponent", "lyapunov_spectrum", "max_lyapunov"},
+    "predictability": {"uncertainty_exponent", "lyapunov_spectrum"},
     "surface of section": {"poincare_section"},
 }
 
@@ -254,10 +254,10 @@ class TestFind:
         assert all(callable(f) for f in hits)
         assert {"attractors", "basin_fractions", "basins"} <= {f.__name__ for f in hits}
 
-    def test_a_flow_gets_21_and_a_map_gets_14(self):
+    def test_a_flow_gets_20_and_a_map_gets_13(self):
         """A map has no vector field, so the seven field analyses drop out."""
-        assert len(ts.analysis.find(ts.systems.Lorenz())) == 21
-        assert len(ts.analysis.find(ts.systems.Henon())) == 14
+        assert len(ts.analysis.find(ts.systems.Lorenz())) == 20
+        assert len(ts.analysis.find(ts.systems.Henon())) == 13
         field = {
             "flow_field",
             "streamlines",
@@ -271,8 +271,8 @@ class TestFind:
         assert not (got & field)
 
     def test_a_class_answers_like_its_instance(self):
-        assert len(ts.analysis.find(ts.systems.Lorenz)) == 21
-        assert len(ts.analysis.find(ts.systems.Henon)) == 14
+        assert len(ts.analysis.find(ts.systems.Lorenz)) == 20
+        assert len(ts.analysis.find(ts.systems.Henon)) == 13
 
     def test_a_trajectory_gets_24_and_a_bare_array_the_same(self):
         """24 since ``zero_one_test`` was registered for data as well as systems.
@@ -292,11 +292,11 @@ class TestFind:
         assert [f.__name__ for f in ts.analysis.find(spectrum)] == ["kaplan_yorke_dimension"]
 
     def test_no_argument_lists_everything(self):
-        assert len(ts.analysis.find()) == 50
+        assert len(ts.analysis.find()) == 49
 
     def test_the_repr_is_the_grouped_table(self):
         out = repr(ts.analysis.find(ts.systems.Henon()))
-        assert out.startswith("14 analyses take a Henon")
+        assert out.startswith("13 analyses take a Henon")
         assert "You have a SYSTEM" in out
 
     def test_a_subject_that_is_neither_says_so(self):
@@ -538,7 +538,7 @@ class TestTheLiveDoorsUseTheBuilder:
             getattr(ts.analysis, name)(subject)
         assert str(excinfo.value) == str(_discovery.wrong_subject(name, cls, held))
 
-    @pytest.mark.parametrize("name", ["lyapunov_spectrum", "fixed_points", "max_lyapunov"])
+    @pytest.mark.parametrize("name", ["lyapunov_spectrum", "fixed_points", "periodic_orbits"])
     def test_a_system_first_door_reached_with_a_trajectory(self, name):
         traj = ts.systems.Lorenz().run(final_time=2.0, dt=0.1, ic=[1.0, 1.0, 1.0])
         with pytest.raises(ts.InvalidInputError) as excinfo:
@@ -562,7 +562,7 @@ class TestTheLiveDoorsUseTheBuilder:
         case where the shortest message is the least useful one.
         """
         with pytest.raises(ts.InvalidInputError) as excinfo:
-            ts.analysis.max_lyapunov(np.zeros(64))
+            ts.analysis.lyapunov_spectrum(np.zeros(64))
         text = str(excinfo.value)
         assert "ts.analysis.lyapunov_from_data(traj)" in text
         assert "ts.analysis.find(traj)" in text
@@ -637,3 +637,72 @@ class TestNoRemovedNameIsReadAsAString:
         assert not offenders, "removed names still read in tsdynamics.analysis:\n  " + "\n  ".join(
             offenders
         )
+
+
+class TestFindMatchesIntentNotOnlyWords:
+    """A question asked in the reader's words must still land.
+
+    ``find`` scores against the registry's own vocabulary, so a field that has
+    two names for everything — and a reader who is an engineer, not a
+    dynamicist — falls through it.  Measured before this widening over 128
+    plausible questions, **20** returned nothing while the analysis that answers
+    them was registered the whole time.
+    """
+
+    #: question -> the analysis that must appear in the top 3.  Grouped by whose
+    #: vocabulary it is.  A row here is a claim that the library HAS an answer.
+    INTENT = {
+        # the engineer's words
+        "robust": "resilience",
+        "robustness": "resilience",
+        "resilient": "resilience",
+        "safety margin": "resilience",
+        "design margin": "resilience",
+        "how much disturbance can it take": "resilience",
+        "failure": "resilience",
+        "will it withstand a shock": "resilience",
+        "buffer": "resilience",
+        "tolerance to shocks": "resilience",
+        # the field's words
+        "critical transition": "tipping_points",
+        "early warning": "tipping_points",
+        "regime shift": "tipping_points",
+        "hysteresis": "continuation",
+        "crisis": "tipping_points",
+        "irreversible": "tipping_points",
+        "multistability": "attractors",
+        "bistability": "attractors",
+        "alternative stable states": "attractors",
+        "sensitive dependence": "lyapunov_spectrum",
+        "predictability horizon": "lyapunov_spectrum",
+        "forecast": "lyapunov_spectrum",
+        "intermittency": "rqa",
+        "laminar": "rqa",
+        "quasiperiodic": "gali",
+        "torus": "gali",
+        "separatrix": "basins",
+        "watershed": "basins",
+        "riddled": "wada_property",
+        "reconstruct": "embed",
+        "state space reconstruction": "embed",
+        "takens": "embed",
+    }
+
+    @pytest.mark.parametrize(("question", "wanted"), sorted(INTENT.items()))
+    def test_the_question_reaches_the_analysis_that_answers_it(self, question, wanted):
+        top = [f.__name__ for f in ts.analysis.find(question)][:3]
+        assert wanted in top, f"{question!r} -> {top}"
+
+    #: Questions the library genuinely cannot answer.  They must stay EMPTY: a
+    #: synonym row invented for one of these would answer a question nobody here
+    #: can, which is the failure mode the whole curation exists to prevent.
+    NO_ANSWER = ("synchronisation", "resonance", "entrainment", "noise floor", "stiffness")
+
+    @pytest.mark.parametrize("question", NO_ANSWER)
+    def test_a_question_with_no_answer_here_stays_empty(self, question):
+        assert list(ts.analysis.find(question)) == []
+
+    def test_a_dead_end_says_where_to_look_instead(self):
+        out = repr(ts.analysis.find("synchronisation"))
+        assert "nothing matches" in out
+        assert "ts.analysis.find(subject)" in out

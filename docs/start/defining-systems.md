@@ -255,7 +255,7 @@ sysm = ts.WrappedSystem(step, dim=1, family="map",
                         ic=[0.5], variables=("x",))
 
 traj = sysm.run(500)                       # a Trajectory, like any other family
-float(ts.analysis.max_lyapunov(sysm, ic=[0.3]))     # ≈ 0.5 — chaotic
+ts.analysis.lyapunov_spectrum(sysm, k=1, ic=[0.3])  # ≈ 0.5 — chaotic
 ts.plot(traj)                              # and it plots like any other
 ```
 

@@ -54,7 +54,7 @@ the original paper for each method your results depend on:
 | You used | Cite |
 | -------- | ---- |
 | `lyapunov_spectrum` (QR / tangent dynamics) | Benettin, Galgani, Giorgilli & Strelcyn, *Lyapunov characteristic exponents for smooth dynamical systems…*, Meccanica **15**, 9–30 (1980) |
-| `max_lyapunov` (two-trajectory rescaling) | Benettin, Galgani & Strelcyn, *Kolmogorov entropy and numerical experiments*, Phys. Rev. A **14**, 2338 (1976) |
+| `lyapunov_spectrum` (two-trajectory rescaling, Jacobian-free fallback) | Benettin, Galgani & Strelcyn, *Kolmogorov entropy and numerical experiments*, Phys. Rev. A **14**, 2338 (1976) |
 | `lyapunov_from_data` (Kantz) | Kantz, *A robust method to estimate the maximal Lyapunov exponent of a time series*, Phys. Lett. A **185**, 77 (1994) |
 | `lyapunov_from_data` (Rosenstein) | Rosenstein, Collins & De Luca, *A practical method for calculating largest Lyapunov exponents from small data sets*, Physica D **65**, 117 (1993) |
 | `kaplan_yorke_dimension` | Kaplan & Yorke, *Chaotic behavior of multidimensional difference equations*, LNM **730**, Springer (1979) |

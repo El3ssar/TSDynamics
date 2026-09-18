@@ -93,7 +93,6 @@ _EXPECTED_ANALYSES = frozenset(
     {
         # A-LYAP
         "lyapunov_spectrum",
-        "max_lyapunov",
         "kaplan_yorke_dimension",
         "lyapunov_from_data",
         # A-CHAOS
@@ -290,7 +289,6 @@ def _runtime_cases() -> list[tuple[str, object]]:
             "lyapunov_spectrum",
             lambda: ts.analysis.lyapunov_spectrum(_henon(), k=2, n=1500, ic=[0.1, 0.1]),
         ),
-        ("max_lyapunov", lambda: ts.analysis.max_lyapunov(_henon(), n=150, ic=[0.1, 0.1])),
         ("kaplan_yorke_dimension", lambda: ts.analysis.kaplan_yorke_dimension(spectrum)),
         ("zero_one_test", lambda: ts.analysis.zero_one_test(series)),
         ("correlation_dimension", lambda: ts.analysis.correlation_dimension(traj)),

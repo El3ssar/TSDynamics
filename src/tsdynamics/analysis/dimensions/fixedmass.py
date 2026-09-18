@@ -35,6 +35,7 @@ from typing import Any
 
 import numpy as np
 
+from .._common import runaway_meta
 from ._common import (
     DimensionResult,
     _as_points,
@@ -219,6 +220,7 @@ def fixed_mass_dimension(
             # One coordinate means "points on a line" — the estimator answers
             # D ~ 1 whatever the attractor is, so the result says so.
             "n_components": int(points.shape[1]),
+            **runaway_meta(points, analysis="fixed_mass_dimension"),
         },
     )
 

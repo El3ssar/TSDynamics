@@ -123,26 +123,93 @@ class TestFixedPoints:
 
 
 # ---------------------------------------------------------------------------
-# max_lyapunov (fast on maps)
+# the maximal exponent — one door since v6 (``max_lyapunov`` was retired)
 # ---------------------------------------------------------------------------
 
 
-class TestMaxLyapunov:
-    def test_logistic_r4_ln2(self) -> None:
+class TestTheMaximalExponentHasOneDoor:
+    """``lyapunov_spectrum(system, k=1)`` is the only way to ask for lambda_1.
+
+    Two public functions answering one question with two different numbers is a
+    trap: measured at HEAD before this change, ``max_lyapunov(henon, ic=[0.1,
+    0.1])`` returned 0.4232673 and ``lyapunov_spectrum(henon, k=1, n=20000,
+    ic=[0.1, 0.1])`` returned 0.4159989 — one nominal question, two answers,
+    and nothing told the reader which to use.
+    """
+
+    def test_asking_for_the_old_name_hands_back_the_new_line(self) -> None:
+        """A guess at ``max_lyapunov`` names the spelling that replaced it."""
+        with pytest.raises(ImportError, match=r"lyapunov_spectrum\(system, k=1\)"):
+            ts.analysis.max_lyapunov  # noqa: B018 - the attribute access IS the test
+
+    def test_logistic_r4_is_ln2(self) -> None:
         m = ts.systems.Logistic(params={"r": 4.0})
-        # v6: on a map ``n`` counts ITERATIONS, the same unit lyapunov_spectrum
-        # counts in — it used to count rescaling *cycles* of ``steps_per`` each,
-        # so the two doors disagreed for one nominal n.
-        lam = ts.analysis.max_lyapunov(m, ic=[0.3], n=1800, seed=1)
+        lam = float(np.asarray(ts.analysis.lyapunov_spectrum(m, k=1, n=1800, ic=[0.3]))[0])
         assert lam == pytest.approx(np.log(2), abs=0.1)
 
-    def test_henon(self) -> None:
-        lam = ts.analysis.max_lyapunov(ts.systems.Henon(), ic=[0.1, 0.1], n=1800, seed=1)
-        assert lam == pytest.approx(0.42, abs=0.12)
+    def test_henon_matches_the_literature(self) -> None:
+        lam = float(
+            np.asarray(
+                ts.analysis.lyapunov_spectrum(ts.systems.Henon(), k=1, n=1800, ic=[0.1, 0.1])
+            )[0]
+        )
+        assert lam == pytest.approx(0.41922, abs=0.05)
+
+    def test_a_map_burns_in_before_it_measures(self) -> None:
+        """The burn-in the retired door had is now this one's default.
+
+        A Lyapunov exponent is a property of the ATTRACTOR, so the iterates
+        spent falling onto it are not part of it.  This door used to *refuse*
+        ``transient`` on a map — "its QR iteration reorthonormalises from the
+        initial condition, so there is nothing to discard" — which confuses the
+        tangent frame with the base orbit, and was the whole of the numeric
+        disagreement above.
+        """
+        hen = ts.systems.Henon()
+        cold = float(
+            np.asarray(
+                ts.analysis.lyapunov_spectrum(hen, k=1, n=20_000, ic=[0.1, 0.1], transient=0)
+            )[0]
+        )
+        default = float(
+            np.asarray(ts.analysis.lyapunov_spectrum(hen, k=1, n=20_000, ic=[0.1, 0.1]))[0]
+        )
+        assert cold != default, "transient= is being ignored on a map"
+        # and the burnt-in one is the number the retired door used to give
+        assert default == pytest.approx(0.4232673343379148, abs=1e-9)
+
+    def test_a_system_with_no_jacobian_is_still_answered(self) -> None:
+        """A ``WrappedSystem`` has no RHS to differentiate — and no second door.
+
+        ``max_lyapunov`` was the only way to reach the Jacobian-free
+        two-trajectory machine; retiring it without folding that in would have
+        deleted a capability, so ``lyapunov_spectrum`` now owns it.
+        """
+
+        def step(u, n):
+            x = u[0]
+            for _ in range(int(n)):
+                x = 3.9 * x * (1 - x)
+            return [x]
+
+        w = ts.WrappedSystem(step, dim=1, family="map", ic=[0.5])
+        spec = ts.analysis.lyapunov_spectrum(w, k=1, ic=[0.3])
+        assert float(np.asarray(spec)[0]) == pytest.approx(0.494, abs=0.02)
+        assert spec.meta["estimator"] == "two-trajectory"
+
+    def test_two_trajectories_resolve_one_exponent_and_say_so(self) -> None:
+        """``k > 1`` off a frame-less machine is refused by name, not truncated."""
+
+        def step(u, n):
+            return [0.5 * u[0] + 0.1 * u[1], 0.3 * u[1]]
+
+        w = ts.WrappedSystem(step, dim=2, family="map", ic=[0.5, 0.5])
+        with pytest.raises(ValueError, match="k=2 frame"):
+            ts.analysis.lyapunov_spectrum(w, k=2)
 
     def test_dde_raises(self) -> None:
-        with pytest.raises(NotImplementedError, match="set_state"):
-            ts.analysis.max_lyapunov(ts.systems.MackeyGlass())
+        with pytest.raises((NotImplementedError, TypeError, ValueError)):
+            ts.analysis.lyapunov_spectrum(ts.systems.MackeyGlass(), k=1, n=10)
 
 
 # ---------------------------------------------------------------------------
@@ -151,17 +218,15 @@ class TestMaxLyapunov:
 
 
 @pytest.mark.slow
-def test_max_lyapunov_lorenz() -> None:
-    lam = ts.analysis.max_lyapunov(
-        ts.systems.Lorenz(),
-        ic=[1.0, 1.0, 1.0],
-        dt=0.05,
-        n=600,
-        steps_per=4,
-        transient=50.0,  # v6: TIME UNITS for a flow (was 1000 protocol steps = 50 t)
-        seed=2,
+def test_lorenz_maximal_exponent_matches_the_literature() -> None:
+    lam = float(
+        np.asarray(
+            ts.analysis.lyapunov_spectrum(
+                ts.systems.Lorenz(), k=1, ic=[1.0, 1.0, 1.0], final_time=2000.0
+            )
+        )[0]
     )
-    assert lam == pytest.approx(0.906, abs=0.2)
+    assert lam == pytest.approx(0.9056, abs=0.02)
 
 
 @pytest.mark.slow

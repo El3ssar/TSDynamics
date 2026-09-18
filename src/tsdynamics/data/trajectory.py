@@ -21,6 +21,7 @@ The point-set operations (:meth:`Trajectory.minmax`,
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple, cast
 
@@ -45,6 +46,36 @@ if TYPE_CHECKING:
 #: non-uniformity in the library (a Poincaré section's crossing times) deviates
 #: by O(1) — nine decades of margin on each side.
 _DT_UNIFORM_RTOL = 1e-9
+
+#: The ``meta`` keys that describe **the rows in hand** rather than the run that
+#: produced them, and so must be re-derived whenever rows are selected.
+#:
+#: ``meta`` is public and people read it.  Measured before v6 round 8:
+#: ``tr[::5].meta["dt"]`` was still the run's ``0.01`` while the object's own
+#: axis said ``0.05``, and ``tr[500:].meta["ic"]`` was ``[1, 1, 1]`` for a slice
+#: starting at ``t = 5`` from ``[-6.51, -6.97, 23.92]``.  The estimators read
+#: :attr:`Trajectory.dt` and were right; a user reading ``meta["dt"]`` to turn a
+#: per-sample exponent into a per-unit-time one was off by exactly the
+#: decimation factor, silently.  Everything else in ``meta`` — the system, the
+#: parameters, the solver, the tolerances — is still true of a slice and is
+#: carried verbatim.
+#:
+#: Each entry is ``key -> f(t, y)``, returning the re-derived value or ``None``
+#: to **drop** the key — a slice with no uniform step reports no step at all,
+#: rather than the wrong one.  A table rather than three branches, so a fourth
+#: row-describing key is one line and cannot be added to the prose alone.
+_ROW_DERIVED_META: dict[str, Callable[[np.ndarray, np.ndarray], Any]] = {
+    "dt": lambda t, y: _axis_dt(t),
+    "t0": lambda t, y: float(t[0]) if t.size else None,
+    "ic": lambda t, y: np.array(y[0], dtype=float) if y.size else None,
+}
+
+#: The word every plotting door in the library accepts for naming the CURVES.
+#: Peeled upstream of this module (by ``ts.plot`` / ``traj.plot`` / ``system.plot``),
+#: so it never arrives here as a per-kind option — but it must be *suggestible*
+#: and *listed*, or the singular ``label=`` gets answered with ``zlabel=``, an
+#: axis name, which is what sent three beta testers into the internals.
+_CURVE_NAMING_KEYS = frozenset({"labels"})
 
 #: The four accessor namespaces ruling A2 deleted, and the members of each that
 #: a trajectory can actually answer.
@@ -285,6 +316,27 @@ def _auto_route(n_components: int) -> str:
     return "time_series"
 
 
+def _axis_dt(t: Any) -> float | None:
+    """Return the uniform step of time axis ``t``, or ``None`` if it has none.
+
+    The single reading of "what is one sample worth here", shared by
+    :attr:`Trajectory.dt` and by the row-selection meta rebuild, so the number a
+    trajectory reports and the number it records cannot drift apart.
+    """
+    axis = np.asarray(t, dtype=float)
+    if axis.size < 2:
+        return None
+    steps = np.diff(axis)
+    first = float(steps[0])
+    if first <= 0.0 or not np.all(np.isfinite(steps)):
+        return None
+    # A *uniformity* check, not a solver tolerance — expressed without the
+    # ``rtol=``/``atol=`` keywords so it reads as what it is.
+    if bool(np.max(np.abs(steps - first)) > _DT_UNIFORM_RTOL * abs(first)):
+        return None
+    return first
+
+
 class Trajectory:
     """
     The result of integrating or iterating a dynamical system.
@@ -436,11 +488,15 @@ class Trajectory:
     def dt(self) -> float | None:
         """The sampling interval, **derived from the ``t`` axis**.
 
-        ``meta["dt"]`` records what the *run* asked for, and slicing carries it
-        verbatim — so a decimated trajectory reported the undecimated step and
-        every per-unit-time estimator was off by the decimation factor with no
-        exception.  This reads the axis instead, and is ``None`` when the axis is
-        non-uniform (a Poincaré section) or too short to have a step.
+        **The axis is the one truth**, and ``None`` when there is no single
+        answer — a non-uniform axis (a Poincaré section) or an axis too short to
+        have a step.  ``meta["dt"]`` used to record what the *run* asked for and
+        slicing carried it verbatim, so a decimated trajectory reported the
+        undecimated step and every per-unit-time estimator taken from ``meta``
+        was off by the decimation factor with no exception.  Since v6 round 8
+        selecting rows re-derives ``meta["dt"]`` from the new axis
+        (:data:`_ROW_DERIVED_META`), so the two agree — but this property is
+        still the reading the library itself uses, because it cannot be absent.
 
         Examples
         --------
@@ -451,18 +507,7 @@ class Trajectory:
         >>> round(tr[::5].dt, 10)          # the decimated step, not the run's
         0.05
         """
-        t = np.asarray(self.t, dtype=float)
-        if t.size < 2:
-            return None
-        steps = np.diff(t)
-        first = float(steps[0])
-        if first <= 0.0 or not np.all(np.isfinite(steps)):
-            return None
-        # A *uniformity* check, not a solver tolerance — expressed without the
-        # ``rtol=``/``atol=`` keywords so it reads as what it is.
-        if bool(np.max(np.abs(steps - first)) > _DT_UNIFORM_RTOL * abs(first)):
-            return None
-        return first
+        return _axis_dt(self.t)
 
     def _columns(self, names: Sequence[str]) -> Trajectory:
         """Build the sub-trajectory holding ``names``, carrying the names along.
@@ -581,6 +626,26 @@ class Trajectory:
             )
         return arr
 
+    def _rows(self, t: np.ndarray, y: np.ndarray) -> Trajectory:
+        """Build the sub-trajectory holding rows ``(t, y)``, with honest ``meta``.
+
+        The one place a row selection is assembled, so a decimated trajectory and
+        a tail slice cannot describe themselves differently.  The three keys that
+        describe the rows (:data:`_ROW_DERIVED_META`) are re-derived from the new
+        arrays; a key the parent did not carry is not invented, and a slice with
+        no uniform step drops ``dt`` rather than reporting one that is wrong.
+        """
+        meta = dict(self.meta)
+        for key, rederive in _ROW_DERIVED_META.items():
+            if key not in meta:
+                continue  # the parent did not carry it; do not invent it
+            value = rederive(np.asarray(t), np.asarray(y))
+            if value is None:
+                meta.pop(key)
+            else:
+                meta[key] = value
+        return Trajectory(t, y, self.system, meta=meta)
+
     def __getitem__(self, key: Any) -> Any:
         """Select **columns by name**, or **rows by position** — one rule each.
 
@@ -626,13 +691,8 @@ class Trajectory:
         if isinstance(key, int | np.integer):
             # Keep the result a well-formed Trajectory (one row), not a
             # corrupted one built from scalars.
-            return Trajectory(
-                np.atleast_1d(self.t[key]),
-                np.atleast_2d(self.y[key]),
-                self.system,
-                meta=self.meta,
-            )
-        return Trajectory(self.t[key], self.y[key], self.system, meta=self.meta)
+            return self._rows(np.atleast_1d(self.t[key]), np.atleast_2d(self.y[key]))
+        return self._rows(self.t[key], self.y[key])
 
     def _bad_key_message(self, key: Any, named: list[str]) -> str:
         """Explain a bracket that is neither a column selection nor a row one."""
@@ -758,7 +818,7 @@ class Trajectory:
             The tail, sharing this trajectory's system and provenance.
         """
         mask = self.t >= t0
-        return Trajectory(self.t[mask], self.y[mask], self.system, meta=self.meta)
+        return self._rows(self.t[mask], self.y[mask])
 
     # --- tabular export ---
 
@@ -1129,28 +1189,44 @@ class Trajectory:
         with *"allowed here: ['color_by']"* — a different concept (a data
         channel) one letter from the style key ``color=`` the caller meant, and
         ``ttle=`` / ``linewith=`` / ``final_tim=`` all got the same wrong hint.
-        """
-        import difflib
 
+        ``labels=`` — the word that names the CURVES — is in the pool and in the
+        printed listing, because it was in neither.  Measured: ``ts.plot(a, b,
+        components="x", label=[...])`` answered *"label= — did you mean
+        zlabel=?"*, an **axis** name, while ``labels=`` was on the signature and
+        working; and the sibling message for ``names=`` enumerated every accepted
+        keyword without it.  Three testers gave up and reached into the
+        internals.  The ranking is :func:`~tsdynamics.viz.spec.nearest_keyword`,
+        shared with the front door, which prefers a candidate that merely
+        *extends* what was typed (``label`` → ``labels``) over an equal-scoring
+        one that does not (``label`` → ``zlabel``, 0.909 each).
+        """
         from tsdynamics.errors import InvalidParameterError
-        from tsdynamics.viz.spec import FIGURE_KEYS
+        from tsdynamics.viz.spec import FIGURE_KEYS, nearest_keyword
         from tsdynamics.viz.style import style_names
 
         allowed = _KIND_KW.get(route or "", frozenset())
         unknown = set(kind_kw) - allowed
         if not unknown:
             return
-        pool = sorted(set(allowed) | set(FIGURE_KEYS) | set(style_names()) | _PLOT_SPEC_KEYS)
+        pool = sorted(
+            set(allowed)
+            | set(FIGURE_KEYS)
+            | set(style_names())
+            | _PLOT_SPEC_KEYS
+            | _CURVE_NAMING_KEYS
+        )
         hints = ""
         for bad in sorted(unknown):
-            near = difflib.get_close_matches(bad, pool, n=1, cutoff=0.6)
+            near = nearest_keyword(bad, pool)
             if near:
-                hints += f"\n    {bad}= — did you mean {near[0]}=?"
+                hints += f"\n    {bad}= — did you mean {near}=?"
         raise InvalidParameterError(
             f"kind={route!r} does not accept keyword(s) {sorted(unknown)}; "
             f"allowed here: {sorted(allowed) or '(none)'}{hints}"
-            "\n(plus any style keyword — color=, linewidth=, alpha=, … — and any "
-            "figure keyword — title=, xlabel=, xlim=, theme=, ….)"
+            "\n(plus any style keyword — color=, linewidth=, alpha=, … — any "
+            "figure keyword — title=, xlabel=, xlim=, theme=, … — and labels=, "
+            "which names the curves.)"
         )
 
     def _delay_samples(self, delay_time: float) -> int:

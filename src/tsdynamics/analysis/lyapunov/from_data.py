@@ -34,7 +34,7 @@ import numpy as np
 
 from tsdynamics.errors import ConvergenceError, InvalidParameterError, remedy
 
-from .._common import reject_system
+from .._common import reject_system, runaway_meta
 from .._result import ScalingResult
 
 __all__ = ["LyapunovFromData", "ScalingRegionWarning", "lyapunov_from_data"]
@@ -105,11 +105,46 @@ class ScalingRegionWarning(UserWarning):
 
 
 #: Independent embedding windows a record must hold before the estimate is
-#: called :attr:`LyapunovFromData.trusted`.  Ten is the smallest count at which
-#: the measured bias on a Lorenz *x* series falls inside the estimator's own
-#: quoted error: 4.7 windows -> +33%, 15.9 -> -12%, 131.5 -> -2.5%.  It is a
-#: floor, not a sufficiency test, exactly like ``MIN_DIMENSION_POINTS``.
-_MIN_INDEPENDENT_WINDOWS = 10.0
+#: called :attr:`LyapunovFromData.trusted`.  It is a floor, not a sufficiency
+#: test, exactly like ``MIN_DIMENSION_POINTS``.
+#:
+#: **Recalibrated in v6 from 10 to 25, by measurement.**  Ten was chosen as "the
+#: smallest count at which the measured bias falls inside the estimator's own
+#: quoted error", and that had stopped being true: swept over a Lorenz *x*
+#: series at ``dt = 0.02`` (truth ``λ = 0.9056``) the estimator returns
+#:
+#: ======= ======= ====== ==========================
+#: samples windows λ      error
+#: ======= ======= ====== ==========================
+#: 2000    11.0    1.2414 **+37%**, quoted ± 0.0046
+#: 3000    22.9    1.1204 **+24%**
+#: 4000    37.8    0.9899 +9.3%
+#: 5000    54.3    0.9624 +6.3%
+#: 20000   312.6   0.9790 +8.1%
+#: ======= ======= ====== ==========================
+#:
+#: so 25 is the smallest round floor that refuses both double-digit cases and
+#: keeps every single-digit one.
+_MIN_INDEPENDENT_WINDOWS = 25.0
+
+#: How many e-foldings of separation the *fitted window* must cover before the
+#: slope across it counts as a growth rate.  ``λ · Δt_fit`` is the number of
+#: e-folds the divergence curve actually climbs inside the fit; below half an
+#: e-fold the separation grows by under 65% across the whole window and the
+#: "slope" is reading scatter, however straight :math:`R^2` says the line is.
+#:
+#: Measured on a Rössler *x* series at ``dt = 0.05`` (truth ``λ = 0.0714``), the
+#: case no record-length floor catches — the record is long, the fit is clean,
+#: and the answer is still wrong:
+#:
+#: ======= ======= ========= ====== ======
+#: samples windows e-folds   λ      error
+#: ======= ======= ========= ====== ======
+#: 5000    47.2    **0.28**  0.0383 -46%
+#: 10000   104.6   0.63      0.0724 +1.4%
+#: 20000   220.6   1.20      0.0632 -11.5%
+#: ======= ======= ========= ====== ======
+_MIN_FIT_EFOLDINGS = 0.5
 
 
 @dataclass(frozen=True, eq=False)
@@ -145,15 +180,30 @@ class LyapunovFromData(ScalingResult):
         Number of reference points that contributed (had a usable neighbour).
     method : str
         ``"kantz"`` or ``"rosenstein"``.
+    decorrelation : int
+        The series' **own** decorrelation lag, in samples — the first lag whose
+        autocorrelation has fallen to ``1/e``, measured from the data and not
+        chosen by the caller.  It is what keeps :attr:`independent_windows`
+        honest (see there).  ``0`` when it could not be measured.
     trusted : bool
-        ``False`` when the estimate is not a reading of a scaling region — the
-        automatic search found no stable-slope plateau (the slope was then fitted
-        over the whole curve as a fallback), or the delay embedding is
-        near-collinear (which also raises a :class:`ScalingRegionWarning`).
-        ``repr`` then says ``UNTRUSTED`` and ``meta["scaling_region"]`` records
-        which happened.  **Check this flag** before believing an exponent from an
-        unattended run.  An explicit ``fit=(lo, hi)`` takes ownership of the
-        region, so it is always ``trusted`` unless the embedding is degenerate.
+        ``False`` when the estimate is not a reading of a scaling region.  Four
+        ways to lose it, and the repr says **which**:
+
+        * the automatic search found no stable-slope plateau (the slope was then
+          fitted over the whole curve as a fallback), or the delay embedding is
+          near-collinear (which also raises a :class:`ScalingRegionWarning`);
+        * the fit is not believable — too few points, or too crooked;
+        * the **record** is too short — fewer than
+          :data:`_MIN_INDEPENDENT_WINDOWS` independent windows;
+        * the **fitted window** is too narrow — the divergence climbs fewer than
+          :data:`_MIN_FIT_EFOLDINGS` e-folds across it, so there is no growth
+          rate to read.
+
+        ``meta["scaling_region"]`` records which happened.  **Check this flag**
+        before believing an exponent from an unattended run.  An explicit
+        ``fit=(lo, hi)`` takes ownership of the *region*; it does not take
+        ownership of the record length or of the window's width, so those two
+        still apply.
     """
 
     _repr_fields: ClassVar[tuple[str, ...]] = ("lyapunov", "method")
@@ -163,10 +213,11 @@ class LyapunovFromData(ScalingResult):
     theiler: int = 0
     n_reference: int = 0
     method: str = "kantz"
+    decorrelation: int = 0
     trusted: bool = True
 
     def __post_init__(self) -> None:
-        """AND the plateau search's verdict with the shared fit-quality floor.
+        """AND the plateau search's verdict with every other way the fit can fail.
 
         ``trusted`` can only ever get *stricter*: the plateau search above is this
         estimator's extra condition, and
@@ -174,36 +225,66 @@ class LyapunovFromData(ScalingResult):
         the floor every scaling result must clear (enough points, straight
         enough).
         """
-        if self.trusted and (not self._fit_is_believable() or not self._record_is_long_enough()):
+        if self.trusted and not all(
+            (
+                self.runaway is None,
+                self._fit_is_believable(),
+                self._record_is_long_enough(),
+                self._fit_window_is_wide_enough(),
+            )
+        ):
             object.__setattr__(self, "trusted", False)
 
     @property
     def independent_windows(self) -> float:
         """How many **independent** embedding windows the record holds.
 
-        ``n_reference / ((m - 1) * τ)`` — the reference points divided by the
-        span one embedding vector covers.  This is the record-length half of
-        :attr:`trusted`, and it is the half that was missing: measured on 2000
-        samples of Lorenz *x* (truth ``λ = 0.906``) the estimator returned
-        ``1.209`` — 33% high — with ``R² = 0.99967`` and ``trusted = True``,
-        because :math:`R^2` measures how straight the fitted line is and says
-        nothing at all about whether there was enough data behind it.
+        ``n_reference / max((m - 1) * τ, τ_dec)`` — the reference points divided
+        by the span one embedding vector covers, floored at the series' **own**
+        decorrelation time.  This is the record-length half of :attr:`trusted`,
+        and it is the half that was missing: measured on 2000 samples of
+        Lorenz *x* (truth ``λ = 0.9056``) the estimator returned ``1.2414`` —
+        37% high — with ``R² = 0.99872`` and ``trusted = True``, because
+        :math:`R^2` measures how straight the fitted line is and says nothing at
+        all about whether there was enough data behind it.
 
-        =======  ======  =======  ====================  =========
-        samples  λ       R²       independent windows   trusted
-        =======  ======  =======  ====================  =========
-        1000     0.223   0.191    1.5                   False
-        2000     1.209   0.9997   4.7                   **False**
-        5000     0.797   0.9974   15.9                  True
-        18000    0.883   0.9992   131.5                 True
-        =======  ======  =======  ====================  =========
+        **Why the floor.**  Without it the denominator is entirely the caller's
+        to choose, so the one thing the library hands a reader whose call was
+        refused — *"reduce dimension/delay"* — also silently **restored the
+        trust flag**: on 500 Lorenz samples, ``dimension=2, delay=1`` takes the
+        span from 48 to 1 and the count from 2.2 to 358.0, a 160x jump in
+        apparent record length bought by shrinking the reconstruction rather
+        than by measuring anything.  :attr:`decorrelation` is read off the data,
+        so it cannot be bought.  Where the embedding is auto-chosen the floor
+        never binds (``τ ≈ τ_dec`` and ``m = 5``, so ``(m-1)τ`` is already
+        ``4 τ_dec``) and no shipped number moves.
         """
         span = max(int(self.embedding_dim) - 1, 1) * max(int(self.delay), 1)
-        return float(self.n_reference) / float(span)
+        return float(self.n_reference) / float(max(span, int(self.decorrelation), 1))
+
+    @property
+    def fit_efoldings(self) -> float:
+        r"""How many e-folds of separation the **fitted window** covers.
+
+        :math:`\lambda \cdot \Delta t_{fit}` — the exponent times the width of
+        the window it was fitted over.  A Lyapunov exponent is a growth *rate*,
+        so a window the separation barely grows across carries no rate to read;
+        this is the diagnostic neither :math:`R^2` nor the record length can be.
+        See :data:`_MIN_FIT_EFOLDINGS` for the measurement that sets the floor.
+        """
+        t = np.asarray(self.abscissa, dtype=float)
+        lo, hi = self.fit_region
+        if t.size == 0 or hi < lo or hi >= t.size:
+            return 0.0
+        return float(abs(self.estimate) * (t[hi] - t[lo]))
 
     def _record_is_long_enough(self) -> bool:
         """Whether the record holds enough independent windows for the estimate."""
         return self.independent_windows >= _MIN_INDEPENDENT_WINDOWS
+
+    def _fit_window_is_wide_enough(self) -> bool:
+        """Whether the divergence climbs far enough across the fitted window."""
+        return self.fit_efoldings >= _MIN_FIT_EFOLDINGS
 
     @property
     def lyapunov(self) -> float:
@@ -304,16 +385,51 @@ class LyapunovFromData(ScalingResult):
         return bool(float(self.estimate) > 0.0)
 
     def _interpretation(self) -> str | None:
-        """Name the dynamics from the exponent's sign, or say why it cannot."""
-        if not self._record_is_long_enough():
-            # Say which failure it is.  Reporting "no clean scaling region" for a
-            # record that is simply too short sends the reader to fiddle with
-            # ``fit=`` when the answer is "measure more" — and its detail line
-            # below would then contradict its own headline.
-            return "⚠ UNTRUSTED — the record is too short to support this fit"
-        if not self.trusted:
-            return self._fit_quality_clause()
-        return "chaotic (λ > 0)" if self.chaotic else "regular (λ ≤ 0)"
+        """Name the dynamics from the exponent's sign, hedged by what supports it.
+
+        **The sign is always named.**  This estimator is billed as the data-side
+        twin of "the one number that says chaotic", and when it could not
+        certify the fit it used to print only the failure — a reader who came
+        *because* they could not make the call themselves was told what was
+        wrong with their record and nothing about their system, while
+        ``zero_one_test``, which carries no trust flag at all, answered
+        ``chaotic (K ~ 1)`` on the same data.  Hedging is an answer; silence is
+        not.  So the shape is *"λ > 0, but <why you should not bank on it> —
+        indeterminate at this record length"*, and :attr:`chaotic` stays
+        ``None`` so no branch reads the hedge as a confident yes.
+        """
+        if self.trusted:
+            return "chaotic (λ > 0)" if self.chaotic else "regular (λ ≤ 0)"
+        lean = "λ > 0" if float(self.estimate) > 0.0 else "λ ≤ 0"
+        # Say WHICH failure it is: they call for opposite actions — "reconstruct
+        # properly", "measure more", "look further ahead", "choose the region
+        # yourself" — and reporting the wrong one sends the reader off to fix the
+        # wrong thing.  Ordered by how far upstream the cause is.
+        if self.runaway is not None:
+            # The headline names the *cause*; the detail line under it carries
+            # the peak, the growth factor and the sample it happened at.
+            why = "this orbit is a runaway, not an attractor"
+        elif self._embedding_is_degenerate():
+            why = "the delay embedding is near-collinear, so these are not dynamical neighbours"
+        elif not self._record_is_long_enough():
+            why = "the record is too short to support this fit"
+        elif not self._fit_window_is_wide_enough():
+            why = (
+                f"the divergence climbs only {self.fit_efoldings:.2f} e-folds across the "
+                f"fitted window, so there is no growth rate in it"
+            )
+        else:
+            # ``_fit_quality_clause`` is a headline in its own right ("⚠ UNTRUSTED
+            # — no clean scaling region"); here it is the *reason clause* of a
+            # longer sentence, so its own banner comes off.
+            clause = self._fit_quality_clause()
+            why = clause.removeprefix("⚠ UNTRUSTED — ") or "the scaling region is unreadable"
+        return f"⚠ UNTRUSTED — {lean}, but {why}; INDETERMINATE at this record length"
+
+    def _embedding_is_degenerate(self) -> bool:
+        """Whether the caller's delay is far below the series' own decorrelation time."""
+        tau_dec = int(self.decorrelation)
+        return bool(tau_dec and int(self.delay) * _DEGENERATE_DELAY_FACTOR < tau_dec)
 
     def _context(self) -> str | None:
         """Return the settings that make the number meaningful."""
@@ -329,21 +445,48 @@ class LyapunovFromData(ScalingResult):
         second is true is what sent a reader off to decimate a series that was
         already too short.
         """
-        if not self._record_is_long_enough():
-            span = max(int(self.embedding_dim) - 1, 1) * max(int(self.delay), 1)
+        if (escape := self.runaway) is not None:
             return (
-                f"⚠ only {self.independent_windows:.1f} independent embedding windows in "
-                f"this record (m={self.embedding_dim}, τ={self.delay} spans {span} samples)"
-                f" — the fit may look clean and still not be supported; measure longer",
+                f"{escape} — a divergence rate measured on an escape is the escape, "
+                f"not a Lyapunov exponent",
+            )
+        if self._embedding_is_degenerate():
+            return (
+                f"⚠ delay={self.delay} against a decorrelation time of ~{self.decorrelation} "
+                f"samples — leave delay unset, or pass one of that order",
+            )
+        if not self._record_is_long_enough():
+            span = max(
+                max(int(self.embedding_dim) - 1, 1) * max(int(self.delay), 1),
+                int(self.decorrelation),
+                1,
+            )
+            return (
+                f"⚠ only {self.independent_windows:.1f} independent windows in this "
+                f"record ({self.n_reference} reference points / {span} samples per "
+                f"window) — the fit may look clean and still not be supported; "
+                f"measure longer, and note that a smaller m or τ buys no trust here",
+            )
+        if not self._fit_window_is_wide_enough():
+            return (
+                f"⚠ the fitted window covers {self.fit_efoldings:.2f} e-folds of "
+                f"separation (needs ≥ {_MIN_FIT_EFOLDINGS:g}) — look further ahead with "
+                f"a larger k_max, or measure longer",
             )
         if not self.trusted:
             return ("⚠ no clear scaling region — inspect .plot() and pass fit=(lo, hi)",)
         return super()._details()
 
     def _derived(self) -> dict[str, Any]:
-        """Export the exponent, its unit and the fit diagnostics."""
+        """Export the exponent, its unit and every diagnostic the repr reports."""
         data = super()._derived()
-        data.update(lyapunov=self.lyapunov, unit=self._unit())
+        data.update(
+            lyapunov=self.lyapunov,
+            unit=self._unit(),
+            chaotic=self.chaotic,
+            independent_windows=self.independent_windows,
+            fit_efoldings=self.fit_efoldings,
+        )
         return data
 
 
@@ -745,6 +888,10 @@ def lyapunov_from_data(
     **65** (1993) 117--134.
     """
     reject_system(data, analysis="lyapunov_from_data")
+    # Read the escape off the DATA before anything is reconstructed from it, so
+    # a runaway that reached the estimator as a bare array (``traj["x"][::10]``
+    # — the spelling that laundered the trajectory's own flag) is caught too.
+    escape = runaway_meta(getattr(data, "y", data), analysis="lyapunov_from_data")
     dimension = int(dimension)
     n_neighbors = int(n_neighbors)
     if dt is None:
@@ -984,6 +1131,11 @@ def lyapunov_from_data(
         theiler=theiler,
         n_reference=n_reference,
         method=method,
+        # The series' OWN decorrelation lag, carried so the record-length test
+        # cannot be gamed by shrinking the embedding the caller chose.  ``0``
+        # when the autocorrelation never reached 1/e — no measurement, so no
+        # floor, rather than a floor invented from a capped search.
+        decorrelation=auto_delay if delay_measured else 0,
         trusted=trusted,
         meta={
             "method": method,
@@ -992,8 +1144,10 @@ def lyapunov_from_data(
             "theiler": theiler,
             "k_max": k_max,
             "n_reference": n_reference,
+            "decorrelation": auto_delay if delay_measured else 0,
             "trusted": trusted,
             "scaling_region": region_source,
+            **escape,
         },
     )
 

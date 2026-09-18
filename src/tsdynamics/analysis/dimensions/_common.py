@@ -527,7 +527,9 @@ class DimensionResult(ScalingResult):
         ``min_window=`` keyword — reported ``D_corr = 1.8183 ± 0``, ``R² = 1``
         and ``trusted = True``.
         """
-        if self.trusted and (self.unembedded or not self._fit_is_believable()):
+        if self.trusted and (
+            self.unembedded or self.runaway is not None or not self._fit_is_believable()
+        ):
             object.__setattr__(self, "trusted", False)
 
     @property
@@ -660,7 +662,12 @@ class DimensionResult(ScalingResult):
         elif np.isfinite(r2):
             bits.append(f"R² = {_sig(r2, 5)}")
         lines = [f"({', '.join(bits)})"]
-        if self.unembedded:
+        if self.runaway is not None:
+            # Named before everything else: an escaping orbit produces the
+            # cleanest-looking fit in the library (measured R² = 0.9976 over
+            # radii of order e^9), so every other diagnostic reassures.
+            lines.append(self._fit_quality_clause())
+        elif self.unembedded:
             # The single most natural mistake for a data-first user, and the one
             # the estimator answers most convincingly: a scalar series lies on a
             # line, so every estimator reports D ~ 1 with a perfect fit.

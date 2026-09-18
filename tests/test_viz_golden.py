@@ -422,7 +422,12 @@ _GOLDEN_PRODUCERS: dict[str, dict] = {
         "kind": "cobweb",
         "ndim": 2,
         "aspect": "equal",
-        "axes": [("x_n", None), ("x_(n+1)", None), None],
+        # A cobweb's axes ARE its domain — the box the map lives in, read off the
+        # kernel when there is one and the orbit's own span when there is not (a
+        # bare series, which is what the golden orbit is).  They used to be left
+        # unset, so matplotlib autoscaled to the orbit and the ``f(x)`` curve's
+        # own ends fell outside the frame it had been computed for.
+        "axes": [("x_n", (-0.992225, 1.0)), ("x_(n+1)", (-0.992225, 1.0)), None],
         "colorbar": None,
         "legend": True,
         "frame": "state2(x_n, x_(n+1))",

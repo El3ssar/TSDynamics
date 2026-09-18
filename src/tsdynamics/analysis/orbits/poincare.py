@@ -120,7 +120,7 @@ def poincare_section(
 
         .. versionadded:: 6.0
             Every sibling that runs a system took ``ic=`` — ``orbit_diagram``,
-            ``lyapunov_spectrum``, ``max_lyapunov``, ``zero_one_test`` — and this
+            ``lyapunov_spectrum``, ``zero_one_test`` — and this
             one refused it with a bare ``TypeError``, leaving ``seed=`` as the
             only control over where the orbit starts.  On a system with a finite
             basin that is not a control at all: 3 of the first 4 seeds can land

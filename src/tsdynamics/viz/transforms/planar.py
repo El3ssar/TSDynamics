@@ -201,8 +201,8 @@ def nullclines(
     if not parts:
         raise InvalidParameterError(
             f"no nullcline of {type(system).__name__} crosses the window "
-            f"x={window_x}, y={window_y}. Widen it with xlim=/ylim=, or raise grid= "
-            "if the curve is thinner than a lattice cell."
+            f"x={window_x}, y={window_y}. Widen it with domain=((lo, hi), (lo, hi)), or "
+            "raise grid= if the curve is thinner than a lattice cell."
         )
     return Geometry(
         "nullclines",
@@ -236,8 +236,8 @@ def _field_of_callable(
     if xlim is None or ylim is None:
         raise InvalidParameterError(
             "a bare right-hand side carries no state space, so vector_field cannot infer "
-            "the window: pass xlim=(lo, hi) and ylim=(lo, hi). (Handed the *system* it "
-            "infers them, like flow_speed does.)"
+            "the window: pass domain=((lo, hi), (lo, hi)). (Handed the *system* it infers "
+            "them, like flow_speed does.)"
         )
     names = labels or ("x", "y")
     n = int(grid[0]) if isinstance(grid, tuple) else int(grid)

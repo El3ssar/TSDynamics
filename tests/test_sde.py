@@ -245,10 +245,18 @@ def test_method_aliases_resolve(alias, canon):
     assert traj.meta["method"] == canon
 
 
-def test_unknown_method_raises():
+def test_a_deterministic_kernel_is_refused_and_told_why():
+    """A deterministic RK kernel has nowhere to put the Wiener increment.
+
+    The message names the two schemes that *do* draw the noise, rather than
+    saying only that the name was unknown — ``heun`` is a real kernel, it is
+    just not one that can integrate an SDE.
+    """
     gbm = GeometricBrownianMotion()
-    with pytest.raises(ValueError, match="unknown SDE method"):
+    with pytest.raises(ValueError, match="nowhere to put the Wiener increment") as excinfo:
         gbm.run(final_time=0.1, dt=0.05, ic=[1.0], solver="heun")
+    assert "euler_maruyama" in str(excinfo.value)
+    assert "milstein" in str(excinfo.value)
 
 
 # ---------------------------------------------------------------------------

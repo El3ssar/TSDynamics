@@ -8,7 +8,7 @@ Rust engine call (``tsdynamics.engine.run.map_lyapunov`` →
 * the engine spectrum reproduces the pure-Python QR oracle (``backend="reference"``)
   to the WS-MAPITER IR-vs-NumPy tolerance, and both match the literature;
 * ``interp == jit`` bit-for-bit (same lowered tape, two evaluators);
-* ``max_lyapunov`` on a map equals the kernel's leading exponent, while its
+* ``lyapunov_spectrum(k=1)`` on a map equals the kernel's leading exponent, while its
   continuous-system two-trajectory path is untouched;
 * a map whose ``_step`` will not lower transparently falls back to the NumPy loop;
 * divergence raises loudly.
@@ -25,7 +25,6 @@ import pytest
 pytest.importorskip("tsdynamics._rust")
 
 import tsdynamics as ts
-from tsdynamics.errors import InvalidParameterError
 from tsdynamics.systems import Henon, Ikeda, Logistic, Tinkerbell
 
 
@@ -103,42 +102,34 @@ def test_reortho_interval_is_answer_preserving() -> None:
     assert np.max(np.abs(every1 - every5)) < 1e-2, (every1, every5)
 
 
-def test_max_lyapunov_map_equals_kernel_top_exponent() -> None:
-    """``max_lyapunov`` on a map IS ``lyapunov_spectrum(k=1)[0]`` — bit for bit.
+def test_the_maximal_exponent_is_the_kernels_top_exponent() -> None:
+    """``k=1`` IS the top of the spectrum, from the one door that remains.
 
-    Not "agrees to a tolerance": v6 folded the map path into a *call* to
-    ``lyapunov_spectrum``, so there is one estimator and the two doors cannot
-    drift.  They used to: ``n`` counted rescaling cycles of ten iterates at one
-    door and iterations at the other, so one nominal horizon gave 0.4197 here
-    and 0.4160 there while doing ten times the work.
-
-    Handed the same start state and no burn-in, the two numbers are the same
-    float.  The only thing left between them is ``max_lyapunov``'s own IC
-    policy (burn in, then delegate from the landed state), which is a documented
-    difference in *where on the attractor* you start, not in the estimator.
+    v6 round 6 retired ``max_lyapunov``: two public functions answering one
+    question returned two numbers (Hénon at one nominal horizon: 0.4233 against
+    0.4160), and a reader had no way to know which to believe.  The burn-in that
+    made the difference now belongs to this door.
     """
     x0 = [-0.53024229, 0.29852734]  # a point on the Hénon attractor
-    mle = float(ts.analysis.max_lyapunov(Henon(), n=10_000, ic=x0, transient=0))
-    top = float(ts.analysis.lyapunov_spectrum(Henon(), k=1, n=10_000, ic=x0)[0])
-    assert mle == top, (mle, top)
-    assert abs(mle - 0.419) < 0.05, mle
+    top = float(ts.analysis.lyapunov_spectrum(Henon(), k=1, n=10_000, ic=x0, transient=0)[0])
+    full = float(ts.analysis.lyapunov_spectrum(Henon(), k=2, n=10_000, ic=x0, transient=0)[0])
+    assert top == full, (top, full)
+    assert abs(top - 0.419) < 0.05, top
 
 
-def test_max_lyapunov_map_refuses_the_cycle_length_it_no_longer_has() -> None:
-    """``steps_per`` was the two-trajectory cycle length; the QR path has no cycle.
-
-    Ignoring the word would leave ``n`` meaning ``n * steps_per`` to the caller
-    and ``n`` to the library — the exact disagreement the fold removed.
-    """
-    with pytest.raises(InvalidParameterError, match="Count iterations with n instead"):
-        ts.analysis.max_lyapunov(Henon(ic=[0.1, 0.1]), n=2000, steps_per=5)
+def test_the_retired_second_door_names_its_replacement() -> None:
+    """``max_lyapunov`` no longer resolves, and the message is the migration."""
+    with pytest.raises(ImportError, match=r"lyapunov_spectrum\(system, k=1\)"):
+        ts.analysis.max_lyapunov  # noqa: B018 - the attribute access IS the test
 
 
-def test_max_lyapunov_continuous_path_unchanged() -> None:
-    """The continuous-system two-trajectory path is untouched (a smoke regression)."""
-    mle = float(ts.analysis.max_lyapunov(ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]), dt=0.05, n=300))
-    # Lorenz maximal exponent ≈ 0.9; a loose band — this only guards that the ODE
-    # path still produces a sane positive exponent (it does not use the kernel).
+def test_a_flow_keeps_a_sane_positive_exponent() -> None:
+    """A smoke regression on the continuous path (it does not use the kernel)."""
+    mle = float(
+        ts.analysis.lyapunov_spectrum(ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]), k=1, final_time=200.0)[
+            0
+        ]
+    )
     assert 0.5 < mle < 1.4, mle
 
 
@@ -209,15 +200,17 @@ def test_piecewise_map_lyapunov_falls_back_and_is_correct() -> None:
     The Tent ``_step`` uses ``np.abs`` so it *lowers*, but its lowered Jacobian
     collapses to the a.e. value (0) at the kink x=0.5 — and the dyadic orbit lands
     exactly there, which would poison the QR-kernel spectrum (the regression that
-    broke CI).  ``lyapunov_spectrum`` and ``max_lyapunov`` must both decline the
-    kernel (non-smooth Jacobian) and fall back to the path that reads the one-sided
-    hand-written ``_jacobian`` (±2), recovering λ = ln 2 exactly.
+    broke CI).  ``lyapunov_spectrum`` must decline the kernel (non-smooth
+    Jacobian) and fall back to the path that reads the one-sided hand-written
+    ``_jacobian`` (±2), recovering λ = ln 2 exactly — at ``k=1`` (the maximal
+    exponent, since v6 the only door to it) as well as for the full spectrum.
     """
     from tsdynamics.systems import Tent
 
     ln2 = np.log(2.0)
     tent = Tent(params={"mu": 1.0})
-    spec0 = float(np.asarray(ts.analysis.lyapunov_spectrum(tent, n=10_000, ic=[np.sqrt(2) / 2]))[0])
-    mle = float(ts.analysis.max_lyapunov(tent, ic=[np.sqrt(2) / 2], n=2000))
+    x0 = [np.sqrt(2) / 2]
+    spec0 = float(np.asarray(ts.analysis.lyapunov_spectrum(tent, n=10_000, ic=x0, transient=0))[0])
+    mle = float(np.asarray(ts.analysis.lyapunov_spectrum(tent, k=1, n=2000, ic=x0, transient=0))[0])
     assert abs(spec0 - ln2) < 1e-3, spec0
     assert abs(mle - ln2) < 5e-2, mle

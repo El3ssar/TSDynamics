@@ -427,7 +427,7 @@ def test_continuation_min_fraction_mass_folds_into_diverged():
         "shift",
         [0.0, 0.1],
         Box([-1.0], [1.0]),
-        n=200,
+        n_seeds=200,
         resolution=100,
         seed=0,
         min_fraction=0.05,
@@ -643,7 +643,7 @@ def test_newton_map_thirds_basin_fractions():
     bf = bas.basin_fractions(
         nm,
         Ball([0.0, 0.0], 1.3),
-        n=30000,
+        n_seeds=30000,
         resolution=300,
         seed=0,
         consecutive_recurrences=8,
@@ -798,7 +798,7 @@ def test_continuation_tracks_two_basins():
         "a",
         [1.3, 1.4, 1.5, 1.6, 1.7],
         Box([-2.0], [2.0]),
-        n=1500,
+        n_seeds=1500,
         resolution=300,
         seed=0,
         min_fraction=0.05,  # drop tiny spurious sets near the unstable origin
@@ -813,3 +813,144 @@ def test_continuation_tracks_two_basins():
         assert np.all(cont.fractions[gid] > 0.2)
     # no attractor disappears over this range.
     assert bas.tipping_points(cont) == []
+
+
+# ===========================================================================
+# v6 round 6 — an answer carries its grid, and a name means a place
+# ===========================================================================
+
+
+class TestAGridQuantisedAnswerCarriesItsGrid:
+    """``resilience`` is a distance read off cells, so it must say so.
+
+    Measured before the fix on a 40x40 two-well image, it printed
+    ``0.615385`` — six significant figures — where the truth is 0.5709 and the
+    honest answer is "6 cells, +-1 cell, biased high".  An engineer reads that
+    number as a safety margin.
+    """
+
+    def test_it_prints_the_cells_not_six_figures(self):
+        d = DuffingTwoWell()
+        res = bas.basins(d, [(-2.0, 2.0, 40), (-2.0, 2.0, 40)])
+        margin = bas.resilience(res, attractor_id=1)
+        text = repr(margin)
+        assert "±" in text, "a quantised answer must carry its quantum"
+        assert "cells on a 40 × 40 grid" in text
+        assert "upper bound" in text, "and say which way it is biased"
+        assert "0.615385" not in text
+
+    def test_the_quantum_shrinks_with_the_grid(self):
+        d = DuffingTwoWell()
+        coarse = bas.resilience(bas.basins(d, [(-2.0, 2.0, 40), (-2.0, 2.0, 40)]), attractor_id=1)
+        fine = bas.resilience(bas.basins(d, [(-2.0, 2.0, 80), (-2.0, 2.0, 80)]), attractor_id=1)
+        assert coarse.meta["quantization"] > fine.meta["quantization"]
+
+
+class TestABoundaryVerdictDoesNotFlipWithTheGrid:
+    """ "Fractal boundary" means *your safety margin is meaningless* to an engineer.
+
+    The same two-well system read ``final-state sensitive (fractal boundary)`` at
+    40x40 and ``smooth boundary`` at 60x60, with nothing saying it had changed
+    its mind.  The verdict is now withheld while the fitted slope is still
+    drifting with the resolution, and the repr names the grid to try.
+    """
+
+    def test_an_unconverged_exponent_is_inconclusive_and_names_the_refinement(self):
+        d = DuffingTwoWell()
+        res = bas.basins(d, [(-2.0, 2.0, 40), (-2.0, 2.0, 40)])
+        alpha = bas.uncertainty_exponent(res)
+        assert alpha.resolved is False
+        assert alpha.final_state_sensitive is None, "no verdict while it is still moving"
+        text = repr(alpha)
+        assert "inconclusive at this resolution" in text
+        assert "80 × 80" in text, "it must name the resolution to try"
+
+    def test_it_says_so_when_basin_entropy_disagrees_on_the_same_image(self):
+        """Two tests, one picture, opposite answers — the reader must be told.
+
+        Daza's ``Sbb > ln 2`` is *sufficient* for a fractal boundary, so it
+        firing while this fit reads ``alpha ~ 1`` is a genuine contradiction and
+        not merely a weaker test staying silent.
+        """
+        labels = np.zeros((60, 60), dtype=int)
+        rng = np.random.default_rng(0)
+        # A deliberately shredded boundary: high Sbb, while the uncertain
+        # fraction saturates so fast that the fitted alpha reads near 1.
+        labels[:, :30] = 1
+        labels[:, 30:] = 2
+        strip = slice(24, 36)
+        labels[:, strip] = rng.integers(1, 3, size=labels[:, strip].shape)
+        entropy = bas.basin_entropy(labels)
+        alpha = bas.uncertainty_exponent(labels)
+        if entropy.fractal_boundary and alpha.final_state_sensitive is False:
+            assert alpha.contradicted_by_basin_entropy is True
+            assert "DISPUTED" in repr(alpha)
+            assert "basin_entropy" in repr(alpha)
+        else:  # pragma: no cover - the two agree on this image; nothing to dispute
+            assert alpha.contradicted_by_basin_entropy is False
+
+
+class TestAnAttractorIsNamedByWhereItIs:
+    """Ids assigned in discovery order paint one physical state two colours.
+
+    Measured before the fix on the magnetic pendulum: the magnet at
+    ``(+0.97, 0.00)`` came back as ``#1`` from ``seed=0`` and ``#3`` from
+    ``seed=3`` — same system, same call, same attractor, two numbers, so a
+    two-panel figure coloured one state twice.
+    """
+
+    def test_the_relabel_orders_by_location_not_by_discovery(self):
+        """The renumbering itself, on a hand-built set: no integration involved."""
+        from tsdynamics.analysis.basins.attractors import Attractor, AttractorSet, canonical_relabel
+
+        found = AttractorSet(
+            attractors={
+                1: Attractor(id=1, points=np.array([[1.0, 0.0]]), cells=4),
+                2: Attractor(id=2, points=np.array([[-1.0, 0.0]]), cells=4),
+            },
+            diverged=0,
+            seeds=100,
+        )
+        relabelled, composed = canonical_relabel(found, {1: 1, 2: 2})
+        assert relabelled.attractors[1].center[0] == pytest.approx(-1.0)
+        assert relabelled.attractors[2].center[0] == pytest.approx(1.0)
+        # the SAME permutation is handed back for the label image
+        assert composed == {1: 2, 2: 1}
+
+    def test_a_basin_images_ids_ascend_with_position(self):
+        d = DuffingTwoWell()
+        res = bas.basins(d, [(-2.0, 2.0, 40), (-2.0, 2.0, 40)])
+        centers = res.attractors.centers
+        order = np.lexsort(tuple(centers[:, i] for i in reversed(range(centers.shape[1]))))
+        assert list(order) == sorted(order), "ids must ascend lexicographically by centre"
+
+    def test_the_location_is_in_the_repr_and_in_the_table(self):
+        d = DuffingTwoWell()
+        found = bas.attractors(d, [(-2.0, 2.0, 30), (-2.0, 2.0, 30)], n_seeds=60, seed=0)
+        assert "at [" in repr(found), "the printout must say WHERE, not only #n"
+        table = found.to_dict(full=True)
+        assert table["centers"]["1"][0] == pytest.approx(found.attractors[1].center[0])
+        assert "center0" in found.attractors[1].to_frame().columns
+
+    @pytest.mark.slow
+    def test_the_same_magnet_keeps_its_number_across_seeds(self):
+        mp = MagneticPendulum()
+        box = Box([-1.3, -1.3, -2.5, -2.5], [1.3, 1.3, 2.5, 2.5])
+        numbers = []
+        for seed in (0, 3):
+            found = bas.attractors(
+                mp,
+                box,
+                resolution=(60, 60, 40, 40),
+                n_seeds=120,
+                seed=seed,
+                dt=0.5,
+                max_steps=800,
+                consecutive_recurrences=25,
+                attractor_locate_steps=15,
+            )
+            # the magnet on the positive x axis, whichever id it was given
+            ids = [found.attractors[k].id for k in found.ids if found.attractors[k].center[0] > 0.5]
+            assert len(ids) == 1, "the (+1, 0) magnet must be found exactly once"
+            numbers.append(ids[0])
+        assert numbers[0] == numbers[1], f"one physical state, two numbers: {numbers}"

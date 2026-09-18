@@ -157,7 +157,7 @@ $\sqrt{p(1-p)/n}$ that depends only on the fraction and the sample count, never
 on the dimension.
 
 ```python
-bf = ts.analysis.basin_fractions(sys, region, n=400, dt=0.5, max_steps=2000, seed=0)
+bf = ts.analysis.basin_fractions(sys, region, n_seeds=400, dt=0.5, max_steps=2000, seed=0)
 
 bf.fractions        # {1: ≈ 0.53, 2: ≈ 0.47}
 bf.dominant         # 1  — the id with the largest basin
@@ -316,7 +316,7 @@ class TiltedDuffing(ts.ContinuousSystem):
         return (y, x - x**3 - delta * y + F)
 
 cont = ts.analysis.continuation(TiltedDuffing(), "F", np.linspace(0.0, 0.6, 13),
-                       region, n=300, resolution=60, dt=0.5, max_steps=1500, seed=0)
+                       region, n_seeds=300, resolution=60, dt=0.5, max_steps=1500, seed=0)
 
 cont.fractions        # {1: [0.52, 0.45, …, nan, nan], 2: [0.48, 0.55, …, 1.0]}
                       #   attractor 1 vanishes past the fold → nan (basin gone)

@@ -42,12 +42,14 @@ from ._common import (
     _recurrence_grid,
     _region_example,
     coerce_region,
+    reject_unknown_fsm,
 )
 from .attractors import (
     DIVERGED,
     AttractorSet,
     _AttractorMapper,
     _reject_unsupported,
+    canonical_relabel,
     classify_seeds,
     resolve_merge_tol,
 )
@@ -620,6 +622,7 @@ def basins(
     attraction", *Chaos* **32**, 023104 (2022).
     """
     _reject_unsupported(system, "basins")
+    reject_unknown_fsm(fsm, analysis="basins")
     region = coerce_region(
         region,
         analysis="basins",
@@ -668,8 +671,12 @@ def basins(
     )
 
     merge = mapper.merge_map(resolve_merge_tol(cellgrid, merge_tol))
-    labels = _apply_merge(labels.reshape(region.shape), merge)
     attractors = mapper.attractor_set(diverged=diverged, seeds=points.shape[0], merge=merge)
+    # Order the colours by WHERE the attractors are, not by the order the seeds
+    # happened to find them — otherwise the same well is #1 in one panel and #2
+    # in the next.  One composed permutation, applied to the image and the set.
+    attractors, merge = canonical_relabel(attractors, merge)
+    labels = _apply_merge(labels.reshape(region.shape), merge)
     return BasinsResult(
         labels=labels,
         grid=region,
@@ -687,7 +694,7 @@ def basin_fractions(
     system: Any,
     region: Grid | Box | Ball | Sequence[tuple[float, ...]] | None = None,
     *,
-    n: int = 10000,
+    n_seeds: int = 10000,
     resolution: int | tuple[int, ...] = 100,
     seed: int | None = 0,
     dt: float = 1.0,
@@ -718,11 +725,13 @@ def basin_fractions(
     region : Box, Ball, or Grid
         The measure to sample initial conditions from (uniform over a Box/Ball, or
         a Grid's bounding box).
-    n : int, default 10000
-        Number of random **initial conditions** drawn from ``region`` — the same
-        quantity ``attractors`` / ``fixed_points`` / ``periodic_orbits`` spell
-        ``n_seeds``.  The standard error of every reported fraction is
-        :math:`\sqrt{p(1-p)/n}`, so this is the accuracy knob.
+    n_seeds : int, default 10000
+        Number of random **initial conditions** drawn from ``region`` — the word
+        ``attractors`` / ``fixed_points`` / ``periodic_orbits`` have always used.
+        (It was ``n`` before v6 round 8, the only door in the family that spelled
+        it differently; ``n=`` now raises, naming this one.)  The standard error
+        of every reported fraction is :math:`\sqrt{p(1-p)/n}`, so this is the
+        accuracy knob.
     resolution : int or tuple of int, default 100
         Recurrence cells per axis (a Grid uses its own ``counts``).
     seed : int, optional
@@ -764,12 +773,13 @@ def basin_fractions(
     complements the linear-stability paradigm", *Nature Physics* **9**, 89 (2013).
     """
     _reject_unsupported(system, "basin_fractions")
+    reject_unknown_fsm(fsm, analysis="basin_fractions")
     region = coerce_region(region, analysis="basin_fractions", system=system, want_grid=False)
     cellgrid = _recurrence_grid(region, resolution)
     mapper = _AttractorMapper(system, cellgrid, dt=dt, max_steps=max_steps, **fsm)
     draw = sampler(region, seed=seed)
 
-    n = int(n)
+    n = int(n_seeds)
     # Draw the whole sample up front (the sampler order — and so the labelling
     # order — is unchanged) and march it: one sequential Rust kernel call on a
     # supported engine run, else the per-sample Python loop (the oracle).  This
@@ -788,13 +798,14 @@ def basin_fractions(
         counts[int(lab)] = counts.get(int(lab), 0) + 1
 
     merge = mapper.merge_map(resolve_merge_tol(cellgrid, merge_tol))
+    attractors = mapper.attractor_set(diverged=diverged, seeds=n, merge=merge)
+    attractors, merge = canonical_relabel(attractors, merge)
     merged_counts: dict[int, int] = {}
     for k, c in counts.items():
         cid = merge.get(k, k)
         merged_counts[cid] = merged_counts.get(cid, 0) + c
 
     fractions = {k: c / n for k, c in merged_counts.items()}
-    attractors = mapper.attractor_set(diverged=diverged, seeds=n, merge=merge)
     return BasinFractions(
         fractions=fractions,
         diverged=diverged / n,

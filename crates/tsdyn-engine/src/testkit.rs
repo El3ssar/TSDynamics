@@ -206,6 +206,45 @@ impl Solver for AlwaysReject {
     }
 }
 
+/// A kernel that **accepts** every step and never lets the step grow — the
+/// stalled march, as opposed to [`AlwaysReject`]'s collapsing one.
+///
+/// This is the shape that defeated every guard before
+/// [`crate::integrate::StallGuard`]: the state stays perfectly finite, nothing is
+/// ever rejected so no step-collapse floor is consulted, and the march creeps
+/// forward at whatever step it was handed until the step *count* runs out
+/// millions of steps later. Counts its own calls so a test can assert how much
+/// work the refusal cost.
+pub struct Creeper {
+    /// Steps taken so far — the quantity the fail-fast guard exists to bound.
+    pub steps: usize,
+    /// The step size to report as the next one, whatever it was handed.
+    h_next: f64,
+}
+
+impl Creeper {
+    /// A creeper pinned at step size `h_next`.
+    pub fn new(h_next: f64) -> Self {
+        Creeper { steps: 0, h_next }
+    }
+}
+
+impl Solver for Creeper {
+    fn name(&self) -> &'static str {
+        "testkit-creeper"
+    }
+    fn caps(&self) -> Caps {
+        Caps::explicit(ProblemKinds::of(ProblemKind::Ode)).adaptive()
+    }
+    fn step(&mut self, _ev: &dyn Evaluator, st: &mut SolverState, h: f64) -> StepOutcome {
+        self.steps += 1;
+        st.t += h;
+        StepOutcome::Accepted {
+            h_next: self.h_next,
+        }
+    }
+}
+
 /// Diagonal Euler–Maruyama with additive noise: `u ← u + h·f(u) + σ·dW`, where
 /// `dW ~ N(0, h)` per component from an owned, seeded [`SplitMix64`]. The seed is
 /// fixed at construction, so building one per trajectory index (via

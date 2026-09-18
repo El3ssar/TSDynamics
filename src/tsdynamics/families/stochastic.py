@@ -905,16 +905,51 @@ class StochasticSystem(SystemBase, ABC):
 
     @classmethod
     def _resolve_method(cls, method: str | None) -> str:
-        """Canonicalise a scheme name; raise on an unknown one."""
+        """Canonicalise a scheme name; raise on an unknown one.
+
+        The refusal speaks the **same words** as every other family's solver
+        door — ``unknown solver 'X'. Did you mean: …?`` then the listing scoped
+        to this family — because a user meets one vocabulary, not one per
+        family.  Two things were missing here and are measured defects rather
+        than polish:
+
+        * **No nearest match.**  ``solver="milstien"`` (one transposition) got a
+          bare listing, where every other door would have said *"Did you mean:
+          'milstein'?"*.
+        * **No reason for an ODE kernel.**  ``solver="rk45"`` on an SDE is not a
+          typo, it is the right word for different dynamics, so the message
+          names the mathematics: a deterministic kernel has nowhere to put the
+          Wiener increment.
+        """
         if method is None:
             return cls._default_method
         canon = _METHODS.get(str(method).lower())
-        if canon is None:
-            raise InvalidParameterError(
-                f"unknown SDE method {method!r}; choose from "
-                f"{sorted(set(_METHODS.values()))} (aliases: {sorted(_METHODS)})."
+        if canon is not None:
+            return canon
+
+        from tsdynamics import solvers
+        from tsdynamics.errors import _nearest
+
+        raw = str(method)
+        names = sorted(set(_METHODS.values()))
+        # Rank over the ALIASES (so "em" and "euler-maruyama" can be matched),
+        # then report the canonical name each one resolves to, de-duplicated.
+        near = list(dict.fromkeys(_METHODS[n] for n in _nearest(raw, sorted(_METHODS))))
+        msg = f"unknown solver {raw!r}."
+        if near:
+            msg += " Did you mean: " + ", ".join(repr(n) for n in near) + "?"
+        msg += f"\n    Available for an sde problem: {names}"
+        try:
+            deterministic = solvers.resolve(raw).name
+        except InvalidParameterError:
+            deterministic = ""
+        if deterministic:
+            msg += (
+                f"\n    {deterministic!r} is a deterministic kernel: it integrates dx = f dt and has"
+                "\n    nowhere to put the Wiener increment dW. An SDE needs a scheme that draws the"
+                "\n    noise — 'euler_maruyama' (order 0.5) or 'milstein' (order 1.0)."
             )
-        return canon
+        raise InvalidParameterError(msg)
 
 
 def _resolve_seed(seed: int | None) -> int:

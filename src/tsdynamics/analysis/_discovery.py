@@ -159,27 +159,78 @@ def summarise(doc: str | None) -> str:
 #:
 #: Each row is a word a reader plausibly types -> the words the registry knows.
 #: Kept deliberately small and literal: this is a thesaurus, not a ranker.
+#: Widened in v6 round 6 with the vocabulary of the FIELD as well as of
+#: engineering, after a sweep of 128 plausible questions: 20 of them returned
+#: nothing while the analysis that answers them was registered the whole time
+#: (``"critical transition"``, ``"early warning"``, ``"hysteresis"``,
+#: ``"sensitive dependence"``, ``"bistability"``, ``"intermittency"``,
+#: ``"quasiperiodic"``, ``"separatrix"``, ``"reconstruct"``, ``"failure"`` …).
+#: A query with genuinely no answer here (``"synchronisation"``,
+#: ``"resonance"``, ``"noise"``) is deliberately **still** empty — inventing a
+#: row for it would answer a question the library cannot.
 SYNONYMS: dict[str, tuple[str, ...]] = {
+    "alternative": ("attractors", "basins", "basin_fractions"),
     "annihilate": ("tipping_points",),
     "attractor": ("attractors", "basins"),
     "bifurcate": ("orbit_diagram", "continuation"),
     "bifurcation": ("orbit_diagram", "continuation"),
+    "bistability": ("attractors", "basins", "basin_fractions"),
+    "bistable": ("attractors", "basins", "basin_fractions"),
+    "buffer": ("resilience",),
+    "catastrophe": ("tipping_points", "continuation"),
+    "coexisting": ("attractors", "basins", "basin_fractions"),
     "collapse": ("tipping_points", "resilience"),
+    "complexity": ("rqa", "expansion_entropy", "correlation_dimension"),
+    "crisis": ("tipping_points", "continuation"),
+    "critical": ("tipping_points", "continuation"),
+    "delay": ("embed", "optimal_delay", "mutual_information"),
     "disturbance": ("resilience", "basin_fractions"),
+    "divide": ("basins", "uncertainty_exponent"),
+    "ergodic": ("invariant_density",),
+    "fail": ("resilience", "tipping_points"),
+    "failure": ("resilience", "tipping_points"),
     "fold": ("tipping_points", "continuation"),
+    "forecast": ("lyapunov_spectrum", "lyapunov_from_data"),
     "fragile": ("resilience",),
+    "headroom": ("resilience",),
+    "horizon": ("lyapunov_spectrum", "lyapunov_from_data"),
+    "hysteresis": ("continuation", "tipping_points"),
+    "intermingled": ("wada_property", "basin_entropy"),
+    "intermittency": ("rqa", "windowed_rqa", "recurrence_matrix"),
+    "intermittent": ("rqa", "windowed_rqa", "recurrence_matrix"),
+    "irreversible": ("tipping_points", "continuation"),
+    "laminar": ("rqa", "windowed_rqa"),
     "margin": ("resilience",),
+    "mixing": ("lyapunov_spectrum", "expansion_entropy"),
+    "multistability": ("attractors", "basins", "basin_fractions"),
+    "multistable": ("attractors", "basins", "basin_fractions"),
     "perturbation": ("resilience", "basin_fractions"),
     "predictable": ("uncertainty_exponent", "basin_entropy"),
+    "quasiperiodic": ("gali", "lyapunov_spectrum"),
+    "reconstruct": ("embed", "optimal_delay", "embedding_dimension"),
+    "reconstruction": ("embed", "optimal_delay", "embedding_dimension"),
+    "regime": ("tipping_points", "continuation"),
+    "resilient": ("resilience", "basin_fractions"),
+    "riddled": ("wada_property", "basin_entropy", "uncertainty_exponent"),
     "robust": ("resilience", "basin_fractions"),
     "robustness": ("resilience", "basin_fractions"),
     "safety": ("resilience",),
+    "sensitive": ("lyapunov_spectrum", "lyapunov_from_data", "uncertainty_exponent"),
+    "sensitivity": ("lyapunov_spectrum", "lyapunov_from_data", "uncertainty_exponent"),
+    "separatrix": ("basins", "basin_entropy", "uncertainty_exponent"),
     "shock": ("resilience",),
     "stability": ("fixed_points", "basin_fractions", "resilience"),
     "survive": ("resilience",),
+    "takens": ("embed", "optimal_delay", "embedding_dimension"),
+    "threshold": ("tipping_points", "continuation"),
     "tip": ("tipping_points", "resilience"),
     "tipping": ("tipping_points",),
+    "tolerance": ("resilience", "basin_fractions"),
+    "torus": ("gali", "lyapunov_spectrum"),
     "unpredictable": ("uncertainty_exponent", "basin_entropy"),
+    "warning": ("tipping_points", "continuation"),
+    "watershed": ("basins", "uncertainty_exponent"),
+    "withstand": ("resilience", "basin_fractions"),
 }
 
 _SPLIT = re.compile(r"[^0-9a-z]+")
@@ -401,7 +452,6 @@ PRODUCER: dict[str, tuple[str, str]] = {
 #: question from a measurement.
 SIBLING: dict[str, str] = {
     "lyapunov_spectrum": "ts.analysis.lyapunov_from_data(traj)",
-    "max_lyapunov": "ts.analysis.lyapunov_from_data(traj)",
 }
 
 #: For a system-first analysis with no data-first twin: why there is none.  A

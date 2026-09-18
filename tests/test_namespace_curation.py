@@ -709,7 +709,7 @@ def test_no_region_argument_requires_a_library_type():
     assert ts.analysis.fixed_points(hen, region=bounds, seed=0) is not None
     assert ts.analysis.basins(hen, grid) is not None
     assert ts.analysis.attractors(hen, grid) is not None
-    assert ts.analysis.basin_fractions(hen, bounds, n=40, seed=0) is not None
+    assert ts.analysis.basin_fractions(hen, bounds, n_seeds=40, seed=0) is not None
     assert ts.analysis.periodic_orbits(hen, 2, region=bounds, seed=0) is not None
     assert ts.data.sampler(bounds, seed=0)().shape == (2,)
     assert ts.data.grid_points([(-1.0, 1.0, 3), (-1.0, 1.0, 3)]).shape == (9, 2)

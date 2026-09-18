@@ -29,6 +29,7 @@ from typing import Any, NamedTuple
 
 import numpy as np
 
+from .._common import runaway_meta
 from ._common import (
     _DEFAULT_C_HI,
     DimensionResult,
@@ -357,6 +358,10 @@ def correlation_dimension(
             # One coordinate means "points on a line" — the estimator answers
             # D ~ 1 whatever the attractor is, so the result says so.
             "n_components": int(points.shape[1]),
+            # The escape stamp, when the point set is a runaway orbit: the
+            # cleanest-looking fit in the library is the one taken through a
+            # blow-up, so ``trusted`` reads this before it reads R^2.
+            **runaway_meta(points, analysis="correlation_dimension"),
         },
     )
 

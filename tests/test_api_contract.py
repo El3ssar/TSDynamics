@@ -344,11 +344,17 @@ def test_the_systems_namespace_answers_the_registry_verbs() -> None:
     assert len(ts.systems.__all__) == 180
 
 
-def test_the_analysis_listing_is_fifty_analyses_and_three_verbs() -> None:
+def test_the_analysis_listing_is_the_analyses_and_three_verbs() -> None:
     """§2.4 — flat, sorted, generated from the registry, 94 % callable analyses.
 
     The density is the point: today's predecessor was 84 names of which 32 were
     classes you never construct and 10 were modules that answered ``TypeError``.
+
+    §2.4 was written at **50** analyses; round 8 closed ``max_lyapunov``, a
+    second door onto ``lyapunov_spectrum``'s question that answered it with a
+    different number (Hénon: 0.4233 against 0.4160 at one nominal horizon), so
+    the count is **49**.  The number is asserted, not derived from the registry
+    it is checking — a count that reads its own subject cannot fail.
     """
     names = list(ts.analysis.__all__)
     assert names == sorted(names), "ts.analysis.__all__ must be flat and sorted"
@@ -359,8 +365,8 @@ def test_the_analysis_listing_is_fifty_analyses_and_three_verbs() -> None:
     assert analyses == sorted(registry.analyses.names()), (
         "the listing must be generated from registry.analyses, never hand-written"
     )
-    assert len(names) == 53, f"§2.4 says 53 names, measured {len(names)}"
-    assert len(analyses) == 50
+    assert len(names) == 52, f"the analysis listing is 52 names, measured {len(names)}"
+    assert len(analyses) == 49
 
 
 def test_the_viz_listing_is_the_thirteen_names() -> None:
@@ -746,7 +752,7 @@ def _vdp() -> Any:
 #: purpose (8x8 grids, 3 parameter values) so the gate is an inner-loop test.
 REGION_CALLS: dict[str, Callable[[], Any]] = {
     "attractors": lambda: ts.analysis.attractors(_henon(), _GRID_REGION),
-    "basin_fractions": lambda: ts.analysis.basin_fractions(_henon(), _REGION, n=20, seed=0),
+    "basin_fractions": lambda: ts.analysis.basin_fractions(_henon(), _REGION, n_seeds=20, seed=0),
     "basins": lambda: ts.analysis.basins(_henon(), _GRID_REGION),
     "continuation": lambda: ts.analysis.continuation(
         _henon(), "a", [1.2, 1.25], [(-2.0, 2.0, 6), (-2.0, 2.0, 6)]
@@ -1437,13 +1443,13 @@ def test_every_analysis_takes_its_subject_as_the_first_positional_argument() -> 
     """§5.1 — "an analysis is a free function whose FIRST argument is the thing it is about".
 
     That sentence is the entire replacement for the bound methods ruling A2
-    removed, so it has to be true of all 50 — a door that takes its subject by
+    removed, so it has to be true of all 49 — a door that takes its subject by
     keyword breaks ``ts.analysis.correlation_dimension(traj)`` and with it the
     grammar every error message teaches.
     """
     offenders: list[str] = []
     analyses = [n for n in ts.analysis.__all__ if n not in ANALYSIS_VERBS]
-    assert len(analyses) == 50
+    assert len(analyses) == 49
     for name in analyses:
         obj = getattr(ts.analysis, name)
         parameters = list(inspect.signature(obj).parameters.values())

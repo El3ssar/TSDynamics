@@ -347,8 +347,44 @@ def _apply_3d_panes(ax: Any, theme: Any) -> None:
             axis._axinfo["grid"]["color"] = theme.grid_color
 
 
+def _apply_3d_scale_and_ticks(ax: Any, axis: Any, which: str) -> None:
+    """Apply one axis's ``scale`` / ``ticks`` / ``tickformat`` to a 3-D axes.
+
+    The 3-D renderer used to apply the three **labels** and the three **limits**
+    and nothing else, so six of the seventeen figure keywords — ``xticks`` /
+    ``yticks`` / ``zticks`` / ``xscale`` / ``yscale`` / ``zscale`` — were honoured
+    on a 2-D axes and silently dropped on a 3-D one.  Measured before v6 round 8:
+    ``ts.plot(traj, components=("x","y","z"), zticks=[10, 40])`` rendered
+    ``ax.get_zticks() == [-10, 0, 10, 20, 30, 40, 50]`` and the picture was
+    bit-identical to the one without the keyword.  106 of the catalogue's ODEs
+    are 3-D, so this was the *common* axes.
+
+    ``Axes3D`` takes ``set_zscale`` / ``set_zticks`` / ``ax.zaxis`` exactly as the
+    flat axes takes their x/y counterparts, so this is the same application the
+    2-D core does (``_core._apply_axis``), reached for all three axes.
+    """
+    import matplotlib.ticker as mticker
+
+    if axis is None:
+        return
+    if axis.scale in ("log", "symlog"):
+        getattr(ax, f"set_{which}scale")(axis.scale)
+    elif axis.scale == "categorical" and axis.categories is not None:
+        getattr(ax, f"set_{which}ticks")(np.arange(len(axis.categories), dtype=float))
+        getattr(ax, f"set_{which}ticklabels")(list(axis.categories))
+    if axis.ticks is not None:
+        getattr(ax, f"set_{which}ticks")(list(axis.ticks))
+    if axis.tickformat is not None:
+        formatter = (
+            mticker.StrMethodFormatter(axis.tickformat)
+            if "{" in axis.tickformat
+            else mticker.FormatStrFormatter(axis.tickformat)
+        )
+        getattr(ax, f"{which}axis").set_major_formatter(formatter)
+
+
 def _apply_3d_axes(ax: Any, spec: PlotSpec, theme: Any) -> None:
-    """Apply the three axis labels/limits, the title, equal box aspect, and camera.
+    """Apply the three axes (labels, limits, scales, ticks), title, aspect and camera.
 
     Also applies theme font sizes and foreground color to the 3-D axes.
     """
@@ -362,6 +398,10 @@ def _apply_3d_axes(ax: Any, spec: PlotSpec, theme: Any) -> None:
     ax.set_ylabel(spec.y.label, **label_kw)
     if spec.z is not None:
         ax.set_zlabel(spec.z.label, **label_kw)
+    # Scales and ticks BEFORE the limits: setting a log scale resets the view
+    # interval, so a limit applied first would be thrown away.
+    for axis, which in ((spec.x, "x"), (spec.y, "y"), (spec.z, "z")):
+        _apply_3d_scale_and_ticks(ax, axis, which)
     if spec.x.limits is not None:
         ax.set_xlim(*spec.x.limits)
     if spec.y.limits is not None:

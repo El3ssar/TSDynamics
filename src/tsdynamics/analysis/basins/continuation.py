@@ -27,7 +27,13 @@ from .._common import is_data, reject_system
 from .._discovery import wrong_subject
 from .._result import AnalysisResult, CollectionResult
 from .._result_json import _pct, _sig, _spread, _state
-from ._common import DIVERGED_COLOR, PALETTE, _palette_indices, coerce_region
+from ._common import (
+    DIVERGED_COLOR,
+    PALETTE,
+    _palette_indices,
+    coerce_region,
+    reject_unknown_fsm,
+)
 from .attractors import Attractor, _reject_unsupported
 from .basins import basin_fractions
 
@@ -298,7 +304,7 @@ def continuation(
     values: Any,
     region: Box | Ball | Grid | Sequence[tuple[float, ...]] | None = None,
     *,
-    n: int = 2000,
+    n_seeds: int = 2000,
     resolution: int | tuple[int, ...] = 100,
     seed: int | None = 0,
     dt: float = 1.0,
@@ -327,10 +333,11 @@ def continuation(
         Parameter values, in the order to walk them.
     region : Box, Ball, or Grid
         The region whose basin fractions are measured at each value.
-    n : int, default 2000
+    n_seeds : int, default 2000
         Number of random **initial conditions** sampled at each parameter value
-        — the same quantity ``attractors`` / ``fixed_points`` spell ``n_seeds``,
-        and what ``basin_fractions`` also calls ``n``.
+        — the word ``attractors`` / ``fixed_points`` / ``periodic_orbits`` /
+        ``basin_fractions`` all use.  (It was ``n`` before v6 round 8; ``n=``
+        now raises, naming this one.)
     resolution : int or tuple of int, default 100
         Recurrence cells per axis (a Grid uses its own ``counts``).
     seed : int, optional
@@ -370,6 +377,7 @@ def continuation(
     analysis of dynamical systems", *Chaos* **33**, 073151 (2023).
     """
     _reject_unsupported(system, "continuation")
+    reject_unknown_fsm(fsm, analysis="continuation")
     region = coerce_region(
         region,
         analysis="continuation",
@@ -388,7 +396,14 @@ def continuation(
     for k, v in enumerate(values):
         sys_v = system.with_params(**{param: float(v)})
         bf = basin_fractions(
-            sys_v, region, n=n, resolution=resolution, seed=seed, dt=dt, max_steps=max_steps, **fsm
+            sys_v,
+            region,
+            n_seeds=n_seeds,
+            resolution=resolution,
+            seed=seed,
+            dt=dt,
+            max_steps=max_steps,
+            **fsm,
         )
         local = {
             lid: att

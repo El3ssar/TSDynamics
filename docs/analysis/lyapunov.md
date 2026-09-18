@@ -154,28 +154,35 @@ ones the bulk test suite checks continuously for every system that declares a
 | Logistic, `r = 4` | `[ln 2 ≈ 0.693]` | exact analytic result |
 | Mackey–Glass, `τ = 17` | leading `> 0` | chaotic; $\ge 1$ positive exponent |
 
-## `max_lyapunov` — no Jacobian required
+## Just the leading exponent — and no Jacobian required
 
-When you only need the *leading* exponent — or when the right-hand side is
-non-smooth and no analytic Jacobian exists — the classic two-trajectory method
-needs nothing but the stepping protocol:
+Ask for one exponent, and you get one:
 
 ```python
-ts.analysis.max_lyapunov(ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]), dt=0.05)   # ≈ 0.89
-ts.analysis.max_lyapunov(ts.systems.Henon(), ic=[0.1, 0.1])                # ≈ 0.42
+ts.analysis.lyapunov_spectrum(ts.systems.Lorenz(), k=1, ic=[1.0, 1.0, 1.0])
+ts.analysis.lyapunov_spectrum(ts.systems.Henon(), k=1, ic=[0.1, 0.1])
 ```
 
-Run a reference and a copy perturbed by `d0`, let them separate for `steps_per`
-protocol steps, log the growth $\ln(d/d_0)$, rescale the perturbation back to
-`d0`, and repeat `n` times (Benettin, Galgani & Strelcyn 1976). Because it only
-touches `step` / `state` / `set_state`, it works for any ODE or map — including
-systems where no Jacobian is available. The continuous normalisation divides by
-the *measured* elapsed `time()` of the reference run, so the exponent is
-correct whatever per-step advance the system makes. For a **map**,
-`max_lyapunov` returns the leading entry of the compiled QR tangent-map
-spectrum — far faster and more robust than per-iterate rescaling (no `d0` /
-collapse tuning). It is **not** available for DDEs, which have no `set_state`;
-use `lyapunov_spectrum` there.
+!!! note "`max_lyapunov` is gone — one question, one spelling"
+
+    Until v6 there was a second door, `max_lyapunov`, onto exactly this
+    question, and the two answered it with **different numbers**: on Hénon at
+    one nominal horizon `max_lyapunov` said `0.4233` and `lyapunov_spectrum`
+    said `0.4160`. The better half of it — the burn-in, and the Jacobian-free
+    two-trajectory machine — moved into `lyapunov_spectrum`, and the second door
+    closed. The old name raises, naming this one.
+
+When the system has a right-hand side to differentiate, the exponents come from
+a **tangent frame** carried alongside the orbit: nothing is perturbed and
+nothing is rescaled. When it does not — a
+[`WrappedSystem`](../start/defining-systems.md) around an external stepper, a
+non-smooth map with no analytic Jacobian — `lyapunov_spectrum` falls back to the
+classic **two-trajectory** method, which needs nothing but the stepping
+protocol: run a reference and a copy perturbed by `d0`, let them separate for
+`steps_per` protocol steps, log the growth $\ln(d/d_0)$, rescale back to `d0`,
+and repeat (Benettin, Galgani & Strelcyn 1976). The continuous normalisation
+divides by the *measured* elapsed `time()` of the reference run, so the exponent
+is correct whatever per-step advance the system makes.
 
 ## `lyapunov_from_data` — from a measured series
 

@@ -39,7 +39,7 @@ from __future__ import annotations
 
 from typing import Any, cast
 
-from ..compose import _plot_spec_of, unwrap_container
+from ..compose import _plot_spec_of, reject_kind_keyword, unwrap_container, warn_on_offscreen_layers
 from ..compose import plot as compose_plot
 from ..spec import (
     FIGURE_KEYS,
@@ -49,7 +49,7 @@ from ..spec import (
     reject_on_keyword,
     split_figure_keywords,
 )
-from ._registry import TransformCall, build_spec, get
+from ._registry import DOMAIN_KEYWORD, TransformCall, build_spec, get
 
 __all__ = ["plot"]
 
@@ -201,6 +201,17 @@ def _build_one(
     accepted = _accepted_names(record) | _style_names() | _COMPOSITION_KEYS
     merged = {k: v for k, v in shared.items() if k in accepted}
     merged.update(own)
+    # ``domain=`` NAMES the evaluation box, so a *shared* ``xlim=``/``ylim=``
+    # goes back to doing only its figure job — the axes.  Without this, the pair
+    # raised "two spellings of one box in one call", which is exactly the figure
+    # the ambiguity warning next door had just taught: field over a big box,
+    # axes zoomed into part of it.  A caller who writes BOTH inside one
+    # transform's own option dict still gets the clash, because there the two
+    # really are two spellings of that transform's window.
+    if DOMAIN_KEYWORD in merged:
+        for key in _window_keywords(record):
+            if key in shared and key not in own:
+                merged.pop(key, None)
     build, style = _split_style(merged)
     composition = {k: build.pop(k) for k in list(build) if k in _COMPOSITION_KEYS}
 
@@ -249,10 +260,12 @@ def _accepted_names(record: Any) -> frozenset[str]:
     """
     import inspect
 
-    from ._registry import _RUN_KEYS, row_option_names
+    from ._registry import _RUN_KEYS, DOMAIN_KEYWORD, domain_aware, row_option_names
 
     params = inspect.signature(record.compute).parameters
     names = frozenset(params) | row_option_names(record) | {"primitive_options"}
+    if domain_aware(record):
+        names |= {DOMAIN_KEYWORD}
     if record.source == "data":
         names |= _RUN_KEYS
     return names
@@ -493,6 +506,22 @@ def plot(
         silent drop, so a typo (``colour=``) costs a message rather than a wrong
         picture.
 
+        Two words are worth naming here:
+
+        ``domain=``
+            **Where to evaluate the equations** — one ``(lo, hi)`` pair per axis
+            (``domain=((-3, 3), (-8, 8))``, or ``domain=(0, 1)`` for a square),
+            the same reading every ``region=`` in the library takes.  It is the
+            transform's word; ``xlim=``/``ylim=`` is the figure's.  They used to
+            be the same word doing both jobs, and it still does both (with a
+            warning) so nothing that worked stopped working.
+        ``kind=``
+            **Does not exist.**  A picture is named *positionally*, by its
+            transform: ``ts.plot(traj, "time_series")``.  Both spellings were
+            once accepted and they built measurably different specs, which is
+            the silent-wrong-answer defect rather than flexibility; ``kind=``
+            now raises, naming the transform that draws what it asked for.
+
     Returns
     -------
     Plot
@@ -500,12 +529,19 @@ def plot(
         the *same* return type as ``traj.plot()`` / ``system.plot()``.  ``plot``
         builds, ``render`` draws, ``show`` displays, ``save`` writes.
 
+    Warns
+    -----
+    tsdynamics.viz.render.caps.VisualizationDegraded
+        If ``xlim=``/``ylim=`` is *also* a named transform's evaluation domain
+        (use ``domain=`` to say which you mean), or if a legended curve ends up
+        entirely outside the axes.
+
     Raises
     ------
     tsdynamics.errors.InvalidParameterError
         If a named transform matches no subject, if a keyword reaches none of
         the named transforms, if a (transform, primitive) pair is not declared,
-        or if the frames do not allow an overlay.
+        if the frames do not allow an overlay, or if ``kind=`` is passed.
 
     Examples
     --------
@@ -524,6 +560,7 @@ def plot(
     from tsdynamics.errors import InvalidParameterError
 
     reject_on_keyword(kw, "ts.plot()", "ts.plot(a, b, force=True)")
+    reject_kind_keyword(kw, "ts.plot()")
     # A lone ``("name", {options})`` pair is a transform call, not a container of
     # plottables to unwrap — so the message is about the missing subject rather
     # than about an unplottable string.
@@ -566,20 +603,26 @@ def plot(
     # the composed spec rather than offered to a transform that has no idea what
     # to do with them.
     figure = split_figure_keywords(kw)
-    kw.update(_shared_with_transforms(figure, selectors))
+    kw.update(_shared_with_transforms(figure, selectors, kw))
     _reject_unaccepted(kw, selectors)
     if animate is not False or fps is not None:
         kw = {**kw, "animate": animate or True, "fps": fps}
     pairs = _pair_up(subjects, selectors)
-    # The subjects no transform claimed draw their own view; build those FIRST,
-    # because a model transform's auto window is derived from them (see
-    # ``_window_over_data``).
+    # **Every data spec is built FIRST**, because a model transform's auto window
+    # is the union over all of them (see ``_window_over_data``) — a subject the
+    # caller also named a transform for is still data on those axes.
     drawn: dict[int, Any] = {
-        i: _default_view(subject, dict(kw)) for i, (subject, sel) in enumerate(pairs) if sel is None
+        i: (
+            _default_view(subject, dict(kw))
+            if sel is None
+            else _build_one(subject, sel, dict(kw), primitive)
+        )
+        for i, (subject, sel) in enumerate(pairs)
+        if not _is_model(sel)
     }
     field_kw = {**kw, **_window_over_data(drawn.values(), kw)}
     specs = [
-        drawn[i] if sel is None else _build_one(subject, sel, dict(field_kw), primitive)
+        drawn[i] if i in drawn else _build_one(subject, cast("Any", sel), dict(field_kw), primitive)
         for i, (subject, sel) in enumerate(pairs)
     ]
     if labels is not None:
@@ -595,7 +638,13 @@ def plot(
         force=force,
     )
     apply_figure_keywords(result, figure)
+    warn_on_offscreen_layers(result)
     return _finish(result, ax)
+
+
+def _is_model(selector: str | TransformCall | None) -> bool:
+    """Whether a selector names a transform that must evaluate the right-hand side."""
+    return selector is not None and get(_selector_name(selector)).source == "model"
 
 
 #: How much room to leave around the data when a model transform's window is
@@ -663,7 +712,7 @@ def _channel_span(arrays: list[Any]) -> tuple[float, float] | None:
 
 
 def _shared_with_transforms(
-    figure: dict[str, Any], selectors: list[str | TransformCall]
+    figure: dict[str, Any], selectors: list[str | TransformCall], options: dict[str, Any]
 ) -> dict[str, Any]:
     """Return the figure keywords a named transform **also** declares.
 
@@ -684,15 +733,59 @@ def _shared_with_transforms(
     >>> ts.plot(vdp, ("flow_speed", {"xlim": (-3, 3)}), xlim=(-10, 10))  # doctest: +SKIP
 
     computes the field over ``[-3, 3]`` and draws axes over ``[-10, 10]``.
+
+    **And the double duty is said out loud.**  Reaching both is the right
+    picture, but it is still one word doing two jobs, and the caller cannot tell
+    from the call which one they asked for.  So a shared ``xlim=``/``ylim=`` that
+    lands on a transform's evaluation window warns once, naming ``domain=`` — the
+    transform's own, non-colliding word.
     """
     if not figure:
         return {}
     accepted: set[str] = set()
+    windowed: set[str] = set()
     for selector in selectors:
         call = _as_call(selector)
         name = call.name if isinstance(call, TransformCall) else str(call)
-        accepted |= _accepted_names(get(name.partition(".")[0]))
-    return {k: v for k, v in figure.items() if k in accepted}
+        record = get(name.partition(".")[0])
+        accepted |= _accepted_names(record)
+        if _window_keywords(record):
+            windowed.add(record.name)
+    shared = {k: v for k, v in figure.items() if k in accepted}
+    if DOMAIN_KEYWORD not in options:
+        _warn_on_window_collision(shared, windowed)
+    return shared
+
+
+def _window_keywords(record: Any) -> tuple[str, ...]:
+    """Return the evaluation-window keywords ``record`` declares (``()`` for none)."""
+    from ._registry import window_keywords
+
+    return window_keywords(record)
+
+
+def _warn_on_window_collision(shared: dict[str, Any], windowed: set[str]) -> None:
+    """Warn once when ``xlim=``/``ylim=`` is also naming a transform's evaluation domain."""
+    import warnings
+
+    from ._registry import _WINDOW_KEYWORDS
+
+    collided = sorted(k for k in shared if k in _WINDOW_KEYWORDS)
+    if not collided or not windowed:
+        return
+    from ..render.caps import VisualizationDegraded
+
+    names = ", ".join(sorted(windowed))
+    box = ", ".join(f"{k}={shared[k]!r}" for k in collided)
+    warnings.warn(
+        f"{box} is doing two jobs here: it frames the axes AND it is the box "
+        f"{names} evaluates the equations over. That is the picture you almost "
+        f"certainly want, so it is what you get — but the two are separable, and "
+        f"you can ask for both at once: domain= is the evaluation window, "
+        f"{collided[0]}= is only the axes.",
+        VisualizationDegraded,
+        stacklevel=4,
+    )
 
 
 def _label_by_subject(

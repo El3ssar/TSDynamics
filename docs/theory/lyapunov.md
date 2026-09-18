@@ -75,7 +75,8 @@ maps (the compiled QR tangent-map kernel behind `TangentSystem`) with the exact
 
 ## The two-trajectory estimator
 
-`max_lyapunov` implements the older and simpler estimator (Benettin,
+`lyapunov_spectrum` falls back to the older and simpler estimator when the
+system carries no Jacobian to differentiate (Benettin,
 Galgani & Strelcyn 1976): evolve the system and a copy displaced by
 $d_0$, measure the separation $d$ after a short interval, accumulate
 $\ln(d/d_0)$, renormalize the displacement back to $d_0$, repeat. It

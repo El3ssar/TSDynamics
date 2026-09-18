@@ -96,7 +96,6 @@ from .lyapunov import LyapunovSpectrum as LyapunovSpectrum
 from .lyapunov import kaplan_yorke_dimension as kaplan_yorke_dimension
 from .lyapunov import lyapunov_from_data as lyapunov_from_data
 from .lyapunov import lyapunov_spectrum as lyapunov_spectrum
-from .lyapunov import max_lyapunov as max_lyapunov
 from .orbits import OrbitDiagram as OrbitDiagram
 from .orbits import PoincareSection as PoincareSection
 from .orbits import ReturnMap as ReturnMap
@@ -219,11 +218,11 @@ def find(what: Any = None, /) -> AnalysisList:
     --------
     >>> import tsdynamics as ts
     >>> sorted(f.__name__ for f in ts.analysis.find("multistability"))[:3]
-    ['attractors', 'basin_entropy', 'basin_fractions']
+    ['attractors', 'basin_fractions', 'basins']
     >>> len(ts.analysis.find(ts.systems.Henon()))    # a map has no vector field
-    14
+    13
     >>> len(ts.analysis.find(ts.systems.Lorenz()))
-    21
+    20
     """
     entries = _registry.analyses.all()
     if what is None:
@@ -294,6 +293,14 @@ _RENAMED_IN_V6: dict[str, tuple[str, str]] = {
         'ts.analysis.orbit_diagram(system, "r", values)',
         "it was a second name for orbit_diagram, and a shared implementation can "
         "name only one of its spellings in an error",
+    ),
+    "max_lyapunov": (
+        "ts.analysis.lyapunov_spectrum(system, k=1)",
+        "two doors onto one question answered it with two numbers — on Hénon at "
+        "one nominal horizon max_lyapunov said 0.4233 and lyapunov_spectrum said "
+        "0.4160 — so the better half (the burn-in, and the Jacobian-free "
+        "two-trajectory machine) moved into lyapunov_spectrum and the second door "
+        "closed",
     ),
     "find_attractors": (
         "ts.analysis.attractors(system, region)",

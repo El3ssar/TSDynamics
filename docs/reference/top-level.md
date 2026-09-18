@@ -199,7 +199,6 @@ class, renamed, nothing wrapped)
 ```pycon
 >>> ts.lyapunov
 AttributeError: module 'tsdynamics' has no attribute 'lyapunov'. Did you mean:
-    ts.analysis.max_lyapunov
     ts.analysis.lyapunov_spectrum
     ts.analysis.lyapunov_from_data
 ```

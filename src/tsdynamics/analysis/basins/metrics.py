@@ -387,7 +387,34 @@ class UncertaintyExponent(AnalysisResult):
         verdict = self.final_state_sensitive
         if verdict is None:
             return "no clean power law (R² below the acceptance level)"
-        return "final-state sensitive (fractal boundary)" if verdict else "smooth boundary (α ≈ 1)"
+        if verdict:
+            return "final-state sensitive (fractal boundary)"
+        if self.contradicted_by_basin_entropy:
+            # One picture, two tests, opposite answers.  Daza's is sufficient,
+            # this one is a fit, so the fit is the one that has to give ground —
+            # and either way a reader must not be handed "smooth" alone.
+            sbb = self.meta.get("basin_entropy_sbb") if self.meta else None
+            number = f"Sbb = {_sig(float(sbb), 4)}" if sbb is not None else "Sbb"
+            return (
+                f"DISPUTED — α ≈ 1 reads smooth, but basin_entropy on this same image "
+                f"has {number} > ln 2, which is SUFFICIENT for a fractal boundary; "
+                f"believe the sufficient test and refine the grid"
+            )
+        return "smooth boundary (α ≈ 1)"
+
+    @property
+    def contradicted_by_basin_entropy(self) -> bool:
+        r"""Whether :func:`basin_entropy` proves fractal where this fit reads smooth.
+
+        Only one direction is a contradiction.  :math:`S_{bb} > \ln 2` is
+        *sufficient* for a fractal boundary and not necessary (Daza et al.
+        2016), so failing it says "not established", never "smooth" — but
+        *passing* it while :math:`\alpha \approx 1` is two answers to one
+        question about one image.
+        """
+        if self.final_state_sensitive is not False or not self.meta:
+            return False
+        return bool(self.meta.get("basin_entropy_fractal"))
 
     def _derived(self) -> dict[str, Any]:
         """Export the applicability flags and the verdict the repr reports.
@@ -401,6 +428,7 @@ class UncertaintyExponent(AnalysisResult):
             "final_state_sensitive": self.final_state_sensitive,
             "resolved": self.resolved,
             "slope_drift": self.slope_drift,
+            "contradicted_by_basin_entropy": self.contradicted_by_basin_entropy,
         }
 
     def _printed_names(self) -> dict[str, str]:
@@ -741,6 +769,22 @@ def uncertainty_exponent(
 
     alpha = float(slope)
     dim = labels.ndim
+    # Ask the OTHER boundary test about the SAME image, and carry its answer.
+    # Daza et al. (2016) prove ``Sbb > ln 2`` is *sufficient* for a fractal
+    # boundary; this estimator fits a power law.  When the proof-style test fires
+    # and the fit says "smooth", one of them is wrong about this picture, and a
+    # reader running both — which the library invites, they sit side by side in
+    # ``find("basin")`` — deserves to be told by whichever they called rather
+    # than left to notice.  It is a label-image computation (no integration), so
+    # it costs nothing next to the march that produced the image.
+    sbb: float | None = None
+    try:
+        other = basin_entropy(basins, include_diverged=include_diverged)
+    except (ValueError, InvalidInputError):  # pragma: no cover - a boundary-free image
+        established = False
+    else:
+        established = bool(other.fractal_boundary)
+        sbb = float(other.sbb)
     return UncertaintyExponent(
         alpha=alpha,
         boundary_dimension=float(dim - alpha),
@@ -754,6 +798,8 @@ def uncertainty_exponent(
             # What the verdict's resolution hedge names when it asks for a
             # finer image — the user should never have to work out "2n" itself.
             "grid_shape": tuple(int(n) for n in labels.shape),
+            "basin_entropy_sbb": sbb,
+            "basin_entropy_fractal": established,
         },
     )
 
@@ -1039,7 +1085,11 @@ def resilience(result: BasinsResult, attractor_id: int | None = None) -> ScalarR
             "attractor_id": int(attractor_id),
             "quantization": quantum,
             "quantization_reason": (
-                f"{value / quantum:.0f} cells on a {grid_words} grid — "
+                # "1 cells" is the commonest reading of all — a margin one cell
+                # wide is exactly when the reader must not be distracted by the
+                # grammar of the sentence telling them so.
+                f"{value / quantum:.0f} cell{'' if round(value / quantum) == 1 else 's'} "
+                f"on a {grid_words} grid — "
                 "refine the grid to tighten, and read it as an upper bound"
             ),
         },

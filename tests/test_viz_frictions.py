@@ -23,6 +23,7 @@ Three clusters, worst first:
 
 from __future__ import annotations
 
+import re
 import warnings
 
 import numpy as np
@@ -167,7 +168,7 @@ def test_a_named_subject_is_exempt_from_the_automatic_disambiguation():
 
 def test_a_multi_curve_subject_gets_the_label_as_a_prefix():
     """One name over several curves would legend two different things identically."""
-    plot = ts.plot(_lorenz(), labels=["run A"], kind="time_series", components=["x", "y"])
+    plot = ts.plot(_lorenz(), "time_series", labels=["run A"], components=["x", "y"])
     assert [layer.label for layer in plot.layers] == ["run A: x", "run A: y"]
 
 
@@ -246,10 +247,12 @@ def test_a_shared_window_reaches_the_transform_that_also_declares_it():
     """``ts.plot(sys, 'flow_speed', ylim=(-8, 8))`` moved the axes and not the field.
 
     Measured: the geometry door (``ts.viz.geometry``) windowed it correctly and
-    the plot door did not — two doors, one word, two pictures, no warning.
+    the plot door did not — two doors, one word, two pictures, no warning.  It
+    reaches both now, and says so (see the ``domain=`` tests below).
     """
     vdp = ts.systems.VanDerPol()
-    plot = ts.plot(vdp, "flow_speed", ylim=(-8.0, 8.0))
+    with pytest.warns(VisualizationDegraded):
+        plot = ts.plot(vdp, "flow_speed", ylim=(-8.0, 8.0))
     field_y = np.asarray(plot.layers[0].data["y"], dtype=float)
     assert (float(field_y.min()), float(field_y.max())) == (-8.0, 8.0)
     assert plot.y.limits == (-8.0, 8.0)
@@ -258,7 +261,8 @@ def test_a_shared_window_reaches_the_transform_that_also_declares_it():
 def test_a_transforms_own_window_still_wins_over_the_shared_one():
     """The escape hatch stays exact: computing over one box, drawing over another."""
     vdp = ts.systems.VanDerPol()
-    plot = ts.plot(vdp, ("flow_speed", {"ylim": (-3.0, 3.0)}), ylim=(-10.0, 10.0))
+    with pytest.warns(VisualizationDegraded):
+        plot = ts.plot(vdp, ("flow_speed", {"ylim": (-3.0, 3.0)}), ylim=(-10.0, 10.0))
     field_y = np.asarray(plot.layers[0].data["y"], dtype=float)
     assert (float(field_y.min()), float(field_y.max())) == (-3.0, 3.0)
     assert plot.y.limits == (-10.0, 10.0)
@@ -643,3 +647,256 @@ def test_every_figure_keyword_survives_a_render_not_merely_a_build(tmp_path):
         plot = ts.plot(traj, color_by="time", **{key: value})
         assert plot.kind is PlotKind.PHASE_PORTRAIT_3D
         plot.save(tmp_path / f"{key}.png")
+
+
+# ---------------------------------------------------------------------------
+# 4. One vocabulary, one window, one whole map
+#
+# The second pass over the same six sessions.  Everything here is a place where
+# the library accepted TWO spellings of one thing and quietly meant different
+# pictures by them, or drew a frame that left out what the picture is for.
+# ---------------------------------------------------------------------------
+
+
+def test_a_picture_is_named_one_way_and_kind_says_which():
+    """``kind=`` and the positional name were both accepted and BUILT DIFFERENT SPECS.
+
+    Measured at v6 round 7: ``ts.plot(tr, kind="time_series")`` and
+    ``ts.plot(tr, "time_series")`` both returned a ``Plot``, neither warned, and
+    ``a.to_dict() != b.to_dict()`` — the ``kind=`` route produced a spec with no
+    ``frame`` (so it could not be frame-checked for an overlay) and a y axis
+    labelled with the *first* component of a three-component plot.
+    """
+    traj = _lorenz(final_time=4.0)
+    with pytest.raises(InvalidParameterError) as excinfo:
+        ts.plot(traj, kind="time_series")
+    message = str(excinfo.value)
+    assert "kind=" in message and "ts.plot(subject, 'time_series')" in message
+    assert ts.plot(traj, "time_series").frame is not None  # the spelling that stays
+
+
+@pytest.mark.parametrize(
+    ("value", "transform"),
+    [
+        ("delay", "delay_embedding"),
+        ("field", "spatial_field"),
+        ("phase_portrait_3d", "phase_portrait"),
+        ("spacetime", "spacetime"),
+        ("recurrence_plot", "recurrence"),
+    ],
+)
+def test_everything_kind_uniquely_served_survives_under_one_spelling(value, transform):
+    """Including the two *recipes* that were never ``PlotKind`` members."""
+    traj = _lorenz(final_time=4.0)
+    with pytest.raises(InvalidParameterError, match=re.escape(f"{transform!r})")):
+        ts.plot(traj, kind=value)
+    assert transform in viz.transforms.names()
+
+
+def test_the_delay_recipes_options_are_the_transforms_options():
+    """``kind="delay", delay_time=17`` had to keep working as ``"delay_embedding"``."""
+    traj = _lorenz(final_time=20.0, dt=0.01)
+    assert ts.plot(traj, "delay_embedding", delay_time=0.16, components="z").y.label == (
+        "z(t - 0.16)"
+    )
+
+
+def test_a_field_has_its_own_word_for_the_box_it_is_evaluated_over():
+    """``xlim`` meant two things — axis limits, and where to evaluate the equations.
+
+    *"Cost me more time than everything else combined, and it produced a
+    plausible wrong picture."*  ``domain=`` is the transform's word, read the
+    way every ``region=`` in the library is read: one ``(lo, hi)`` pair per axis.
+    """
+    vdp = ts.systems.VanDerPol()
+    plot = ts.plot(vdp, "flow_speed", domain=((-3.0, 3.0), (-8.0, 8.0)))
+    field_x = np.asarray(plot.layers[0].data["x"], dtype=float)
+    field_y = np.asarray(plot.layers[0].data["y"], dtype=float)
+    assert (float(field_x.min()), float(field_x.max())) == (-3.0, 3.0)
+    assert (float(field_y.min()), float(field_y.max())) == (-8.0, 8.0)
+    assert plot.x.limits == (-3.0, 3.0) and plot.y.limits == (-8.0, 8.0)
+
+
+def test_the_new_window_word_reaches_the_arrays_door_too():
+    """One word at every door, or it is not one word."""
+    geom = viz.geometry(ts.systems.VanDerPol(), "flow_speed", domain=((-1.0, 1.0), (-2.0, 2.0)))
+    assert geom.axis_limits == ((-1.0, 1.0), (-2.0, 2.0))
+
+
+def test_a_square_domain_may_be_written_once():
+    """``domain=(0, 1)`` is the unit square — the shape a caller reaches for."""
+    plot = ts.plot(ts.systems.VanDerPol(), "flow_speed", domain=(-2.0, 2.0))
+    assert plot.x.limits == (-2.0, 2.0) and plot.y.limits == (-2.0, 2.0)
+
+
+@pytest.mark.parametrize(
+    "bad", [(1.0, 0.0), ((1.0, 0.0), (0.0, 1.0)), "nope", ((1.0, 2.0), (3.0, 4.0), (5.0, 6.0))]
+)
+def test_a_malformed_domain_is_refused_with_the_shape_it_wanted(bad):
+    with pytest.raises(InvalidParameterError, match="one .lo, hi. pair per axis"):
+        ts.plot(ts.systems.VanDerPol(), "flow_speed", domain=bad)
+
+
+def test_the_field_box_and_the_axes_may_be_named_separately_in_one_call():
+    """The two words do two jobs, so both at once is an ordinary figure.
+
+    It used to raise *"two spellings of one box in one call"* — while the
+    ambiguity warning next door was, in the same breath, teaching ``domain=`` as
+    the evaluation window and ``xlim=`` as "only the axes".  A beta tester read
+    that as an invitation, took it, and was refused: field over a big box with
+    the axes zoomed into part of it is a completely ordinary panel.
+    """
+    plot = ts.plot(
+        ts.systems.VanDerPol(),
+        "flow_speed",
+        domain=((-6.0, 6.0), (-6.0, 6.0)),
+        xlim=(-2.0, 2.0),
+        ylim=(-2.0, 2.0),
+    )
+    assert plot.x.limits == (-2.0, 2.0)
+    # ...and the field really was evaluated over the big box, not the small one.
+    xs = np.concatenate([np.asarray(layer.data["x"]).ravel() for layer in plot.layers])
+    assert xs.max() > 2.5
+
+
+def test_naming_the_box_twice_inside_one_transform_call_is_refused():
+    """Written into ONE transform's own options they really are two spellings."""
+    with pytest.raises(InvalidParameterError, match="two spellings of one box"):
+        ts.plot(
+            ts.systems.VanDerPol(),
+            ("flow_speed", {"domain": ((-1.0, 1.0), (-1.0, 1.0)), "xlim": (-2.0, 2.0)}),
+        )
+
+
+def test_a_window_doing_two_jobs_says_so_and_names_the_word_for_one_of_them():
+    """The collision is gone as a *defect* and kept as a convenience — out loud."""
+    with pytest.warns(VisualizationDegraded, match="domain="):
+        ts.plot(ts.systems.VanDerPol(), "flow_speed", xlim=(-3.0, 3.0))
+
+
+def test_an_axis_limit_on_a_plain_trajectory_is_silent():
+    """Nothing collides when no transform wanted the window: that must stay quiet."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        ts.plot(_lorenz(final_time=4.0), "time_series", xlim=(0.0, 1.0))
+
+
+def test_a_cobweb_draws_the_whole_map_not_the_orbits_bounding_box():
+    """The picture whose entire point is *the diagonal crosses the hump* omitted the hump.
+
+    Measured: ``Logistic(r=2.8).run(steps=40, ic=[0.6])`` converges onto the
+    fixed point, so the orbit's bounding box is ``[0.6, 0.643]`` — ``f`` was
+    drawn over *that*, and neither the critical point nor the second fixed point
+    was on the canvas.  A 1-D map does not declare a domain but it **is** one,
+    and it can be read off the kernel: the unit square, for every ``r``.
+    """
+    orbit = ts.systems.Logistic(r=2.8).run(steps=40, ic=[0.6])
+    plot = ts.plot(orbit, "cobweb")
+    visited = np.asarray(orbit.y[:, 0], dtype=float)
+    assert float(visited.max()) < 0.7  # the orbit never goes near the hump...
+    lo, hi = plot.x.limits
+    assert lo == pytest.approx(0.0, abs=1e-3) and hi == pytest.approx(1.0, abs=1e-3)
+    assert plot.y.limits == plot.x.limits  # ...and the box is square
+    graph = next(layer for layer in plot.layers if layer.label == "f(x)")
+    x = np.asarray(graph.data["x"], dtype=float)
+    y = np.asarray(graph.data["y"], dtype=float)
+    assert (float(x.min()), float(x.max())) == (lo, hi)  # f spans the AXIS range
+    assert float(y.max()) == pytest.approx(0.7, abs=1e-3)  # the hump, r/4
+
+
+@pytest.mark.parametrize("r", [2.8, 3.2, 3.6, 3.9])
+def test_the_logistic_cobweb_is_the_unit_square_whatever_the_orbit_did(r):
+    plot = ts.plot(ts.systems.Logistic(r=r).run(steps=40, ic=[0.6]), "cobweb")
+    lo, hi = plot.x.limits
+    assert lo == pytest.approx(0.0, abs=1e-3) and hi == pytest.approx(1.0, abs=1e-3)
+
+
+def test_a_bare_series_cobweb_still_keeps_the_orbits_span():
+    """No kernel, no domain to read — and inventing one would be a made-up answer."""
+    geom = viz.geometry(np.array([0.2, 0.5, 0.75, 0.6, 0.7]), "cobweb")
+    assert geom.axis_limits == ((pytest.approx(0.2), pytest.approx(0.75)),) * 2
+    assert not any(part.label == "f(x)" for part in geom.parts)
+
+
+def test_a_field_is_computed_over_orbits_a_named_transform_also_claimed():
+    """The union was taken over the subjects no transform claimed — and no others.
+
+    ``ts.plot(vdp, t1, t2, "vector_field", "phase_portrait")`` names a transform
+    for the orbits too, so they contributed nothing to the field's window: the
+    field came out on ``[-3, 3]`` and the orbit reaching ``x = 4.2`` ran off the
+    canvas while staying in the legend.
+    """
+    vdp = ts.systems.VanDerPol()
+    far = vdp.run(final_time=8.0, dt=0.01, ic=[4.0, 4.0])
+    plot = ts.plot(vdp, far, "vector_field", "phase_portrait")
+    lo, hi = plot.x.limits
+    for layer in plot.layers:
+        x = np.asarray(layer.data["x"], dtype=float)
+        assert lo <= np.nanmin(x) and np.nanmax(x) <= hi, layer.label
+
+
+def test_a_legended_curve_that_is_entirely_off_screen_says_so():
+    """A legend entry is a claim that the curve is in this picture."""
+    vdp = ts.systems.VanDerPol()
+    a = vdp.run(final_time=8.0, dt=0.01, ic=[0.5, 0.0])
+    b = vdp.run(final_time=8.0, dt=0.01, ic=[4.0, 4.0])
+    with pytest.warns(VisualizationDegraded, match="entirely outside the axes"):
+        ts.plot(a, b, "phase_portrait", xlim=(10.0, 20.0))
+
+
+def test_a_reference_line_outside_the_data_scale_is_not_an_off_screen_curve():
+    """``lambda = 0`` is a datum a transform draws to be measured against."""
+    t = np.linspace(1.0, 50.0, 200)
+    est = 1.0 + 8.0 * np.exp(-t / 5.0)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        ts.plot((t, est), "lyapunov_convergence")
+
+
+def test_two_runs_of_one_system_are_legended_by_the_parameter_that_differs():
+    """``VanDerPol (1)`` / ``VanDerPol (2)`` names argument slots, not dynamics.
+
+    Overlaying two parameter values is the commonest figure in this field; the
+    values were in ``traj.meta["params"]`` the whole time.  The system's name —
+    which both curves share — stays in the title, where it belongs.
+    """
+    vdp = ts.systems.VanDerPol()
+    a = vdp.with_params(mu=1.0).run(final_time=20.0, dt=0.02, ic=[0.1, 0.1])
+    b = vdp.with_params(mu=3.0).run(final_time=20.0, dt=0.02, ic=[0.1, 0.1])
+    plot = ts.plot(a, b)
+    assert [layer.label for layer in plot.layers] == ["mu = 1", "mu = 3"]
+    assert plot.title == "VanDerPol"
+
+
+def test_the_parameter_legend_only_fires_when_it_can_name_every_curve_apart():
+    """Same parameters, different starts: ``(1)`` / ``(2)`` is the honest answer."""
+    vdp = ts.systems.VanDerPol()
+    a = vdp.run(final_time=6.0, dt=0.05, ic=[0.1, 0.1])
+    b = vdp.run(final_time=6.0, dt=0.05, ic=[0.5, 0.5])
+    assert [layer.label for layer in ts.plot(a, b).layers] == ["VanDerPol (1)", "VanDerPol (2)"]
+
+
+def test_an_explicit_label_still_wins_over_the_parameter_it_would_have_used():
+    vdp = ts.systems.VanDerPol()
+    a = vdp.with_params(mu=1.0).run(final_time=6.0, dt=0.05, ic=[0.1, 0.1])
+    b = vdp.with_params(mu=3.0).run(final_time=6.0, dt=0.05, ic=[0.1, 0.1])
+    assert [layer.label for layer in ts.plot(a, b, labels=["A", "B"]).layers] == ["A", "B"]
+
+
+def test_a_recorded_cascade_names_its_observable_at_every_door():
+    """``ts.plot(od, "orbit_diagram")`` labelled the y axis ``x0`` — a made-up index name.
+
+    Identical for ``components=0`` and ``components="z"``, which is exactly the
+    defect the same label was fixed for at the system door: two different
+    pictures, one wrong caption.
+    """
+    rossler = ts.systems.Rossler()
+    section = rossler.poincare("y", 0.0, direction="up")
+    values = np.linspace(4.0, 6.0, 5)
+    for observable, expected in ((None, "x"), ("z", "z")):
+        kw = {} if observable is None else {"components": observable}
+        recorded = ts.analysis.orbit_diagram(
+            section, "c", values, points_per_value=6, transient=80, **kw
+        )
+        assert ts.plot(recorded, "orbit_diagram").y.label == expected
+        assert ts.plot(recorded).y.label == expected

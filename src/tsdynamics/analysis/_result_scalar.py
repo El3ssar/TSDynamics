@@ -20,7 +20,13 @@ from tsdynamics.analysis._result_json import _jsonify, _sig
 #: subject's time is continuous: per unit time for a flow, per iteration for a
 #: map.  Printing the wrong one is a wrong answer, not a cosmetic slip — the two
 #: differ by the sampling interval (a factor of ~60 on a Lorenz run at dt=0.02).
-_RATE_ANALYSES = frozenset({"max_lyapunov"})
+#:
+#: No SHIPPED analysis returns a scalar Lyapunov exponent since v6 round 6 —
+#: ``max_lyapunov`` was retired into ``lyapunov_spectrum(k=1)``, which returns a
+#: :class:`~tsdynamics.analysis.LyapunovSpectrum`.  Both spellings stay in the
+#: table because it is keyed on a ``meta`` STRING, so a hand-built
+#: ``ScalarResult`` carrying either one still renders and classifies correctly.
+_RATE_ANALYSES = frozenset({"lyapunov_spectrum", "max_lyapunov"})
 
 #: Fixed units for the analyses that return a bare number.  A result may always
 #: override by recording ``meta["unit"]`` at the call site; this table exists so
@@ -275,7 +281,7 @@ class ScalarResult(_NumericOps, AnalysisResult):
     def _interpretation(self) -> str | None:
         r"""Name the dynamics when the number is a Lyapunov exponent.
 
-        Only ``max_lyapunov`` gets a verdict, and only against the same realised
+        Only a scalar Lyapunov exponent gets a verdict, and only against the same realised
         floor :class:`~tsdynamics.analysis.LyapunovSpectrum` uses: a bare
         ``lambda > 0`` test would call floating-point noise chaos.
         """
@@ -297,7 +303,7 @@ class ScalarResult(_NumericOps, AnalysisResult):
         -------
         bool or None
         """
-        if (self.meta.get("analysis") if self.meta else None) != "max_lyapunov":
+        if (self.meta.get("analysis") if self.meta else None) not in _RATE_ANALYSES:
             return None
         value = float(self)
         if not np.isfinite(value):

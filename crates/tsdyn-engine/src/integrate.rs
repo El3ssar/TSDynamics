@@ -49,7 +49,121 @@ use crate::interrupt::Poller;
 /// never makes progress (e.g. rejects forever). Large enough never to bite a
 /// well-behaved integration: a fixed 1e-6 step covers a span of 100 in 1e8
 /// steps.
+///
+/// This is the *last* backstop, not the first: exhausting it is O(1e8) solver
+/// steps, which is tens of seconds of grinding. The guard that actually catches
+/// a stalled march is [`HOPELESS_STEPS`], which detects the same condition from
+/// the step size in O(1) and fires thousands of times sooner.
 pub const DEFAULT_MAX_STEPS: usize = 100_000_000;
+
+/// The number of solver steps beyond which a march is declared **unable to
+/// finish**, used to turn the span into a step floor (see
+/// [`IntegrateConfig::stall_floor`]).
+///
+/// # The defect this closes
+///
+/// A trajectory heading for a finite-time singularity does not necessarily reach
+/// [`OVERFLOW_SCALE`]: if the state grows only algebraically in `1/(t* − t)` the
+/// *time* runs out of double-precision resolution long before the *state* runs
+/// out of exponent. The adaptive controller responds by shrinking the step
+/// without bound, every step is accepted, and the march creeps. Nothing stops it
+/// but [`DEFAULT_MAX_STEPS`] — a pure count, with no relation to the span the
+/// caller asked for — so the (correct) refusal costs the whole 1e8-step budget.
+///
+/// Measured on `LorenzBounded` from `ic = [-44.53, -22.73, -49.58]`, `t ∈ [0,
+/// 100]`, `dt = 0.01`: the refusal took **33.0 s**, and an independent SciPy
+/// `RK45` on the same right-hand side confirms why — at the stall point
+/// (`t = 0.0974`, identical to the engine's) the step has collapsed to
+/// `h ≈ 2e-14` while the state is merely `2e5`, so finishing would take
+/// `5.1e15` steps.
+///
+/// # Why a step floor, and why this number
+///
+/// `remaining / h` is the number of steps the march still needs, and it is known
+/// *at every step*. Comparing it against a budget converts an O(budget)
+/// discovery into an O(1) one. Folding the span in up front — `floor = span /
+/// HOPELESS_STEPS` — makes it a single comparison against the kernel's natural
+/// step, with no division in the hot loop.
+///
+/// `1e12` is chosen so the guard can only ever refuse a run that was never going
+/// to return: at the ~330 ns/step this engine measures for a 3-D system, 1e12
+/// steps is **over three days** of solver time for one trajectory, and it is four
+/// orders of magnitude beyond the 1e8-step cap that already bounded every
+/// single-segment caller. It is also far from delicate — on the measurement
+/// above, floors derived from 1e12 and from 1e15 fire after 20 779 and 208 211
+/// steps respectively, both sub-second, against 100 000 000 before.
+///
+/// The floor is **relative to the integration span**, which is what keeps it
+/// scale-free: it is a statement about how many steps the run would take, so it
+/// carries no assumption about the system's time scale, and it is unchanged by
+/// the output resolution `dt` (v6's "`dt` is sampling, not accuracy").
+pub const HOPELESS_STEPS: f64 = 1e12;
+
+/// Steps a march is allowed to keep running *after* its step has fallen below
+/// the stall floor, so that a genuine blow-up still reaches
+/// [`OVERFLOW_SCALE`] and is reported as the divergence it is.
+///
+/// # Why a grace period is required
+///
+/// A collapsed step is the *shared* symptom of two different diagnoses. Both
+/// `x' = x²` and `LorenzBounded` from a bad start are finite-time blow-ups whose
+/// step dies; the only difference is whether the state manages to climb to
+/// [`OVERFLOW_SCALE`] before `t` runs out of double-precision resolution. The
+/// step size alone cannot tell them apart — so refusing the instant the floor is
+/// breached would relabel every overflow blow-up a "stall", which is the wrong
+/// diagnosis and the wrong remedy.
+///
+/// The grace resolves it without guessing: keep marching for a bounded number of
+/// steps and let the escape guard have first refusal. If the state escapes, the
+/// error is [`Escaped`](IntegrateError::Escaped), exactly as before this guard
+/// existed. If it does not, the march really is going nowhere and the error is
+/// [`Stalled`](IntegrateError::Stalled).
+///
+/// # A step count alone is not enough — the grace must follow the STATE
+///
+/// How many steps a blow-up needs to climb from the floor to `1e150` is not a
+/// property of the problem but of the *kernel*. Measured on `x' = x²` (`x₀ = 1`,
+/// pole at `t = 1`), steps from the floor being breached to the escape:
+///
+/// | kernel | `rtol` | span | steps to escape |
+/// |---|---|---|---|
+/// | `rk45`       | `1e-3`  | 2    |     1 339 |
+/// | `rk45`       | `1e-6`  | 2    |     4 271 |
+/// | `rk45`       | `1e-9`  | 2    |     8 449 |
+/// | `rk45`       | `1e-12` | 100  |    35 513 |
+/// | `rosenbrock` | `1e-9`  | 10   | **8 203 259** |
+///
+/// A fixed grace large enough for the implicit kernel would cost seconds, which
+/// is the latency this whole guard exists to remove. But the *reason* the
+/// implicit kernel needs so many steps is visible while it is taking them: its
+/// state is climbing relentlessly — `4.0e6 → 1.2e24` over the first million
+/// steps, 476 doublings on the way to `1e150`, and never more than **17 222**
+/// steps between two of them.
+///
+/// A stalled march does not do that. `LorenzBounded` from the reproduction's bad
+/// start, followed for **30 million** steps past the floor, managed **10**
+/// doublings with a worst gap of **11 197 715** steps, ending at `|u| = 1.5e7`
+/// with `h = 7.9e-20` — going nowhere, in exactly the sense the error says.
+///
+/// So the grace is reset by *growth*, and the window is sized between those two
+/// measurements: 1 000 000 steps is **58×** the worst gap a blow-up needs and
+/// **11×** below the gap a stall achieves. Both margins are measured, not
+/// assumed, and they point in opposite directions — which is what makes the
+/// discrimination robust rather than tuned.
+///
+/// The grace is likewise restored in full whenever the step climbs back above
+/// the floor, so a merely *transient* collapse — a relaxation oscillator's fast
+/// jump — is never refused at all, however often it recurs. See
+/// [`StallGuard::trip`].
+pub const STALL_GRACE_STEPS: usize = 1_000_000;
+
+/// Growth factor in the state magnitude that counts as "still escaping" and
+/// restores the grace (see [`STALL_GRACE_STEPS`]).
+///
+/// A doubling is the smallest increment that cannot be mistaken for the drift of
+/// a march sitting still, and it is a scale-free question about the state rather
+/// than a threshold on it.
+pub const STALL_GROWTH_FACTOR: f64 = 2.0;
 
 /// State magnitude at which a trajectory is declared to have escaped, whatever
 /// the kernel still thinks about its error estimate.
@@ -94,6 +208,24 @@ pub struct IntegrateConfig {
     /// to what time scale?), so it is deliberately left unexposed rather than
     /// given an arbitrary value here.
     pub min_step: f64,
+    /// Step floor below which the march is declared **stalled** — it is taking
+    /// steps so small that the run cannot finish — aborting with
+    /// [`IntegrateError::Stalled`].
+    ///
+    /// Unlike [`min_step`](IntegrateConfig::min_step) (a caller-set floor
+    /// consulted only on a *rejected* retry, and reported as a divergence) this
+    /// one is checked against the kernel's **natural** step at the top of every
+    /// step, so it catches the case that actually bites: a controller that has
+    /// settled on an unusably small step and keeps getting it *accepted*. That
+    /// march never rejects, never reaches a non-finite state and never exceeds
+    /// [`OVERFLOW_SCALE`], so no other guard sees it.
+    ///
+    /// `0.0` (the default) means **derive it from the span**: every entry point
+    /// that knows its own integration span fills it in as `span /
+    /// `[`HOPELESS_STEPS`], so the bridge and every in-engine driver (events,
+    /// DDE, basin, Lyapunov, the resumable stepper) are covered without a call
+    /// site change. A positive value set by the caller wins.
+    pub stall_floor: f64,
     /// Upper bound on any single solver step. `f64::INFINITY` (the default)
     /// means no ceiling — the adaptive controller chooses freely. Must be
     /// finite-or-infinite and `> 0`.
@@ -126,16 +258,25 @@ pub struct IntegrateConfig {
 
 impl IntegrateConfig {
     /// A config with the given first step and default guards
-    /// (`min_step = 0`, `max_step = ∞`, `max_steps = `[`DEFAULT_MAX_STEPS`],
-    /// `dense = false`).
+    /// (`min_step = 0`, `stall_floor = 0` i.e. derived from the span,
+    /// `max_step = ∞`, `max_steps = `[`DEFAULT_MAX_STEPS`], `dense = false`).
     pub fn new(first_step: f64) -> Self {
         IntegrateConfig {
             first_step,
             min_step: 0.0,
+            stall_floor: 0.0,
             max_step: f64::INFINITY,
             max_steps: DEFAULT_MAX_STEPS,
             dense: false,
         }
+    }
+
+    /// Pin the stall floor explicitly, overriding the span-derived default (see
+    /// [`stall_floor`](IntegrateConfig::stall_floor)). A non-positive value
+    /// restores "derive from the span".
+    pub fn with_stall_floor(mut self, stall_floor: f64) -> Self {
+        self.stall_floor = stall_floor;
+        self
     }
 
     /// Set the per-step size ceiling (see [`max_step`](IntegrateConfig::max_step)).
@@ -206,6 +347,23 @@ pub enum IntegrateError {
         /// The cap that was hit.
         steps: usize,
     },
+    /// The kernel's natural step fell below
+    /// [`IntegrateConfig::stall_floor`] — the march is taking steps so small
+    /// that it cannot reach the final time, caught in O(1) instead of after the
+    /// whole [`IntegrateConfig::max_steps`] budget.
+    ///
+    /// Like [`StepLimit`](IntegrateError::StepLimit) and unlike everything else
+    /// here, this is **not** a divergence: the state is finite and the model is
+    /// fine. It is the same "did not reach the final time" condition, found
+    /// early, and carries the same remedy.
+    Stalled {
+        /// Time at which the step was found to have collapsed.
+        t: f64,
+        /// The kernel's natural step there.
+        h: f64,
+        /// The floor it fell below.
+        floor: f64,
+    },
     /// The state's magnitude crossed [`OVERFLOW_SCALE`] — the trajectory is
     /// escaping, caught before it reaches an actual `inf`.
     Escaped {
@@ -238,6 +396,13 @@ impl core::fmt::Display for IntegrateError {
             }
             IntegrateError::StepLimit { t, steps } => {
                 write!(f, "hit the {steps}-step limit at t = {t}")
+            }
+            IntegrateError::Stalled { t, h, floor } => {
+                write!(
+                    f,
+                    "the step size collapsed to {h:e} at t = {t}, below the {floor:e} \
+                     needed to finish"
+                )
             }
             IntegrateError::Escaped { t, magnitude } => {
                 write!(
@@ -291,6 +456,137 @@ pub(crate) fn classify_escape(u: &[f64], t: f64) -> IntegrateError {
 /// finite and positive on entry and only ever reassigned from a checked-finite
 /// `h_next`, so `NaN` can never reach the `min`, and `h.min(INFINITY) == h`
 /// bit-for-bit for every finite `h`.
+/// The step floor this march runs under: the caller's, if they pinned a positive
+/// one, else [`HOPELESS_STEPS`] applied to `span`.
+///
+/// A non-finite or non-positive `span` (a degenerate window) yields `0.0`, i.e.
+/// the guard is off — there is no scale to be relative to, and such a march does
+/// no steps anyway.
+///
+/// Shared by all four adaptive marches ([`advance_to`] and [`dense_grid`] here,
+/// both [`crate::event`] loops and [`crate::dde`]'s) so they cannot drift apart:
+/// a stall must be caught wherever a step is taken, not only on the plain grid.
+#[inline]
+pub(crate) fn resolve_stall_floor(cfg: &IntegrateConfig, span: f64) -> f64 {
+    if cfg.stall_floor > 0.0 {
+        return cfg.stall_floor;
+    }
+    if span.is_finite() && span > 0.0 {
+        span / HOPELESS_STEPS
+    } else {
+        0.0
+    }
+}
+
+/// The O(1) stall detector every adaptive march runs, carrying the span-derived
+/// floor and the [`STALL_GRACE_STEPS`] countdown.
+///
+/// Threaded through a march the way [`Poller`] is, and for the same reason: the
+/// grid integrator calls [`advance_to`] once per *output point*, so a guard
+/// constructed per segment would hand every segment a fresh grace and a long
+/// grid would never exhaust one.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct StallGuard {
+    /// The step size below which this march cannot finish; `0.0` disables the
+    /// guard entirely. Read once per march into a local, never per step — see
+    /// [`StallGuard::floor`].
+    pub(crate) floor: f64,
+    /// Steps still allowed below the floor before the march is refused.
+    grace: usize,
+    /// The time of the previous below-floor step, used to tell a *consecutive*
+    /// collapse from a march that recovered in between (see
+    /// [`StallGuard::trip`]).
+    last_below_t: f64,
+    /// State magnitude when the grace was last restored; the march keeps its
+    /// grace for as long as it keeps multiplying this by
+    /// [`STALL_GROWTH_FACTOR`].
+    mark_magnitude: f64,
+}
+
+impl StallGuard {
+    /// Build the guard for a march covering `span` (see [`resolve_stall_floor`]).
+    #[inline]
+    pub(crate) fn new(cfg: &IntegrateConfig, span: f64) -> Self {
+        StallGuard {
+            floor: resolve_stall_floor(cfg, span),
+            grace: STALL_GRACE_STEPS,
+            last_below_t: f64::NEG_INFINITY,
+            mark_magnitude: f64::INFINITY,
+        }
+    }
+
+    /// The floor, to be hoisted into a local **once per march**.
+    ///
+    /// The guard's whole fast path is then `if h < floor { … }` against a
+    /// register: no load, no store and no aliasing barrier on the step loop,
+    /// which runs hundreds of millions of times in a long integration. Calling
+    /// a `&mut self` method every step instead cost a measured ~5% on
+    /// `integrate`, which is not a price a guard against a *failing* run may
+    /// charge a succeeding one.
+    ///
+    /// `0.0` means the guard is off, and `h < 0.0` is false for every step size
+    /// the loops assert to be positive — so a disabled guard is not merely cheap
+    /// but provably inert.
+    #[inline]
+    pub(crate) fn floor(&self) -> f64 {
+        self.floor
+    }
+
+    /// Account for one step taken **below** the floor; the caller checks that.
+    ///
+    /// `h` is the kernel's *natural* step, never the clamped trial: a landing
+    /// step (or a DDE's delay-capped step) is legitimately as small as the
+    /// distance to the target, and a forced-short step must not read as a stall.
+    ///
+    /// Two things restore the grace in full, and each answers one of the ways
+    /// this guard could be wrong.
+    ///
+    /// **The step recovered.** Only *consecutive* below-floor steps count, and
+    /// recovery is detected without costing the fast path anything: every
+    /// below-floor step advances `t` by less than `floor` (that is what being
+    /// below the floor means, and a *rejected* step does not advance it at all),
+    /// so `t` having moved a whole `floor` or more since the previous trip
+    /// proves an above-floor step happened in between. A march that dips and
+    /// recovers is therefore never refused, however often it recurs.
+    ///
+    /// **The state is still escaping.** `u` growing by
+    /// [`STALL_GROWTH_FACTOR`] since the last reset means the trajectory is on
+    /// its way to [`OVERFLOW_SCALE`] and must be allowed to get there, so that
+    /// it is reported as the divergence it is rather than as a stall. See
+    /// [`STALL_GRACE_STEPS`] for the measurements that separate the two.
+    ///
+    /// `h` is the kernel's *natural* step, never the clamped trial: a landing
+    /// step (or a DDE's delay-capped step) is legitimately as small as the
+    /// distance to the target, and a forced-short step must not read as a stall.
+    ///
+    /// Scanning `u` is O(dim), which is why it lives here on the cold path: a
+    /// march that is not collapsing never reaches this function at all.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn trip(&mut self, h: f64, t: f64, u: &[f64]) -> Result<(), IntegrateError> {
+        let magnitude = u.iter().fold(0.0_f64, |m, x| m.max(x.abs()));
+        // `>` (not `>=`) so a state pinned at zero cannot reset the grace for
+        // ever against a `mark_magnitude` of zero.
+        let escaping = magnitude > self.mark_magnitude * STALL_GROWTH_FACTOR;
+        if escaping || t - self.last_below_t >= self.floor {
+            self.grace = STALL_GRACE_STEPS;
+            self.mark_magnitude = magnitude;
+        }
+        self.last_below_t = t;
+        match self.grace.checked_sub(1) {
+            Some(left) => {
+                self.grace = left;
+                Ok(())
+            }
+            None => Err(IntegrateError::Stalled {
+                t,
+                h,
+                floor: self.floor,
+            }),
+        }
+    }
+}
+
 #[inline]
 pub(crate) fn trial_step(h: f64, max_step: f64, remaining: f64) -> (bool, f64) {
     let pre = h.min(max_step);
@@ -311,6 +607,7 @@ pub(crate) fn trial_step(h: f64, max_step: f64, remaining: f64) -> (bool, f64) {
 /// step, so a poller scoped to one call would reset before it ever reached
 /// [`crate::interrupt::POLL_STRIDE`] and the run — the very long run a user
 /// wants to Ctrl-C — would never check for signals at all.
+#[allow(clippy::too_many_arguments)]
 fn advance_to(
     ev: &dyn Evaluator,
     solver: &mut dyn Solver,
@@ -318,6 +615,7 @@ fn advance_to(
     h: &mut f64,
     t_end: f64,
     cfg: &IntegrateConfig,
+    stall: &mut StallGuard,
     poll: &mut Poller,
 ) -> Result<(), IntegrateError> {
     // A hard assert (not debug-only): a non-positive or non-finite first step is
@@ -327,8 +625,14 @@ fn advance_to(
         h.is_finite() && *h > 0.0,
         "first step must be finite and positive, got {h}"
     );
+    let stall_floor = stall.floor();
     let mut steps = 0usize;
     while st.t < t_end {
+        // Before the count: the count costs the whole budget to reach, this
+        // costs one register comparison. See `HOPELESS_STEPS`.
+        if *h < stall_floor {
+            stall.trip(*h, st.t, &st.u)?;
+        }
         if steps >= cfg.max_steps {
             return Err(IntegrateError::StepLimit { t: st.t, steps });
         }
@@ -401,7 +705,8 @@ pub fn integrate_final(
     let mut st = SolverState::for_evaluator(ev, u0.to_vec(), t0, p.to_vec());
     let mut h = cfg.first_step;
     let mut poll = Poller::new();
-    advance_to(ev, solver, &mut st, &mut h, t1, cfg, &mut poll)?;
+    let mut stall = StallGuard::new(cfg, t1 - t0);
+    advance_to(ev, solver, &mut st, &mut h, t1, cfg, &mut stall, &mut poll)?;
     Ok(st.u)
 }
 
@@ -474,10 +779,14 @@ pub fn integrate_grid_polled(
 
     let mut st = SolverState::for_evaluator(ev, u0.to_vec(), t_eval[0], p.to_vec());
     let mut h = cfg.first_step;
+    // The floor is relative to the span of the WHOLE grid, never to one output
+    // segment: `dt` is an output resolution, and a guard that moved with it
+    // would make the answer depend on how finely the caller sampled.
+    let mut stall = StallGuard::new(cfg, t_eval[t_eval.len() - 1] - t_eval[0]);
     for (k, (chunk, &target)) in out.chunks_mut(dim).zip(t_eval).enumerate() {
         if k > 0 {
             debug_assert!(target >= st.t, "t_eval must be non-decreasing");
-            advance_to(ev, solver, &mut st, &mut h, target, cfg, poll)?;
+            advance_to(ev, solver, &mut st, &mut h, target, cfg, &mut stall, poll)?;
         }
         chunk.copy_from_slice(&st.u);
     }
@@ -538,8 +847,14 @@ fn dense_grid(
         k += 1;
     }
 
+    let mut stall = StallGuard::new(cfg, t_end - t_eval[0]);
+    let stall_floor = stall.floor();
     let mut steps = 0usize;
     while st.t < t_end {
+        // The same O(1) stall guard the landing loop runs (see `advance_to`).
+        if h < stall_floor {
+            stall.trip(h, st.t, &st.u)?;
+        }
         if steps >= cfg.max_steps {
             return Err(IntegrateError::StepLimit { t: st.t, steps });
         }
@@ -1260,5 +1575,186 @@ mod tests {
                 );
             }
         }
+    }
+
+    // -- fail fast on a march that cannot finish (HOPELESS_STEPS) ----------
+    //
+    // The user-facing defect: a bad initial condition was refused correctly, but
+    // only after the whole `DEFAULT_MAX_STEPS` budget — tens of seconds, far too
+    // late to act on in a sweep.
+
+    /// A march whose step has collapsed is refused after the grace, not after
+    /// the whole step budget.
+    #[test]
+    fn a_stalled_march_is_refused_without_burning_the_step_budget() {
+        use crate::testkit::Creeper;
+        let ev = ConstantField::new(vec![1.0]);
+        // Span 1.0 ⇒ floor 1e-12. The kernel accepts every step at 1e-18, six
+        // orders below it, and nothing else in the loop can notice: the state
+        // stays finite, no step is ever rejected.
+        let mut s = Creeper::new(1e-18);
+        let cfg = IntegrateConfig::new(1e-18);
+        let err = integrate_final(&ev, &mut s, &[0.0], &[], 0.0, 1.0, &cfg).unwrap_err();
+        assert!(matches!(err, IntegrateError::Stalled { .. }), "got {err:?}");
+        // The whole point: the refusal cost the grace, not the budget.
+        assert!(
+            s.steps <= STALL_GRACE_STEPS + 2,
+            "refusal took {} steps, expected ~{STALL_GRACE_STEPS}",
+            s.steps
+        );
+        assert!(
+            s.steps * 50 < DEFAULT_MAX_STEPS,
+            "refusal must be orders below the {DEFAULT_MAX_STEPS}-step budget, took {}",
+            s.steps
+        );
+    }
+
+    /// A trajectory that really blows up keeps saying so: the fail-fast guard
+    /// must not relabel a divergence as a solver-settings problem.
+    #[test]
+    fn a_blow_up_is_still_reported_as_a_divergence_not_a_stall() {
+        let ev = VmEval::new(blowup());
+        let mut s = Rk45::with_tolerances(1e-9, 1e-12);
+        let cfg = IntegrateConfig::new(0.01);
+        let t_eval = grid(0.0, 0.05, 41); // through the t = 1 singularity
+        let err = integrate_grid(&ev, &mut s, &[1.0], &[], &t_eval, &cfg).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                IntegrateError::Escaped { .. } | IntegrateError::NonFinite { .. }
+            ),
+            "a finite-time blow-up must read as a divergence, got {err:?}"
+        );
+    }
+
+    /// A step that dips below the floor and climbs back out — a relaxation
+    /// oscillator's fast transition — is never refused, however often it recurs.
+    #[test]
+    fn a_march_that_recovers_its_step_is_never_stalled() {
+        let cfg = IntegrateConfig::new(1e-3);
+        let mut guard = StallGuard::new(&cfg, 1.0); // floor 1e-12
+        let floor = guard.floor();
+        // A faithful mini-march: `t` advances by the step actually taken, which
+        // is how the guard tells a recovery from a consecutive collapse.
+        let mut t = 0.0f64;
+        for i in 0..(10 * STALL_GRACE_STEPS) {
+            // Ten times the grace in total, but never more than three in a row
+            // below the floor.
+            let h = if i % 4 == 3 { 1e-3 } else { 1e-18 };
+            if h < floor {
+                guard
+                    .trip(h, t, &[1.0])
+                    .unwrap_or_else(|e| panic!("refused a recovering march at step {i}: {e:?}"));
+            }
+            t += h;
+        }
+    }
+
+    /// …but a collapse that never recovers *is* refused, after the grace.
+    #[test]
+    fn a_step_that_stays_collapsed_is_refused_after_the_grace() {
+        let cfg = IntegrateConfig::new(1e-3);
+        let mut guard = StallGuard::new(&cfg, 1.0); // floor 1e-12
+        let (floor, h) = (guard.floor(), 1e-18);
+        assert!(h < floor);
+        let mut t = 0.0f64;
+        for i in 0..STALL_GRACE_STEPS {
+            guard
+                .trip(h, t, &[1.0])
+                .unwrap_or_else(|e| panic!("refused inside the grace at step {i}: {e:?}"));
+            t += h;
+        }
+        assert!(
+            matches!(
+                guard.trip(h, t, &[1.0]),
+                Err(IntegrateError::Stalled { .. })
+            ),
+            "the grace must end"
+        );
+    }
+
+    /// A state that keeps growing is escaping, and is never called stalled.
+    ///
+    /// This is what lets an *implicit* kernel's blow-up still be reported as a
+    /// divergence: `rosenbrock` on `x' = x²` needs 8 203 259 steps from the floor
+    /// to `OVERFLOW_SCALE` — eight times any affordable fixed grace — but it
+    /// doubles its state every 17 222 steps at worst while it does. See
+    /// [`STALL_GRACE_STEPS`].
+    #[test]
+    fn a_state_that_keeps_growing_is_never_called_stalled() {
+        let cfg = IntegrateConfig::new(1e-3);
+        let mut guard = StallGuard::new(&cfg, 1.0); // floor 1e-12
+        let h = 1e-18; // permanently below the floor
+        let mut t = 0.0f64;
+        let mut u = [1.0f64];
+        // Ten times the grace, doubling every tenth of it — far slower than the
+        // 17 222-step worst case measured, and still never refused.
+        let every = STALL_GRACE_STEPS / 10;
+        for i in 0..(10 * STALL_GRACE_STEPS) {
+            if i > 0 && i % every == 0 {
+                u[0] *= 2.5;
+            }
+            guard
+                .trip(h, t, &u)
+                .unwrap_or_else(|e| panic!("called an escaping state stalled at step {i}: {e:?}"));
+            t += h;
+        }
+    }
+
+    /// …but growth that has *stopped* does not hold the grace open for ever.
+    #[test]
+    fn a_state_that_stops_growing_is_refused() {
+        let cfg = IntegrateConfig::new(1e-3);
+        let mut guard = StallGuard::new(&cfg, 1.0);
+        let h = 1e-18;
+        let mut t = 0.0f64;
+        let mut u = [1.0f64];
+        for _ in 0..3 {
+            u[0] *= 4.0;
+            guard.trip(h, t, &u).expect("growth holds the grace open");
+            t += h;
+        }
+        // Now it sits still.  A state that merely drifts (well under a doubling)
+        // must not read as escaping.
+        let mut refused = false;
+        for _ in 0..(STALL_GRACE_STEPS + 2) {
+            u[0] *= 1.0000001;
+            if guard.trip(h, t, &u).is_err() {
+                refused = true;
+                break;
+            }
+            t += h;
+        }
+        assert!(refused, "a march that stopped growing must be refused");
+    }
+
+    /// The floor is set by the integration span, never by how finely the caller
+    /// sampled it — `dt` is an output resolution, not an accuracy knob.
+    #[test]
+    fn the_stall_floor_follows_the_span_not_the_output_resolution() {
+        let cfg = IntegrateConfig::new(1e-3);
+        assert_eq!(resolve_stall_floor(&cfg, 100.0), 100.0 / HOPELESS_STEPS);
+        // Same span, 10 samples or 10 000: one floor.
+        let coarse = StallGuard::new(&cfg, 100.0);
+        let fine = StallGuard::new(&cfg, 100.0);
+        assert_eq!(coarse.floor, fine.floor);
+        // A caller-pinned floor wins; a degenerate span disables the guard.
+        assert_eq!(
+            resolve_stall_floor(&cfg.with_stall_floor(0.25), 100.0),
+            0.25
+        );
+        assert_eq!(resolve_stall_floor(&cfg, 0.0), 0.0);
+        assert_eq!(resolve_stall_floor(&cfg, f64::NAN), 0.0);
+    }
+
+    /// The guard is off by construction when there is no scale to be relative
+    /// to, so a zero-length window cannot be refused for "stalling".
+    #[test]
+    fn a_zero_length_span_is_not_a_stall() {
+        let ev = ConstantField::new(vec![1.0]);
+        let mut s = Rk4::new();
+        let cfg = IntegrateConfig::new(1e-3);
+        let out = integrate_final(&ev, &mut s, &[7.0], &[], 5.0, 5.0, &cfg).unwrap();
+        assert_eq!(out, vec![7.0]);
     }
 }

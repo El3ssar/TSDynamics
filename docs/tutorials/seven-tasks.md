@@ -103,7 +103,7 @@ spec.kaplan_yorke       # 2.06 — the fractal dimension implied by the spectrum
 Two cheaper verdicts, useful as cross-checks:
 
 ```python
-ts.analysis.max_lyapunov(hen, ic=[0.1, 0.1])      # ≈ 0.42, no Jacobian needed
+ts.analysis.lyapunov_spectrum(hen, k=1, ic=[0.1, 0.1])   # ≈ 0.42, just the leader
 print(ts.analysis.zero_one_test(lor, final_time=300.0, dt=0.1))
 # ZeroOneResult  K = 0.998306   chaotic (K ≈ 1)   (Lorenz)
 ```
@@ -250,7 +250,7 @@ image, Monte-Carlo them instead (basin stability, Menck et al. 2013):
 
 ```python
 print(ts.analysis.basin_fractions(duff, [(-2.0, 2.0), (-2.0, 2.0)],
-                                  n=400, dt=0.5, max_steps=2000))
+                                  n_seeds=400, dt=0.5, max_steps=2000))
 # BasinFractions  #1 51.5% ± 2.5% · #2 48.5% ± 2.5% · 0.0% diverged
 #     (DuffingTwoWell, 400 samples)
 ```

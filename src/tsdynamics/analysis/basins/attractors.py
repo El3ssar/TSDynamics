@@ -46,6 +46,7 @@ from ._common import (
     _recurrence_grid,
     _representative,
     coerce_region,
+    reject_unknown_fsm,
 )
 
 if TYPE_CHECKING:
@@ -389,6 +390,16 @@ class AttractorSet(AnalysisResult):
         """Return the attractor representatives as an ``(n_attractors, dim)`` array."""
         arr = np.asarray(self.centers, dtype=float)
         return arr.astype(dtype, copy=bool(copy)) if dtype is not None else arr
+
+    def _full_extras(self) -> dict[str, Any]:
+        """Export each attractor's LOCATION, keyed by id.
+
+        The repr says *where* every attractor is and so does each member's own
+        ``to_frame()``; the set's ``to_dict(full=True)`` serialised its children
+        without their derived answers, so the one property that makes two runs
+        comparable — the position — was the one the exported table dropped.
+        """
+        return {"centers": {int(k): self.attractors[k].center for k in self.ids}}
 
 
 # ---------------------------------------------------------------------------
@@ -1493,6 +1504,7 @@ def attractors(
     attraction", *Chaos* **32**, 023104 (2022).
     """
     _reject_unsupported(system, "attractors")
+    reject_unknown_fsm(fsm, analysis="attractors")
     region = coerce_region(region, analysis="attractors", system=system, want_grid=False)
 
     grid = _recurrence_grid(region, resolution)
@@ -1512,9 +1524,64 @@ def attractors(
     diverged = int(np.sum(labels == DIVERGED))
     merge = mapper.merge_map(resolve_merge_tol(grid, merge_tol))
     found = mapper.attractor_set(diverged=diverged, seeds=int(n_seeds), merge=merge)
+    found, _ = canonical_relabel(found, merge)
     # Attach provenance without re-allocating the (potentially large) attractor
     # dict — ``replace`` reuses every field but ``meta``.
     return replace(found, meta=AnalysisResult.build_meta(system, analysis="attractors"))
+
+
+def canonical_relabel(
+    found: AttractorSet, merge: dict[int, int]
+) -> tuple[AttractorSet, dict[int, int]]:
+    """Renumber attractors by **where they are**, not by when they were found.
+
+    The recurrence machine hands out ids in the order it stumbles on
+    attractors, which is the order the seeds happen to be visited in — so the
+    same physical state is ``#1`` when a parameter is swept one way and ``#2``
+    swept back, and a two-panel figure paints one well in two colours.  The
+    location is the one property of an attractor that does not depend on how it
+    was found, so it is what orders them: ascending lexicographically by
+    representative, ties broken by the larger attractor first and then by the
+    old id, which keeps the result deterministic for *concentric* sets (two
+    rings share a centroid exactly).
+
+    Returns the renumbered set and the composed ``{old_id: new_id}`` map — the
+    merge and the renumbering in one permutation, so the label image and the
+    attractor set are remapped by the same table and cannot drift apart.
+
+    Parameters
+    ----------
+    found : AttractorSet
+        The merged set, straight from
+        :meth:`_AttractorMapper.attractor_set`.
+    merge : dict[int, int]
+        The proximity-merge map its ids already went through.
+
+    Returns
+    -------
+    tuple[AttractorSet, dict[int, int]]
+    """
+    ids = found.ids
+    if not ids:
+        return found, merge
+
+    def key(k: int) -> tuple[Any, ...]:
+        att = found.attractors[k]
+        pts = np.asarray(att.points, dtype=float)
+        where = tuple(att.center) if pts.size else ()
+        return (where, -int(att.cells), int(k))
+
+    renumber = {old: new for new, old in enumerate(sorted(ids, key=key), start=1)}
+    if all(old == new for old, new in renumber.items()):
+        return found, merge
+    relabelled = AttractorSet(
+        attractors={renumber[k]: replace(found.attractors[k], id=renumber[k]) for k in ids},
+        diverged=found.diverged,
+        seeds=found.seeds,
+        meta=found.meta,
+    )
+    composed = {k: renumber.get(merge.get(k, k), merge.get(k, k)) for k in set(merge) | set(ids)}
+    return relabelled, composed
 
 
 def resolve_merge_tol(cellgrid: _CellGrid, merge_tol: float | None) -> float:

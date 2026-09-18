@@ -79,4 +79,4 @@ def test_infer_forcing_period_moved_and_did_not_die_with_the_module() -> None:
 def test_the_analyses_are_reachable_as_free_functions() -> None:
     """The one door ruling A2 leaves open actually answers."""
     hen = Henon()
-    assert float(ts.analysis.max_lyapunov(hen, ic=[0.1, 0.1])) > 0.0
+    assert float(ts.analysis.lyapunov_spectrum(hen, k=1, ic=[0.1, 0.1]).values[0]) > 0.0

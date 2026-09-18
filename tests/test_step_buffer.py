@@ -88,28 +88,27 @@ def test_step_matches_perstep_integrate_rossler():
 
 
 # ---------------------------------------------------------------------------
-# The regression guard: max_lyapunov stays sane (the buffer drove it to ~23)
+# The regression guard: the leading exponent stays sane (the buffer drove it to ~23)
 # ---------------------------------------------------------------------------
 
 
-def test_max_lyapunov_lorenz_not_corrupted_by_step():
-    """``max_lyapunov`` (which interleaves ``step``/``set_state``) lands near 0.9.
+def test_leading_lyapunov_exponent_of_lorenz_not_corrupted_by_step():
+    """The two-trajectory estimate (``step``/``set_state``) lands near 0.9.
 
     This is the exact failure mode the rejected batch buffer introduced: the
     reference and perturbed trajectories integrated at different cadences and the
     measured exponent blew up to ~23.  A short but unambiguous run pins it back to
     the Lorenz value (≈0.906) in the fast tier.
     """
-    lam = ts.analysis.max_lyapunov(
+    lam = ts.analysis.lyapunov_spectrum(
         ts.systems.Lorenz(),
+        k=1,
         ic=[1.0, 1.0, 1.0],
         dt=0.05,
-        n=250,
-        steps_per=4,
-        transient=20.0,  # 400 protocol steps at dt=0.05; v6 measures this in TIME
-        seed=2,
+        final_time=50.0,
+        transient=20.0,  # v6 measures the burn-in in TIME UNITS, not steps
     )
-    assert 0.7 < lam < 1.15
+    assert 0.7 < float(lam.values[0]) < 1.15
 
 
 # ---------------------------------------------------------------------------

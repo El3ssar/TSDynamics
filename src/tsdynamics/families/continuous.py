@@ -638,11 +638,22 @@ class ContinuousSystem(SystemBase, ABC):
         # entry point that rejected the advertised value (diagnosis P2-1), exactly
         # where auto-stiffness matters for a stiff system stepped incrementally
         # (Poincaré / basins / streaming).
+        #
+        # Resolve **within this family** (``family="ode"``), exactly as ``run``
+        # does.  Without the scope this door answered a different question from
+        # the one next to it: measured at HEAD, ``run(solver="milstein")``
+        # refused an SDE kernel on a deterministic flow while
+        # ``reinit(solver="milstein")`` *accepted* it and returned ``None`` —
+        # the failure surfaced one call later, out of ``step()``, as a raw
+        # ``ValueError`` carrying the engine's own unfiltered kernel dump.  A
+        # bad value must be refused where it is typed, by the family that was
+        # asked, and an unknown name's listing must never offer a kernel this
+        # family cannot drive.
         self._step_method = method or self._default_method
         if solvers.normalize(self._step_method) == "auto":
             resolution = solvers.recommend(self, family="ode", ic=ic_arr, t=t0)
         else:
-            resolution = solvers.resolve(self._step_method)
+            resolution = solvers.resolve(self._step_method, family="ode")
         # Cache the canonical kernel name (``"RK45"`` → ``"rk45"``) so the per-step
         # loop hits the engine core directly without re-resolving every call.
         self._step_method_canonical = resolution.name
@@ -710,7 +721,7 @@ class ContinuousSystem(SystemBase, ABC):
         in one engine call was rejected (WS-STEPBUF): a chunked adaptive integration
         is *not* equal to N single-``dt`` integrations (the controller would carry
         its step/error state across output nodes), which silently corrupted
-        sensitive consumers such as ``max_lyapunov``.  The durable handle amortises
+        sensitive consumers such as ``lyapunov_spectrum``.  The durable handle amortises
         the *build/marshalling*, never the numerics.
         """
         from tsdynamics.engine.run import make_ode_stepper, step_advance

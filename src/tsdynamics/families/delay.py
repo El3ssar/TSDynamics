@@ -14,6 +14,7 @@ from tsdynamics.errors import (
     InvalidParameterError,
     remedy,
 )
+from tsdynamics.errors import _nearest as nearest
 from tsdynamics.utils.tolerances import (
     DDE_ATOL,
     DDE_LYAPUNOV_ATOL,
@@ -42,6 +43,73 @@ if TYPE_CHECKING:
     from .base import ParamSet
 
 __all__ = ["DelaySystem"]
+
+
+def _unknown_dde_solver_message(method: str) -> str:
+    """Build the DDE's own 'unknown solver' message (nearest match, then why).
+
+    The shared registry message cannot be reused verbatim here, and the reason
+    is a wrong answer rather than a matter of taste: its stiff hint is read from
+    ``solvers.STIFF_METHOD``, which has an ``"ode"`` entry and no ``"dde"`` one,
+    so it falls back to ``"bdf"``.  Measured, that made
+    ``MackeyGlass().run(solver="LSODA")`` answer *"Did you mean: 'bdf',
+    'trbdf2'?"* — two kernels the method of steps cannot drive, neither of them
+    present in the very listing printed on the next line.  A library that hands
+    back a line which does not run is worse than one that hands back nothing.
+
+    A delay system has no single square Jacobian to freeze (the tangent space is
+    the history space), so there is no stiff DDE kernel to name; the honest
+    advice is to shorten ``dt``, which is what bounds the step in the method of
+    steps.
+    """
+    from tsdynamics import solvers
+
+    names = solvers.available_for("dde")
+    near = nearest(solvers.normalize(method), names)
+    msg = f"unknown solver {method!r}."
+    if near:
+        msg += " Did you mean: " + ", ".join(repr(n) for n in near) + "?"
+    msg += f"\n    Available for a dde problem: {names}"
+    msg += (
+        "\n    The method of steps drives EXPLICIT kernels only — a delay system has no"
+        "\n    single Jacobian to freeze, so there is no stiff DDE kernel to offer."
+        "\n    For a stiff delay system, shorten dt rather than changing solver."
+    )
+    return msg
+
+
+def _resolve_dde_solver(method: str) -> str:
+    """Validate a DDE ``solver=`` name at the door, against the DDE's own kernels.
+
+    Before v6 round 8 this door validated nothing: the raw string was handed
+    down to the engine, so ``solver="milstein"`` — an SDE scheme, on a
+    *deterministic* delay system — travelled all the way into Rust and came back
+    as a bare ``ValueError`` quoting a 24-name kernel dump that itself offered
+    ``euler_maruyama`` and ``milstein`` to a DDE.  The name is refused here now,
+    by the family that was asked.
+
+    One case is deliberately **not** answered here: a real but *implicit* ODE
+    kernel (``bdf``, ``rosenbrock``, …).  The engine already refuses those by
+    naming the mathematics — *"DDE integration supports explicit methods only;
+    'bdf' is implicit"* — which says more than any capability listing, so it is
+    left to speak.  ``"auto"`` likewise passes through: it is a documented no-op
+    on this family and resolves downstream to the DDE default.
+    """
+    from tsdynamics import solvers
+
+    if solvers.normalize(method) == "auto":
+        return method
+    try:
+        canonical = solvers.resolve(method).name
+    except InvalidParameterError:
+        raise InvalidParameterError(_unknown_dde_solver_message(method)) from None
+    if canonical not in solvers.available_for("dde") and not solvers.is_implicit(canonical):
+        # A real kernel belonging to another family (the SDE schemes).  The
+        # registry's capability message is exactly right — it names the family
+        # the kernel *does* serve and lists this one's — so let it raise.
+        solvers.resolve(method, family="dde")
+    return canonical
+
 
 # ---------------------------------------------------------------------------
 # Type alias for history functions
@@ -518,7 +586,7 @@ class DelaySystem(SystemBase, ABC):
         """
         reject_unknown_run_keywords(self, solver_options, family="dde", accepted=_DDE_RUN_KEYWORDS)
         dt = self._default_dt if dt is None else dt
-        method = self._default_method if solver is None else solver
+        method = _resolve_dde_solver(self._default_method if solver is None else solver)
         transient = resolve_transient(transient, discrete=False)
         if transient > 0.0:
             traj = self.run(

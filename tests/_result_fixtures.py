@@ -126,7 +126,9 @@ def build() -> dict[str, AnalysisResult]:
     return {
         # -- the five generic wrappers + the base ---------------------------
         "AnalysisResult": AnalysisResult(meta={**lorenz, "analysis": "a_measurement"}),
-        "ScalarResult": ScalarResult(value=0.4232674, meta={**henon, "analysis": "max_lyapunov"}),
+        "ScalarResult": ScalarResult(
+            value=0.4232674, meta={**henon, "analysis": "lyapunov_spectrum"}
+        ),
         "CountResult": CountResult(9, meta={"analysis": "optimal_delay", "method": "mi"}),
         "ArrayResult": ArrayResult(values=np.array([1.0, 2.0, 3.0]), meta={"analysis": "a_curve"}),
         "CollectionResult": CollectionResult(

@@ -7,22 +7,21 @@ Covers the audit findings:
   for its ``float`` value: comparisons and arithmetic, not only ``float()``.
 - ``A12:A12-2`` — the generic scalar ``__plot_spec__`` fallback must label each
   marker with its field name (``xcategories``), not anonymous integer ticks.
-- ``A1:A1-1`` — ``max_lyapunov`` must thread ``seed`` into the map engine-kernel
-  off-basin random-IC retry so a retried result is reproducible.
+- ``A1:A1-1`` — RETIRED: it pinned ``max_lyapunov``'s own off-basin random-IC
+  retry, and ``max_lyapunov`` was folded into ``lyapunov_spectrum(k=1)`` in v6
+  round 6 (two doors, two numbers for one question).
 - ``A1:A1-4`` — the ``lyapunov_from_data`` ``eps`` default must document the
   comparably-scaled-coordinate assumption (diagnosis-only).
 """
 
 from __future__ import annotations
 
-from typing import Any
-
 import numpy as np
 import pytest
 
 from tsdynamics.analysis.chaos.expansion import ExpansionEntropyResult
 from tsdynamics.analysis.dimensions._common import DimensionResult
-from tsdynamics.analysis.lyapunov import lyapunov_from_data, max_lyapunov
+from tsdynamics.analysis.lyapunov import lyapunov_from_data
 from tsdynamics.analysis.lyapunov.from_data import LyapunovFromData
 
 # --------------------------------------------------------------------------
@@ -103,95 +102,22 @@ def test_scalar_fallback_labels_fields() -> None:
 
 
 # --------------------------------------------------------------------------
-# A1:A1-1 — seed threaded into the map engine-kernel retry
+# A1:A1-1 — RETIRED with ``max_lyapunov`` (v6 round 6)
 # --------------------------------------------------------------------------
+# The seeded off-basin random-IC retry these tests pinned was ``max_lyapunov``'s
+# own initial-condition policy.  ``max_lyapunov`` is gone — the maximal exponent
+# is ``lyapunov_spectrum(system, k=1)`` and nothing else — and the surviving door
+# delegates the retry to the family estimator, which owns its own.  The one door
+# that remains is pinned by
+# ``tests/test_analysis_grammar.py::TestTheMaximalExponentHasExactlyOneDoor``.
 
 
-def _capture_reinit_ics(monkeypatch: Any) -> list[Any]:
-    """Record every ``ic`` passed to ``DiscreteMap.reinit`` (None or array)."""
-    from tsdynamics.families.discrete import DiscreteMap
+def test_the_second_lyapunov_door_is_closed() -> None:
+    """``max_lyapunov`` no longer resolves, and says what replaced it."""
+    import tsdynamics as ts
 
-    captured: list[Any] = []
-    original = DiscreteMap.reinit
-
-    def spy(self: Any, u: Any = None, **kw: Any) -> None:
-        captured.append(None if u is None else np.asarray(u, dtype=float).copy())
-        original(self, u, **kw)
-
-    monkeypatch.setattr(DiscreteMap, "reinit", spy)
-    return captured
-
-
-def _fail_first_kernel_call(monkeypatch: Any) -> None:
-    """Force the engine QR kernel to diverge on its first call, then run normally."""
-    from tsdynamics.engine import run
-    from tsdynamics.errors import ConvergenceError
-
-    real = run.map_lyapunov
-    state = {"calls": 0}
-
-    def flaky(*args: Any, **kw: Any) -> Any:
-        state["calls"] += 1
-        if state["calls"] == 1:
-            raise ConvergenceError("forced off-basin divergence (test)")
-        return real(*args, **kw)
-
-    monkeypatch.setattr(run, "map_lyapunov", flaky)
-
-
-def test_map_retry_ic_is_seeded_and_reproducible(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The off-basin retry draws its IC from the seeded RNG (deterministic).
-
-    Pre-fix the map path forwarded neither ``d0`` nor ``seed``; the retry did
-    ``reinit(None)`` — an *unseeded* random draw — so a retried result was not
-    reproducible even with ``seed=`` set, breaking the determinism contract the
-    two-trajectory path upholds.
-    """
-    pytest.importorskip("tsdynamics._rust")
-    from tsdynamics.systems import Henon
-
-    seed = 7
-    sys = Henon()
-    dim = int(sys.dim)
-    expected_retry_ic = np.random.default_rng(seed).random(dim)
-
-    _fail_first_kernel_call(monkeypatch)
-    captured = _capture_reinit_ics(monkeypatch)
-
-    max_lyapunov(sys, n=1000, transient=100, ic=None, seed=seed)
-
-    # First reinit is attempt 0 (ic=None); the second is the seeded retry.
-    assert captured[0] is None
-    retry_ic = captured[1]
-    assert retry_ic is not None
-    np.testing.assert_allclose(retry_ic, expected_retry_ic)
-
-
-def test_map_retry_reproducible_across_calls(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Two seeded runs that both hit the retry give the same retry IC."""
-    pytest.importorskip("tsdynamics._rust")
-    from tsdynamics.systems import Henon
-
-    def run_once() -> Any:
-        _fail_first_kernel_call(monkeypatch)
-        captured = _capture_reinit_ics(monkeypatch)
-        max_lyapunov(Henon(), n=1000, transient=100, ic=None, seed=11)
-        return captured[1]
-
-    ic_a = run_once()
-    monkeypatch.undo()
-    ic_b = run_once()
-    np.testing.assert_allclose(ic_a, ic_b)
-
-
-def test_max_lyapunov_map_seed_smoke() -> None:
-    """The public max_lyapunov accepts seed for a map and returns a finite value."""
-    pytest.importorskip("tsdynamics._rust")
-    from tsdynamics.systems import Henon
-
-    res = max_lyapunov(Henon(), n=5000, transient=200, ic=[0.1, 0.1], seed=3)
-    assert np.isfinite(float(res))
-    assert 0.3 < float(res) < 0.6  # Hénon MLE ≈ 0.42
+    with pytest.raises(ImportError, match=r"lyapunov_spectrum\(system, k=1\)"):
+        ts.analysis.max_lyapunov  # noqa: B018 - the attribute access IS the test
 
 
 # --------------------------------------------------------------------------

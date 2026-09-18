@@ -11,6 +11,7 @@ from typing import Any, ClassVar, cast
 
 import numpy as np
 
+from tsdynamics.analysis._common import RUNAWAY_KEY as _RUNAWAY_KEY
 from tsdynamics.analysis._result_base import AnalysisResult
 from tsdynamics.analysis._result_json import _sig
 from tsdynamics.analysis._result_scalar import _NumericOps
@@ -195,12 +196,36 @@ class ScalingResult(_NumericOps, AnalysisResult):
         return float(1.0 - np.sum(residual**2) / ss_tot)
 
     @property
+    def runaway(self) -> str | None:
+        """The escape line when the measured data had left the building, else ``None``.
+
+        Stamped onto ``meta`` by
+        :func:`~tsdynamics.analysis._common.runaway_meta`, which every data-first
+        estimator calls on its coerced input.  It is the **most upstream** way a
+        scaling result can be wrong and the hardest to see from the fit: measured
+        on a Chua orbit that reached ``1.6e9``, ``correlation_dimension``
+        answered ``D_corr = 0.48954`` over ``log r ∈ [8.93, 10.4]`` with
+        ``R² = 0.9976`` — an excellent straight line through the escape itself.
+        So it outranks every other check, and :attr:`trusted` is ``False``
+        whenever it is set, however clean the fit looks.
+
+        Returns
+        -------
+        str or None
+        """
+        if not self.meta:
+            return None
+        line = self.meta.get(_RUNAWAY_KEY)
+        return str(line) if line else None
+
+    @property
     def trusted(self) -> bool:
         r"""Whether the reported slope rests on enough straight curve to believe.
 
-        Computed, not asserted: ``n_fit >= 4`` **and** the fit's :math:`R^2` is
-        finite and at least ``0.98``.  Before v6 ``trusted`` was a constructor
-        flag defaulting to ``True``, so a two-point window printed
+        Computed, not asserted: the data was **on an attractor** (see
+        :attr:`runaway`), ``n_fit >= 4`` **and** the fit's :math:`R^2` is finite
+        and at least ``0.98``.  Before v6 ``trusted`` was a constructor flag
+        defaulting to ``True``, so a two-point window printed
         ``D_corr = 1.8183 ± 0 … R² = 1`` and called itself trusted — a line
         through two points always has :math:`R^2 = 1`.
 
@@ -212,10 +237,15 @@ class ScalingResult(_NumericOps, AnalysisResult):
         -------
         bool
         """
-        return self._fit_is_believable()
+        return self._fit_is_believable() and self.runaway is None
 
     def _fit_is_believable(self) -> bool:
-        """Return whether the fit window is long enough and straight enough."""
+        """Return whether the fit window is long enough and straight enough.
+
+        About the **fit** only — deliberately not about the data, so a subclass
+        naming *why* a result is untrusted can tell a bad fit from a good fit
+        through a blow-up, which call for opposite actions.
+        """
         r2 = self.r_squared
         return bool(
             self.n_fit >= _MIN_TRUSTWORTHY_FIT and np.isfinite(r2) and r2 >= _MIN_TRUSTWORTHY_R2
@@ -228,7 +258,11 @@ class ScalingResult(_NumericOps, AnalysisResult):
 
         Lifted here from the two subclasses that had it, so the base and
         :class:`~tsdynamics.analysis.results.ExpansionEntropyResult` hedge too.
+        A runaway orbit is named **first**: it is the reason the reader can act
+        on, and it is invisible in the fit diagnostics (which look excellent).
         """
+        if (escape := self.runaway) is not None:
+            return f"⚠ UNTRUSTED — {escape.removeprefix('⚠ unbounded — ')}"
         if self.n_fit < _MIN_MEANINGFUL_R2_FIT:
             return f"⚠ UNTRUSTED — {self.n_fit} fit pts is a line through its own endpoints"
         return "⚠ UNTRUSTED — no clean scaling region"

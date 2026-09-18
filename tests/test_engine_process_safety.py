@@ -219,9 +219,13 @@ _LONG_CALLS: dict[str, str] = {
     "lyapunov_spectrum": """
         ts.analysis.lyapunov_spectrum(ts.systems.Lorenz(), final_time=2_000_000.0, dt=0.01)
     """,
-    # The QR tangent-map iteration (`map_lyapunov.rs`).
-    "max_lyapunov": """
-        ts.analysis.max_lyapunov(ts.systems.Henon(), ic=[0.1, 0.1], n=200_000_000)
+    # The QR tangent-map iteration (`map_lyapunov.rs`).  Spelled through
+    # `lyapunov_spectrum`, which absorbed `max_lyapunov` in v6 — `k=1` is the
+    # leading exponent, and on a map that is the engine QR kernel.
+    "map_lyapunov": """
+        ts.analysis.lyapunov_spectrum(
+            ts.systems.Henon(), k=1, ic=[0.1, 0.1], n=200_000_000
+        )
     """,
     # The recurrence FSM (`basin.rs`), one `dt` segment per cell check.
     "basins_of_attraction": """

@@ -166,11 +166,11 @@ $e^{-13.667}$ per unit time, which is why *any* blob of initial conditions
 collapses onto the zero-volume attractor.
 
 !!! tip "Only need the top exponent?"
-    When you just want the leading rate — or the right-hand side is non-smooth
-    and has no analytic Jacobian — [`max_lyapunov`](../analysis/lyapunov.md) runs
-    the classic two-trajectory method using nothing but the stepping protocol:
-    `ts.analysis.max_lyapunov(ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]), dt=0.05)` returns
-    `≈ 0.89`, agreeing with $\lambda_1$ from the full spectrum.
+    Ask for one: `ts.analysis.lyapunov_spectrum(lor, k=1, ic=[1.0, 1.0, 1.0])`.
+    When the right-hand side is non-smooth and has no analytic Jacobian, the
+    same call falls back to the classic
+    [two-trajectory method](../analysis/lyapunov.md), which uses nothing but the
+    stepping protocol.
 
 ## 5. The attractor's dimension — two ways
 
@@ -254,7 +254,7 @@ tutorial](bifurcations.md) asks the sequel question — where does this chaos
 
 ## See also
 
-- [Lyapunov spectra](../analysis/lyapunov.md) — the full spectrum API for flows, maps and delay systems, plus `max_lyapunov` and the Kaplan–Yorke dimension
+- [Lyapunov spectra](../analysis/lyapunov.md) — the full spectrum API for flows, maps and delay systems, the Jacobian-free fallback, and the Kaplan–Yorke dimension
 - [Fractal dimensions](../analysis/dimensions.md) — the correlation dimension and the rest of the fractal-geometry toolkit
 - [The road to chaos](bifurcations.md) — how a fixed point period-doubles into an attractor like this one
 - [Reconstruction from one signal](reconstruction.md) — recover all of the above from a single measured channel
