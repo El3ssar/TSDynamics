@@ -30,8 +30,8 @@ _rust = pytest.importorskip("tsdynamics._rust")
 
 import tsdynamics as ts  # noqa: E402
 from tsdynamics import StochasticSystem  # noqa: E402
-from tsdynamics.engine import run  # noqa: E402
-from tsdynamics.engine.problem import map_problem, sde_problem  # noqa: E402
+from tsdynamics._engine import run  # noqa: E402
+from tsdynamics._engine.problem import map_problem, sde_problem  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # SDE test fixtures (not catalogue systems; unique names to avoid registry

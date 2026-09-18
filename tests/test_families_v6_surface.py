@@ -719,7 +719,7 @@ class TestHidingNeverUnbinds:
         # `dir()` is not the lookup path — the teaching error still fires.
         params = ts.systems.Lorenz().params
         for call in (lambda: params.pop("sigma"), params.popitem, params.clear):
-            with pytest.raises(ts.InvalidInputError, match="fixed-key"):
+            with pytest.raises(ts.errors.InvalidInputError, match="fixed-key"):
                 call()
 
     def test_hiding_composes_with_a_base_that_already_curates_its_listing(self):
@@ -965,7 +965,9 @@ class TestAWriteCannotCorruptTheAnswer:
         self, factory, attr, value, names
     ):
         subject = factory()
-        with pytest.raises((ts.InvalidParameterError, ts.InvalidInputError)) as excinfo:
+        with pytest.raises(
+            (ts.errors.InvalidParameterError, ts.errors.InvalidInputError)
+        ) as excinfo:
             setattr(subject, attr, value)
         assert names in str(excinfo.value)
 
@@ -996,7 +998,7 @@ class TestAWriteCannotCorruptTheAnswer:
         for entry in registry.all_systems():
             try:
                 entry.cls().params = {"x": 1}
-            except (ts.InvalidParameterError, ts.InvalidInputError) as err:
+            except (ts.errors.InvalidParameterError, ts.errors.InvalidInputError) as err:
                 for line in str(err).splitlines()[1:]:
                     if not line.strip():
                         continue
@@ -1009,7 +1011,7 @@ class TestAWriteCannotCorruptTheAnswer:
     def test_a_system_with_no_parameters_says_so_instead_of_inventing_one(self):
         bare = ts.systems.SprottA()
         assert bare.params == {}
-        with pytest.raises(ts.InvalidParameterError, match="declares no parameters"):
+        with pytest.raises(ts.errors.InvalidParameterError, match="declares no parameters"):
             bare.params = {"a": 1.0}
 
     def test_a_refused_write_leaves_the_object_usable(self):
@@ -1017,7 +1019,7 @@ class TestAWriteCannotCorruptTheAnswer:
         # accepted and `lor.info` then raised a raw `IndexError: tuple index out
         # of range` from inside the equation renderer.
         lor = _lorenz()
-        with pytest.raises(ts.InvalidInputError):
+        with pytest.raises(ts.errors.InvalidInputError):
             lor.variables = ("a", "b")
         assert lor.variables == ("x", "y", "z")
         assert lor.info.dim == 3
@@ -1118,7 +1120,7 @@ class TestAStateWriteDropsWhatWasDerivedFromIt:
 
     def test_a_write_keeps_the_two_axes_describing_the_same_rows(self):
         traj = _traj()
-        with pytest.raises(ts.InvalidInputError, match="rows"):
+        with pytest.raises(ts.errors.InvalidInputError, match="rows"):
             traj.y = np.zeros((3, 3))
         assert traj.shape == (11, 3)
         assert traj.y.shape[0] == traj.t.shape[0]
@@ -1137,7 +1139,7 @@ class TestTheFixedKeyMappingAnswersInEverySpelling:
             lambda: params.fromkeys(["a"]),
             lambda: ParamSet.fromkeys(["a"], 0.0),
         ):
-            with pytest.raises(ts.InvalidInputError, match="fixed-key"):
+            with pytest.raises(ts.errors.InvalidInputError, match="fixed-key"):
                 call()
 
     def test_the_four_hidden_mutators_are_off_the_listing_but_answer(self):

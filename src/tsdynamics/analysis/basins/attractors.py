@@ -31,9 +31,9 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import numpy as np
 
+from ..._utils.tolerances import BASIN_ATOL, BASIN_RTOL
 from ...data import Ball, Box, Grid, sampler, set_distance
 from ...errors import ConvergenceError
-from ...utils.tolerances import BASIN_ATOL, BASIN_RTOL
 from .._common import reject_data
 from .._result import AnalysisResult, _ArrayBacked, _build_meta
 from .._result_base import _MAX_ITEMS
@@ -80,8 +80,8 @@ DIVERGED = -1
 #: and stops early: the orbit has converged onto a fixed point, which is
 #: invariant and can reach nothing further.  This is a convergence test on the
 #: state, **not** a solver tolerance — the march's integration accuracy is
-#: :data:`~tsdynamics.utils.tolerances.BASIN_RTOL` /
-#: :data:`~tsdynamics.utils.tolerances.BASIN_ATOL`.
+#: :data:`~tsdynamics._utils.tolerances.BASIN_RTOL` /
+#: :data:`~tsdynamics._utils.tolerances.BASIN_ATOL`.
 _STATIONARY_REL = 1e-12
 
 
@@ -493,8 +493,8 @@ class _AttractorMapper:
         """Reinitialise the driven system at initial condition ``ic``.
 
         A **flow** is re-seeded with the basin march's own tolerances
-        (:data:`~tsdynamics.utils.tolerances.BASIN_RTOL` /
-        :data:`~tsdynamics.utils.tolerances.BASIN_ATOL`) rather than
+        (:data:`~tsdynamics._utils.tolerances.BASIN_RTOL` /
+        :data:`~tsdynamics._utils.tolerances.BASIN_ATOL`) rather than
         ``ContinuousSystem.reinit``'s library default.  Two reasons, and both are
         load-bearing:
 
@@ -526,7 +526,7 @@ class _AttractorMapper:
         the maps' / flows' loud-divergence contract) and arithmetic overflow are
         treated as "gone".  An engine-unavailability failure
         (:class:`~tsdynamics.errors.BackendError` /
-        :class:`~tsdynamics.engine.run.EngineNotAvailableError`) is *also* a
+        :class:`~tsdynamics._engine.run.EngineNotAvailableError`) is *also* a
         ``RuntimeError`` but is **not** a divergence — it propagates rather than
         silently painting an all-diverged basin.
         """
@@ -1262,7 +1262,7 @@ def classify_seeds(
     drive the recurrence FSM through.  When the run is *supported* — an ODE flow or
     a map on the compiled engine whose tape lowers — the **entire** per-seed march
     (stepping + cell-binning + the shared-label early-out) runs in one sequential
-    Rust kernel call (:func:`tsdynamics.engine.run.basin_march`), and ``mapper`` is
+    Rust kernel call (:func:`tsdynamics._engine.run.basin_march`), and ``mapper`` is
     reloaded from its outcome (:meth:`_AttractorMapper._load_march`) so the existing
     ``merge_map`` / ``attractor_set`` / basin-painting post-processing is unchanged.
     The per-cell-check numerics are byte-for-byte the released ``system.step()``, so
@@ -1323,16 +1323,16 @@ def _try_rust_march(
     system's tape does not lower (a non-symbolic ``_step`` / ``_equations``) or the
     compiled engine is unavailable.  Resolves the method / Jacobian-carrying tape /
     tolerances exactly as :meth:`_AttractorMapper._reinit` does (``_default_method``
-    plus :data:`~tsdynamics.utils.tolerances.BASIN_RTOL` /
-    :data:`~tsdynamics.utils.tolerances.BASIN_ATOL`), so the kernel reproduces the
+    plus :data:`~tsdynamics._utils.tolerances.BASIN_RTOL` /
+    :data:`~tsdynamics._utils.tolerances.BASIN_ATOL`), so the kernel reproduces the
     Python oracle's stepping numerics bit-for-bit.  The two sites must name the
     *same* constants — see :meth:`_AttractorMapper._reinit` for why the march keeps
     its own, looser pair.
     """
-    from tsdynamics import solvers
-    from tsdynamics.engine import run
-    from tsdynamics.engine.compile import TapeCompileError
-    from tsdynamics.engine.problem import map_problem, ode_problem
+    from tsdynamics import _solvers as solvers
+    from tsdynamics._engine import run
+    from tsdynamics._engine.compile import TapeCompileError
+    from tsdynamics._engine.problem import map_problem, ode_problem
 
     grid = mapper.grid
     thresholds = (
@@ -1522,7 +1522,7 @@ def attractors(
     # sequential Rust kernel call on a supported engine run, else the per-seed
     # Python loop (the oracle).  Either way ``mapper`` carries the same FSM state.
     seeds = np.array([draw() for _ in range(int(n_seeds))], dtype=np.float64).reshape(-1, grid.dim)
-    from ...engine.run import resolve_backend
+    from ..._engine.run import resolve_backend
 
     backend = resolve_backend(getattr(system, "_default_backend", "jit"))
     labels = classify_seeds(mapper, seeds, backend=backend, jit=backend == "jit")

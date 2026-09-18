@@ -245,7 +245,7 @@ def test_the_title_sheds_the_str_methods_but_is_still_a_string(traj):
     assert f"{p.title:>10}" == "    Lorenz"
     assert "".join(sorted(p.title)) == "".join(sorted("Lorenz"))
     # ...and the read/call duality the subclass exists for is untouched.
-    with pytest.raises(ts.InvalidInputError, match="relabel"):
+    with pytest.raises(ts.errors.InvalidInputError, match="relabel"):
         p.title("nope")
     plt.close("all")
 
@@ -319,7 +319,7 @@ def test_the_renamed_geometry_keyword_answers_by_name():
 
     frame = make_frame(FrameSpace.STATE2, ("x", "y"))
     channels = {"x": np.arange(4.0), "y": np.arange(4.0)}
-    with pytest.raises(ts.InvalidParameterError, match="chosen_primitive"):
+    with pytest.raises(ts.errors.InvalidParameterError, match="chosen_primitive"):
         Geometry("mine", frame, channels=channels, primitive="line")
     built = Geometry("mine", frame, channels=channels, chosen_primitive="line")
     assert built.chosen_primitive == "line"
@@ -705,7 +705,7 @@ def test_a_custom_primitive_is_refused_by_a_message_that_names_the_fix(traj):
         """A vertical drop to the baseline plus a marker at each point."""
         return [{"x": part["x"], "y": part["y"], "mark": "line"}]
 
-    with pytest.raises(ts.InvalidParameterError) as excinfo:
+    with pytest.raises(ts.errors.InvalidParameterError) as excinfo:
         ts.plot(traj, "time_series", primitive=name)
     message = str(excinfo.value)
     assert "ts.viz.transforms.allow" in message

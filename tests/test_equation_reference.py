@@ -45,7 +45,7 @@ import numpy as np
 import pytest
 
 from tsdynamics import registry
-from tsdynamics.engine import compile as _compile
+from tsdynamics._engine import compile as _compile
 
 # --------------------------------------------------------------------------- #
 # Layer 1 — curated independent analytic checks

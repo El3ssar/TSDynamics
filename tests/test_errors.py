@@ -18,6 +18,7 @@ import numpy as np
 import pytest
 
 import tsdynamics as ts
+from tsdynamics._utils.grids import make_output_grid
 from tsdynamics.errors import (
     BackendError,
     ConvergenceError,
@@ -26,7 +27,6 @@ from tsdynamics.errors import (
     TSDynamicsError,
     invalid_value,
 )
-from tsdynamics.utils.grids import make_output_grid
 
 # ---------------------------------------------------------------------------
 # 1. The hierarchy (and the multiple-inheritance contract)
@@ -338,7 +338,7 @@ def test_catch_all_via_base_class():
 
 def _lowered(system):
     """Lower ``system`` with the right family entry point (bypassing the cache)."""
-    from tsdynamics.engine import compile as _compile
+    from tsdynamics._engine import compile as _compile
 
     if hasattr(type(system), "_drift"):
         return _compile.lower_sde(system)
@@ -353,7 +353,7 @@ def test_numeric_call_in_an_ode_kernel_names_the_call_and_the_fix():
     """``math.sin`` in ``_equations`` is diagnosed, not left as a raw RuntimeError."""
     import math
 
-    from tsdynamics.engine.compile import TapeCompileError
+    from tsdynamics._engine.compile import TapeCompileError
 
     class _MathODE(ts.ContinuousSystem):
         params = {"s": 10.0}
@@ -377,7 +377,7 @@ def test_numeric_call_in_an_ode_kernel_names_the_call_and_the_fix():
 
 def test_numeric_call_in_an_sde_diffusion_names_the_kernel():
     """The guard reaches ``_diffusion``, not only the drift."""
-    from tsdynamics.engine.compile import TapeCompileError
+    from tsdynamics._engine.compile import TapeCompileError
 
     class _NumpySDE(ts.StochasticSystem):
         params = {"mu": 1.0}
@@ -410,7 +410,7 @@ def test_missing_structural_params_is_not_diagnosed_as_a_numeric_call():
     math.sin" would send the user in entirely the wrong direction, which is what
     the shared guard's catch-all branch originally did.
     """
-    from tsdynamics.engine.compile import TapeCompileError
+    from tsdynamics._engine.compile import TapeCompileError
 
     class _NoStructural(ts.ContinuousSystem):
         params = {"N": 4, "F": 8.0}

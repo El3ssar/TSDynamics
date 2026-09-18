@@ -2,7 +2,7 @@
 
 The map analogue of the basin-march / ODE-stepper perf streams: the per-step
 Python QR tangent-map loop (``TangentSystem._accumulate_map``) replaced by a single
-Rust engine call (``tsdynamics.engine.run.map_lyapunov`` →
+Rust engine call (``tsdynamics._engine.run.map_lyapunov`` →
 ``tsdynamics._rust.map_lyapunov_spectrum``).  These tests lock in the contract:
 
 * the engine spectrum reproduces the pure-Python QR oracle (``backend="reference"``)
@@ -184,7 +184,7 @@ def test_tape_jacobian_is_smooth_discriminator() -> None:
     It is the gate that routes a smooth map (Hénon) to the engine kernel and a
     piecewise map (the ``np.abs``-based Tent) to the pure-Python QR loop.
     """
-    from tsdynamics.engine.compile import lower_map_cached, tape_jacobian_is_smooth
+    from tsdynamics._engine.compile import lower_map_cached, tape_jacobian_is_smooth
     from tsdynamics.systems import Tent
 
     assert tape_jacobian_is_smooth(lower_map_cached(Henon(), with_jacobian=True)) is True

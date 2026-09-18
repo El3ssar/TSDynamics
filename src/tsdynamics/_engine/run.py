@@ -2,8 +2,8 @@
 
 This is the top of the engine seam: the functions a user (or the family base
 classes, stream C-FAM) call to actually *run* a system on the Rust engine.
-Each entry point turns a system into a :class:`~tsdynamics.engine.problem.Problem`
-(:mod:`tsdynamics.engine.problem`), resolves a backend, and dispatches.
+Each entry point turns a system into a :class:`~tsdynamics._engine.problem.Problem`
+(:mod:`tsdynamics._engine.problem`), resolves a backend, and dispatches.
 
 Backends
 --------
@@ -24,7 +24,7 @@ Both run inside the compiled extension :mod:`tsdynamics._rust` (stream E7).
 Until that extension is built, ``"interp"``/``"jit"`` raise
 :class:`EngineNotAvailableError`.  A third backend, ``"reference"``, needs no compiled
 engine: it evaluates the lowered tape in pure Python (the
-:mod:`~tsdynamics.engine.compile` reference evaluator) and delegates ODE
+:mod:`~tsdynamics._engine.compile` reference evaluator) and delegates ODE
 time-stepping to SciPy — the dependency-light oracle the lowering is validated
 against, and a usable fallback for RHS evaluation and small ODE/map runs.
 
@@ -41,20 +41,20 @@ Module layout (the run-split refactor)
 ``_engine`` / ``BACKENDS`` / :class:`EngineNotAvailableError`) and the shared
 problem-coercion / naming / provenance helpers.  The rest was split out into
 focused submodules and is **re-exported here** so every name stays reachable at
-its historical path ``tsdynamics.engine.run.<name>``:
+its historical path ``tsdynamics._engine.run.<name>``:
 
-- :mod:`~tsdynamics.engine.run_methods` — ``method=`` resolution + auto-stiffness
+- :mod:`~tsdynamics._engine.run_methods` — ``method=`` resolution + auto-stiffness
   (``_resolve_method_for`` / ``_recommend_method`` / ``_resolve_method_and_prepare``).
-- :mod:`~tsdynamics.engine._families` — the per-family runners (``_run_continuous``
+- :mod:`~tsdynamics._engine._families` — the per-family runners (``_run_continuous``
   / ``_step_continuous`` / ``_run_dde`` / ``_run_map`` / ``_sample_past``) and the
   low-level ``_engine_*`` FFI shims.
-- :mod:`~tsdynamics.engine.stepper` — the resumable ``OdeStepper`` API
+- :mod:`~tsdynamics._engine.stepper` — the resumable ``OdeStepper`` API
   (``make_ode_stepper`` / ``step_advance`` / ``step_advance_to_event``).
-- :mod:`~tsdynamics.engine.sde_run` — the SDE dense/ensemble seam
+- :mod:`~tsdynamics._engine.sde_run` — the SDE dense/ensemble seam
   (``sde_integrate_dense`` / ``sde_ensemble_final``).
-- :mod:`~tsdynamics.engine.events` — the event subsystem (``crossings`` / ``Event``
+- :mod:`~tsdynamics._engine.events` — the event subsystem (``crossings`` / ``Event``
   / ``EventSolution`` / ``integrate_events``).
-- :mod:`~tsdynamics.engine.reference` — the pure-Python reference oracle
+- :mod:`~tsdynamics._engine.reference` — the pure-Python reference oracle
   (``_reference_*`` / ``_scipy_method``).
 """
 
@@ -66,9 +66,9 @@ from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
+from tsdynamics._utils.grids import make_output_grid
+from tsdynamics._utils.tolerances import BASIN_ATOL, BASIN_RTOL, DEFAULT_ATOL, DEFAULT_RTOL
 from tsdynamics.errors import BackendError, ConvergenceError
-from tsdynamics.utils.grids import make_output_grid
-from tsdynamics.utils.tolerances import BASIN_ATOL, BASIN_RTOL, DEFAULT_ATOL, DEFAULT_RTOL
 
 if TYPE_CHECKING:
     from tsdynamics.families import Trajectory
@@ -84,7 +84,7 @@ from ._families import (  # noqa: F401
 
 # The run-split refactor moved the focused concerns out of this module into the
 # submodules below.  Re-export every name they own so all of them stay reachable
-# at their historical path ``tsdynamics.engine.run.<name>`` — a pure move, no
+# at their historical path ``tsdynamics._engine.run.<name>`` — a pure move, no
 # public-surface change.  (The split-out modules late-import the shared run-side
 # helpers — ``_engine``/``resolve_backend``/``_name``/``_primary_tape``/… — from
 # this module inside their functions, so these module-level imports do not create
@@ -285,7 +285,7 @@ def jit_cache_stats() -> dict[str, int]:
     ``backend="jit"`` compiles a tape to native code with Cranelift.  That is a
     *per-call* cost — ~0.13 ms for Lorenz, ~0.3 s for a Gray–Scott field — so the
     engine memoises the compiled evaluator on the tape's identity, exactly as
-    :func:`tsdynamics.engine.compile.lower_ode_cached` memoises the tape itself.
+    :func:`tsdynamics._engine.compile.lower_ode_cached` memoises the tape itself.
     This is that cache's ``{"hits", "misses", "size", "maxsize"}``.
 
     Set ``TSDYNAMICS_NO_JIT_CACHE=1`` to bypass the cache process-wide (every
@@ -307,7 +307,7 @@ def jit_cache_stats() -> dict[str, int]:
 def clear_jit_cache() -> None:
     """Drop every cached compiled evaluator and reset the counters.
 
-    The twin of :func:`tsdynamics.engine.compile.clear_tape_cache`: the hook that
+    The twin of :func:`tsdynamics._engine.compile.clear_tape_cache`: the hook that
     makes a following ``backend="jit"`` call a guaranteed compile (for tests and
     timings), and the way to release the native code of a large system.
 
@@ -480,7 +480,7 @@ def integrate(
         special value ``"auto"`` selects a kernel by a-priori auto-stiffness
         **for ODEs**: the Jacobian spectrum at the start state is probed and an
         implicit kernel (``bdf``) is used on a stiff RHS, the explicit default
-        (``rk45``) otherwise (:func:`tsdynamics.solvers.recommend`; a one-point
+        (``rk45``) otherwise (:func:`tsdynamics._solvers.recommend`; a one-point
         heuristic).  The probe reads the Jacobian at the resolved initial state
         (``problem.ic``) but always at ``t=0.0`` — the ``t0=`` argument is not
         threaded into it — so a non-autonomous system whose stiffness varies in
@@ -491,9 +491,9 @@ def integrate(
         default — see :func:`_recommend_method`.
     rtol, atol : float
         Solver tolerances — the accuracy knob (see
-        :mod:`tsdynamics.utils.tolerances`).  Default
-        :data:`~tsdynamics.utils.tolerances.DEFAULT_RTOL` /
-        :data:`~tsdynamics.utils.tolerances.DEFAULT_ATOL`.
+        :mod:`tsdynamics._utils.tolerances`).  Default
+        :data:`~tsdynamics._utils.tolerances.DEFAULT_RTOL` /
+        :data:`~tsdynamics._utils.tolerances.DEFAULT_ATOL`.
 
         .. versionchanged:: 6.0
             Tightened from ``1e-6``/``1e-9`` to ``1e-9``/``1e-12``.  Now that
@@ -915,7 +915,7 @@ def map_param_sweep(
 
     Drives ``tsdynamics._rust.map_param_sweep`` over a map tape lowered once with
     the swept parameter kept as its single runtime ``Param`` input (see
-    :func:`tsdynamics.engine.compile.lower_map_sweep`).  For each value the kernel
+    :func:`tsdynamics._engine.compile.lower_map_sweep`).  For each value the kernel
     sets that input, runs ``transient + n_record`` iterations (carrying the final
     state forward across values when ``carry_state``), and records the last
     ``n_record`` asymptotic states' selected ``components``.

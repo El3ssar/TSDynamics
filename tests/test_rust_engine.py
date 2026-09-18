@@ -1,7 +1,7 @@
 """End-to-end tests for the ``tsdynamics._rust`` engine binding (stream E7).
 
 These exercise the compiled extension through the public Python seam
-(:mod:`tsdynamics.engine.run`) and via a few direct ``_rust`` calls for the
+(:mod:`tsdynamics._engine.run`) and via a few direct ``_rust`` calls for the
 error paths. They are skipped wholesale when the extension is not built (the
 default ``ci.yml`` Python job runs without it); the dedicated
 ``engine-bindings.yml`` job builds ``_rust`` and runs them for real.
@@ -24,8 +24,8 @@ import pytest
 _rust = pytest.importorskip("tsdynamics._rust")
 
 import tsdynamics as ts  # noqa: E402
-from tsdynamics.engine import run  # noqa: E402
-from tsdynamics.engine.compile import lower_ode  # noqa: E402
+from tsdynamics._engine import run  # noqa: E402
+from tsdynamics._engine.compile import lower_ode  # noqa: E402
 
 # A small, representative spread: a 3-D chaotic flow, a stiffer-ish 3-D flow,
 # and two maps. Kept short so integration stays in the non-chaotic regime where

@@ -1,10 +1,10 @@
 """SDE engine seam — the diagonal-Itô dense/ensemble entry points.
 
-Split out of :mod:`tsdynamics.engine.run` (the run-split refactor); every name
-here stays reachable as ``tsdynamics.engine.run.<name>`` via re-export, so this is
+Split out of :mod:`tsdynamics._engine.run` (the run-split refactor); every name
+here stays reachable as ``tsdynamics._engine.run.<name>`` via re-export, so this is
 a pure move.
 
-Unlike :func:`tsdynamics.engine.run.integrate` / :func:`tsdynamics.engine.run.ensemble`,
+Unlike :func:`tsdynamics._engine.run.integrate` / :func:`tsdynamics._engine.run.ensemble`,
 these carry the two SDE-specific knobs — the fixed step ``dt`` (which *is* the
 noise scale ``√dt``) and the noise ``seed`` — and drive the two-tape engine call
 (drift + diffusion).  The family base class
@@ -13,7 +13,7 @@ noise scale ``√dt``) and the noise ``seed`` — and drive the two-tape engine 
 provenance; the pure-Python reference path stays in the family.
 
 The backend resolver + engine accessor (``resolve_backend``/``_engine``) are
-late-imported from :mod:`tsdynamics.engine.run` inside the functions that need
+late-imported from :mod:`tsdynamics._engine.run` inside the functions that need
 them, so importing this module does not create an import cycle.
 """
 

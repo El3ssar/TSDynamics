@@ -1674,7 +1674,7 @@ class SystemBase(DeriveMixin, SystemPlottable):
         Every family's ``interp`` / ``jit`` / ``reference`` integration branch
         funnels here, so the FFI marshalling, the divergence guards and the
         engine-path provenance live once in
-        :func:`tsdynamics.engine.run.integrate` rather than being re-implemented
+        :func:`tsdynamics._engine.run.integrate` rather than being re-implemented
         per family.  Family-specific run inputs pass straight through as keyword
         arguments — ``history`` for a delay system, ``ic`` / ``method`` /
         ``rtol`` / ``atol`` / ``t0`` for the continuous families, ``final_time``
@@ -1702,7 +1702,7 @@ class SystemBase(DeriveMixin, SystemPlottable):
         divergence, an interrupt, an engine fault) leaves ``self.ic`` untouched
         instead of latching the offending initial condition onto the instance.
         """
-        from tsdynamics.engine import run
+        from tsdynamics._engine import run
 
         with self._ic_rollback():
             if seed is not None:

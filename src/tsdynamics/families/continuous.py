@@ -12,8 +12,8 @@ from typing import Any, ClassVar, cast
 
 import numpy as np
 
+from tsdynamics._utils.tolerances import DEFAULT_ATOL, DEFAULT_RTOL
 from tsdynamics.errors import InvalidParameterError
-from tsdynamics.utils.tolerances import DEFAULT_ATOL, DEFAULT_RTOL
 
 from ._kwargs import reject_unknown_run_keywords
 from .base import SystemBase, Trajectory, as_lyapunov_result, orbit_peak, resolve_transient
@@ -616,7 +616,7 @@ class ContinuousSystem(SystemBase, ABC):
         """Run :meth:`reinit`'s body (wrapped by its IC rollback guard)."""
         t0 = float(t) if t is not None else 0.0
         ic_arr = self._resolve_ic(u)
-        from tsdynamics.engine.run import resolve_backend
+        from tsdynamics._engine.run import resolve_backend
 
         # Honour the requested backend through the stepping protocol: ``reference``
         # is the wheel-free pure-Python oracle and a real, supported stepping path
@@ -629,8 +629,8 @@ class ContinuousSystem(SystemBase, ABC):
             backend if backend is not None else self._default_backend
         )
 
-        from tsdynamics import solvers
-        from tsdynamics.engine.problem import ode_problem
+        from tsdynamics import _solvers as solvers
+        from tsdynamics._engine.problem import ode_problem
 
         # Lower the tape ONCE here and reuse it for every step() — a sweep reinits
         # thousands of times, so re-lowering per step would dominate the cost.
@@ -642,7 +642,7 @@ class ContinuousSystem(SystemBase, ABC):
         # ``integrate``/``ensemble`` honour (FIX-AUTOSTIFF): probe the Jacobian
         # spectrum at the start state and let the solver registry pick the implicit
         # ``bdf`` on a stiff RHS or the explicit ``rk45`` otherwise
-        # (:func:`tsdynamics.solvers.recommend`).  Without this branch the stepping
+        # (:func:`tsdynamics._solvers.recommend`).  Without this branch the stepping
         # path crashed with an opaque "unknown solver method 'auto'" — the one
         # entry point that rejected the advertised value (diagnosis P2-1), exactly
         # where auto-stiffness matters for a stiff system stepped incrementally
@@ -710,9 +710,9 @@ class ContinuousSystem(SystemBase, ABC):
         WS-STEPPER).  The amortisation is durable: the first ``step`` after a
         :meth:`reinit` builds an opaque resumable engine handle
         (:class:`tsdynamics._rust.OdeStepper`, via
-        :func:`~tsdynamics.engine.run.make_ode_stepper`) that owns the built tape
+        :func:`~tsdynamics._engine.run.make_ode_stepper`) that owns the built tape
         evaluator + solver once and carries the live ``(u, t)`` across calls; every
-        later ``step`` is one :func:`~tsdynamics.engine.run.step_advance` on that
+        later ``step`` is one :func:`~tsdynamics._engine.run.step_advance` on that
         handle — the tape is **never re-marshalled into the engine again**.  So a
         constant-``dt`` stepping loop (Poincaré refinement, basins over flows) skips
         not only the solver-registry resolve, the implicit-Jacobian decision, the
@@ -733,7 +733,7 @@ class ContinuousSystem(SystemBase, ABC):
         sensitive consumers such as ``lyapunov_spectrum``.  The durable handle amortises
         the *build/marshalling*, never the numerics.
         """
-        from tsdynamics.engine.run import make_ode_stepper, step_advance
+        from tsdynamics._engine.run import make_ode_stepper, step_advance
 
         if self._engine_problem is None:
             self.reinit()
@@ -763,14 +763,14 @@ class ContinuousSystem(SystemBase, ABC):
         # only the sub-``1e-9`` remainder defers to the helper for that identical
         # loud-footgun error (and the byte-identical degenerate-grid behaviour).
         if not tf - t0 > 1e-9:
-            from tsdynamics.utils.grids import make_output_grid
+            from tsdynamics._utils.grids import make_output_grid
 
             # Raises InvalidParameterError for dt <= 0 / a non-forward window; for a
             # valid-but-tiny span it returns the (possibly single-node) grid, which
             # the per-``dt`` engine core integrated identically — reproduce that here
             # via the same lean core to stay byte-identical for the rare small step.
             t_eval = make_output_grid(t0, tf, dt)
-            from tsdynamics.engine.run import _step_continuous
+            from tsdynamics._engine.run import _step_continuous
 
             y = _step_continuous(
                 self._step_tape_arrays,
@@ -830,7 +830,7 @@ class ContinuousSystem(SystemBase, ABC):
 
         The ``backend="reference"`` stepping path: it integrates the cached
         (loop-invariant) tape from the live ``(state, t)`` over a one-segment grid
-        with the same :func:`tsdynamics.engine.run._run_continuous` the
+        with the same :func:`tsdynamics._engine.run._run_continuous` the
         ``integrate(backend="reference")`` entry point uses, so the wheel-free
         oracle is reachable through ``reinit``/``step``/``state`` exactly as it is
         through ``integrate`` (diagnosis #5).  Answer-identical to
@@ -839,12 +839,12 @@ class ContinuousSystem(SystemBase, ABC):
         A non-positive ``dt`` / non-forward window raises
         :class:`~tsdynamics.errors.InvalidParameterError` (a ``ValueError``), the
         same loud-footgun contract as the engine stepping path
-        (:func:`~tsdynamics.utils.grids.make_output_grid` enforces it).
+        (:func:`~tsdynamics._utils.grids.make_output_grid` enforces it).
         """
         import dataclasses
 
-        from tsdynamics.engine.run import _run_continuous
-        from tsdynamics.utils.grids import make_output_grid
+        from tsdynamics._engine.run import _run_continuous
+        from tsdynamics._utils.grids import make_output_grid
 
         assert self._state_now is not None
         assert self._step_method_canonical is not None
@@ -937,7 +937,7 @@ class ContinuousSystem(SystemBase, ABC):
         """
         import symengine
 
-        from tsdynamics.engine.symbols import state_time_symbols
+        from tsdynamics._engine.symbols import state_time_symbols
 
         y, t_sym = state_time_symbols()
 
@@ -981,7 +981,7 @@ class ContinuousSystem(SystemBase, ABC):
 
         import symengine
 
-        from tsdynamics.engine.symbols import state_time_symbols
+        from tsdynamics._engine.symbols import state_time_symbols
 
         y, t_sym = state_time_symbols()
 
@@ -1071,7 +1071,7 @@ class ContinuousSystem(SystemBase, ABC):
         """Integrate with event detection and wrap the result as a Trajectory.
 
         Builds the ODE problem, hands it to the engine event seam
-        (:func:`tsdynamics.engine.run.integrate_events`), and attaches the
+        (:func:`tsdynamics._engine.run.integrate_events`), and attaches the
         per-event crossings to ``meta`` (the SciPy-shaped ``t_events`` /
         ``y_events``).
         """
@@ -1109,8 +1109,8 @@ class ContinuousSystem(SystemBase, ABC):
         seed: int | None,
     ) -> Trajectory:
         """Run :meth:`_run_events`' body (wrapped by its IC rollback guard)."""
-        from tsdynamics.engine import run as engine_run
-        from tsdynamics.engine.problem import ode_problem
+        from tsdynamics._engine import run as engine_run
+        from tsdynamics._engine.problem import ode_problem
 
         be = backend if backend is not None else self._default_backend
         meth = method or self._default_method
@@ -1124,7 +1124,7 @@ class ContinuousSystem(SystemBase, ABC):
         # than the raw ``"auto"`` alias.  ``integrate_events`` re-resolves the
         # canonical name to itself (idempotent), so this is the single resolution
         # point that drives both the engine call and the provenance.
-        from tsdynamics.engine.run_methods import _resolve_method_for
+        from tsdynamics._engine.run_methods import _resolve_method_for
 
         meth = _resolve_method_for(meth, prob).name
         sol = engine_run.integrate_events(
@@ -1226,12 +1226,12 @@ class ContinuousSystem(SystemBase, ABC):
             / stiff (``bdf`` / ``rosenbrock`` / ``trbdf2``).  Pass ``"auto"`` to
             select a kernel by a-priori auto-stiffness — the Jacobian spectrum at
             the start state is probed and ``bdf`` chosen on a stiff RHS, ``rk45``
-            otherwise (:func:`tsdynamics.solvers.recommend`; a one-point heuristic,
+            otherwise (:func:`tsdynamics._solvers.recommend`; a one-point heuristic,
             so a reliably-stiff system should still declare ``_default_method``).
         rtol, atol : float
             Solver tolerances — the accuracy knob.  Default
-            :data:`~tsdynamics.utils.tolerances.DEFAULT_RTOL` /
-            :data:`~tsdynamics.utils.tolerances.DEFAULT_ATOL` (``1e-9`` /
+            :data:`~tsdynamics._utils.tolerances.DEFAULT_RTOL` /
+            :data:`~tsdynamics._utils.tolerances.DEFAULT_ATOL` (``1e-9`` /
             ``1e-12``).
 
             .. versionchanged:: 6.0
@@ -1254,7 +1254,7 @@ class ContinuousSystem(SystemBase, ABC):
         backend : {"jit", "interp", "reference"}, optional
             Where the ODE is integrated.  Defaults to ``_default_backend``
             (``"jit"``).  The first two go through the shared engine seam
-            (:func:`tsdynamics.engine.run.integrate`).
+            (:func:`tsdynamics._engine.run.integrate`).
 
             - ``"jit"`` (default) — the **Cranelift JIT**: the lowered tape
               compiled to native code, with a process-wide compiled-evaluator
@@ -1286,7 +1286,7 @@ class ContinuousSystem(SystemBase, ABC):
         events : sequence, optional
             Detect events along the flow (the SciPy-shaped ``events=`` API; see
             :meth:`run`).  Each element is an
-            :class:`~tsdynamics.engine.run.Event`, a bare ``g(y, t)`` callable
+            :class:`~tsdynamics._engine.run.Event`, a bare ``g(y, t)`` callable
             carrying ``.direction`` / ``.terminal`` attributes, or a plane tuple
             (``("y", 0.0, "up")``).  A **terminal** event stops the integration at
             its first crossing; the returned trajectory carries each event's

@@ -10,7 +10,7 @@ one.
 
 This module is the single definition of "escaped", so the trajectory repr, the
 section repr and the Lyapunov verdict cannot drift apart about it.  It lives in
-:mod:`tsdynamics.utils` — the leaf package — because ``data``, ``families``,
+:mod:`tsdynamics._utils` — the leaf package — because ``data``, ``families``,
 ``derived`` and ``analysis`` all have to agree on the answer.
 """
 

@@ -50,7 +50,7 @@ def _step_grid(t0, dt):
     tf = t0 + dt
     if tf - t0 > 1e-9:
         return np.array([t0, tf], dtype=np.float64)
-    from tsdynamics.utils.grids import make_output_grid
+    from tsdynamics._utils.grids import make_output_grid
 
     return make_output_grid(t0, tf, dt)
 
@@ -68,7 +68,7 @@ def test_step_grid_matches_helper_across_dt_threshold():
     the degenerate single-node band the naive direct shortcut gets wrong — the exact
     bug an earlier ``1e-12`` cutover shipped, caught here).
     """
-    from tsdynamics.utils.grids import make_output_grid
+    from tsdynamics._utils.grids import make_output_grid
 
     rng = np.random.default_rng(20240620)
     n_checked = 0
@@ -108,7 +108,7 @@ def test_step_does_not_call_make_output_grid(monkeypatch):
     sys.reinit([1.0, 1.0, 1.0])
     sys.step(0.01)  # warm: tape + step context cached by reinit
 
-    monkeypatch.setattr("tsdynamics.engine.run.make_output_grid", _boom)
+    monkeypatch.setattr("tsdynamics._engine.run.make_output_grid", _boom)
     # step keeps working: it never touches the helper…
     state = sys.step(0.01)
     assert state.shape == (3,)
@@ -329,8 +329,8 @@ def test_step_continuous_matches_run_continuous():
     ``_run_continuous`` marshals them from the ``Problem``.  Identical output
     confirms the split changed nothing numerically.
     """
-    from tsdynamics.engine.problem import ode_problem
-    from tsdynamics.engine.run import _run_continuous, _step_continuous
+    from tsdynamics._engine.problem import ode_problem
+    from tsdynamics._engine.run import _run_continuous, _step_continuous
 
     sys = ts.systems.Rossler()
     prob = ode_problem(sys, ic=[0.3, -0.2, 0.1], t0=2.0)
@@ -359,8 +359,8 @@ def test_step_continuous_diverges_loudly():
     (defense-in-depth, mirroring :func:`_run_continuous`); either way a blow-up is
     never silently handed back.
     """
-    from tsdynamics.engine.problem import ode_problem
-    from tsdynamics.engine.run import _step_continuous
+    from tsdynamics._engine.problem import ode_problem
+    from tsdynamics._engine.run import _step_continuous
 
     sys = ts.systems.Lorenz()
     prob = ode_problem(sys, ic=[1e6, 1e6, 1e6], t0=0.0)
@@ -393,8 +393,8 @@ def test_step_continuous_finiteness_guard_message(monkeypatch):
     by forcing the engine call to hand back a poisoned array — confirming the guard
     is wired and names the system, mirroring :func:`_run_continuous`.
     """
-    import tsdynamics.engine._families as families
-    from tsdynamics.engine.run import _step_continuous
+    import tsdynamics._engine._families as families
+    from tsdynamics._engine.run import _step_continuous
 
     # ``_step_continuous`` (and ``_engine_integrate_dense``) live in
     # ``engine._families`` post run-split; patch the FFI shim where it is *looked

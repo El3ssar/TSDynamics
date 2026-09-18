@@ -111,7 +111,7 @@ class TrajectoryBatch(Sequence["Trajectory"]):
         """Which members left the building, as an ``(n,)`` boolean mask.
 
         A member has diverged when its **end state** is non-finite or past the
-        library's one escape scale (:data:`~tsdynamics.utils.escape.ESCAPE_SCALE`
+        library's one escape scale (:data:`~tsdynamics._utils.escape.ESCAPE_SCALE`
         — the same number :attr:`~tsdynamics.data.Trajectory.unbounded` and the
         Lyapunov verdict use, so a batch and a single run cannot disagree about
         what "diverged" means).
@@ -137,7 +137,7 @@ class TrajectoryBatch(Sequence["Trajectory"]):
         >>> band.run(final_time=1.0, dt=0.1).diverged
         array([False, False])
         """
-        from tsdynamics.utils.escape import ESCAPE_SCALE
+        from tsdynamics._utils.escape import ESCAPE_SCALE
 
         end = self.final
         if not end.size:

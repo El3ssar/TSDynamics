@@ -97,7 +97,7 @@ def runaway_meta(points: Any, *, analysis: str) -> dict[str, str]:
         ``{"unbounded": <the escape line>}`` when the data left the building,
         else an empty dict (which merges into a meta dict harmlessly).
     """
-    from tsdynamics.utils.escape import detect_unbounded
+    from tsdynamics._utils.escape import detect_unbounded
 
     block = np.asarray(points, dtype=float)
     if block.ndim == 1:

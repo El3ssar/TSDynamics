@@ -3,7 +3,7 @@
 Stream C-FAM unifies how every family reaches the Rust engine.  A single
 ``_default_backend`` knob plus a thin :meth:`SystemBase._dispatch` template route
 ODE / DDE / map integration through the one engine seam
-(:func:`tsdynamics.engine.run.integrate`); diagonal-Itô SDEs keep their dedicated
+(:func:`tsdynamics._engine.run.integrate`); diagonal-Itô SDEs keep their dedicated
 seed-carrying ``run.sde_*`` seam (``run.integrate`` cannot carry the noise
 seed/step).  The registry now also detects the ``sde`` family.
 
@@ -18,9 +18,9 @@ import numpy as np
 import pytest
 
 import tsdynamics as ts
-from tsdynamics import registry
-from tsdynamics.engine import run
-from tsdynamics.engine.problem import sde_problem
+from tsdynamics import _utils, registry
+from tsdynamics._engine import run
+from tsdynamics._engine.problem import sde_problem
 
 # ---------------------------------------------------------------------------
 # An SDE fixture (a StochasticSystem subclass; registers as a non-builtin sde)
@@ -209,7 +209,7 @@ def test_dde_engine_absent_gives_install_guidance(monkeypatch) -> None:
     DDE rejects (no pure-Python delay integrator) — so ``_run_dde`` re-raises with
     the DDE-correct guidance (install the compiled wheel) instead.
     """
-    from tsdynamics.engine.run import EngineNotAvailableError
+    from tsdynamics._engine.run import EngineNotAvailableError
 
     def boom():
         raise EngineNotAvailableError("simulated: extension not built")
@@ -221,7 +221,7 @@ def test_dde_engine_absent_gives_install_guidance(monkeypatch) -> None:
 
 def test_run_integrate_and_ensemble_refuse_dde_ensemble() -> None:
     """The engine has no batched method-of-steps path; ``run.ensemble`` refuses a DDE."""
-    from tsdynamics.engine.problem import dde_problem
+    from tsdynamics._engine.problem import dde_problem
 
     prob = dde_problem(ts.systems.MackeyGlass(), ic=[1.0])
     with pytest.raises(NotImplementedError, match="DDE"):
@@ -274,10 +274,10 @@ def test_make_output_grid_is_the_single_definition() -> None:
     The four byte-identical ``_make_t_eval`` copies are gone; importing the helper
     from any layer resolves to the one ``utils.grids`` definition.
     """
-    from tsdynamics.engine import run as run_mod
+    from tsdynamics._engine import run as run_mod
+    from tsdynamics._utils import make_output_grid as canonical
+    from tsdynamics._utils.grids import make_output_grid
     from tsdynamics.families import continuous, delay, stochastic
-    from tsdynamics.utils import make_output_grid as canonical
-    from tsdynamics.utils.grids import make_output_grid
 
     assert make_output_grid is canonical
     # The private per-family copies were removed (no shadowing definitions).
@@ -293,11 +293,11 @@ def test_make_output_grid_is_the_single_definition() -> None:
 
 
 def test_make_output_grid_samples_endpoint_inclusive() -> None:
-    g = ts.utils.make_output_grid(0.0, 1.0, 0.3)
+    g = _utils.make_output_grid(0.0, 1.0, 0.3)
     assert g[0] == 0.0
     assert g[-1] == 1.0  # tf appended even when dt does not divide the span
     # An exactly-dividing dt needs no append.
-    np.testing.assert_array_equal(ts.utils.make_output_grid(0.0, 1.0, 0.5), [0.0, 0.5, 1.0])
+    np.testing.assert_array_equal(_utils.make_output_grid(0.0, 1.0, 0.5), [0.0, 0.5, 1.0])
 
 
 # ---------------------------------------------------------------------------

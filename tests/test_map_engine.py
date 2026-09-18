@@ -30,9 +30,9 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from tsdynamics.engine import run
-from tsdynamics.engine.compile import TapeCompileError
-from tsdynamics.engine.problem import map_problem
+from tsdynamics._engine import run
+from tsdynamics._engine.compile import TapeCompileError
+from tsdynamics._engine.problem import map_problem
 from tsdynamics.families.discrete import _unwrap_static
 
 pytest.importorskip("tsdynamics._rust")
@@ -199,7 +199,7 @@ def test_map_iterate_runs_exactly_one_full_orbit_finiteness_scan(monkeypatch, ba
     Every backend already diverges loudly *before* returning (the Rust map loop
     raises ``EngineError::Diverged`` → ``ConvergenceError`` at the first
     non-finite iterate; ``_reference_map`` raises per-iterate), so the single
-    remaining scan in :func:`tsdynamics.engine._families._run_map` is
+    remaining scan in :func:`tsdynamics._engine._families._run_map` is
     defense-in-depth.  A second scan at the family boundary was unreachable and
     was pure O(steps x dim) tax — this counting test pins it at one and cannot
     flake.  (``reference`` also scans per-iterate on a ``(dim,)`` state; those

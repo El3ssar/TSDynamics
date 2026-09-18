@@ -74,9 +74,9 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 import numpy as np
 
+from tsdynamics._utils.plot_namespace import plot_seam_error
 from tsdynamics.analysis._result_json import _fmt, _jsonify, _jsonify_bounded, _row_for
 from tsdynamics.analysis._result_viz import VisualizationNotInstalled, _PlotAccessor
-from tsdynamics.utils.plot_namespace import plot_seam_error
 
 if TYPE_CHECKING:
     from tsdynamics.viz.spec import PlotSpec

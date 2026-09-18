@@ -8,7 +8,7 @@ base flow ``dx/dt = f(x, t)``.
 This module is the engine path for ODE Lyapunov: it constructs the **extended**
 ODE — base state stacked with ``k`` tangent vectors — symbolically and lowers it
 to an engine :class:`Tape` through the public
-:func:`tsdynamics.engine.compile.lower_expressions`.  That tape runs on any
+:func:`tsdynamics._engine.compile.lower_expressions`.  That tape runs on any
 evaluator behind the frozen ``Evaluator`` seam (the Cranelift JIT — the default
 since v6 — the SSA-tape interpreter, or the pure-Python reference oracle), so the
 Rust engine is the variational integrator.
@@ -40,7 +40,7 @@ __all__ = [
 def build_variational_tape(system: Any, k: int) -> Any:
     """Lower the extended variational ODE of ``system`` with ``k`` tangents to a Tape.
 
-    Mirrors :func:`tsdynamics.engine.compile.lower_ode` for the base flow, then
+    Mirrors :func:`tsdynamics._engine.compile.lower_ode` for the base flow, then
     appends ``k`` blocks of ``dim`` tangent equations ``dw_i/dt = J · w_i`` whose
     Jacobian entries reuse the same a.e.-resolved symbolic derivatives the stiff
     solver path uses (``abs``/``sign`` resolved a.e. via
@@ -69,8 +69,8 @@ def build_variational_tape(system: Any, k: int) -> Any:
     """
     import symengine
 
-    from tsdynamics.engine.compile import lower_expressions
-    from tsdynamics.engine.symbols import state_time_symbols
+    from tsdynamics._engine.compile import lower_expressions
+    from tsdynamics._engine.symbols import state_time_symbols
     from tsdynamics.families.continuous import _resolve_derivative_nodes
 
     y, t_sym = state_time_symbols()
@@ -148,7 +148,7 @@ def build_variational_tape_cached(system: Any, k: int) -> Any:
 
     Lowering is a pure function of the *math*, so this routes through the same
     bounded-LRU store the other ``lower_*_cached`` helpers use
-    (:mod:`tsdynamics.engine.compile`) — sharing its size bound, its thread lock,
+    (:mod:`tsdynamics._engine.compile`) — sharing its size bound, its thread lock,
     its ``clear_tape_cache()`` / ``tape_cache_stats()`` surface, and the
     ``TSDYNAMICS_NO_TAPE_CACHE`` bypass.
 
@@ -167,7 +167,7 @@ def build_variational_tape_cached(system: Any, k: int) -> Any:
     function of the class, so the class captures it transitively (the same
     invariant :func:`lower_ode_cached` documents).
     """
-    from tsdynamics.engine.compile import (
+    from tsdynamics._engine.compile import (
         _cache_get_or_build,
         _kernel_identity,
         _structural_key,

@@ -6,9 +6,9 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import numpy as np
 
+from tsdynamics._utils.tolerances import DEFAULT_ATOL, DEFAULT_RTOL
 from tsdynamics.families import ContinuousSystem, DelaySystem, DiscreteMap, Trajectory
 from tsdynamics.families._hidden import hide
-from tsdynamics.utils.tolerances import DEFAULT_ATOL, DEFAULT_RTOL
 
 from ._base import DerivedSystem
 from ._variational import build_variational_tape_cached, embed_extended, split_extended
@@ -377,7 +377,7 @@ class TangentSystem(DerivedSystem):
         (``interp``/``jit``), build one durable
         :class:`tsdynamics._rust.OdeStepper` over the extended variational tape —
         the per-chunk loop then re-seeds it with ``set_state`` after each QR and
-        :func:`~tsdynamics.engine.run.step_advance` advances it one ``dt``,
+        :func:`~tsdynamics._engine.run.step_advance` advances it one ``dt``,
         marshalling the tape into the engine exactly once instead of per chunk
         (the ``TODO(stepper-amortize)``).  ``advance(dt)`` reproduces the per-dt
         ``integrate_dense`` bit-for-bit, so the spectrum is unchanged.
@@ -397,8 +397,8 @@ class TangentSystem(DerivedSystem):
         if self._backend == "reference":
             return
 
-        from tsdynamics import solvers
-        from tsdynamics.engine import run
+        from tsdynamics import _solvers as solvers
+        from tsdynamics._engine import run
 
         requested = self._method or self.system._default_method
         # ``method="auto"`` is owned by run.integrate (it probes the start-state
@@ -487,7 +487,7 @@ class TangentSystem(DerivedSystem):
         if self._z is None:
             self.reinit()
         assert self._z is not None  # reinit() seeds the extended state in ODE mode
-        from tsdynamics.engine import run
+        from tsdynamics._engine import run
 
         dim = self.system.dim
         t0 = self._t
@@ -500,7 +500,7 @@ class TangentSystem(DerivedSystem):
                 self._ode_stepper, dt, params_vec, name=type(self.system).__name__
             )
         else:
-            from tsdynamics.engine.problem import ODEProblem
+            from tsdynamics._engine.problem import ODEProblem
 
             method = self._method or self.system._default_method
             problem = ODEProblem(tape=self._ext_tape, ic=self._z, t0=t0, system=self.system)
@@ -536,7 +536,7 @@ class TangentSystem(DerivedSystem):
         ``system.params``, so a control-parameter change still takes effect on the
         next ``step`` exactly as the per-chunk ``run.integrate`` path did.
         """
-        from tsdynamics.engine.problem import ODEProblem
+        from tsdynamics._engine.problem import ODEProblem
 
         assert self._z is not None  # only called on the live (seeded) fast path
         prob = ODEProblem(tape=self._ext_tape, ic=self._z, t0=self._t, system=self.system)
@@ -795,8 +795,8 @@ class TangentSystem(DerivedSystem):
         - **maps**: ``n`` (default 5000), ``ic``, ``reortho_interval`` (1).
         - **ODEs**: ``final_time`` (200.0), ``dt`` (0.1), ``ic``, ``transient``
           (50.0), ``method``, ``rtol`` / ``atol``
-          (:data:`~tsdynamics.utils.tolerances.DEFAULT_RTOL` /
-          :data:`~tsdynamics.utils.tolerances.DEFAULT_ATOL`, ``1e-9`` /
+          (:data:`~tsdynamics._utils.tolerances.DEFAULT_RTOL` /
+          :data:`~tsdynamics._utils.tolerances.DEFAULT_ATOL`, ``1e-9`` /
           ``1e-12``), and any extra integrator keywords.
 
         The estimate is returned (the inner
@@ -821,7 +821,7 @@ class TangentSystem(DerivedSystem):
 
         For the compiled-engine backends (``jit`` — the default — and ``interp``) the whole
         QR tangent-map iteration runs in one Rust kernel call
-        (:func:`~tsdynamics.engine.run.map_lyapunov`) — no per-step Python→FFI
+        (:func:`~tsdynamics._engine.run.map_lyapunov`) — no per-step Python→FFI
         round-trip, ~thousands of times faster than the NumPy loop it supersedes.
         The ``reference`` backend, and any map whose ``_step`` will not lower to the
         engine IR (piecewise/ufunc) or a missing engine wheel, transparently use the
@@ -865,20 +865,20 @@ class TangentSystem(DerivedSystem):
         """Run the map QR spectrum on the Rust engine kernel, or decline.
 
         Lowers the map ``_step`` (with its Jacobian) once and runs the entire QR
-        tangent-map iteration in one :func:`~tsdynamics.engine.run.map_lyapunov`
+        tangent-map iteration in one :func:`~tsdynamics._engine.run.map_lyapunov`
         call — the per-step Python QR loop replaced by a single FFI round-trip.
 
         Returns the spectrum (also seeding ``self`` so ``exponents()`` reports it)
         on success, or ``None`` to decline so the caller falls back to the pure-NumPy
         loop — when the map will not lower to the engine IR
-        (:class:`~tsdynamics.engine.compile.TapeCompileError`) or the compiled
+        (:class:`~tsdynamics._engine.compile.TapeCompileError`) or the compiled
         wheel is absent
-        (:class:`~tsdynamics.engine.run.EngineNotAvailableError`).  Mirrors the NumPy
+        (:class:`~tsdynamics._engine.run.EngineNotAvailableError`).  Mirrors the NumPy
         path's random-IC retry on divergence (a random draw can land off-basin); an
         explicit ``ic`` that diverges re-raises rather than retrying silently.
         """
-        from tsdynamics.engine import run
-        from tsdynamics.engine.compile import (
+        from tsdynamics._engine import run
+        from tsdynamics._engine.compile import (
             TapeCompileError,
             lower_map_cached,
             tape_jacobian_is_smooth,
@@ -1016,7 +1016,7 @@ class TangentSystem(DerivedSystem):
         — exactly the cases :meth:`_setup_ode_stepper` builds a stepper for — the
         **whole** burn-in + averaging Benettin loop (per-``dt`` extended-variational
         integration + QR + ``Σ log|diag R|`` accumulation) runs in one
-        :func:`~tsdynamics.engine.run.lyapunov_spectrum_ode` engine call instead of
+        :func:`~tsdynamics._engine.run.lyapunov_spectrum_ode` engine call instead of
         the per-``dt`` Python loop (one Python→FFI round-trip, no per-chunk NumPy
         ``qr``).  The per-``dt`` numerics are byte-for-byte the per-chunk path
         (``interp == jit``), so the spectrum is unchanged to floating-point
@@ -1059,7 +1059,7 @@ class TangentSystem(DerivedSystem):
         ``self`` so :meth:`state` / :meth:`deviations` / :meth:`exponents` read
         exactly as the per-chunk loop would have left them.
         """
-        from tsdynamics.engine import run
+        from tsdynamics._engine import run
 
         assert self._z is not None  # reinit() seeds the extended state
         assert self._step_kernel is not None  # explicit-engine path resolved it

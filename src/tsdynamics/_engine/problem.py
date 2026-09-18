@@ -1,12 +1,12 @@
 """Problem builders — bundle a compiled tape with its runtime data, per family.
 
-A :class:`Tape` (from :mod:`tsdynamics.engine.compile`) is pure dynamics: the
+A :class:`Tape` (from :mod:`tsdynamics._engine.compile`) is pure dynamics: the
 straight-line instructions for a right-hand side.  To *run* a system the engine
 also needs the runtime context — the initial state, the control-parameter
 values, the start time, and any family-specific structure (a DDE's delay slots,
 an SDE's diffusion tape).  A **Problem** is that bundle: the immutable,
 engine-ready description of one integrable system, the unit
-:mod:`tsdynamics.engine.run` hands across the FFI boundary.
+:mod:`tsdynamics._engine.run` hands across the FFI boundary.
 
 There is one Problem type per family — :class:`ODEProblem`, :class:`MapProblem`,
 :class:`DDEProblem`, :class:`SDEProblem` — each built from a system instance by
@@ -279,7 +279,7 @@ def map_problem(
     ------
     TapeCompileError
         If the map's ``_step`` cannot be traced symbolically (see
-        :func:`tsdynamics.engine.compile.lower_map`).
+        :func:`tsdynamics._engine.compile.lower_map`).
     """
     tape = lower_map_cached(system, with_jacobian=with_jacobian)
     ic_arr = system.resolve_ic(ic)
@@ -307,7 +307,7 @@ def dde_problem(
     ------
     TapeCompileError
         If a delayed access has a state-dependent delay (see
-        :func:`tsdynamics.engine.compile.lower_dde`).
+        :func:`tsdynamics._engine.compile.lower_dde`).
     """
     tape, slots = lower_dde_cached(system)
     ic_arr = system.resolve_ic(ic)

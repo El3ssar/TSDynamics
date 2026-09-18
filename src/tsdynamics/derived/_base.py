@@ -69,7 +69,7 @@ class DerivedSystem:
         if name.startswith("_") or name in ("system",):
             raise AttributeError(f"{type(self).__name__!r} object has no attribute {name!r}")
         if name == "to_plot_spec":
-            from tsdynamics.utils.plot_namespace import plot_seam_error
+            from tsdynamics._utils.plot_namespace import plot_seam_error
 
             raise plot_seam_error(type(self).__name__, "view")
         from tsdynamics.families.base import _absent_name_error

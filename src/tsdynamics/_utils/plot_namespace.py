@@ -1,6 +1,6 @@
 """``subject.plot`` as a callable NAMESPACE — the compensation ruling A2 promised.
 
-Lives in :mod:`tsdynamics.utils` (the LEAF package) because both
+Lives in :mod:`tsdynamics._utils` (the LEAF package) because both
 :mod:`tsdynamics.data` and :mod:`tsdynamics.families` bind it, and it must import
 no plotting library at module scope — ``import tsdynamics`` still pulls in none.
 

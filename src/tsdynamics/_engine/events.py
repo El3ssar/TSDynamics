@@ -1,6 +1,6 @@
 """Event subsystem — the ``run(events=[...])`` engine seam.
 
-The crossing/event layer split out of :mod:`tsdynamics.engine.run` (the run-split
+The crossing/event layer split out of :mod:`tsdynamics._engine.run` (the run-split
 refactor).  It owns:
 
 - :func:`crossings` — the low-level engine seam refining crossings of *one* event
@@ -12,10 +12,10 @@ refactor).  It owns:
   WS-EVENTSAPI), driving *both* the compiled engine (one :func:`crossings` per
   event) and the dependency-light :func:`scipy.integrate.solve_ivp` oracle.
 
-Every name here stays reachable as ``tsdynamics.engine.run.<name>`` via re-export,
+Every name here stays reachable as ``tsdynamics._engine.run.<name>`` via re-export,
 so this is a pure move.  Run-side helpers (``_engine``/``_primary_tape``/
 ``_run_continuous``/``resolve_backend``/``EngineNotAvailableError``/``_name``) are
-late-imported from :mod:`tsdynamics.engine.run` inside the functions that need
+late-imported from :mod:`tsdynamics._engine.run` inside the functions that need
 them, so importing this module does not create an import cycle.
 """
 
@@ -27,15 +27,15 @@ from typing import Any
 
 import numpy as np
 
+from tsdynamics._utils.grids import make_output_grid
+from tsdynamics._utils.tolerances import DEFAULT_ATOL, DEFAULT_RTOL
 from tsdynamics.errors import ConvergenceError
-from tsdynamics.utils.grids import make_output_grid
-from tsdynamics.utils.tolerances import DEFAULT_ATOL, DEFAULT_RTOL
 
 from .problem import ODEProblem, Problem
 
 #: The event seam's public API.  Everything else in this module is an
 #: implementation detail of the two paths (``_engine_events`` / ``_reference_events``)
-#: and stays reachable, underscored, as ``tsdynamics.engine.run.<name>``.
+#: and stays reachable, underscored, as ``tsdynamics._engine.run.<name>``.
 __all__ = ["Event", "EventSolution", "crossings", "integrate_events"]
 
 
@@ -71,12 +71,12 @@ def crossings(
     Parameters
     ----------
     problem : Problem
-        An :class:`~tsdynamics.engine.problem.ODEProblem` whose ``ic`` is the
+        An :class:`~tsdynamics._engine.problem.ODEProblem` whose ``ic`` is the
         state to start this span from (resume by rebuilding the problem with the
         previous ``u_final``).
     g_tape : Tape
         A single-output event tape over the full state, e.g. built by
-        :func:`tsdynamics.engine.compile.lower_expressions` from
+        :func:`tsdynamics._engine.compile.lower_expressions` from
         ``normal · u - offset``.
     t0, t1 : float
         The integration span (forward only, ``t1 >= t0``).
@@ -187,7 +187,7 @@ def crossings(
 #: crossings where the event function ``g(u, t)`` is *increasing*, ``"down"`` only
 #: the decreasing ones, and ``"both"`` keeps either.  This is the single canonical
 #: home: :mod:`tsdynamics.derived.poincare` (one layer up in the import graph)
-#: imports it from here, and :mod:`tsdynamics.engine.run` re-exports it.
+#: imports it from here, and :mod:`tsdynamics._engine.run` re-exports it.
 _DIRECTION_WORDS: dict[str, int] = {
     "up": +1,
     "increasing": +1,
@@ -266,7 +266,7 @@ class Event:
 
     Examples
     --------
-    >>> from tsdynamics.engine.run import Event
+    >>> from tsdynamics._engine.run import Event
     >>> above = Event(lambda y, t: y(2) - 27.0, direction="up")
     >>> escape = Event(("x", 1e3), terminal=True)        # stop if x crosses 1000
     """
@@ -419,7 +419,7 @@ class EventSolution:
 def _event_tape(system: Any, event: Event) -> Any:
     """Lower an event's condition ``g(u, t)`` to a single-output tape.
 
-    Mirrors :func:`tsdynamics.engine.compile.lower_ode`: the condition is built
+    Mirrors :func:`tsdynamics._engine.compile.lower_ode`: the condition is built
     over the engine state accessor ``y(i)``, the time symbol and the system's
     control-parameter symbols, then ``y(i)`` is substituted to plain state inputs
     and the expression is lowered.  Declaring the *full* control-parameter list
@@ -429,8 +429,8 @@ def _event_tape(system: Any, event: Event) -> Any:
     """
     import symengine
 
-    from tsdynamics.engine.compile import lower_expressions
-    from tsdynamics.engine.symbols import state_time_symbols
+    from tsdynamics._engine.compile import lower_expressions
+    from tsdynamics._engine.symbols import state_time_symbols
 
     y, t_sym = state_time_symbols()
     dim = int(system.dim)
@@ -505,8 +505,8 @@ def integrate_events(
     Examples
     --------
     >>> import tsdynamics as ts
-    >>> from tsdynamics.engine.problem import ode_problem
-    >>> from tsdynamics.engine.run import integrate_events
+    >>> from tsdynamics._engine.problem import ode_problem
+    >>> from tsdynamics._engine.run import integrate_events
     >>> prob = ode_problem(ts.systems.Lorenz(), ic=[1.0, 1.0, 1.0])
     >>> sol = integrate_events(prob, [("z", 27.0, "up")], final_time=30.0, dt=0.01)
     >>> sol.t_events[0].size > 0
@@ -750,7 +750,7 @@ def _reference_events(
     final_time, dt, t0, method, rtol, atol
         As in :func:`integrate_events` (``method`` is a canonical kernel name,
         mapped to the nearest SciPy method by
-        :func:`tsdynamics.engine.reference._scipy_method`).
+        :func:`tsdynamics._engine.reference._scipy_method`).
 
     Returns
     -------

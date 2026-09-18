@@ -1058,7 +1058,7 @@ def test_naming_gate_homonym_whitelist_is_sound() -> None:
 #
 #   1. the **good-error shape** — the message names the offending value, and for
 #      the sites WS-ERRORS migrated the exception is the right ``TSDynamicsError``
-#      subclass (so ``except ts.TSDynamicsError`` works) while its stdlib base
+#      subclass (so ``except ts.errors.TSDynamicsError`` works) while its stdlib base
 #      keeps ``except ValueError`` / ``except TypeError`` working; and
 #   2. **no silent footgun** — the wrong input *raises* rather than returning a
 #      1-step ``Trajectory`` / a ``0 ± 0`` dimension / a swallowed keyword.
@@ -1432,7 +1432,7 @@ def test_errgate_value_naming_error(case: _ValueNamingCase) -> None:
 
     For the sites WS-ERRORS migrated onto the hierarchy (``case.tsdclass`` set),
     the raised exception is additionally that specific ``TSDynamicsError``
-    subclass — so a caller can ``except ts.TSDynamicsError`` — while the stdlib
+    subclass — so a caller can ``except ts.errors.TSDynamicsError`` — while the stdlib
     base in ``case.raises`` keeps ``except ValueError`` / ``except TypeError``
     working.  Asserting the stdlib base (not the subclass) keeps the curated
     exemplars forward-compatible if they are later promoted onto the hierarchy.
@@ -1967,7 +1967,7 @@ def test_errgate_runnable_lines_detects_prose_and_code() -> None:
 # ``rtol=1e-6`` / ``atol=1e-9`` used to be duplicated as bare literals across
 # sixteen call sites in five subpackages, which is precisely how two "the same"
 # defaults drift apart unnoticed.  They now all name a constant in
-# :mod:`tsdynamics.utils.tolerances`.  This gate walks the source of every
+# :mod:`tsdynamics._utils.tolerances`.  This gate walks the source of every
 # module under ``src/tsdynamics`` (excluding the catalogue, whose per-system
 # ``known_lyapunov`` kwargs are deliberate literature-reproduction pins) and
 # fails if any ``rtol=`` / ``atol=`` *parameter default* or keyword *argument* is
@@ -2065,13 +2065,13 @@ def _bare_tolerance_literals(path: pathlib.Path, rel: str) -> list[str]:
 
 
 def test_no_bare_tolerance_literal_in_the_library() -> None:
-    """Every ``rtol``/``atol`` default names a :mod:`tsdynamics.utils.tolerances` constant.
+    """Every ``rtol``/``atol`` default names a :mod:`tsdynamics._utils.tolerances` constant.
 
     Regression gate for the v6 tolerance hoist: the sixteen duplicated
     ``1e-6``/``1e-9`` literals are gone, and a new one must not creep back into a
     signature, a call site, or a ``self._rtol = ...`` assignment.  If you need a
     genuinely different number for one driver, add a *named* constant to
-    :mod:`tsdynamics.utils.tolerances` documenting the measurement that justifies
+    :mod:`tsdynamics._utils.tolerances` documenting the measurement that justifies
     it — that is the whole point of the module.
     """
     offenders: dict[str, list[str]] = {}
@@ -2083,7 +2083,7 @@ def test_no_bare_tolerance_literal_in_the_library() -> None:
             offenders[rel] = hits
     assert not offenders, (
         "bare rtol/atol numeric literals found (name a constant in "
-        "tsdynamics.utils.tolerances instead):\n"
+        "tsdynamics._utils.tolerances instead):\n"
         + "\n".join(f"  {mod}: {', '.join(hits)}" for mod, hits in sorted(offenders.items()))
     )
 
@@ -2119,7 +2119,7 @@ def test_tolerance_gate_homonyms_are_live() -> None:
 
 def test_tolerance_constants_are_the_documented_values() -> None:
     """Pin the canonical tolerance constants so a bump is a deliberate, reviewed edit."""
-    from tsdynamics.utils import tolerances as tol
+    from tsdynamics._utils import tolerances as tol
 
     assert (tol.DEFAULT_RTOL, tol.DEFAULT_ATOL) == (1e-9, 1e-12)
     assert (tol.DDE_RTOL, tol.DDE_ATOL) == (1e-3, 1e-3)
@@ -2138,7 +2138,7 @@ def test_basin_march_python_and_rust_name_the_same_tolerance() -> None:
     """
     import importlib
 
-    from tsdynamics.utils.tolerances import BASIN_ATOL, BASIN_RTOL
+    from tsdynamics._utils.tolerances import BASIN_ATOL, BASIN_RTOL
 
     # ``from ... import attractors`` now binds the *function* of that name, which
     # v6 renamed from ``find_attractors`` — it shadows the module inside its own
@@ -2182,7 +2182,7 @@ def test_kernel_subscript_error_names_the_accessor_and_the_fix() -> None:
     fix.  The old message went further wrong: it recited the numeric-routine and
     ``_structural_params`` advice, neither of which has anything to do with it.
     """
-    from tsdynamics.engine.compile import TapeCompileError
+    from tsdynamics._engine.compile import TapeCompileError
 
     class Subscripted(ts.ContinuousSystem):
         params = {"a": 1.0}
@@ -2216,7 +2216,7 @@ def test_subscripting_something_that_is_not_the_state_is_not_blamed_on_the_state
     that line that was already right.  The claim is now made only when the state
     really was subscripted, so this falls through to the general advice.
     """
-    from tsdynamics.engine.compile import TapeCompileError
+    from tsdynamics._engine.compile import TapeCompileError
 
     class ParamSubscripted(ts.ContinuousSystem):
         params = {"a": 1.0}
@@ -2244,7 +2244,7 @@ def test_unpacking_the_state_is_answered_with_the_accessor_calls() -> None:
     non-iterable function object`` and the numpy/``_structural_params``
     paragraph, which is about neither.
     """
-    from tsdynamics.engine.compile import TapeCompileError
+    from tsdynamics._engine.compile import TapeCompileError
 
     class Unpacked(ts.ContinuousSystem):
         params = {"a": 1.0}
@@ -2268,7 +2268,7 @@ def test_unpacking_the_state_is_answered_with_the_accessor_calls() -> None:
 
 def test_unpacking_something_that_is_not_the_state_is_not_blamed_on_the_state() -> None:
     """The negative of the above: unpacking a scalar *parameter* is a different bug."""
-    from tsdynamics.engine.compile import TapeCompileError
+    from tsdynamics._engine.compile import TapeCompileError
 
     class ParamUnpacked(ts.ContinuousSystem):
         params = {"a": 1.0}

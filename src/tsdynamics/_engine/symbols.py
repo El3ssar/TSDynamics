@@ -24,7 +24,7 @@ __all__ = ["state_time_symbols"]
 def __dir__() -> list[str]:
     """Show the one provider, not ``Any`` / ``annotations``.
 
-    ``symbols`` is advertised on ``dir(tsdynamics.engine)``, so it is a namespace
+    ``symbols`` is advertised on ``dir(tsdynamics._engine)``, so it is a namespace
     someone writing a custom family tab-completes into.
     """
     return sorted(__all__)

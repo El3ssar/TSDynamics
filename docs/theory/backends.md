@@ -28,7 +28,7 @@ fallback.
 
 The compile is **once per distinct system**, not once per call: the engine
 memoises the compiled evaluator on the tape's identity, so a repeat run, a
-parameter sweep or an ensemble reuses it (`tsdynamics.engine.run.jit_cache_stats()`
+parameter sweep or an ensemble reuses it (`tsdynamics._engine.run.jit_cache_stats()`
 reports hits/misses; `clear_jit_cache()` empties it, and
 `TSDYNAMICS_NO_JIT_CACHE=1` disables it).
 
@@ -79,7 +79,7 @@ ts.systems.Lorenz().run(final_time=100, dt=0.01, backend="reference")  # pure-Py
 ## Choosing a solver
 
 `run(solver=...)` selects the solver kernel; the name is resolved by the
-solver registry (`tsdynamics.solvers`), which canonicalises spellings and
+solver registry (`tsdynamics._solvers`), which canonicalises spellings and
 aliases:
 
 | `method` | kernel |

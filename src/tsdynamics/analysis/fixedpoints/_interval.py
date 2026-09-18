@@ -611,7 +611,7 @@ def flow_interval_fn(system: ContinuousSystem) -> ResidJacIv:
     Raises :class:`~tsdynamics.errors.InvalidInputError` if the RHS contains a node
     the interval engine cannot model.
     """
-    from tsdynamics.engine.symbols import state_time_symbols
+    from tsdynamics._engine.symbols import state_time_symbols
 
     cls = type(system)
     dim = int(cast("int", system.dim))

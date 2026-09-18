@@ -1,4 +1,4 @@
-"""Coverage for the symbolic→IR compiler (:mod:`tsdynamics.engine.compile`).
+"""Coverage for the symbolic→IR compiler (:mod:`tsdynamics._engine.compile`).
 
 Runs without the compiled Rust engine: lowering needs only SymEngine + the
 engine-native symbols (``engine.symbols.state_time_symbols``), and the reference
@@ -18,8 +18,8 @@ import pytest
 
 import tsdynamics as ts
 from tsdynamics import registry
-from tsdynamics.engine import compile as compile_ir
-from tsdynamics.engine.compile import (
+from tsdynamics._engine import compile as compile_ir
+from tsdynamics._engine.compile import (
     DelaySlot,
     Tape,
     TapeCompileError,
@@ -228,7 +228,7 @@ def test_powi_uses_square_and_multiply() -> None:
     not NumPy's exp·log ``pow`` — the integer-power path of the reference oracle.
     Cross-language bit-exactness is asserted by the I-XVAL gate; here we check the
     reduction is mathematically correct across signs and the edge exponents."""
-    from tsdynamics.engine.compile import _powi
+    from tsdynamics._engine.compile import _powi
 
     for base, exp in [(0.9, 50), (1.1, 13), (2.0, 10), (0.5, -4), (7.0, 1)]:
         assert float(_powi(np.float64(base), exp)) == pytest.approx(base**exp, rel=1e-12)
@@ -886,7 +886,7 @@ def test_common_ode_lowering_never_imports_sympy() -> None:
 
     code = (
         "import sys, tsdynamics as ts\n"
-        "from tsdynamics.engine.compile import lower_ode\n"
+        "from tsdynamics._engine.compile import lower_ode\n"
         "lower_ode(ts.systems.Lorenz())\n"
         "lower_ode(ts.systems.GrayScott())\n"
         "print(sum(1 for m in sys.modules if m.split('.')[0] == 'sympy'))\n"

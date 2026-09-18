@@ -332,7 +332,7 @@ def _use_engine_for_ode(entry, opts) -> bool:
     # Jacobian — robust to any implicit name (bdf / rosenbrock / trbdf2).
     method = getattr(entry.cls, "_default_method", "RK45")
     try:
-        from tsdynamics.solvers import resolve
+        from tsdynamics._solvers import resolve
 
         if resolve(method).spec.caps.needs_jacobian:
             return False

@@ -13,8 +13,8 @@ deliberate per-driver exception *visible* rather than accidental.
 This module is deliberately a **leaf**: it imports nothing from
 :mod:`tsdynamics`, so both the family layer (:mod:`tsdynamics.families`, which
 imports the engine only lazily inside methods) and the engine layer
-(:mod:`tsdynamics.engine.run`) can import it at module scope with no cycle.  It
-sits beside :mod:`tsdynamics.utils.grids`, which hoists the output grid for the
+(:mod:`tsdynamics._engine.run`) can import it at module scope with no cycle.  It
+sits beside :mod:`tsdynamics._utils.grids`, which hoists the output grid for the
 same reason.
 
 Why the ODE default is ``1e-9`` / ``1e-12``
@@ -123,7 +123,7 @@ DDE_LYAPUNOV_ATOL: float = 1e-9
 
 #: Tolerances for the basin cell march — the per-``dt`` flow steps
 #: :class:`~tsdynamics.analysis.basins.attractors._AttractorMapper` and its Rust
-#: twin (:func:`tsdynamics.engine.run.basin_march`) drive per cell check.  The
+#: twin (:func:`tsdynamics._engine.run.basin_march`) drive per cell check.  The
 #: two paths are contractually **bit-identical**, so these constants must be used
 #: by both or the equivalence breaks.  Deliberately looser than
 #: :data:`DEFAULT_RTOL`; see the module docstring for the measurement.

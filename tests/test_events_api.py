@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 
 import tsdynamics as ts
-from tsdynamics.engine.run import Event, EventSolution, integrate_events
+from tsdynamics._engine.run import Event, EventSolution, integrate_events
 from tsdynamics.errors import InvalidInputError, InvalidParameterError
 
 # The engine path is compiled; reference-path assertions run without it, but the
@@ -302,7 +302,7 @@ class TestTerminalGridParity:
         assert np.allclose(eng.y[-1], ref.y[-1], atol=5e-3)
 
     def test_reference_terminal_grid_ends_at_t_stop(self):
-        from tsdynamics.utils.grids import make_output_grid
+        from tsdynamics._utils.grids import make_output_grid
 
         sys = _EventsHarmonic()
         ref = sys.run(backend="reference", events=[self._stop_at_20()], **self._KW)
@@ -330,7 +330,7 @@ class TestReferenceEnsembleErrorNarrowing:
     """
 
     def test_value_error_propagates_from_ode_ensemble(self, monkeypatch):
-        from tsdynamics.engine import reference as ref_mod
+        from tsdynamics._engine import reference as ref_mod
 
         def boom(*args, **kwargs):
             raise ValueError("structural failure, not divergence")
@@ -338,14 +338,14 @@ class TestReferenceEnsembleErrorNarrowing:
         monkeypatch.setattr(ref_mod, "_reference_ode", boom)
         ics = np.array([[1.0, 1.0, 1.0], [2.0, 2.0, 2.0]])
         prob = ts.systems.Lorenz()
-        from tsdynamics.engine.problem import ode_problem
+        from tsdynamics._engine.problem import ode_problem
 
         p = ode_problem(prob, ic=ics[0])
         with pytest.raises(ValueError, match="structural failure"):
             ref_mod._reference_ensemble(p, ics, 0.0, 1.0, method="rk45", rtol=1e-6, atol=1e-9)
 
     def test_divergence_becomes_nan_row_in_ode_ensemble(self, monkeypatch):
-        from tsdynamics.engine import reference as ref_mod
+        from tsdynamics._engine import reference as ref_mod
         from tsdynamics.errors import ConvergenceError
 
         def diverge(*args, **kwargs):
@@ -353,7 +353,7 @@ class TestReferenceEnsembleErrorNarrowing:
 
         monkeypatch.setattr(ref_mod, "_reference_ode", diverge)
         ics = np.array([[1.0, 1.0, 1.0]])
-        from tsdynamics.engine.problem import ode_problem
+        from tsdynamics._engine.problem import ode_problem
 
         p = ode_problem(ts.systems.Lorenz(), ic=ics[0])
         out = ref_mod._reference_ensemble(p, ics, 0.0, 1.0, method="rk45", rtol=1e-6, atol=1e-9)
@@ -394,14 +394,14 @@ class TestPoincareConsumer:
 
 class TestEventGuards:
     def test_map_problem_rejected(self):
-        from tsdynamics.engine.problem import build_problem
+        from tsdynamics._engine.problem import build_problem
 
         prob = build_problem(ts.systems.Henon())
         with pytest.raises(InvalidInputError):
             integrate_events(prob, [("x", 0.0)], final_time=10.0)
 
     def test_empty_events_rejected(self):
-        from tsdynamics.engine.problem import build_problem
+        from tsdynamics._engine.problem import build_problem
 
         prob = build_problem(ts.systems.Lorenz(), ic=LORENZ_IC)
         with pytest.raises(InvalidParameterError):
@@ -412,7 +412,7 @@ class TestEventGuards:
         sol = sys._run_events(final_time=10.0, dt=0.02, events=[("x", 0.0, "down")], ic=(1.0, 0.0))
         assert isinstance(sol, ts.Trajectory)
         # Round-trip the transport object directly too.
-        from tsdynamics.engine.problem import ode_problem
+        from tsdynamics._engine.problem import ode_problem
 
         out = integrate_events(
             ode_problem(sys, ic=np.array([1.0, 0.0])), [("x", 0.0)], final_time=10.0, dt=0.02

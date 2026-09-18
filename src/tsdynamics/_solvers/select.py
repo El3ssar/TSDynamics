@@ -224,7 +224,7 @@ class Resolution:
         """``{"with_jacobian": True}`` iff the kernel needs the Jacobian, else ``{}``.
 
         The exact kwargs to merge into
-        :func:`tsdynamics.engine.problem.build_problem` so an implicit method
+        :func:`tsdynamics._engine.problem.build_problem` so an implicit method
         gets a Jacobian-carrying tape and the engine guard is satisfied.
         """
         return {"with_jacobian": True} if self.needs_jacobian else {}
@@ -357,7 +357,7 @@ def build_kwargs(method: str, *, family: str | None = None) -> dict[str, bool]:
     ``{"with_jacobian": True}`` when the resolved kernel needs the Jacobian
     (every implicit method, plus Milstein), else ``{}``.  The family
     engine-dispatch seam merges this into its
-    :func:`~tsdynamics.engine.problem.build_problem` call so the stiff path
+    :func:`~tsdynamics._engine.problem.build_problem` call so the stiff path
     "just works" — an implicit ``method=`` produces a Jacobian-carrying tape and
     the engine's Jacobian guard (PR #74) is satisfied rather than raising.
 
@@ -435,7 +435,7 @@ def select(family: str = "ode", *, stiff: bool = False) -> str:
 
     Examples
     --------
-    >>> from tsdynamics.solvers import select
+    >>> from tsdynamics._solvers import select
     >>> select("ode", stiff=False)
     'rk45'
     >>> select("ode", stiff=True)
@@ -497,7 +497,7 @@ def is_stiff(
     Parameters
     ----------
     system : SystemBase
-        An ODE system (anything :func:`tsdynamics.engine.run.eval_jac` can lower
+        An ODE system (anything :func:`tsdynamics._engine.run.eval_jac` can lower
         with a Jacobian).  Non-ODE families return ``False``.
     ic : array-like, optional
         Point to evaluate the Jacobian at.  Defaults to the system's resolved IC.
@@ -530,13 +530,13 @@ def is_stiff(
 def _jacobian_eigenvalues(system: Any, *, ic: Any, t: float) -> np.ndarray | None:
     """Return the eigenvalues of ``∂f/∂u`` at ``(ic, t)``, or ``None`` on failure.
 
-    Lazily imports the engine run seam so importing :mod:`tsdynamics.solvers`
+    Lazily imports the engine run seam so importing :mod:`tsdynamics._solvers`
     never pulls in the engine.  Any lowering / evaluation failure (non-ODE
     family, no Jacobian, non-finite values) is swallowed into ``None`` so callers
     fall back to the explicit default rather than erroring on solver *selection*.
     """
     try:
-        from ..engine.run import eval_jac
+        from .._engine.run import eval_jac
 
         u = system.resolve_ic() if ic is None else np.asarray(ic, dtype=float)
         _deriv, jac = eval_jac(system, u, float(t), backend="reference")

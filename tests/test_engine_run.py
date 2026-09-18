@@ -1,7 +1,7 @@
 """Coverage for problem builders and run entry points.
 
-:mod:`tsdynamics.engine.problem` (per-family Problem bundles) and
-:mod:`tsdynamics.engine.run` (backend selection + integrate/ensemble dispatch).
+:mod:`tsdynamics._engine.problem` (per-family Problem bundles) and
+:mod:`tsdynamics._engine.run` (backend selection + integrate/ensemble dispatch).
 Runs without the compiled engine: the ``reference`` backend exercises the full
 path in pure Python, and the engine seam is checked through a fake module so the
 ``interp`` / ``jit`` dispatch is verified without ``tsdynamics._rust``.
@@ -15,8 +15,8 @@ import numpy as np
 import pytest
 
 import tsdynamics as ts
-from tsdynamics.engine import run
-from tsdynamics.engine.problem import (
+from tsdynamics._engine import run
+from tsdynamics._engine.problem import (
     DDEProblem,
     MapProblem,
     ODEProblem,
@@ -24,7 +24,7 @@ from tsdynamics.engine.problem import (
     build_problem,
     ode_problem,
 )
-from tsdynamics.engine.run import EngineNotAvailableError, resolve_backend
+from tsdynamics._engine.run import EngineNotAvailableError, resolve_backend
 from tsdynamics.families import Trajectory
 
 
@@ -189,8 +189,8 @@ def test_reference_map_diverges_loudly() -> None:
     """
     import re
 
-    from tsdynamics.engine.compile import eval_tape
-    from tsdynamics.engine.problem import map_problem
+    from tsdynamics._engine.compile import eval_tape
+    from tsdynamics._engine.problem import map_problem
 
     # Independently locate the 0-based iterate where the lowered tape first goes
     # non-finite, so the index assertion is pinned to the actual blow-up rather
@@ -226,7 +226,7 @@ def test_reference_map_finite_orbit_iterates_without_raising() -> None:
 
 def test_map_time_axis_starts_at_n0() -> None:
     """A warm-restart map carries its starting iteration index on the time axis."""
-    from tsdynamics.engine.problem import map_problem
+    from tsdynamics._engine.problem import map_problem
 
     prob = map_problem(ts.systems.Henon(ic=[0.1, 0.1]), n0=100)
     traj = run.integrate(prob, final_time=5, backend="reference")

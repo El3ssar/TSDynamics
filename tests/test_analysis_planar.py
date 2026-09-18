@@ -429,7 +429,7 @@ def test_the_ftle_ridge_sits_on_the_basin_boundary_of_a_bistable_flow():
     "integrate every cell and see which well it ends in" ensemble, so nothing in
     the comparison shares code with the field being checked.
     """
-    from tsdynamics.engine import run as engine_run
+    from tsdynamics._engine import run as engine_run
 
     system = _TwoWell()
     n = 61

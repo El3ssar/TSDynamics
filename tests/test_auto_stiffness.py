@@ -16,7 +16,7 @@ end is engine-gated and asserts ``interp == jit`` bit-for-bit.
 
 The probe is read at the canonical Oregonator IC ``[1, 1, 1]`` (Field–Noyes),
 where the one-point stiffness heuristic correctly fires — the heuristic is
-IC-dependent by construction (see :func:`tsdynamics.solvers.is_stiff`), which is
+IC-dependent by construction (see :func:`tsdynamics._solvers.is_stiff`), which is
 why a reliably-stiff catalogue system also declares ``_default_method``.
 """
 
@@ -26,7 +26,7 @@ import numpy as np
 import pytest
 
 import tsdynamics as ts
-from tsdynamics import solvers
+from tsdynamics import _solvers as solvers
 
 # Field–Noyes Oregonator IC where the a-priori one-point heuristic detects the
 # structural stiffness (mu=1e-6, epsilon=1e-2 put a ~1e6 factor on the fast mode).
@@ -116,7 +116,7 @@ def test_ensemble_on_stiff_system_rebuilds_the_jacobian_tape() -> None:
     before the Oregonator's first relaxation spike, so the ensemble's final state
     equals the lone integrate's last grid point exactly (no phase sensitivity).
     """
-    from tsdynamics.engine.run import ensemble
+    from tsdynamics._engine.run import ensemble
 
     kw = dict(final_time=0.5, dt=0.05, backend="reference")
     ics = np.array([OREGONATOR_IC, [1.1, 1.0, 0.9]], dtype=float)
@@ -164,8 +164,8 @@ def test_explicit_method_still_resolves_unchanged() -> None:
 
 def test_auto_is_a_noop_on_a_map() -> None:
     """A map iterates without a solver kernel, so ``method="auto"`` must not raise."""
-    from tsdynamics.engine import run
-    from tsdynamics.engine.problem import build_problem
+    from tsdynamics._engine import run
+    from tsdynamics._engine.problem import build_problem
 
     # Pin a deterministic in-basin IC: Henon has no default_ic, and a random draw
     # (what a bare build_problem resolves) escapes the attractor's basin and

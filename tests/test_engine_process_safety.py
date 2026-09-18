@@ -122,7 +122,7 @@ def test_fork_after_a_parallel_call_does_not_deadlock_the_child():
         import numpy as np
 
         import tsdynamics as ts
-        from tsdynamics.engine import run as engine_run
+        from tsdynamics._engine import run as engine_run
 
         warnings.simplefilter("ignore")  # CPython's fork-in-a-thread notice
 
@@ -252,7 +252,7 @@ _LONG_CALLS: dict[str, str] = {
     # design.  See `test_an_ensemble_is_interruptible`.
     "ensemble_ode": """
         import numpy as np
-        from tsdynamics.engine import run as engine_run
+        from tsdynamics._engine import run as engine_run
         ics = np.random.default_rng(0).normal(size=(64, 3))
         engine_run.ensemble(
             ts.systems.Lorenz(), ics, final_time=200_000.0, dt=0.005, method="rk4"
@@ -260,7 +260,7 @@ _LONG_CALLS: dict[str, str] = {
     """,
     "ensemble_map": """
         import numpy as np
-        from tsdynamics.engine import run as engine_run
+        from tsdynamics._engine import run as engine_run
         ics = np.random.default_rng(0).normal(size=(64, 2)) * 0.1
         engine_run.ensemble(ts.systems.Henon(), ics, final_time=2_000_000_000)
     """,
@@ -349,7 +349,7 @@ def test_an_ensemble_is_interruptible():
         import numpy as np
 
         import tsdynamics as ts
-        from tsdynamics.engine import run as engine_run
+        from tsdynamics._engine import run as engine_run
 
         lor = ts.systems.Lorenz()
         ics = np.random.default_rng(0).normal(size=(64, 3))

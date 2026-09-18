@@ -518,8 +518,8 @@ def _sweep_via_kernel(
     """Run the *whole* map sweep in one engine call (stream perf/param-sweep-kernel).
 
     Lowers the map once keeping ``param`` as the tape's single runtime ``Param``
-    (:func:`tsdynamics.engine.compile.lower_map_sweep_cached`), then drives the
-    Rust sweep kernel (:func:`tsdynamics.engine.run.map_param_sweep`) over every
+    (:func:`tsdynamics._engine.compile.lower_map_sweep_cached`), then drives the
+    Rust sweep kernel (:func:`tsdynamics._engine.run.map_param_sweep`) over every
     value — one FFI round-trip for the entire diagram instead of one ``iterate``
     call per value (the WS-MAPITER path).  The per-iterate numerics are
     byte-for-byte the per-value ``iterate`` path, so the diagram is byte-identical
@@ -539,8 +539,8 @@ def _sweep_via_kernel(
     """
     import warnings
 
-    from tsdynamics.engine.compile import lower_map_sweep_cached
-    from tsdynamics.engine.run import map_param_sweep
+    from tsdynamics._engine.compile import lower_map_sweep_cached
+    from tsdynamics._engine.run import map_param_sweep
 
     tape = lower_map_sweep_cached(system, param)
     # The sweep tape has exactly the swept parameter as its single runtime input

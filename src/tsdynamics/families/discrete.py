@@ -268,7 +268,7 @@ class DiscreteMap(SystemBase, ABC):
         -------
         array-like of shape (dim, dim).
         """
-        from tsdynamics.engine.compile import map_jacobian_fn
+        from tsdynamics._engine.compile import map_jacobian_fn
 
         # ``_jacobian`` is called off the CLASS (``type(sys)._jacobian(x, *params)``),
         # so a map whose dimension is only fixed per instance has no dimension to
@@ -527,7 +527,7 @@ class DiscreteMap(SystemBase, ABC):
               on very small tapes, and the way to skip the one-off compile.
               Both require the compiled extension (:mod:`tsdynamics._rust`);
               until it is built they raise
-              :class:`~tsdynamics.engine.run.EngineNotAvailableError`.
+              :class:`~tsdynamics._engine.run.EngineNotAvailableError`.
             - ``"reference"`` — the lowered next-state tape, iterated in pure
               Python.  Not for production use: it is the dependency-light oracle
               the engine is validated against.
@@ -538,9 +538,9 @@ class DiscreteMap(SystemBase, ABC):
 
             Every backend lowers ``_step`` to the engine IR, so it requires a
             map whose step traces symbolically (see
-            :func:`tsdynamics.engine.compile.lower_map`); piecewise or
+            :func:`tsdynamics._engine.compile.lower_map`); piecewise or
             ``numpy``-ufunc steps raise
-            :class:`~tsdynamics.engine.compile.TapeCompileError`.
+            :class:`~tsdynamics._engine.compile.TapeCompileError`.
         transient : int, optional
             Leading stretch of the orbit to discard, in **iterations** (the same
             unit as ``steps``).  ``transient + steps`` iterations are run and the
@@ -621,7 +621,7 @@ class DiscreteMap(SystemBase, ABC):
                 # arithmetic blow-ups (``OverflowError`` / ``FloatingPointError`` /
                 # ``ZeroDivisionError``, all :class:`ArithmeticError`).  A missing /
                 # broken engine surfaces as
-                # :class:`~tsdynamics.engine.run.EngineNotAvailableError` (a
+                # :class:`~tsdynamics._engine.run.EngineNotAvailableError` (a
                 # :class:`~tsdynamics.errors.BackendError`, hence a ``RuntimeError`` but
                 # NOT a ``ConvergenceError``); narrowing the catch lets it — and any
                 # other genuine fault, e.g. a ``backend="jit"`` compile failure —
@@ -662,7 +662,7 @@ class DiscreteMap(SystemBase, ABC):
         """Iterate on the Rust engine (or its pure-Python reference evaluator).
 
         Routes through the shared engine-dispatch seam
-        (:meth:`SystemBase._dispatch` → :func:`tsdynamics.engine.run.integrate`),
+        (:meth:`SystemBase._dispatch` → :func:`tsdynamics._engine.run.integrate`),
         which lowers ``_step`` to the engine IR and runs the native map loop
         (stream E-MAP).  This is the seam that makes a map iterate on the same
         engine as every other family.
@@ -677,7 +677,7 @@ class DiscreteMap(SystemBase, ABC):
         diverges loudly *before* returning — the Rust map loop raises
         ``EngineError::Diverged`` → :class:`~tsdynamics.errors.ConvergenceError`
         at the first non-finite iterate, ``_reference_map`` raises per-iterate,
-        and :func:`tsdynamics.engine._families._run_map` keeps one full
+        and :func:`tsdynamics._engine._families._run_map` keeps one full
         ``np.all(np.isfinite(...))`` guard at the engine seam covering *all*
         callers of the map path.  A second, row-wise
         ``np.isfinite(traj.y).all(axis=1)`` here was unreachable (no backend has
@@ -715,7 +715,7 @@ class DiscreteMap(SystemBase, ABC):
 
         On the compiled-engine backends (``"jit"`` default / ``"interp"``) the whole
         QR tangent-map iteration runs in one Rust kernel call
-        (:func:`tsdynamics.engine.run.map_lyapunov`) — no per-step Python→FFI
+        (:func:`tsdynamics._engine.run.map_lyapunov`) — no per-step Python→FFI
         round-trip, so it is dramatically faster than the per-step NumPy loop.
         ``backend="reference"`` (and any map whose ``_step`` will not lower to the
         engine IR, or a wheel-free environment) runs the pure-Python QR loop — the

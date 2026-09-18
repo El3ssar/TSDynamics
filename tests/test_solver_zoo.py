@@ -8,7 +8,7 @@ mis-wired (bad tolerance threading, missing Jacobian build, alias not resolving)
 fails here.
 
 It is **dynamic**: the parametrisation reads
-:func:`tsdynamics.solvers.available_for`, so a newly added solver joins these
+:func:`tsdynamics._solvers.available_for`, so a newly added solver joins these
 sweeps automatically — no edit to this file. Two cheap reference problems keep CI
 fast:
 
@@ -29,7 +29,7 @@ import numpy as np
 import pytest
 
 import tsdynamics as ts
-from tsdynamics import solvers
+from tsdynamics import _solvers as solvers
 
 pytest.importorskip("tsdynamics._rust")
 

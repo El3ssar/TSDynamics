@@ -28,7 +28,7 @@ _rust = pytest.importorskip("tsdynamics._rust")
 solve_ivp = pytest.importorskip("scipy.integrate").solve_ivp
 
 import tsdynamics as ts  # noqa: E402
-from tsdynamics.engine import run  # noqa: E402
+from tsdynamics._engine import run  # noqa: E402
 
 
 class _Robertson(ts.ContinuousSystem):

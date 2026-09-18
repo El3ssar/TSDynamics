@@ -7,7 +7,7 @@ per-call cost: ~0.13 ms for Lorenz but ~0.3 s for a Gray–Scott field, which ma
 re-compile a byte-identical tape once per value.  The engine now memoises the
 compiled evaluator on the tape's identity (``crates/tsdyn-jit/src/cache.rs``),
 the exact analogue of the lowered-tape cache in
-:mod:`tsdynamics.engine.compile`.
+:mod:`tsdynamics._engine.compile`.
 
 A stale hit would silently return wrong numbers, so the tests here assert both
 halves:
@@ -30,9 +30,9 @@ import numpy as np
 import pytest
 
 import tsdynamics as ts
-from tsdynamics.engine import run as runmod
-from tsdynamics.engine.compile import lower_ode_cached
-from tsdynamics.engine.problem import ode_problem
+from tsdynamics._engine import run as runmod
+from tsdynamics._engine.compile import lower_ode_cached
+from tsdynamics._engine.problem import ode_problem
 
 _rust = pytest.importorskip("tsdynamics._rust")
 

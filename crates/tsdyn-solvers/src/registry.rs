@@ -6,7 +6,7 @@
 //! kernel up by name walks that collection — there is no hand-edited dispatch
 //! table, so two solver streams (E3, E4, E-SDE) never touch a shared file and
 //! never merge-conflict.  This is the Rust half of D4; the Python half
-//! (`tsdynamics.solvers` directory scan + `tsdynamics.plugins` entry points)
+//! (`tsdynamics._solvers` directory scan + `tsdynamics.plugins` entry points)
 //! mirrors it for out-of-tree plugins.
 //!
 //! Registration happens at static-init time, so it requires no startup call:

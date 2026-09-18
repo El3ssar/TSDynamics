@@ -38,8 +38,8 @@ import pytest
 pytest.importorskip("tsdynamics._rust")  # engine-marked: routes through the sweep kernel
 
 import tsdynamics as ts
-from tsdynamics.engine.compile import TapeCompileError
-from tsdynamics.engine.run import EngineNotAvailableError
+from tsdynamics._engine.compile import TapeCompileError
+from tsdynamics._engine.run import EngineNotAvailableError
 from tsdynamics.errors import BackendError
 from tsdynamics.families import DiscreteMap
 from tsdynamics.systems import Henon, Logistic
@@ -254,7 +254,7 @@ def test_map_sweep_is_a_single_engine_call(monkeypatch):
     exactly once for the entire diagram — not once per value (the WS-MAPITER
     path this stream supersedes) and not the per-step protocol loop.
     """
-    from tsdynamics.engine import run as run_mod
+    from tsdynamics._engine import run as run_mod
 
     calls = {"n": 0}
     real_sweep = run_mod.map_param_sweep

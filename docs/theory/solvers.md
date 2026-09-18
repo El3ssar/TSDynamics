@@ -288,7 +288,7 @@ over slowest decay rate) crosses a threshold; `recommend` combines that verdict
 with the policy table and hands back a ready-to-use resolution:
 
 ```python
-from tsdynamics import solvers
+from tsdynamics import _solvers as solvers
 
 solvers.is_stiff(ts.systems.Oregonator(), ic=[1.0, 1.0, 1.0])   # True
 solvers.is_stiff(ts.systems.Lorenz(),     ic=[1.0, 1.0, 1.0])   # False

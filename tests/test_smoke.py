@@ -13,7 +13,7 @@ def test_package_importable() -> None:
 
 
 def test_submodules_importable() -> None:
-    for module in ["tsdynamics.families", "tsdynamics.utils", "tsdynamics.systems"]:
+    for module in ["tsdynamics.families", "tsdynamics._utils", "tsdynamics.systems"]:
         importlib.import_module(module)
 
 
@@ -95,8 +95,8 @@ def test_models_do_not_clutter_top_level_namespace() -> None:
 
 
 def test_utils_public_surface() -> None:
-    import tsdynamics.utils as u
-    from tsdynamics.utils import make_output_grid  # noqa: F401
+    import tsdynamics._utils as u
+    from tsdynamics._utils import make_output_grid  # noqa: F401
 
     # The sagitta tooling moved to ``tsdynamics.analysis.sampling`` (and ``SagittaDt``
     # is hidden).  ``utils`` is the leaf package holding the values BOTH the family

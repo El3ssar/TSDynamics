@@ -1,7 +1,7 @@
 """The Python solver registry — the discovery half of the pluggable engine (D4).
 
 .. note::
-    **Advanced / internal.**  Reachable as :mod:`tsdynamics.solvers` to inspect or
+    **Advanced / internal.**  Reachable as :mod:`tsdynamics._solvers` to inspect or
     extend the available integrators, but most users only ever pass a solver by
     name (``integrate(method="rk45")``) rather than importing this package.
 
@@ -13,7 +13,7 @@ auto-populates it from two sources at import time:
 1. **a directory scan** of this package's own modules — dropping a module that
    calls :func:`register` makes its solver available with no central table to
    edit; and
-2. **out-of-tree plugins** declared under the ``tsdynamics.solvers`` entry-point
+2. **out-of-tree plugins** declared under the ``tsdynamics._solvers`` entry-point
    group (see :mod:`tsdynamics.plugins`).
 
 Stream **F2** owns this *mechanism* only.  It ships no built-in solvers — those
@@ -207,7 +207,7 @@ def unregister(name: str) -> bool:
 def _coerce_to_specs(name: str, obj: Any) -> list[SolverSpec]:
     """Interpret a loaded plugin object as zero or more :class:`SolverSpec`.
 
-    A ``tsdynamics.solvers`` entry point may resolve to a :class:`SolverSpec`, an
+    A ``tsdynamics._solvers`` entry point may resolve to a :class:`SolverSpec`, an
     iterable of them, or a zero-argument callable returning either (a callable
     that registers solvers itself returns ``None`` and contributes nothing here).
     Anything else is ignored with a warning.
@@ -239,7 +239,7 @@ def _coerce_to_specs(name: str, obj: Any) -> list[SolverSpec]:
 def discover_plugins(*, strict: bool = False) -> list[str]:
     """Load out-of-tree solver plugins and register any they contribute.
 
-    Walks the ``tsdynamics.solvers`` entry-point group (see
+    Walks the ``tsdynamics._solvers`` entry-point group (see
     :mod:`tsdynamics.plugins`), coerces each loaded object to specs, and
     registers those not already present (so it is safe to call repeatedly —
     e.g. after installing a plugin).
@@ -280,7 +280,7 @@ discover_plugins()
 
 # ``discover_plugins`` is deliberately absent: loading entry points is packaging
 # machinery, not solver API.  It stays bound and callable
-# (``tsdynamics.solvers.discover_plugins()``), just off the tab surface — the same
+# (``tsdynamics._solvers.discover_plugins()``), just off the tab surface — the same
 # rule applied to its twins in ``tsdynamics.analysis`` and ``tsdynamics.viz``.
 __all__ = [
     "SolverCaps",

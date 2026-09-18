@@ -12,7 +12,7 @@ The home for the SDE family base class. Per the resolved noise contract
 so the SDE is ``dX_k = f_k(X, t) dt + g_k(X, t) dW_k`` with independent
 ``dW_k`` (Itô interpretation). Both are written symbolically with the SymEngine
 ``y``/``t`` accessors, just like every other family, and lower to instruction
-tapes through :func:`tsdynamics.engine.compile.lower_sde` (drift + diffusion,
+tapes through :func:`tsdynamics._engine.compile.lower_sde` (drift + diffusion,
 the diffusion carrying ``∂g/∂u`` for Milstein).
 
 Solvers (the real engine, ``tsdyn-solvers``/``tsdyn-engine``): **Euler–Maruyama**
@@ -52,8 +52,8 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import numpy as np
 
+from tsdynamics._utils.grids import make_output_grid
 from tsdynamics.errors import ConvergenceError, InvalidParameterError, remedy
-from tsdynamics.utils.grids import make_output_grid
 
 from ._kwargs import reject_unknown_run_keywords
 from .base import Absent, SystemBase, Trajectory, resolve_transient
@@ -71,7 +71,7 @@ _SDE_RUN_KEYWORDS = (
 )
 
 if TYPE_CHECKING:
-    from tsdynamics.engine.problem import SDEProblem
+    from tsdynamics._engine.problem import SDEProblem
 
 __all__ = ["StochasticSystem"]
 
@@ -198,7 +198,7 @@ def _sde_step(
     Euler–Maruyama: ``u + f h + g ⊙ dW``. Milstein adds the diagonal correction
     ``½ g ⊙ g' ⊙ (dW² − h)`` using ``g' = diag(∂g/∂u)``.
     """
-    from tsdynamics.engine.compile import eval_tape, eval_tape_jac
+    from tsdynamics._engine.compile import eval_tape, eval_tape_jac
 
     f = eval_tape(drift, u, p, t)
     if method == "milstein":
@@ -389,7 +389,7 @@ class StochasticSystem(SystemBase, ABC):
         """
         import symengine
 
-        from tsdynamics.engine.symbols import state_time_symbols
+        from tsdynamics._engine.symbols import state_time_symbols
 
         dim = int(cast(int, self.dim))
         y, t_sym = state_time_symbols()
@@ -645,7 +645,7 @@ class StochasticSystem(SystemBase, ABC):
             dedicated ``run.sde_integrate_dense`` seam.  The engine path reproduces
             the ``"reference"`` pure-Python oracle to floating-point tolerance
             under a fixed seed (see the module docstring on the Box–Muller ULP)
-            and raises :class:`~tsdynamics.engine.run.EngineNotAvailableError` if
+            and raises :class:`~tsdynamics._engine.run.EngineNotAvailableError` if
             the extension is not built.
 
             .. versionchanged:: 6.0
@@ -717,7 +717,7 @@ class StochasticSystem(SystemBase, ABC):
         backend: str | None,
     ) -> Trajectory:
         """Run :meth:`run`'s body (wrapped by its IC rollback guard)."""
-        from tsdynamics.engine import run
+        from tsdynamics._engine import run
 
         backend = backend if backend is not None else self._default_backend
         canon = self._resolve_method(method)
@@ -809,7 +809,7 @@ class StochasticSystem(SystemBase, ABC):
         ndarray, shape (n, dim)
             Final states (rows of ``NaN`` for diverged trajectories).
         """
-        from tsdynamics.engine import run
+        from tsdynamics._engine import run
 
         # ``**kwargs`` exists so the adaptive-solver keywords reach the same
         # family-aware typed error they get at ``integrate`` / ``run``, rather
@@ -867,8 +867,8 @@ class StochasticSystem(SystemBase, ABC):
     # ------------------------------------------------------------------ #
 
     def _problem(self, *, ic: np.ndarray, t0: float, method: str) -> SDEProblem:
-        """Build the :class:`~tsdynamics.engine.problem.SDEProblem` for ``method``."""
-        from tsdynamics.engine.problem import sde_problem
+        """Build the :class:`~tsdynamics._engine.problem.SDEProblem` for ``method``."""
+        from tsdynamics._engine.problem import sde_problem
 
         return sde_problem(
             self,
@@ -927,7 +927,7 @@ class StochasticSystem(SystemBase, ABC):
         if canon is not None:
             return canon
 
-        from tsdynamics import solvers
+        from tsdynamics import _solvers as solvers
         from tsdynamics.errors import _nearest
 
         raw = str(method)

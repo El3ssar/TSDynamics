@@ -64,19 +64,20 @@ from tsdynamics.errors import MovedInV6
 # ---------------------------------------------------------------------------
 
 #: §2.1 — ``ts.<TAB>``.  Five classes you subclass, one type you receive, one
-#: plotting verb, three registries, six names you type inside ``except``, and
-#: ``__version__``.
+#: plotting verb, three registries, and ``__version__``.
+#:
+#: The six typed exceptions were promoted in v6.0 and demoted again here, on
+#: measurement: the hierarchy is purely ADDITIVE — ``InvalidParameterError`` IS a
+#: ``ValueError``, ``ConvergenceError`` IS a ``RuntimeError``,
+#: ``InvalidInputError`` IS a ``TypeError`` — so ``except ValueError`` already
+#: catches a bad ``dt`` and nothing a user writes REQUIRES this library's
+#: spelling.  They are a refinement for telling one failure from another, and a
+#: refinement lives at its own address (``ts.errors.<Name>``).
 TOP_LEVEL: tuple[str, ...] = (
-    "BackendError",
     "ContinuousSystem",
-    "ConvergenceError",
     "DelaySystem",
     "DiscreteMap",
-    "InvalidInputError",
-    "InvalidParameterError",
-    "StepBudgetError",
     "StochasticSystem",
-    "TSDynamicsError",
     "Trajectory",
     "WrappedSystem",
     "__version__",
@@ -202,13 +203,13 @@ PUBLIC_PACKAGES: tuple[str, ...] = (
     "tsdynamics.analysis.results",
     "tsdynamics.data",
     "tsdynamics.derived",
-    "tsdynamics.engine",
+    "tsdynamics._engine",
     "tsdynamics.errors",
     "tsdynamics.families",
     "tsdynamics.registry",
-    "tsdynamics.solvers",
+    "tsdynamics._solvers",
     "tsdynamics.systems",
-    "tsdynamics.utils",
+    "tsdynamics._utils",
     "tsdynamics.viz",
     "tsdynamics.viz.spec",
     # §11.3 T4 — the gap the ruling closed.  Measured: the fourteen-package gate
@@ -232,7 +233,7 @@ def _module(name: str) -> types.ModuleType:
 # ---------------------------------------------------------------------------
 
 
-def test_the_top_level_is_the_seventeen_names_the_contract_names() -> None:
+def test_the_top_level_is_the_eleven_names_the_contract_names() -> None:
     """``ts.__all__`` is exactly §2.1, and ``dir()`` mirrors it.
 
     Both halves matter.  ``__all__`` governs ``from tsdynamics import *``;
@@ -241,7 +242,7 @@ def test_the_top_level_is_the_seventeen_names_the_contract_names() -> None:
     """
     assert tuple(sorted(ts.__all__)) == TOP_LEVEL
     assert dir(ts) == sorted(TOP_LEVEL)
-    assert len(TOP_LEVEL) == 17
+    assert len(TOP_LEVEL) == 11
 
 
 @pytest.mark.parametrize("pkg_name", PUBLIC_PACKAGES)
@@ -462,7 +463,7 @@ DECLARED_MODULE_EXPORTS: dict[str, dict[str, str]] = {
     # packages stay importable but are off the listing, like every other
     # internal submodule, so no __all__ entry is module-valued here.
     "tsdynamics.systems": {},
-    "tsdynamics.engine": {
+    "tsdynamics._engine": {
         # `engine` is reachable but off the top level's __all__ and flagged
         # internal in its own docstring (§2.1).  Its listing is four submodules
         # *because* that is what it offers: `ts.engine.run` means the module, so
@@ -678,7 +679,6 @@ SHADOWED_SUBMODULES: dict[str, str] = {
     "tsdynamics.analysis.orbits.orbit_diagram": "S3 — §9.5 asks for this check on every area",
     "tsdynamics.analysis.orbits.return_map": "S3 — §9.5 asks for this check on every area",
     "tsdynamics.analysis.recurrence.rqa": "S3 — §9.5 asks for this check on every area",
-    "tsdynamics.solvers.select": "C6 — solvers/** is C6's for v6 (§9.4 ownership gaps)",
 }
 
 
@@ -919,7 +919,7 @@ def test_the_section_verb_on_a_system_takes_plain_python() -> None:
     assert ros.poincare("y", 0.0) is not None
     assert ros.poincare(("y", 0.0, "up")) is not None
     assert ts.systems.Duffing().poincare(period=4.488) is not None
-    with pytest.raises(ts.InvalidParameterError) as excinfo:
+    with pytest.raises(ts.errors.InvalidParameterError) as excinfo:
         ros.poincare("y", 0.0, period=1.0)
     assert "period" in str(excinfo.value)
 
@@ -1315,7 +1315,7 @@ def test_a_wrong_family_horizon_word_is_refused_by_name(family: str) -> None:
     wrong = "steps" if family != "DiscreteMap" else "final_time"
     if wrong in RUN_KEYWORDS[family]:  # pragma: no cover — guards the table itself
         pytest.skip(f"{wrong} is a real {family} keyword")
-    with pytest.raises((ts.InvalidParameterError, TypeError)) as excinfo:
+    with pytest.raises((ts.errors.InvalidParameterError, TypeError)) as excinfo:
         system.run(**{wrong: 5})
     assert wrong in str(excinfo.value)
 
@@ -1332,7 +1332,7 @@ def test_a_solver_is_spelled_solver_and_a_method_is_an_estimator() -> None:
     """
     lor = ts.systems.Lorenz()
     assert "solver" in inspect.signature(lor.run).parameters
-    with pytest.raises(ts.InvalidParameterError) as excinfo:
+    with pytest.raises(ts.errors.InvalidParameterError) as excinfo:
         lor.run(final_time=1.0, dt=0.5, method="rk45")
     assert "solver" in str(excinfo.value)
     estimators = _doors_taking("method")

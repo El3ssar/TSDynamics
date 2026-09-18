@@ -7,6 +7,7 @@ from typing import Any, ClassVar
 
 import numpy as np
 
+from tsdynamics._utils.escape import escaped
 from tsdynamics.errors import (
     ConvergenceError,
     InvalidInputError,
@@ -14,7 +15,6 @@ from tsdynamics.errors import (
     remedy,
 )
 from tsdynamics.families import DelaySystem
-from tsdynamics.utils.escape import escaped
 
 from .._common import reject_data, reject_system
 from .._discovery import register as _register

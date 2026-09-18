@@ -428,7 +428,7 @@ class TestFlowShooting:
             periodic_orbits(_Harmonic(), 6.0, ic=[1.0, 0.0])
 
     def test_a_map_still_needs_its_integer_period(self) -> None:
-        with pytest.raises(ts.InvalidInputError, match="needs the period p"):
+        with pytest.raises(ts.errors.InvalidInputError, match="needs the period p"):
             periodic_orbits(ts.systems.Henon())
 
     def test_the_singular_spelling_is_gone_and_says_so(self) -> None:

@@ -8,7 +8,7 @@ intent is to catch shape errors, wrong parameter signatures, and bad imports.
 
 from __future__ import annotations
 
-from tsdynamics.engine.symbols import state_time_symbols
+from tsdynamics._engine.symbols import state_time_symbols
 
 # The engine-native symbolic state/time accessors (`y(i)` / `t`), byte-identical
 # to the callables a system's `_equations` is written against.

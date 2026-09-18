@@ -232,7 +232,7 @@ _RETIRED_KIND_METHODS: frozenset[str] = frozenset(
 def _transform_names(result: Any) -> list[str]:
     """Every registered plot transform whose declared subjects admit ``result``.
 
-    The same question :class:`~tsdynamics.utils.plot_namespace.PlotNamespace`
+    The same question :class:`~tsdynamics._utils.plot_namespace.PlotNamespace`
     asks for a trajectory or a system, asked for a result — so ``.plot.<TAB>``
     means one thing everywhere in the library.
     """
@@ -252,7 +252,7 @@ class _PlotAccessor:
     the registered transforms that admit **this** result and
     ``result.plot.scaling_fit()`` is exactly ``ts.plot(result, "scaling_fit")`` —
     the same gesture, meaning the same thing, that ``traj.plot`` and
-    ``system.plot`` already carry (:class:`~tsdynamics.utils.plot_namespace.PlotNamespace`).
+    ``system.plot`` already carry (:class:`~tsdynamics._utils.plot_namespace.PlotNamespace`).
 
     .. versionchanged:: 6.0
         **The eight kind-forcing methods are gone** (``.scaling()`` /

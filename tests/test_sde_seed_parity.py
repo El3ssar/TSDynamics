@@ -32,8 +32,8 @@ import pytest
 
 import tsdynamics.families.stochastic as sde_mod
 from tsdynamics import StochasticSystem
+from tsdynamics._utils.grids import make_output_grid
 from tsdynamics.families.stochastic import _seed_for
-from tsdynamics.utils.grids import make_output_grid
 
 # A guarded import (not a module-level ``importorskip``): it auto-tags this module
 # ``engine`` for the engine CI job (see ``tests/_engine_marker.py``) yet lets the

@@ -13,7 +13,7 @@
 //! per value.
 //!
 //! Python already solves the analogous problem one layer up —
-//! `tsdynamics.engine.compile` memoises *lowered* tapes in a bounded LRU with
+//! `tsdynamics._engine.compile` memoises *lowered* tapes in a bounded LRU with
 //! `clear_tape_cache()` / `tape_cache_stats()` and a `TSDYNAMICS_NO_TAPE_CACHE`
 //! bypass. This is the same design for the *compiled* artifact, so a repeat call
 //! on an unchanged tape compiles once.

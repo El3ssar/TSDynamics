@@ -169,7 +169,7 @@ Several catalogue systems already do (e.g. `KuramotoSivashinsky`, `Duffing`).
 | DDE `lyapunov_spectrum` | `1e-7` | `1e-9` | same march, tighter for the variational renormalisation |
 | basin cell march | `1e-6` | `1e-9` | thousands of two-node integrations for a *topological* classification |
 
-Every one of these is a named constant in `tsdynamics.utils.tolerances`
+Every one of these is a named constant in `tsdynamics._utils.tolerances`
 (`DEFAULT_RTOL`, `DDE_RTOL`, `BASIN_RTOL`, …) rather than a literal repeated
 across the code, so "what is the default?" has exactly one answer per surface and
 a deliberate exception is visible rather than accidental.
@@ -244,14 +244,14 @@ rather than silently degrading.
 
 Every solver lives in the solver registry — a `name → SolverSpec` table with
 capability flags. The table below is the **complete registry**, generated
-directly from `tsdynamics.solvers.all_specs()`. Each `solver=` string accepted by
+directly from `tsdynamics._solvers.all_specs()`. Each `solver=` string accepted by
 `run` is one row here. (The `name` column is the exact `solver=` value; common
 aliases such as `"RK45"` / `"dopri5"` resolve to `rk45`.)
 
 <!--
   GENERATED TABLE — regenerate after adding/removing a solver with:
 
-      from tsdynamics import solvers
+      from tsdynamics import _solvers as solvers
       for name, spec in solvers.all_specs().items():
           c = spec.caps
           print(name, c.kind, c.adaptive, c.needs_jacobian,

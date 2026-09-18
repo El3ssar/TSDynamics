@@ -1,10 +1,10 @@
 """In-tree specs for the implicit / stiff solver family (stream E4).
 
-One :class:`~tsdynamics.solvers.SolverSpec` per Rust kernel in
+One :class:`~tsdynamics._solvers.SolverSpec` per Rust kernel in
 ``crates/tsdyn-solvers/src/implicit/`` — the L-stable, analytic-Jacobian
 kernels the auto-stiffness layer selects on a stiff RHS.  Both declare
-:attr:`~tsdynamics.solvers.SolverCaps.needs_jacobian`, which is exactly the
-signal :func:`tsdynamics.solvers.build_kwargs` turns into ``with_jacobian=True``
+:attr:`~tsdynamics._solvers.SolverCaps.needs_jacobian`, which is exactly the
+signal :func:`tsdynamics._solvers.build_kwargs` turns into ``with_jacobian=True``
 so the engine's Jacobian guard (PR #74) is satisfied instead of raising.
 
 Importing this module registers the specs (the F2 directory scan imports it);
@@ -17,7 +17,7 @@ from __future__ import annotations
 from . import SolverCaps, SolverSpec, register
 
 #: A spec module exports **nothing**: importing it registers the implicit / stiff
-#: kernels into :data:`tsdynamics.solvers.SOLVERS` as a side effect, and the
+#: kernels into :data:`tsdynamics._solvers.SOLVERS` as a side effect, and the
 #: specs are read back through that registry (``ts.solvers.get(name)``), never
 #: from here.  Declared (rather than omitted) so ``dir()`` says so instead of
 #: re-advertising the parent's ``SolverSpec`` / ``SolverCaps`` / ``register``.

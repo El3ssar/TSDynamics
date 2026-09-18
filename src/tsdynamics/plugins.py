@@ -8,7 +8,7 @@ renderers register themselves automatically.
 The six group names below are the frozen contract a plugin author declares
 against in their own ``pyproject.toml``::
 
-    [project.entry-points."tsdynamics.solvers"]
+    [project.entry-points."tsdynamics._solvers"]
     my_method = "my_pkg.solvers:MY_SPEC"
 
 **A declared group is a promise, and a promise nothing loads is a lie.**
@@ -22,9 +22,9 @@ the gate, and it names the module expected to do the loading.
 This module is deliberately *generic*: it discovers and loads entry points and
 imports submodules, but knows nothing about what a system/solver/analysis/
 renderer *is*.  Each consuming subpackage interprets the loaded objects in its
-own terms (e.g. :mod:`tsdynamics.solvers` turns them into solver specs).
+own terms (e.g. :mod:`tsdynamics._solvers` turns them into solver specs).
 
-Stream **F2** owns this mechanism; it is consumed by ``tsdynamics.solvers``
+Stream **F2** owns this mechanism; it is consumed by ``tsdynamics._solvers``
 (also F2) and by the analyses/renderers registries.
 """
 
@@ -40,7 +40,7 @@ from typing import Any, Protocol
 
 # ── Entry-point group names (the frozen plugin contract) ───────────────────────
 SYSTEMS_GROUP = "tsdynamics.systems"
-SOLVERS_GROUP = "tsdynamics.solvers"
+SOLVERS_GROUP = "tsdynamics._solvers"
 ANALYSES_GROUP = "tsdynamics.analyses"
 RENDERERS_GROUP = "tsdynamics.renderers"
 #: Out-of-tree **plot transforms** (see :mod:`tsdynamics.viz.transforms`).  Each
@@ -176,13 +176,13 @@ def register_entry_points(
     """Load the plugins in *group* and register each into *registry* by name.
 
     The generic-registry counterpart of
-    :func:`tsdynamics.solvers.discover_plugins`: it wires the
+    :func:`tsdynamics._solvers.discover_plugins`: it wires the
     ``tsdynamics.analyses`` and ``tsdynamics.renderers`` plugin kinds into their
     :class:`~tsdynamics.registry.Registry` consumers.
 
     Each entry point resolves to the object to register **verbatim** under the
     entry point's own name — an analysis function, a renderer callable, … —
-    unlike :mod:`~tsdynamics.solvers`, whose plugins resolve to ``SolverSpec``
+    unlike :mod:`~tsdynamics._solvers`, whose plugins resolve to ``SolverSpec``
     metadata.  Names already present are left untouched, so this is safe to call
     repeatedly (e.g. after installing a new plugin).  Plugin load failures are
     isolated by :func:`load_plugins` (warn-and-skip unless *strict*).

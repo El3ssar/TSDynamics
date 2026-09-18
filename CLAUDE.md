@@ -46,7 +46,7 @@ paths have MOVED, no shims):
 ```
 src/tsdynamics/
 ├── __init__.py               # __version__ (managed by python-semantic-release) + re-exports
-├── registry.py               # system registry (SystemEntry + all_systems/…) + generic analyses/renderers registries (solvers live in tsdynamics.solvers)
+├── registry.py               # system registry (SystemEntry + all_systems/…) + generic analyses/renderers registries (solvers live in tsdynamics._solvers)
 ├── families/                 # base classes + the System protocol (was base/)
 │   ├── base.py               # SystemBase + MetaStore + Absent + the v6 absent-name errors
 │   ├── _params.py            # ParamSet — a **dict subclass** since v6 (fixed keys, as_tuple, param_hash)
@@ -61,18 +61,18 @@ src/tsdynamics/
 │   ├── stochastic.py         # StochasticSystem — diagonal-Itô SDEs (_drift+_diffusion; EM/Milstein)
 │   ├── _plottable.py         # SystemPlottable plotting seam (system.__plot_spec__/plot, splits plot vs run kwargs)
 │   └── wrapped.py            # WrappedSystem (canonical home; adapt an external stepper — re-exported via derived)
-├── engine/                   # Rust-facing engine layer; tsdynamics._rust is the sole backend
+├── _engine/                   # Rust-facing engine layer; tsdynamics._rust is the sole backend
 │   ├── symbols.py            # engine-native symbolic frontend: state_time_symbols() → (Function("y"), Symbol("t"))
 │   ├── compile.py            # symbolic dynamics → IR Tape (all families) + reference evaluator + bounded lowered-tape CACHE (lower_*_cached / clear_tape_cache / tape_cache_stats)
 │   ├── problem.py            # per-family Problem builders bundling a tape + runtime context
-│   ├── run.py                # orchestration: integrate/ensemble + eval_rhs/eval_jac + backend resolve (resolve_backend/_engine/BACKENDS/EngineNotAvailableError) + problem-coercion/naming/provenance; RE-EXPORTS every name the split-out submodules own so tsdynamics.engine.run.<X> keeps working for EVERY X
+│   ├── run.py                # orchestration: integrate/ensemble + eval_rhs/eval_jac + backend resolve (resolve_backend/_engine/BACKENDS/EngineNotAvailableError) + problem-coercion/naming/provenance; RE-EXPORTS every name the split-out submodules own so tsdynamics._engine.run.<X> keeps working for EVERY X
 │   ├── run_methods.py        # method= resolution + auto-stiffness split out of run.py: _resolve_method_for/_recommend_method/_resolve_method_and_prepare (shared by integrate+ensemble)
 │   ├── _families.py          # per-family runners split out of run.py: _run_continuous/_step_continuous/_run_dde/_sample_past/_run_map + the low-level _engine_* FFI shims (_engine_integrate_dense/_engine_ensemble_final/_engine_map_ensemble_final)
 │   ├── stepper.py            # resumable OdeStepper API split out of run.py: make_ode_stepper/step_advance/step_advance_to_event (WS-STEPPER)
 │   ├── sde_run.py            # SDE dense/ensemble seam split out of run.py: sde_integrate_dense/sde_ensemble_final (the seed/step-carrying path run.integrate refuses)
 │   ├── events.py             # event subsystem split out of run.py: crossings/Event/EventSolution/integrate_events (WS-CROSSKERNEL + WS-EVENTSAPI)
 │   └── reference.py          # the pure-Python reference oracle (backend="reference") split out of run.py: SciPy-stepped ODE + reference-evaluated map
-├── solvers/                  # F2 registry mechanism + C-SOLV in-tree specs (explicit/implicit/stochastic) + method= resolution/aliases + auto-stiffness (select.py)
+├── _solvers/                  # F2 registry mechanism + C-SOLV in-tree specs (explicit/implicit/stochastic) + method= resolution/aliases + auto-stiffness (select.py)
 ├── derived/
 │   ├── _base.py              # DerivedSystem (wrapper base, with_params rebuilds)
 │   ├── poincare.py           # PoincareMap (Hermite-refined crossings)
@@ -112,7 +112,7 @@ src/tsdynamics/
 ├── systems/
 │   ├── continuous/           # 9 ODE category modules (+ spatial_fields.py 2-D PDEs) + delayed_systems.py (DDEs!)
 │   └── discrete/             # 5 map category modules
-└── utils/                    # the LEAF package: values both families/ and engine/ must agree on
+└── _utils/                    # the LEAF package: values both families/ and engine/ must agree on
     ├── escape.py             # Unbounded + detect_unbounded (the runaway-orbit verdict Trajectory.unbounded reports)
     ├── grids.py              # make_output_grid (the single hoisted output-grid builder; sagitta tooling moved to analysis/sampling/)
     ├── plot_namespace.py     # subject.plot as a callable NAMESPACE (bound on Trajectory + SystemBase) + the retired-`to_plot_spec` message
@@ -352,6 +352,28 @@ Do **not** re-add generic signal processing here. Beware the false friends:
 Benettin's "Kolmogorov entropy" citation are all SURVIVORS and unrelated to the
 deleted entropy package.
 
+**The machinery packages are PRIVATE (v6.1).** `engine`, `solvers` and `utils` are
+`_engine`, `_solvers` and `_utils` on disk, so `ts.engine` raises `AttributeError`
+rather than resolving to 66 names of FFI shims and tape internals. The rename was
+the only mechanism that works: Python auto-binds any imported submodule onto its
+parent, so a package the library imports internally is reachable as `ts.<name>`
+however carefully `__init__.py` avoids binding it — dropping the import buys
+nothing. Measured before the change: `engine` 10 modules / 66 public names,
+`solvers` 5 / 33, `utils` 5 / 26, against 2 / 14 / 3 mentions in user-facing docs
+and 122 / 20 / 29 in tests. That ratio *is* the definition of machinery.
+`families`, `data`, `derived`, `registry`, `plugins` and `errors` stay reachable:
+each has real user-facing traffic, and `errors` is additionally an ABI.
+
+**The six typed exceptions left `__all__`** for a measured reason, not a taste:
+the hierarchy is purely additive — `InvalidParameterError` IS a `ValueError`,
+`ConvergenceError` IS a `RuntimeError`, `InvalidInputError` IS a `TypeError` — so
+`except ValueError` already catches a bad `dt` and nothing a user writes requires
+this library's spelling. They are a *refinement* (telling one failure from
+another), and a refinement lives at `ts.errors.<Name>`. `ts.__all__` is
+**ELEVEN**. Gates: `test_the_typed_errors_live_at_their_own_address_because_you_never_need_them`
+asserts both halves — the additive hierarchy AND the redirect — because only
+together do they make the demotion safe.
+
 Reachable but not top-level: `SystemBase`, `ParamSet`, `MetaStore`, `System`
 (protocol) via `tsdynamics.families`.
 `errors` is bound eagerly and is **not** in `__all__` (the six exception classes
@@ -397,7 +419,7 @@ viz layer's transform→geometry registry, entry-point group
 the word: a *plot* transform turns a system or trajectory into plottable
 geometry, and never ships a signal-processing estimator.
 **Solvers are not registered here**: they live in the
-richer `tsdynamics.solvers` registry (a `name → SolverSpec` table with
+richer `tsdynamics._solvers` registry (a `name → SolverSpec` table with
 capability flags + `solvers/` directory and entry-point discovery via
 `plugins.py`, stream F2). Do not re-add a `solvers` registry to `registry.py`.
 **Family detection keys off the module
@@ -530,7 +552,7 @@ mathematical reason plus a runnable line.  `SystemBase.__getattr__` answers ever
   rebuilds the ODE tape `with_jacobian=True` when an implicit kernel needs it.
   Lowering goes through the cached `lower_*_cached` helpers (see the tape cache
   section), so a parameter sweep reuses one tape. The output grid each
-  family samples on is the one hoisted `tsdynamics.utils.grids.make_output_grid`
+  family samples on is the one hoisted `tsdynamics._utils.grids.make_output_grid`
   (the four byte-identical `_make_t_eval` copies are gone). **SDEs are the
   exception** — they keep the dedicated `run.sde_integrate_dense` /
   `run.sde_ensemble_final` seam (`run.integrate` cannot carry the noise
@@ -561,7 +583,7 @@ import Trajectory` are the same object.
   answered by name, and the answer names the **data-first** free function (the
   table is `data/trajectory.py::_DELETED_TRAJECTORY_ACCESSORS`) — a remedy line
   a library hands back must RESOLVE *and run for the subject that was held*.
-- **`subject.plot` is a callable NAMESPACE** (`utils/plot_namespace.py`, bound on
+- **`subject.plot` is a callable NAMESPACE** (`_utils/plot_namespace.py`, bound on
   both `Trajectory` and `SystemBase`): `traj.plot()` is the verb it always was,
   and `traj.plot.<TAB>` lists every transform that admits **this** subject, so
   `traj.plot.psd()` == `ts.plot(traj, "psd")`. It is the discovery route ruling
@@ -718,15 +740,15 @@ six decades.
   resolution** (pinned by a counting test, which cannot flake). `dop853` at
   `dt=0.001`: 126.7 -> 17.5 ms.
 
-### Solver tolerances (v6, `utils/tolerances.py`)
+### Solver tolerances (v6, `_utils/tolerances.py`)
 
 **Every `rtol=`/`atol=` default in the library is a named constant in the leaf
-module `utils/tolerances.py`.** Before v6 the pair `1e-6`/`1e-9` was duplicated
+module `_utils/tolerances.py`.** Before v6 the pair `1e-6`/`1e-9` was duplicated
 as bare literals across ~16 sites in five subpackages plus the docstrings that
 quoted them — which is exactly how two "same" defaults drift apart. The module
 is a leaf (imports nothing from `tsdynamics`), so `families/` (which imports the
-engine only lazily) and `engine/run.py` both take it at module scope with no
-cycle; `engine/run.py` was rejected as the home for precisely that reason. A
+engine only lazily) and `_engine/run.py` both take it at module scope with no
+cycle; `_engine/run.py` was rejected as the home for precisely that reason. A
 polish gate (`test_polish_standards.py::test_no_bare_tolerance_literal_in_the_library`,
 AST-based) fails on any bare `rtol`/`atol` numeric literal in a signature, a call
 keyword or a `self._rtol = …` assignment; genuine homonyms (FNN's `R_tol`/`A_tol`,
@@ -1061,7 +1083,7 @@ field to its result class, grow the listing, and go green on the PR.
 
 `result.plot` is a `_PlotAccessor` (`analysis/_result_viz.py`) — callable, and a
 **namespace of the transform names that admit this result**, exactly as
-`traj.plot` / `system.plot` are (`utils/plot_namespace.py`). So
+`traj.plot` / `system.plot` are (`_utils/plot_namespace.py`). So
 `result.plot.<TAB>` means one thing everywhere in the library, and
 `dim.plot.scaling_fit()` **is** `ts.plot(dim, "scaling_fit")`.
 
@@ -1289,7 +1311,7 @@ subpackages).
 - **General events API (stream WS-EVENTSAPI):** `ContinuousSystem.run(events=[...])`
   exposes the same wired event engine generally — a scipy-shaped `events=` surface
   for arbitrary stopping (A-RQA / A-BASIN / custom). An **`Event`**
-  (`tsdynamics.engine.run.Event`) is a *symbolic* scalar condition `g(u, t) = 0`
+  (`tsdynamics._engine.run.Event`) is a *symbolic* scalar condition `g(u, t) = 0`
   so one spec drives both paths: a callable `g(y, t)`/`g(y, t, **params)` over the
   engine state accessor (returning one SymEngine expr, optionally with scipy-style
   `.direction`/`.terminal` attributes), or a plane tuple (`("z", 27.0, "up")` /
@@ -2318,7 +2340,7 @@ Nothing else in the library learns a new name when one is added.
   (a `TypeError`: a malformed argument, e.g. an array of the wrong shape),
   `ConvergenceError` (a `RuntimeError`: divergence / non-convergence / no crossing),
   and `BackendError`/`EngineNotAvailableError` (a `RuntimeError`: the compiled engine
-  is unavailable). These are wired across the families and `engine/run.py`
+  is unavailable). These are wired across the families and `_engine/run.py`
   (divergence → `ConvergenceError`; an out-of-range `dt`/unknown backend/bad
   argument → `InvalidParameterError` / `InvalidInputError`) so a `RuntimeError` /
   `ValueError` / `TypeError` `except` keeps catching the same failure.
@@ -2719,7 +2741,7 @@ run; nothing to wipe.
 - Control parameters are read live from the system on every run (through
   `problem.params_vec()`), so a parameter change never bakes into the tape. A
   *delay* value (DDE) or a structural parameter **is** baked into the tape.
-- **In-process lowered-tape cache (stream PERF-LOWER-CACHE, `engine/compile.py`):**
+- **In-process lowered-tape cache (stream PERF-LOWER-CACHE, `_engine/compile.py`):**
   lowering is a pure function of the *math* (kernel body, dimension, structural
   parameters, DDE/map params, the `with_jacobian` flag), so the lowered `Tape`
   (and `LoweredSDE`) is memoised by `lower_ode_cached` / `lower_map_cached` /
@@ -2752,7 +2774,7 @@ run; nothing to wipe.
   / `with_jacobian` flag is always a miss and a hash collision costs a compile,
   never a stale hit. Bounded LRU (`CACHE_MAXSIZE = 64` — smaller than the tape
   cache's 256 because an entry holds executable pages), thread-safe, compiles
-  outside the lock. Surface: `tsdynamics.engine.run.jit_cache_stats()` /
+  outside the lock. Surface: `tsdynamics._engine.run.jit_cache_stats()` /
   `clear_jit_cache()` (→ the `_rust` functions of the same names) and the
   `TSDYNAMICS_NO_JIT_CACHE` env var (truthy ⇒ always re-compile — the bypass that
   proves WITH-cache == WITHOUT-cache, `tests/test_jit_cache.py`). Answer-preserving:
@@ -2864,7 +2886,7 @@ Two layers now cover them:
 | Map params order ≠ `_step` signature order | **Raises `TypeError` at import**. |
 | DDE with constant past at a fixed point | Lyapunov exponents ≈ 0. Provide a non-equilibrium `history`. |
 | Tight tolerances on DDE | `rtol=atol=1e-3` is the DDE default and the right start — **not** because tightening stalls the solver (measured: all 6 built-in DDEs complete at `1e-12`/`1e-15`, T=500) but because the method of steps lands on every sample, so `dt` bounds the step and the tolerance is inert (5 of 6 are bit-identical from `1e-3` to `1e-9`). |
-| Adding a new `rtol=`/`atol=` default | Don't write a literal — name a constant in `utils/tolerances.py`. A gate (`test_polish_standards.py::test_no_bare_tolerance_literal_in_the_library`) fails on a bare literal in any signature, call keyword or `self._rtol =` assignment. |
+| Adding a new `rtol=`/`atol=` default | Don't write a literal — name a constant in `_utils/tolerances.py`. A gate (`test_polish_standards.py::test_no_bare_tolerance_literal_in_the_library`) fails on a bare literal in any signature, call keyword or `self._rtol =` assignment. |
 | "My results got less accurate in v6" | `dt` is now **sampling only** — it no longer secretly bounds the internal step (see "Dense output and `max_step`"). The default `rtol`/`atol` tightened to `1e-9`/`1e-12` to compensate, so a plain `.run()` is *more* accurate than pre-v6, not less. If you pinned `rtol=1e-6` explicitly you kept the old accuracy on a coarser step — tighten it; or pass `max_step=dt` to reproduce the old step regime; or set `TSDYNAMICS_NO_DENSE_OUTPUT=1` to reproduce pre-v6 numbers exactly. |
 | An adaptive kernel strides over a narrow feature | Pass `max_step=`. (A step *size* — `max_steps` is a step *count*.) |
 | A repr shows `PoincareSection(crossings=…)` / an `OrbitSet` says "period 6" | Fixed in v6: **every** result's repr IS the answer (§4.3) — the section prints `PoincareSection  300 crossings of y = 0 up   ·  3-D states   (Rossler)` and a *flow's* period renders as the real number `T = 6.66329` (a map's stays an integer count). `summary()` exists on nothing. |

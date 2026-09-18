@@ -66,8 +66,8 @@ class OrnsteinUhlenbeck(StochasticSystem):
 
 
 def test_drift_and_diffusion_lower_to_the_symbolic_values():
-    from tsdynamics.engine.compile import eval_tape, eval_tape_jac
-    from tsdynamics.engine.problem import sde_problem
+    from tsdynamics._engine.compile import eval_tape, eval_tape_jac
+    from tsdynamics._engine.problem import sde_problem
 
     gbm = GeometricBrownianMotion()
     prob = sde_problem(gbm, ic=[1.0], with_diffusion_jacobian=True)

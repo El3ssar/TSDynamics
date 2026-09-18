@@ -12,7 +12,7 @@ produced here is consumed by the interpreter (``tsdyn-vm``) and the JIT
 (``tsdyn-jit``) unchanged.
 
 What this module is *not*: it does not integrate.  Time-stepping lives in the
-Rust solver kernels (reached through :mod:`tsdynamics.engine.run`).  The only
+Rust solver kernels (reached through :mod:`tsdynamics._engine.run`).  The only
 evaluation here is a small, dependency-light **reference evaluator**
 (:func:`eval_tape` / :func:`eval_tape_jac`) that mirrors
 ``tsdyn-ir``'s ``reference.rs`` operational semantics — the oracle the lowering
@@ -2162,7 +2162,7 @@ def lower_ode(system: Any, *, with_jacobian: bool = False) -> Tape:
     Examples
     --------
     >>> import tsdynamics as ts
-    >>> from tsdynamics.engine.compile import lower_ode, eval_tape
+    >>> from tsdynamics._engine.compile import lower_ode, eval_tape
     >>> tape = lower_ode(ts.systems.Lorenz())
     >>> tape.dim
     3
@@ -2657,7 +2657,7 @@ def lower_dde(system: Any) -> tuple[Tape, list[DelaySlot]]:
     """
     import symengine
 
-    from tsdynamics.engine.symbols import state_time_symbols
+    from tsdynamics._engine.symbols import state_time_symbols
 
     y, t_sym = state_time_symbols()
 
@@ -2832,7 +2832,7 @@ def lower_sde(system: Any, *, with_diffusion_jacobian: bool = False) -> LoweredS
     """
     import symengine
 
-    from tsdynamics.engine.symbols import state_time_symbols
+    from tsdynamics._engine.symbols import state_time_symbols
     from tsdynamics.families.discrete import _unwrap_static
 
     y, t_sym = state_time_symbols()

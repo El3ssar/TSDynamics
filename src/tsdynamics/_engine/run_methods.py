@@ -1,7 +1,7 @@
 """Solver-method resolution + auto-stiffness — the ``method=`` contract.
 
-Split out of :mod:`tsdynamics.engine.run` (the run-split refactor); every name
-here stays reachable as ``tsdynamics.engine.run.<name>`` via re-export, so this is
+Split out of :mod:`tsdynamics._engine.run` (the run-split refactor); every name
+here stays reachable as ``tsdynamics._engine.run.<name>`` via re-export, so this is
 a pure move.
 
 This module owns the shared ``method=`` resolution both :func:`integrate` and
@@ -11,7 +11,7 @@ rejection ("LSODA"), and the implicit-kernel Jacobian rebuild behave identically
 across both entry points (diagnosis #11/#13).
 
 The problem-coercion helper (``_as_problem``) is late-imported from
-:mod:`tsdynamics.engine.run` inside the functions that need it, so importing this
+:mod:`tsdynamics._engine.run` inside the functions that need it, so importing this
 module does not create an import cycle.
 """
 
@@ -22,7 +22,7 @@ from typing import Any
 from .problem import DDEProblem, MapProblem, ODEProblem, Problem
 
 #: ``method=`` resolution exports **nothing**: all three entry points are
-#: underscored and reached as ``tsdynamics.engine.run.<name>``.  Declared (rather
+#: underscored and reached as ``tsdynamics._engine.run.<name>``.  Declared (rather
 #: than omitted) so ``dir()`` says so instead of offering the four ``Problem``
 #: classes as if this module owned them.
 __all__: list[str] = []
@@ -34,8 +34,8 @@ def _recommend_method(problem: Problem) -> Any:
     The auto-stiffness wiring (ticket FIX-AUTOSTIFF) applies to **ODEs only**:
     probe the problem's Jacobian spectrum at its start state and let the solver
     registry recommend an implicit kernel (``bdf``) on a stiff RHS or the explicit
-    default (``rk45``) otherwise (:func:`tsdynamics.solvers.recommend`).  The probe
-    is the one-point heuristic :func:`tsdynamics.solvers.is_stiff` — useful but not
+    default (``rk45``) otherwise (:func:`tsdynamics._solvers.recommend`).  The probe
+    is the one-point heuristic :func:`tsdynamics._solvers.is_stiff` — useful but not
     a guarantee (see its docstring): the verdict is read at the problem's resolved
     start state (``problem.ic``) and at ``problem.t0`` (``0.0`` unless a builder set
     it; the integrate/ensemble ``t0=`` argument is not threaded here).  A system
@@ -49,7 +49,7 @@ def _recommend_method(problem: Problem) -> Any:
       by the map branch (``"auto"`` simply does not raise).
     - **DDEs** are driven by the method of steps, which reuses the *explicit*
       stage kernels only.  A stiffness probe would be meaningless **and** a trap:
-      :func:`tsdynamics.solvers.is_stiff` reads only the *instantaneous* Jacobian
+      :func:`tsdynamics._solvers.is_stiff` reads only the *instantaneous* Jacobian
       ``∂f/∂u``, ignoring the delay terms that actually shape a DDE's spectrum, so
       a spurious "stiff" verdict could otherwise select the implicit
       ``rosenbrock`` the DDE engine cannot drive.  ``"auto"`` therefore resolves to
@@ -68,7 +68,7 @@ def _recommend_method(problem: Problem) -> Any:
     solvers.Resolution
         The recommended kernel, carrying its ``build_kwargs``.
     """
-    from tsdynamics import solvers
+    from tsdynamics import _solvers as solvers
 
     # Maps (no kernel) and DDEs (explicit method-of-steps; no meaningful stiffness
     # probe) fall back to their family default — auto-stiffness is ODE-only.
@@ -100,7 +100,7 @@ def _resolve_method_for(method: str, problem: Problem) -> Any:
     families that ignore ``method=`` (maps fold params in; SDE/DDE batches are
     refused by the caller before stepping).
     """
-    from tsdynamics import solvers
+    from tsdynamics import _solvers as solvers
 
     if solvers.normalize(method) == "auto":
         return _recommend_method(problem)

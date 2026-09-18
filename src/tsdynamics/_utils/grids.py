@@ -2,7 +2,7 @@
 
 The one definition of the uniform output grid an ``integrate`` call samples on.
 Both the family base classes (:mod:`tsdynamics.families`) and the engine run
-layer (:mod:`tsdynamics.engine.run`) build the same grid, so it lives here in
+layer (:mod:`tsdynamics._engine.run`) build the same grid, so it lives here in
 the leaf ``utils`` package (it imports only NumPy) and both layers consume it —
 rather than each carrying a byte-identical private copy that could silently
 drift apart.

@@ -55,8 +55,8 @@ from xval_harness import RustEngine, ScipyReference, crossvalidate, crossvalidat
 
 import tsdynamics as ts
 from tsdynamics import registry
-from tsdynamics.engine import run
-from tsdynamics.engine.compile import (
+from tsdynamics._engine import run
+from tsdynamics._engine.compile import (
     OP_ADD,
     OP_POWI,
     OP_STATE,
@@ -64,7 +64,7 @@ from tsdynamics.engine.compile import (
     TapeCompileError,
     eval_tape,
 )
-from tsdynamics.engine.problem import map_problem
+from tsdynamics._engine.problem import map_problem
 from tsdynamics.families.discrete import _unwrap_static
 
 _rust = pytest.importorskip("tsdynamics._rust")
@@ -248,7 +248,7 @@ def test_op_powi_is_exercised_by_the_catalogue() -> None:
     Keeps :func:`test_ode_reference_matches_engine` honest: it would still pass if
     no system used the opcode, so assert the catalogue genuinely exercises it.
     """
-    from tsdynamics.engine.problem import build_problem
+    from tsdynamics._engine.problem import build_problem
 
     using_powi = [
         e.name

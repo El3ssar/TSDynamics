@@ -74,7 +74,7 @@ site* would otherwise use.  See its docstring for the measurement behind that.
 
 One concrete leaf lives outside this module to keep it import-light (it must load
 while the package is still initialising):
-:class:`tsdynamics.engine.run.EngineNotAvailableError` subclasses
+:class:`tsdynamics._engine.run.EngineNotAvailableError` subclasses
 :class:`BackendError` and is raised when the compiled ``tsdynamics._rust``
 extension is absent — ``except BackendError`` (or ``except RuntimeError``) catches
 it.
@@ -176,7 +176,7 @@ class BackendError(TSDynamicsError, RuntimeError):
     A base for backend-side failures — an engine that is not built, a kernel that
     refused a problem, or an FFI-boundary failure surfaced with domain framing
     rather than a raw extension traceback.  Its concrete leaf
-    :class:`tsdynamics.engine.run.EngineNotAvailableError` is raised when the
+    :class:`tsdynamics._engine.run.EngineNotAvailableError` is raised when the
     compiled ``tsdynamics._rust`` extension is missing, so
     ``isinstance(err, BackendError)`` catches it.  Subclasses
     :class:`RuntimeError`, so legacy ``except RuntimeError`` handlers still apply.

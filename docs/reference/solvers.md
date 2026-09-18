@@ -1,5 +1,5 @@
 ---
-description: API reference for tsdynamics.solvers — the by-name solver registry, capability flags, solver resolution and auto-stiffness selection.
+description: API reference for tsdynamics._solvers — the by-name solver registry, capability flags, solver resolution and auto-stiffness selection.
 ---
 
 <span class="ts-kicker">Reference</span>
@@ -25,24 +25,24 @@ documents the registry itself.
 
 ## Specs & capabilities
 
-::: tsdynamics.solvers.SolverSpec
+::: tsdynamics._solvers.SolverSpec
 
-::: tsdynamics.solvers.SolverCaps
+::: tsdynamics._solvers.SolverCaps
 
 ## Resolution & selection
 
-::: tsdynamics.solvers.select.resolve
+::: tsdynamics._solvers.select.resolve
 
-::: tsdynamics.solvers.select.default_method
+::: tsdynamics._solvers.select.default_method
 
-::: tsdynamics.solvers.select.available_for
+::: tsdynamics._solvers.select.available_for
 
-::: tsdynamics.solvers.select.recommend
+::: tsdynamics._solvers.select.recommend
 
-::: tsdynamics.solvers.select.is_stiff
+::: tsdynamics._solvers.select.is_stiff
 
-::: tsdynamics.solvers.select.build_kwargs
+::: tsdynamics._solvers.select.build_kwargs
 
 ## Registration
 
-::: tsdynamics.solvers.register
+::: tsdynamics._solvers.register

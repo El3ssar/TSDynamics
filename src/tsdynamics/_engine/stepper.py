@@ -1,10 +1,10 @@
 """Resumable ODE stepper handle (stream WS-STEPPER).
 
-Split out of :mod:`tsdynamics.engine.run` (the run-split refactor); every name
-here stays reachable as ``tsdynamics.engine.run.<name>`` via re-export, so this is
+Split out of :mod:`tsdynamics._engine.run` (the run-split refactor); every name
+here stays reachable as ``tsdynamics._engine.run.<name>`` via re-export, so this is
 a pure move.
 
-The durable replacement for the per-``dt`` :func:`tsdynamics.engine._families._step_continuous`
+The durable replacement for the per-``dt`` :func:`tsdynamics._engine._families._step_continuous`
 core: an opaque engine handle (``tsdynamics._rust.OdeStepper``) that owns the built
 tape evaluator + solver once and carries the live integration point across calls. A
 constant-/small-``dt`` stepping loop (``ContinuousSystem.step()``, Poincaré
@@ -16,7 +16,7 @@ exactly as the released path; verified bit-for-bit in the Rust test
 ``stepper_advance_reproduces_per_dt_integrate_dense_bit_for_bit``).
 
 The engine accessor (``_engine``) is late-imported from
-:mod:`tsdynamics.engine.run` inside the functions that need it, so importing this
+:mod:`tsdynamics._engine.run` inside the functions that need it, so importing this
 module does not create an import cycle.
 """
 

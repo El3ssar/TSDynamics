@@ -179,7 +179,7 @@ class TestTheWordForNamingCurvesIsDiscoverableFromItsOwnError:
 
     def test_the_singular_names_the_plural(self) -> None:
         a, b = self._two_orbits()
-        with pytest.raises(ts.InvalidParameterError) as excinfo:
+        with pytest.raises(ts.errors.InvalidParameterError) as excinfo:
             ts.plot(a, b, components="x", label=["A", "B"])
         message = str(excinfo.value)
         assert "labels=" in message
@@ -188,7 +188,7 @@ class TestTheWordForNamingCurvesIsDiscoverableFromItsOwnError:
     def test_the_accepted_listing_names_the_word_that_works(self) -> None:
         """``labels=`` was on the signature and in no listing any error printed."""
         a, b = self._two_orbits()
-        with pytest.raises(ts.InvalidParameterError) as excinfo:
+        with pytest.raises(ts.errors.InvalidParameterError) as excinfo:
             ts.plot(a, b, components="x", nonsense_kw=1)
         assert "labels=" in str(excinfo.value)
 
@@ -203,13 +203,13 @@ class TestBasinFractionsSpeaksTheSameWordAsItsSiblings:
 
     def test_the_retired_spelling_names_the_live_one(self) -> None:
         henon = ts.systems.Henon()
-        with pytest.raises(ts.InvalidParameterError, match="n_seeds"):
+        with pytest.raises(ts.errors.InvalidParameterError, match="n_seeds"):
             ts.analysis.basin_fractions(henon, [(-2, 2), (-2, 2)], n=40, seed=0)
 
     def test_a_typo_never_names_a_private_class(self) -> None:
         """It read ``_AttractorMapper.__init__() got an unexpected keyword``."""
         henon = ts.systems.Henon()
-        with pytest.raises(ts.InvalidParameterError) as excinfo:
+        with pytest.raises(ts.errors.InvalidParameterError) as excinfo:
             ts.analysis.basin_fractions(henon, [(-2, 2), (-2, 2)], lost_step=3, seed=0)
         message = str(excinfo.value)
         assert "_AttractorMapper" not in message
@@ -231,7 +231,7 @@ class TestARemedyLineMatchesTheCallItAnswers:
             def _equations(u, t, a):  # noqa: ANN001, ANN205, D102
                 return [-u(1) - u(2), u(0) + a * u(1), 0.2 + u(2) * (u(0) - 5.7), -0.05 * u(3)]
 
-        with pytest.raises(ts.InvalidInputError) as excinfo:
+        with pytest.raises(ts.errors.InvalidInputError) as excinfo:
             ts.analysis.basins(Four(), [(-2, 2, 6), (-2, 2, 6), (0, 0, 1), (0, 0, 1)])
         line = next(ln for ln in str(excinfo.value).splitlines() if "recurrence=[" in ln)
         assert line.count("(") - line.count("()") == 4
@@ -258,7 +258,7 @@ class TestAFieldCanBeDrawnOverOneBoxAndFramedOverAnother:
 
     def test_two_spellings_inside_one_transform_call_still_raise(self) -> None:
         vdp = ts.systems.VanDerPol()
-        with pytest.raises(ts.InvalidParameterError, match="two spellings"):
+        with pytest.raises(ts.errors.InvalidParameterError, match="two spellings"):
             ts.plot(vdp, ("vector_field", {"domain": [(-6, 6), (-6, 6)], "xlim": (-3, 3)}))
 
 

@@ -1,12 +1,12 @@
 """Reference backend — the pure-Python lowering oracle / dependency-light fallback.
 
 The ``backend="reference"`` path: it needs no compiled engine, evaluating the
-lowered IR tape in pure Python (the :mod:`tsdynamics.engine.compile` reference
+lowered IR tape in pure Python (the :mod:`tsdynamics._engine.compile` reference
 evaluator) and delegating ODE time-stepping to SciPy.  It is the dependency-light
 oracle the lowering is validated against, and a usable fallback for ODE/map runs.
 
-Split out of :mod:`tsdynamics.engine.run` (the run-split refactor); every name
-here stays reachable as ``tsdynamics.engine.run.<name>`` via re-export, so this is
+Split out of :mod:`tsdynamics._engine.run` (the run-split refactor); every name
+here stays reachable as ``tsdynamics._engine.run.<name>`` via re-export, so this is
 a pure move.
 """
 
@@ -22,7 +22,7 @@ from .compile import eval_tape
 from .problem import MapProblem, ODEProblem, Problem
 
 #: The reference oracle exports **nothing**: it is an internal seam whose four
-#: entry points are underscored and reached as ``tsdynamics.engine.run.<name>``.
+#: entry points are underscored and reached as ``tsdynamics._engine.run.<name>``.
 #: Declared (rather than omitted) so ``dir()`` says so instead of offering
 #: ``math`` / ``np`` / ``Problem`` as if they were library helpers.
 __all__: list[str] = []

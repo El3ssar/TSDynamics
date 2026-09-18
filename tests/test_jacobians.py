@@ -91,7 +91,7 @@ def _call_handwritten_jacobian(cls, sys, y_sym, t_sym):
 def test_ode_handwritten_jacobian_matches_autogen(ode_entry, rng) -> None:
     import symengine
 
-    from tsdynamics.engine.symbols import state_time_symbols
+    from tsdynamics._engine.symbols import state_time_symbols
 
     y_sym, t_sym = state_time_symbols()
 
@@ -169,7 +169,7 @@ def test_jacobian_matches_the_symbolic_jacobian(name: str) -> None:
     import symengine
 
     from tsdynamics import registry
-    from tsdynamics.engine.symbols import state_time_symbols
+    from tsdynamics._engine.symbols import state_time_symbols
 
     entry = next((e for e in registry.all_systems() if e.name == name), None)
     if entry is None:

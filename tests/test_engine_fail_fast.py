@@ -107,10 +107,10 @@ class TestABadStartIsRefusedQuickly:
         _, exc = _timed(
             lambda: ts.systems.LorenzBounded().run(final_time=100.0, dt=0.01, ic=_BAD_START)
         )
-        assert isinstance(exc, ts.StepBudgetError)
+        assert isinstance(exc, ts.errors.StepBudgetError)
         # `StepBudgetError` is a `ConvergenceError` is a `RuntimeError`: every
         # handler that caught this before still catches it.
-        assert isinstance(exc, ts.ConvergenceError)
+        assert isinstance(exc, ts.errors.ConvergenceError)
         assert isinstance(exc, RuntimeError)
         message = str(exc)
         assert "did not reach the final time" in message
@@ -202,8 +202,8 @@ class TestABlowUpStillSaysItDiverged:
 
     def test_a_polynomial_blow_up_is_reported_as_a_divergence(self):
         elapsed, exc = _timed(lambda: _Blowup().run(final_time=10.0, dt=0.01, ic=[1.0]))
-        assert isinstance(exc, ts.ConvergenceError)
-        assert not isinstance(exc, ts.StepBudgetError), (
+        assert isinstance(exc, ts.errors.ConvergenceError)
+        assert not isinstance(exc, ts.errors.StepBudgetError), (
             "x' = x² escapes to 1e150; calling that a stalled run would send the "
             "user to tune rtol when their trajectory left the building"
         )
@@ -212,6 +212,6 @@ class TestABlowUpStillSaysItDiverged:
 
     def test_an_exponential_blow_up_is_reported_as_a_divergence(self):
         _, exc = _timed(lambda: _LogBlowup().run(final_time=5.0, dt=0.01, ic=[0.0]))
-        assert isinstance(exc, ts.ConvergenceError)
-        assert not isinstance(exc, ts.StepBudgetError)
+        assert isinstance(exc, ts.errors.ConvergenceError)
+        assert not isinstance(exc, ts.errors.StepBudgetError)
         assert "diverged" in str(exc)

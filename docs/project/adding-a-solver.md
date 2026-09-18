@@ -144,7 +144,7 @@ The capability flags **must match the Rust `Caps`**:
 ```python
 # skip-doctest — a template: registering a placeholder kernel would put
 # "your_kernel" in the solver table for the rest of the session
-from tsdynamics.solvers import SolverSpec, SolverCaps, register
+from tsdynamics._solvers import SolverSpec, SolverCaps, register
 
 register(
     SolverSpec(

@@ -1,11 +1,11 @@
 """In-tree specs for the stochastic (SDE) solver family (stream E-SDE).
 
-One :class:`~tsdynamics.solvers.SolverSpec` per diagonal-Itô kernel in
+One :class:`~tsdynamics._solvers.SolverSpec` per diagonal-Itô kernel in
 ``crates/tsdyn-solvers/src/sde/`` — the Python mirror of the
 ``register_sde_kernel!`` registry.  Both are explicit; Milstein additionally
 reads the diffusion Jacobian ``∂g/∂u`` and so declares
-:attr:`~tsdynamics.solvers.SolverCaps.needs_jacobian` (which
-:func:`tsdynamics.solvers.build_kwargs` turns into ``with_jacobian=True`` on the
+:attr:`~tsdynamics._solvers.SolverCaps.needs_jacobian` (which
+:func:`tsdynamics._solvers.build_kwargs` turns into ``with_jacobian=True`` on the
 diffusion tape).
 
 These are the ``method=`` names
@@ -20,7 +20,7 @@ from __future__ import annotations
 from . import SolverCaps, SolverSpec, register
 
 #: A spec module exports **nothing**: importing it registers the diagonal-Itô SDE
-#: kernels into :data:`tsdynamics.solvers.SOLVERS` as a side effect, and the
+#: kernels into :data:`tsdynamics._solvers.SOLVERS` as a side effect, and the
 #: specs are read back through that registry (``ts.solvers.get(name)``), never
 #: from here.  Declared (rather than omitted) so ``dir()`` says so instead of
 #: re-advertising the parent's ``SolverSpec`` / ``SolverCaps`` / ``register``.

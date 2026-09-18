@@ -1,9 +1,9 @@
 """In-tree specs for the explicit Runge–Kutta solver family (stream E3).
 
-One :class:`~tsdynamics.solvers.SolverSpec` per Rust kernel in
+One :class:`~tsdynamics._solvers.SolverSpec` per Rust kernel in
 ``crates/tsdyn-solvers/src/explicit/`` — the Python-side *mirror* of the
 link-time registry that crate self-populates with ``register_solver!``.  A spec
-carries no implementation; its :attr:`~tsdynamics.solvers.SolverSpec.kernel`
+carries no implementation; its :attr:`~tsdynamics._solvers.SolverSpec.kernel`
 names the Rust kernel the engine dispatches to (here, the kernel name *is* the
 ``method=`` name).
 
@@ -18,7 +18,7 @@ from __future__ import annotations
 from . import SolverCaps, SolverSpec, register
 
 #: A spec module exports **nothing**: importing it registers the explicit Runge–Kutta
-#: kernels into :data:`tsdynamics.solvers.SOLVERS` as a side effect, and the
+#: kernels into :data:`tsdynamics._solvers.SOLVERS` as a side effect, and the
 #: specs are read back through that registry (``ts.solvers.get(name)``), never
 #: from here.  Declared (rather than omitted) so ``dir()`` says so instead of
 #: re-advertising the parent's ``SolverSpec`` / ``SolverCaps`` / ``register``.

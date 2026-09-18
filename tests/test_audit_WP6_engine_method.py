@@ -22,7 +22,7 @@ import pytest
 import symengine
 
 import tsdynamics as ts
-from tsdynamics.engine.compile import eval_tape_jac, lower_ode
+from tsdynamics._engine.compile import eval_tape_jac, lower_ode
 
 pytest.importorskip("tsdynamics._rust")
 

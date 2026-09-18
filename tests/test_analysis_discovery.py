@@ -300,7 +300,7 @@ class TestFind:
         assert "You have a SYSTEM" in out
 
     def test_a_subject_that_is_neither_says_so(self):
-        with pytest.raises(ts.InvalidInputError, match="takes a question or a subject"):
+        with pytest.raises(ts.errors.InvalidInputError, match="takes a question or a subject"):
             ts.analysis.find(object())
 
 
@@ -409,7 +409,7 @@ class TestTheRegistrationDoor:
         assert registry.analyses.entry("fixed_points").metadata["subjects"] == ("flow", "map")
 
     def test_an_unknown_area_is_refused_at_registration(self):
-        with pytest.raises(ts.InvalidParameterError, match="must be one of"):
+        with pytest.raises(ts.errors.InvalidParameterError, match="must be one of"):
             ts.analysis.register(subjects=("trajectory",), area="nonsense")(lambda d: None)
 
     def test_every_analysis_declares_its_subjects_and_area(self):
@@ -480,7 +480,7 @@ class TestTheSharedMessageBuilder:
 
     def test_the_free_function_door_names_what_it_needs_and_what_it_got(self):
         err = _discovery.wrong_subject("correlation_dimension", "Lorenz", "flow")
-        assert isinstance(err, ts.InvalidInputError)
+        assert isinstance(err, ts.errors.InvalidInputError)
         head = str(err).splitlines()[0]
         assert head.startswith("correlation_dimension() needs data, and got a system (Lorenz)")
 
@@ -534,21 +534,21 @@ class TestTheLiveDoorsUseTheBuilder:
     @pytest.mark.parametrize(("name", "cls", "held"), LIVE_DOORS)
     def test_a_live_door_raises_exactly_what_the_builder_renders(self, name, cls, held):
         subject = getattr(ts.systems, cls)()
-        with pytest.raises(ts.InvalidInputError) as excinfo:
+        with pytest.raises(ts.errors.InvalidInputError) as excinfo:
             getattr(ts.analysis, name)(subject)
         assert str(excinfo.value) == str(_discovery.wrong_subject(name, cls, held))
 
     @pytest.mark.parametrize("name", ["lyapunov_spectrum", "fixed_points", "periodic_orbits"])
     def test_a_system_first_door_reached_with_a_trajectory(self, name):
         traj = ts.systems.Lorenz().run(final_time=2.0, dt=0.1, ic=[1.0, 1.0, 1.0])
-        with pytest.raises(ts.InvalidInputError) as excinfo:
+        with pytest.raises(ts.errors.InvalidInputError) as excinfo:
             getattr(ts.analysis, name)(traj)
         assert str(excinfo.value) == str(_discovery.wrong_subject(name, "Trajectory", "data"))
 
     def test_a_result_first_door_never_claims_to_want_measured_data(self):
         """The named live bug, asserted on the shipped call rather than the builder."""
         for name in ("kaplan_yorke_dimension", "basin_entropy", "resilience", "wada_property"):
-            with pytest.raises(ts.InvalidInputError) as excinfo:
+            with pytest.raises(ts.errors.InvalidInputError) as excinfo:
                 getattr(ts.analysis, name)(ts.systems.Lorenz())
             text = str(excinfo.value)
             assert "needs a result from another analysis" in " ".join(text.split())
@@ -561,7 +561,7 @@ class TestTheLiveDoorsUseTheBuilder:
         ``lyapunov_from_data``; sending them to a listing instead is the one
         case where the shortest message is the least useful one.
         """
-        with pytest.raises(ts.InvalidInputError) as excinfo:
+        with pytest.raises(ts.errors.InvalidInputError) as excinfo:
             ts.analysis.lyapunov_spectrum(np.zeros(64))
         text = str(excinfo.value)
         assert "ts.analysis.lyapunov_from_data(traj)" in text

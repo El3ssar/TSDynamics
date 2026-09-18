@@ -34,10 +34,10 @@ import pytest
 _rust = pytest.importorskip("tsdynamics._rust")
 
 import tsdynamics as ts  # noqa: E402
-from tsdynamics.engine import run as engine_run  # noqa: E402
-from tsdynamics.engine.problem import build_problem  # noqa: E402
+from tsdynamics._engine import run as engine_run  # noqa: E402
+from tsdynamics._engine.problem import build_problem  # noqa: E402
+from tsdynamics._utils.grids import make_output_grid  # noqa: E402
 from tsdynamics.errors import ConvergenceError, InvalidParameterError  # noqa: E402
-from tsdynamics.utils.grids import make_output_grid  # noqa: E402
 
 # The tolerance pairs no adaptive controller can act on.
 BAD_TOLERANCES = [

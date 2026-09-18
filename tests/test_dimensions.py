@@ -765,7 +765,7 @@ class TestTheScalingWindowKeywordIsCalledFlatness:
         """These two forward ``**kwargs``, so the raw binder error would name a
         PRIVATE function (``_core_kwargs() got an unexpected keyword argument
         'tol'``) — not a line anybody can act on."""
-        with pytest.raises(ts.InvalidParameterError) as excinfo:
+        with pytest.raises(ts.errors.InvalidParameterError) as excinfo:
             getattr(ts.analysis, name)(np.zeros((50, 2)), tol=1.2)
         text = str(excinfo.value)
         assert "_core_kwargs" not in text

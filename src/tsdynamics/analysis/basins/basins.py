@@ -660,7 +660,7 @@ def basins(
     # and falling back on, the per-point Python loop.  ``grid_points`` order is the
     # classification order, so the shared labelling accumulates exactly as before.
     points = grid_points(region)
-    from ...engine.run import resolve_backend
+    from ..._engine.run import resolve_backend
 
     backend = resolve_backend(getattr(system, "_default_backend", "jit"))
     labels = classify_seeds(mapper, points, backend=backend, jit=backend == "jit")
@@ -785,7 +785,7 @@ def basin_fractions(
     # supported engine run, else the per-sample Python loop (the oracle).  This
     # also accelerates :func:`continuation`, which sweeps ``basin_fractions``.
     samples = np.array([draw() for _ in range(n)], dtype=np.float64).reshape(-1, cellgrid.dim)
-    from ...engine.run import resolve_backend
+    from ..._engine.run import resolve_backend
 
     backend = resolve_backend(getattr(system, "_default_backend", "jit"))
     labels = classify_seeds(mapper, samples, backend=backend, jit=backend == "jit")

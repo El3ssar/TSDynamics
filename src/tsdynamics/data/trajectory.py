@@ -27,17 +27,17 @@ from typing import TYPE_CHECKING, Any, Literal, NamedTuple, cast
 
 import numpy as np
 
+from tsdynamics._utils.escape import Unbounded, detect_unbounded
+from tsdynamics._utils.plot_namespace import plot_namespace as _plot_namespace
+from tsdynamics._utils.plot_namespace import plot_seam_error as _plot_seam_error
 from tsdynamics.errors import InvalidInputError, remedy
 from tsdynamics.errors import taught as _taught
-from tsdynamics.utils.escape import Unbounded, detect_unbounded
-from tsdynamics.utils.plot_namespace import plot_namespace as _plot_namespace
-from tsdynamics.utils.plot_namespace import plot_seam_error as _plot_seam_error
 
 #: What this module *defines*.  ``dir()`` here used to offer ``np``, ``cast``,
 #: ``dataclass``, ``NamedTuple``, ``Literal``, ``Callable``, ``Any``,
 #: ``TYPE_CHECKING`` and ``annotations`` alongside the four names that matter
 #: (``CONTRACT.md`` §11, T4).  ``Unbounded`` / ``detect_unbounded`` are imported
-#: from :mod:`tsdynamics.utils.escape` and listed there, not here.
+#: from :mod:`tsdynamics._utils.escape` and listed there, not here.
 __all__ = ["MinMax", "Neighbors", "Trajectory", "as_trajectory"]
 
 if TYPE_CHECKING:
@@ -578,7 +578,7 @@ class Trajectory:
         Unbounded or None
             ``None`` when the orbit is bounded.  Otherwise the record whose
             ``str`` is the warning line — see
-            :class:`tsdynamics.utils.escape.Unbounded`.
+            :class:`tsdynamics._utils.escape.Unbounded`.
 
         Examples
         --------

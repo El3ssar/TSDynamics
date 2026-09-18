@@ -3,7 +3,7 @@ Result-identity gate for the Rust basin-march kernel (stream ``perf/basin-march`
 
 The whole per-initial-condition recurrence FSM (stepping + cell-binning + the
 shared-label early-out) runs in one sequential Rust kernel
-(:func:`tsdynamics.engine.run.basin_march`, driven by
+(:func:`tsdynamics._engine.run.basin_march`, driven by
 :func:`tsdynamics.analysis.basins.attractors.classify_seeds`) on a supported run
 — an ODE flow or a map whose ``_step`` lowers, on the ``interp`` / ``jit``
 backend.  Because every cell check advances the *same* engine stepper the Python

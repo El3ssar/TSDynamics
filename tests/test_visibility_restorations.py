@@ -119,7 +119,7 @@ def test_from_dict_accepts_the_envelope_to_json_writes(traj):
         rebuilt = ts.viz.Plot.from_dict(payload)
         assert rebuilt.kind == p.kind
         assert len(rebuilt.layers) == len(p.layers)
-    with pytest.raises(ts.InvalidInputError, match="ts.viz.load"):
+    with pytest.raises(ts.errors.InvalidInputError, match="ts.viz.load"):
         ts.viz.Plot.from_dict({"not": "a plot"})
     plt.close("all")
 

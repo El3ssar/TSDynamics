@@ -16,7 +16,7 @@ _equations(y, t, **params)          your one symbolic method
         │  evaluated with SymEngine symbols
         ▼
 SymEngine expression list           dim expressions, params as symbols
-        │  tsdynamics.engine.compile.lower_ode (SSA lowering)
+        │  tsdynamics._engine.compile.lower_ode (SSA lowering)
         ▼
 IR tape                             a flat list of SSA instructions (+ the
         │                           analytic Jacobian when a stiff method needs it)

@@ -8,7 +8,7 @@
 //! `Evaluator` / `Solver` seams. This is the only crate that knows about Python;
 //! everything below it is pure Rust.
 //!
-//! # The exposed surface (the Python `tsdynamics.engine.run` seam)
+//! # The exposed surface (the Python `tsdynamics._engine.run` seam)
 //!
 //! The function names and positional argument order mirror exactly what
 //! `tsdynamics/engine/run.py` calls on the `tsdynamics._rust` module, so that
@@ -289,7 +289,7 @@ impl OwnedTape {
 /// Evaluate `du/dt = f(u, p, t)` (or the next state, for a map tape) once.
 ///
 /// Returns the `(dim,)` derivative. The strongest, divergence-free signal that a
-/// system lowers correctly — used by `tsdynamics.engine.run.eval_rhs`.
+/// system lowers correctly — used by `tsdynamics._engine.run.eval_rhs`.
 #[pyfunction]
 #[allow(clippy::too_many_arguments)]
 fn eval_rhs<'py>(
@@ -1490,10 +1490,10 @@ fn _version() -> &'static str {
 /// The compiled-evaluator (JIT) cache counters:
 /// `{"hits", "misses", "size", "maxsize"}`.
 ///
-/// The Rust-side twin of `tsdynamics.engine.compile.tape_cache_stats()`, and for
+/// The Rust-side twin of `tsdynamics._engine.compile.tape_cache_stats()`, and for
 /// the same reason: without it a test cannot tell "the second `backend="jit"`
 /// call was fast" from "the second call re-compiled and the machine was busy".
-/// Reached from Python as `tsdynamics.engine.run.jit_cache_stats()`.
+/// Reached from Python as `tsdynamics._engine.run.jit_cache_stats()`.
 #[pyfunction]
 fn jit_cache_stats(py: Python<'_>) -> PyResult<Py<pyo3::types::PyDict>> {
     let s = tsdyn_jit::cache_stats();
@@ -1507,7 +1507,7 @@ fn jit_cache_stats(py: Python<'_>) -> PyResult<Py<pyo3::types::PyDict>> {
 
 /// Drop every cached compiled evaluator and reset the counters.
 ///
-/// Mirrors `tsdynamics.engine.compile.clear_tape_cache()`. Evaluators a running
+/// Mirrors `tsdynamics._engine.compile.clear_tape_cache()`. Evaluators a running
 /// call still holds are kept alive by their `Arc`, so this is safe at any time.
 #[pyfunction]
 fn clear_jit_cache() {

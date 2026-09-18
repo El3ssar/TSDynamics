@@ -18,7 +18,7 @@ by the four self-registering :mod:`tsdynamics.viz` backends (matplotlib / Plotly
 JSON / three.js) when ``tsdynamics.viz`` is first imported — it is created empty
 here and stays empty until then, since ``import tsdynamics`` pulls in no plotting
 machinery.  Solvers are **not** registered here: they live in the richer
-:mod:`tsdynamics.solvers` registry (a ``name → SolverSpec`` table carrying
+:mod:`tsdynamics._solvers` registry (a ``name → SolverSpec`` table carrying
 capability flags, populated by that package's directory scan + the
 :mod:`~tsdynamics.plugins` entry-point loader).
 
@@ -337,7 +337,7 @@ def categories(family: str | None = None, *, builtin: bool | None = True) -> dic
 # lives elsewhere and merely calls ``register``.
 #
 # Solvers do *not* use this generic container: they have their own richer
-# ``name → SolverSpec`` registry in :mod:`tsdynamics.solvers` (capability flags,
+# ``name → SolverSpec`` registry in :mod:`tsdynamics._solvers` (capability flags,
 # kernel names, directory + entry-point discovery).  Keep solver registration
 # there — do not re-add a ``solvers`` registry here.
 # ---------------------------------------------------------------------------

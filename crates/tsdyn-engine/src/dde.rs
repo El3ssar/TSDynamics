@@ -65,7 +65,7 @@ use crate::integrate::{IntegrateConfig, IntegrateError};
 ///
 /// Slot `k` occupies extended-input index `dim + k` and is filled each evaluation
 /// with [`component`](DelaySlot::component) of the history at time `t − `[`delay`](DelaySlot::delay).
-/// Mirrors `tsdynamics.engine.compile.DelaySlot` (Python side of the contract).
+/// Mirrors `tsdynamics._engine.compile.DelaySlot` (Python side of the contract).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DelaySlot {
     /// Which true-state component (`0 ≤ component < dim`) is delayed.

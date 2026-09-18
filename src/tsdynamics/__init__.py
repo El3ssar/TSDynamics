@@ -44,8 +44,8 @@ Design notes — the curated top level, and why a name is not here
 Everything below this line is the *rationale* for the namespace.  It is worth
 reading before you add a name to it, and not otherwise.
 
-The seventeen names
--------------------
+The eleven names
+----------------
 ``tsdynamics.<TAB>`` shows **only what you type**:
 
 ============================== =================================================
@@ -57,10 +57,6 @@ one received type              :class:`Trajectory` — you annotate it, you
 one plotting verb              :func:`plot`
 three registries               :mod:`~tsdynamics.systems`
                                :mod:`~tsdynamics.analysis` :mod:`~tsdynamics.viz`
-six names for ``except``       :class:`TSDynamicsError` :class:`ConvergenceError`
-                               :class:`StepBudgetError` :class:`BackendError`
-                               :class:`InvalidParameterError`
-                               :class:`InvalidInputError`
 ``__version__``                the package version
 ============================== =================================================
 
@@ -117,8 +113,8 @@ Still reachable, off every listing
 ----------------------------------
 :mod:`~tsdynamics.errors` (the module — the Rust bridge imports it by name, so it
 is an ABI, not a choice), :mod:`~tsdynamics.data`, :mod:`~tsdynamics.derived`,
-:mod:`~tsdynamics.engine`, :mod:`~tsdynamics.families`, :mod:`~tsdynamics.plugins`,
-:mod:`~tsdynamics.registry`, :mod:`~tsdynamics.solvers`, :mod:`~tsdynamics.utils`.
+:mod:`~tsdynamics._engine`, :mod:`~tsdynamics.families`, :mod:`~tsdynamics.plugins`,
+:mod:`~tsdynamics.registry`, :mod:`~tsdynamics._solvers`, :mod:`~tsdynamics._utils`.
 
 :mod:`~tsdynamics.viz` and :func:`plot` resolve **lazily**, so a plain
 ``import tsdynamics`` pulls in no plotting library.
@@ -140,7 +136,7 @@ from . import (
 )
 
 # Machinery submodules: bound eagerly so ``ts.engine`` / ``ts.registry`` resolve
-# and ``from tsdynamics.engine import run`` imports, but kept OFF ``__all__`` /
+# and ``from tsdynamics._engine import run`` imports, but kept OFF ``__all__`` /
 # ``dir()`` — see ``_INTERNAL_SUBMODULES``.  The redundant ``as`` form marks them
 # as deliberate re-exports rather than unused imports.
 from . import (
@@ -148,9 +144,6 @@ from . import (
 )
 from . import (
     derived as derived,
-)
-from . import (
-    engine as engine,
 )
 from . import (
     errors as errors,
@@ -165,13 +158,7 @@ from . import (
     registry as registry,
 )
 from . import (
-    solvers as solvers,
-)
-from . import (
     systems as systems,
-)
-from . import (
-    utils as utils,
 )
 from ._redirects import (
     REMOVED_IN_V6 as _REMOVED_IN_V6,
@@ -183,19 +170,14 @@ from ._redirects import (
     SCOPE_SURGERY_REMEDY as _SCOPE_SURGERY_REMEDY,
 )
 
-# The six names you type inside ``except``.  They are promoted from
-# ``ts.errors.<Name>`` because catching is ordinary work and the module dot was
-# pure toll; ``ts.errors`` itself stays bound forever (the Rust bridge imports
-# the path by name at ``crates/tsdyn-core/src/lib.rs``, so it is an ABI).
-from .errors import (
-    BackendError,
-    ConvergenceError,
-    InvalidInputError,
-    InvalidParameterError,
-    StepBudgetError,
-    TSDynamicsError,
-)
-
+# The typed exceptions are NOT promoted.  The hierarchy is purely additive —
+# ``InvalidParameterError`` IS a ``ValueError``, ``ConvergenceError`` IS a
+# ``RuntimeError``, ``InvalidInputError`` IS a ``TypeError`` — so ``except
+# ValueError`` already catches a bad ``dt`` and no user needs this library's
+# spelling to write working code.  The names are a *refinement* you reach for
+# when you want to tell one failure from another, and a refinement lives at its
+# own address: ``ts.errors.<Name>``.  ``ts.errors`` stays bound forever (the Rust
+# bridge imports the path by name at ``crates/tsdyn-core/src/lib.rs``, an ABI).
 # Not exported: it is the exception this module's ``__getattr__`` RAISES, never
 # one a user types.  ``ts.errors.MovedInV6`` is its address.
 from .errors import (
@@ -219,16 +201,10 @@ __version__ = "5.4.0"
 #: append inside the same group).  The *reasons* live in the module docstring,
 #: where they can be read as prose; this list is data.
 __all__ = [
-    "BackendError",
     "ContinuousSystem",
-    "ConvergenceError",
     "DelaySystem",
     "DiscreteMap",
-    "InvalidInputError",
-    "InvalidParameterError",
-    "StepBudgetError",
     "StochasticSystem",
-    "TSDynamicsError",
     "Trajectory",
     "WrappedSystem",
     "__version__",
@@ -240,7 +216,7 @@ __all__ = [
 
 #: Submodules bound by an ordinary ``import`` and kept **off** ``__all__`` /
 #: ``dir()``.  They stay reachable forever — ``ts.engine`` resolves and
-#: ``from tsdynamics.engine import run`` imports — they simply do not earn a tab
+#: ``from tsdynamics._engine import run`` imports — they simply do not earn a tab
 #: slot, and the reason is C1: **nothing in them is required to make a call.**
 #:
 #: ``errors`` is here for a second, harder reason: the Rust bridge does
@@ -254,13 +230,10 @@ __all__ = [
 _INTERNAL_SUBMODULES = (
     "data",
     "derived",
-    "engine",
     "errors",
     "families",
     "plugins",
     "registry",
-    "solvers",
-    "utils",
 )
 
 #: The public homes a curated top level sends people to, searched **in this
@@ -274,6 +247,11 @@ _PUBLIC_HOMES = (
     "analysis.results",
     "data",
     "derived",
+    # The typed exceptions.  They left ``__all__`` in v6.1 (the hierarchy is
+    # additive, so ``except ValueError`` already works and nobody NEEDS this
+    # library's spelling), which makes a guess at ``ts.ConvergenceError`` the only
+    # way a user learns the new address — so ``errors`` must be searched here.
+    "errors",
     # The four names a user reaches for when they WRITE against the library
     # rather than call it — ``System`` (the runtime Protocol you annotate and
     # ``isinstance``-check), ``SystemBase`` (the class you subclass to add a

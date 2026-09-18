@@ -1291,7 +1291,7 @@ def ftle_field(
     backward : bool, optional
         Integrate backwards in time (attracting structures).  Default ``False``.
     **integrate_kwargs
-        Forwarded to :func:`tsdynamics.engine.run.ensemble` (``method``,
+        Forwarded to :func:`tsdynamics._engine.run.ensemble` (``method``,
         ``rtol``, ``dt``, ``backend``, ...).
 
     Returns
@@ -1309,7 +1309,7 @@ def ftle_field(
     measured in the plane it was drawn on.  That is the standard 2-D FTLE
     section and it is what the ridges of a 3-D flow's section mean.
     """
-    from tsdynamics.engine import run as _run
+    from tsdynamics._engine import run as _run
 
     _require_flow(system, "ftle_field")
     xlim, ylim, grid = window_from_region(region, plane, system, xlim, ylim, grid)
@@ -1366,7 +1366,7 @@ def _backward_final(
     defined — on the flow with :math:`f \\to -f` — and the reversal is done where
     the flow is actually described, in the **symbolic** right-hand side: the
     system's equations are negated and lowered to their own engine tape via the
-    public :func:`~tsdynamics.engine.compile.lower_expressions`, exactly as the
+    public :func:`~tsdynamics._engine.compile.lower_expressions`, exactly as the
     variational (Lyapunov) lowering does.  The reversed tape is then handed to
     the ordinary ensemble path, so backward FTLE costs the same as forward FTLE
     and runs on the same compiled engine.
@@ -1375,14 +1375,14 @@ def _backward_final(
     does not work: family detection walks the MRO, so a proxy is not a
     ``ContinuousSystem`` and the problem builder refuses it.
     """
-    from tsdynamics.engine import run as _run
+    from tsdynamics._engine import run as _run
 
     problem = _reversed_problem(system)
     return np.asarray(_run.ensemble(problem, ics, final_time=horizon, **kwargs), dtype=float)
 
 
 def _reversed_problem(system: Any) -> Any:
-    """Build an :class:`~tsdynamics.engine.problem.ODEProblem` for ``-f``.
+    """Build an :class:`~tsdynamics._engine.problem.ODEProblem` for ``-f``.
 
     Lowered ``jacobian=True`` so a flow whose ``_default_method`` is an implicit
     kernel still integrates: a pre-built problem is never re-lowered by
@@ -1390,9 +1390,9 @@ def _reversed_problem(system: Any) -> Any:
     """
     import symengine
 
-    from tsdynamics.engine.compile import lower_expressions
-    from tsdynamics.engine.problem import ODEProblem
-    from tsdynamics.engine.symbols import state_time_symbols
+    from tsdynamics._engine.compile import lower_expressions
+    from tsdynamics._engine.problem import ODEProblem
+    from tsdynamics._engine.symbols import state_time_symbols
 
     y, t_sym = state_time_symbols()
     dim = int(system.dim)
@@ -1452,7 +1452,7 @@ def _march_first_time(
     first-passage time, not a root-found one, and the transforms record the
     chunk size in ``meta`` so the quantisation is visible.
     """
-    from tsdynamics.engine import run as _run
+    from tsdynamics._engine import run as _run
 
     n = ics.shape[0]
     out = np.full(n, np.nan, dtype=float)
@@ -1533,7 +1533,7 @@ def escape_time_field(
         (default) is *left the drawn window*, in-plane — the picture the window
         is already showing.
     **integrate_kwargs
-        Forwarded to :func:`tsdynamics.engine.run.ensemble`.
+        Forwarded to :func:`tsdynamics._engine.run.ensemble`.
 
     Returns
     -------
@@ -1653,7 +1653,7 @@ def transient_time_field(
         ``(n,)`` boolean — a ball around a known attractor, a section crossing, a
         sign condition.  Overrides ``tol``.
     **integrate_kwargs
-        Forwarded to :func:`tsdynamics.engine.run.ensemble`.
+        Forwarded to :func:`tsdynamics._engine.run.ensemble`.
 
     Returns
     -------

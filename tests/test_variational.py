@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 
 import tsdynamics as ts
+from tsdynamics._engine.compile import clear_tape_cache, tape_cache_stats
 from tsdynamics.derived._variational import (
     build_variational_tape,
     build_variational_tape_cached,
@@ -18,7 +19,6 @@ from tsdynamics.derived._variational import (
     split_extended,
 )
 from tsdynamics.derived.tangent import TangentSystem
-from tsdynamics.engine.compile import clear_tape_cache, tape_cache_stats
 from tsdynamics.families import ContinuousSystem
 
 
@@ -56,7 +56,7 @@ def test_embed_split_roundtrip() -> None:
 
 
 def test_variational_tape_shape_and_rhs() -> None:
-    from tsdynamics.engine.compile import eval_tape
+    from tsdynamics._engine.compile import eval_tape
 
     s = LinOsc()
     k = 2

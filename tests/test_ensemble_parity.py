@@ -1,7 +1,7 @@
 """Pin the engine's *parallel == serial* ensemble contract for ODEs and maps.
 
 The Rust engine fans a batch of initial conditions out over a rayon thread pool
-and returns one final-state row per IC (:func:`tsdynamics.engine.run.ensemble`,
+and returns one final-state row per IC (:func:`tsdynamics._engine.run.ensemble`,
 ``(n, dim)``).  The engine's promise — stated in ``CLAUDE.md`` and in the kernel
 docstrings — is that this batched run is *deterministic and per-row*: a batch
 row is the same trajectory the single-IC :meth:`integrate` / :meth:`iterate`
@@ -40,7 +40,7 @@ import numpy as np
 import pytest
 
 import tsdynamics as ts
-from tsdynamics.engine import run
+from tsdynamics._engine import run
 
 pytestmark = pytest.mark.engine
 

@@ -8,10 +8,10 @@ from typing import TYPE_CHECKING, Any, cast
 import numpy as np
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from tsdynamics.engine.run import Event
+    from tsdynamics._engine.run import Event
 
-from tsdynamics.engine.events import _DIRECTION_WORDS  # noqa: F401  # re-export for back-compat
-from tsdynamics.engine.events import _normalize_event_direction as _normalize_direction
+from tsdynamics._engine.events import _DIRECTION_WORDS  # noqa: F401  # re-export for back-compat
+from tsdynamics._engine.events import _normalize_event_direction as _normalize_direction
 from tsdynamics.errors import ConvergenceError, InvalidParameterError, invalid_value, remedy
 from tsdynamics.families import Trajectory
 from tsdynamics.families._hidden import hide
@@ -27,7 +27,7 @@ __all__ = ["PoincareMap", "PoincareSection", "auto_plane"]
 # ---------------------------------------------------------------------------
 # The direction vocabulary (``_DIRECTION_WORDS``) and its coercion helper
 # (imported above as ``_normalize_direction``) are the single canonical pair in
-# :mod:`tsdynamics.engine.events` — the engine layer sits *below* ``derived`` in
+# :mod:`tsdynamics._engine.events` — the engine layer sits *below* ``derived`` in
 # the import graph, so importing them here introduces no cycle.  ``_DIRECTION_WORDS``
 # is re-imported (rather than only used) to keep the historical
 # ``poincare._DIRECTION_WORDS`` path resolvable.
@@ -835,7 +835,7 @@ class PoincareMap(DerivedSystem):
 
         A Poincaré section *is* an event: the crossing of ``g(u) = normal·u −
         offset`` in the map's :attr:`direction`.  This exposes it as an
-        :class:`~tsdynamics.engine.run.Event` so the general ``events=`` API
+        :class:`~tsdynamics._engine.run.Event` so the general ``events=`` API
         reproduces the section — ``PoincareMap`` is one consumer of the same
         wired engine seam (stream WS-EVENTSAPI / WS-CROSSKERNEL).  Driven at the
         same fixed-step march (``method="rk4"`` at this map's ``dt``) from the
@@ -858,7 +858,7 @@ class PoincareMap(DerivedSystem):
         ``g(y, t)`` callable, which is why the type is not exported.  This is the
         one place the library hands one back.
         """
-        from tsdynamics.engine.run import Event
+        from tsdynamics._engine.run import Event
 
         return [Event((self._normal.copy(), self._offset), direction=self.direction)]
 
@@ -999,7 +999,7 @@ class PoincareMap(DerivedSystem):
         self.reinit(ic)
 
         if _crossings.engine_eligible(self.system, backend):
-            from tsdynamics.engine.run import EngineNotAvailableError
+            from tsdynamics._engine.run import EngineNotAvailableError
 
             try:
                 times, points = self._engine_trajectory(steps, transient, backend)

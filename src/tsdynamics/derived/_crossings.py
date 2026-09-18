@@ -1,7 +1,7 @@
 """Engine-backed Poincaré crossing detection (stream WS-CROSSKERNEL).
 
 The Rust event engine (:func:`tsdyn_engine::integrate_events`, wired through
-:func:`tsdynamics.engine.run.crossings`) marches a whole attractor and refines
+:func:`tsdynamics._engine.run.crossings`) marches a whole attractor and refines
 its section crossings in **one FFI call per span**, replacing the Python
 ``PoincareMap`` loop that drove the flow one ``dt`` at a time through a full
 ``integrate()`` round-trip (the named "Poincaré sections are slow" culprit).
@@ -52,8 +52,8 @@ from typing import Any
 
 import numpy as np
 
+from tsdynamics._utils.tolerances import DEFAULT_ATOL, DEFAULT_RTOL
 from tsdynamics.errors import ConvergenceError
-from tsdynamics.utils.tolerances import DEFAULT_ATOL, DEFAULT_RTOL
 
 #: What this module *defines* — ``np``, ``Any`` and the two tolerance constants
 #: it imports are not part of its surface (``CONTRACT.md`` §11, T4).
@@ -72,12 +72,12 @@ def plane_event_tape(dim: int, normal: np.ndarray, offset: float) -> Any:
     """Lower the section plane ``g(u) = normal · u − offset`` to a one-output tape.
 
     The event function is pure geometry (no parameters, no time), so it lowers to a
-    single-output :class:`~tsdynamics.engine.compile.Tape` over the ``dim`` state
-    inputs — exactly the channel :func:`tsdynamics.engine.run.crossings` watches.
+    single-output :class:`~tsdynamics._engine.compile.Tape` over the ``dim`` state
+    inputs — exactly the channel :func:`tsdynamics._engine.run.crossings` watches.
     """
     import symengine
 
-    from tsdynamics.engine.compile import lower_expressions
+    from tsdynamics._engine.compile import lower_expressions
 
     syms = [symengine.Symbol(f"u{i}") for i in range(dim)]
     expr: Any = symengine.sympify(0)
@@ -105,7 +105,7 @@ def engine_eligible(system: Any, backend: str | None) -> bool:
         return False
     if backend is not None and str(backend).lower() == "reference":
         return False
-    from tsdynamics import solvers
+    from tsdynamics import _solvers as solvers
 
     try:
         name = solvers.resolve(getattr(system, "_default_method", "rk45")).name
@@ -151,8 +151,8 @@ def section_crossings(
     attractor or the direction is wrong) or the march makes no progress —
     matching the Python loop's contract.
     """
-    from tsdynamics.engine import run
-    from tsdynamics.engine.problem import ODEProblem, ode_problem
+    from tsdynamics._engine import run
+    from tsdynamics._engine.problem import ODEProblem, ode_problem
 
     dim = int(system.dim)
     need = int(n_crossings) + int(transient)

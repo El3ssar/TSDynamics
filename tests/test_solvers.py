@@ -2,7 +2,7 @@
 
 Covers the C-SOLV acceptance:
 
-* the in-tree :class:`~tsdynamics.solvers.SolverSpec`s are registered and mirror
+* the in-tree :class:`~tsdynamics._solvers.SolverSpec`s are registered and mirror
   the Rust ``register_solver!`` / ``register_sde_kernel!`` kernels (a parity test
   reads the crate source so the mirror cannot silently drift);
 * ``method=`` **resolves by name/caps** (aliases, case, family filtering) and an
@@ -24,8 +24,8 @@ from pathlib import Path
 import pytest
 
 import tsdynamics as ts
-from tsdynamics import solvers
-from tsdynamics.solvers import SolverCaps, SolverSpec
+from tsdynamics import _solvers as solvers
+from tsdynamics._solvers import SolverCaps, SolverSpec
 
 # The kernels C-SOLV mirrors, with the caps facts the resolver keys on.
 # (name, kind, adaptive, needs_jacobian, family)

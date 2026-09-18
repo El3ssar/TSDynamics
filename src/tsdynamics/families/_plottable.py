@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from tsdynamics.utils.plot_namespace import plot_namespace as _plot_namespace
+from tsdynamics._utils.plot_namespace import plot_namespace as _plot_namespace
 
 if TYPE_CHECKING:
     from tsdynamics.data import Trajectory

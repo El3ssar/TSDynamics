@@ -16,7 +16,7 @@ being the symbolic variational dynamics
     δy'(t) = Σ_j (∂f/∂y_j) · δy_j(t)  +  Σ_s (∂f/∂y_{c(s)}(t-τ_s)) · δy_{c(s)}(t-τ_s)
 
 (a per-current-state Jacobian plus one Jacobian per delay slot) — and integrates
-it on the existing Rust DDE engine (:func:`tsdynamics.engine.run.integrate`,
+it on the existing Rust DDE engine (:func:`tsdynamics._engine.run.integrate`,
 ``backend="interp"/"jit"``).  The variational equations are ordinary delayed RHS
 expressions, so the **frozen IR is untouched** — the delayed deviations are just
 extra delay slots, exactly like the base system's delays.
@@ -51,8 +51,8 @@ from typing import Any
 
 import numpy as np
 
+from tsdynamics._utils.tolerances import DDE_LYAPUNOV_ATOL, DDE_LYAPUNOV_RTOL
 from tsdynamics.errors import ConvergenceError, InvalidParameterError, invalid_value
-from tsdynamics.utils.tolerances import DDE_LYAPUNOV_ATOL, DDE_LYAPUNOV_RTOL
 
 __all__ = ["dde_lyapunov_spectrum"]
 
@@ -80,19 +80,19 @@ def _build_extended_tape(system: Any, k: int) -> tuple[Any, list[Any], int]:
     ``dim·(k+1)`` state inputs plus the delay slots: the base system's slots
     (reused by the deviation equations) followed by one delayed-deviation slot
     per ``(deviation, base-slot)`` pair.  Parameters are folded to constants,
-    matching :func:`tsdynamics.engine.compile.lower_dde`.
+    matching :func:`tsdynamics._engine.compile.lower_dde`.
     """
     from collections.abc import Callable
 
     import symengine
 
-    from tsdynamics.engine.compile import (
+    from tsdynamics._engine.compile import (
         DelaySlot,
         _is_past_y,
         _past_y_component_and_delay,
         lower_expressions,
     )
-    from tsdynamics.engine.symbols import state_time_symbols
+    from tsdynamics._engine.symbols import state_time_symbols
     from tsdynamics.families.continuous import (
         _resolve_derivative_nodes as _resolve_derivative_nodes_untyped,
     )
@@ -288,8 +288,8 @@ def dde_lyapunov_spectrum(
             Default moved from ``"interp"`` to ``"jit"``.
     rtol, atol : float
         Engine integration tolerances.  Default
-        :data:`~tsdynamics.utils.tolerances.DDE_LYAPUNOV_RTOL` /
-        :data:`~tsdynamics.utils.tolerances.DDE_LYAPUNOV_ATOL`.
+        :data:`~tsdynamics._utils.tolerances.DDE_LYAPUNOV_RTOL` /
+        :data:`~tsdynamics._utils.tolerances.DDE_LYAPUNOV_ATOL`.
 
     Returns
     -------
@@ -298,8 +298,8 @@ def dde_lyapunov_spectrum(
     """
     from scipy.interpolate import CubicSpline
 
-    from tsdynamics.engine.problem import DDEProblem
-    from tsdynamics.engine.run import integrate, resolve_backend
+    from tsdynamics._engine.problem import DDEProblem
+    from tsdynamics._engine.run import integrate, resolve_backend
 
     # Bound `k` BEFORE `_build_extended_tape`, which is where an absurd value
     # is spent: it loops symbolically over `k` building the extended DDE, so

@@ -1,7 +1,7 @@
 """Per-family runners + the low-level engine FFI shims.
 
-Split out of :mod:`tsdynamics.engine.run` (the run-split refactor); every name
-here stays reachable as ``tsdynamics.engine.run.<name>`` via re-export, so this is
+Split out of :mod:`tsdynamics._engine.run` (the run-split refactor); every name
+here stays reachable as ``tsdynamics._engine.run.<name>`` via re-export, so this is
 a pure move.
 
 This module owns:
@@ -16,7 +16,7 @@ This module owns:
   compiled extension exposes.
 
 Run-side helpers (``_engine``/``_name``/``_primary_tape``/
-``EngineNotAvailableError``) are late-imported from :mod:`tsdynamics.engine.run`
+``EngineNotAvailableError``) are late-imported from :mod:`tsdynamics._engine.run`
 inside the functions that need them, so importing this module does not create an
 import cycle.
 """
@@ -203,7 +203,7 @@ def _run_dde(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Integrate a DDE on the Rust method-of-steps engine (stream E-DDE).
 
-    The delay system lowers (via :func:`tsdynamics.engine.compile.lower_dde`) to a
+    The delay system lowers (via :func:`tsdynamics._engine.compile.lower_dde`) to a
     tape over ``dim + n_slots`` inputs whose extra inputs are the delay slots; the
     engine fills those from a history buffer it interpolates with cubic Hermite,
     reusing the explicit solver kernels for each step.  Only constant delays

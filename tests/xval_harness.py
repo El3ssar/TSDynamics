@@ -118,8 +118,8 @@ class RustEngine:
     """The shipping Rust engine (:mod:`tsdynamics._rust`).
 
     Drives the engine through its public Python seam —
-    :func:`tsdynamics.engine.run.integrate` and
-    :func:`tsdynamics.engine.run.eval_rhs` — exactly the path the family base
+    :func:`tsdynamics._engine.run.integrate` and
+    :func:`tsdynamics._engine.run.eval_rhs` — exactly the path the family base
     classes use.  It is the backend the catalogue gate (stream I-XVAL) sweeps over
     the whole registry to keep the engine honest against the symbolic truth.
 
@@ -132,13 +132,13 @@ class RustEngine:
         sweep can run the same comparison through either and an ``interp``-vs-
         ``jit`` cross-check pins that contract.
     method, rtol, atol
-        Forwarded to :func:`~tsdynamics.engine.run.integrate`.  Defaults are a
+        Forwarded to :func:`~tsdynamics._engine.run.integrate`.  Defaults are a
         tight adaptive ``RK45``.
 
     Notes
     -----
     :meth:`integrate_dense` rides ``run.integrate``, which samples on the uniform
-    grid :func:`tsdynamics.utils.grids.make_output_grid` builds from
+    grid :func:`tsdynamics._utils.grids.make_output_grid` builds from
     ``(t0, final_time, dt)``.  That grid reproduces a uniform ``t_eval`` exactly,
     so the harness contract ("sample at ``t_eval``") is met for uniform grids
     (the only kind the sweeps use); a non-uniform ``t_eval`` raises rather than
@@ -169,7 +169,7 @@ class RustEngine:
 
     def integrate_dense(self, system: Any, ic: Any, t_eval: np.ndarray) -> np.ndarray:
         """Integrate via the Rust engine and sample at a uniform ``t_eval``."""
-        from tsdynamics.engine import run
+        from tsdynamics._engine import run
 
         t_eval = np.ascontiguousarray(t_eval, dtype=np.float64)
         ic = np.asarray(system.resolve_ic(ic), dtype=np.float64).ravel()
@@ -207,7 +207,7 @@ class RustEngine:
 
     def eval_rhs(self, system: Any, u: Any, t: float = 0.0) -> np.ndarray:
         """Evaluate ``du/dt`` once on the engine (used by :func:`crossvalidate_rhs`)."""
-        from tsdynamics.engine import run
+        from tsdynamics._engine import run
 
         return np.asarray(run.eval_rhs(system, u, t, backend=self.backend), dtype=np.float64)
 

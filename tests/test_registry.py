@@ -303,19 +303,19 @@ def test_sde_samples_complete() -> None:
 
 
 def test_solver_registry_is_not_duplicated_in_registry_module() -> None:
-    """Solvers register in ``tsdynamics.solvers``, never in ``registry``.
+    """Solvers register in ``tsdynamics._solvers``, never in ``registry``.
 
     ``registry`` keeps only the *reserved* generic
     ``analyses``/``renderers``/``plot_transforms`` seams; the solver registry is
-    the richer ``SolverSpec`` table in ``tsdynamics.solvers``. A stray
+    the richer ``SolverSpec`` table in ``tsdynamics._solvers``. A stray
     ``registry.solvers`` would resurrect the two-registries-for-one-thing split
     this guard exists to prevent.
     """
-    from tsdynamics import solvers
+    from tsdynamics import _solvers as solvers
     from tsdynamics.registry import Registry
 
     assert not hasattr(registry, "solvers"), (
-        "registry.solvers is back — solvers belong in tsdynamics.solvers"
+        "registry.solvers is back — solvers belong in tsdynamics._solvers"
     )
     assert isinstance(registry.analyses, Registry)
     assert isinstance(registry.renderers, Registry)
@@ -357,7 +357,7 @@ def test_plot_transform_registry_is_created_empty_and_filled_by_viz() -> None:
 #: debug, for as long as the group has existed.
 _GROUP_CONSUMERS = {
     "SYSTEMS_GROUP": "tsdynamics.systems",
-    "SOLVERS_GROUP": "tsdynamics.solvers",
+    "SOLVERS_GROUP": "tsdynamics._solvers",
     "ANALYSES_GROUP": "tsdynamics.analysis",
     "RENDERERS_GROUP": "tsdynamics.viz",
     "PLOT_TRANSFORMS_GROUP": "tsdynamics.viz",

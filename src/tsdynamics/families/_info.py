@@ -208,7 +208,7 @@ def _render_equations(system: Any, *, limit: int = 12) -> list[str]:
                 return []
             import symengine as se
 
-            from tsdynamics.engine.symbols import state_time_symbols
+            from tsdynamics._engine.symbols import state_time_symbols
 
             u, t = state_time_symbols()
             # ODE / SDE kernels take their parameters as KEYWORDS (the catalogue
@@ -319,7 +319,7 @@ class SystemInfo:
                 continue  # a fixed-step Ito scheme has no embedded error estimate
             value = getattr(system, attr, None)
             if value is None and key in ("rtol", "atol"):
-                from tsdynamics.utils.tolerances import DEFAULT_ATOL, DEFAULT_RTOL
+                from tsdynamics._utils.tolerances import DEFAULT_ATOL, DEFAULT_RTOL
 
                 value = DEFAULT_RTOL if key == "rtol" else DEFAULT_ATOL
             if value is not None:

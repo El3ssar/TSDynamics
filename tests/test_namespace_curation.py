@@ -69,13 +69,6 @@ _CURATED_TOP_LEVEL = {
     "systems",
     "analysis",
     "viz",
-    # the six names you type inside ``except``
-    "TSDynamicsError",
-    "ConvergenceError",
-    "StepBudgetError",
-    "BackendError",
-    "InvalidParameterError",
-    "InvalidInputError",
     "__version__",
 }
 
@@ -83,7 +76,7 @@ _CURATED_TOP_LEVEL = {
 def test_top_level_all_is_curated():
     """``ts.__all__`` is exactly the curated headline set — no flat dump."""
     assert set(ts.__all__) == _CURATED_TOP_LEVEL
-    assert len(ts.__all__) == 17
+    assert len(ts.__all__) == 11
     # ``__dir__`` mirrors ``__all__`` (curated autocomplete surface).
     assert dir(ts) == sorted(ts.__all__)
 
@@ -99,8 +92,27 @@ def test_top_level_all_is_sorted_one_name_per_line():
     assert ts.__all__ == sorted(ts.__all__), "tsdynamics.__all__ is not sorted"
 
 
-def test_the_six_except_names_are_the_error_classes_themselves():
-    """Catching is ordinary work, so the classes are on the top level, not a dot down."""
+def test_the_typed_errors_live_at_their_own_address_because_you_never_need_them():
+    """The exceptions are NOT on the top level, and the hierarchy is why.
+
+    They were promoted in v6.0 on the argument that catching is ordinary work.
+    The measurement says otherwise: every one subclasses the builtin a caller
+    would already reach for, so ``except ValueError`` catches a bad ``dt``
+    today and NOTHING a user writes requires this library's spelling.  The
+    names are a *refinement* — for telling one failure from another — and a
+    refinement lives one dot down.
+
+    Both halves are asserted, because only together do they make the demotion
+    safe: the additive hierarchy (you can work without the names) and the
+    redirect (a guess teaches the address).
+    """
+    # It is additive, so plain Python catches everything this library raises.
+    assert issubclass(ts.errors.InvalidParameterError, ValueError)
+    assert issubclass(ts.errors.InvalidInputError, TypeError)
+    assert issubclass(ts.errors.ConvergenceError, RuntimeError)
+    assert issubclass(ts.errors.BackendError, RuntimeError)
+    assert issubclass(ts.errors.StepBudgetError, ts.errors.ConvergenceError)
+
     for name in (
         "TSDynamicsError",
         "ConvergenceError",
@@ -109,10 +121,13 @@ def test_the_six_except_names_are_the_error_classes_themselves():
         "InvalidParameterError",
         "InvalidInputError",
     ):
-        assert getattr(ts, name) is getattr(ts.errors, name)
-    assert issubclass(ts.InvalidParameterError, ValueError)
-    assert issubclass(ts.InvalidInputError, TypeError)
-    assert issubclass(ts.StepBudgetError, ts.ConvergenceError)
+        assert name not in ts.__all__
+        assert hasattr(ts.errors, name), f"{name} must stay reachable at its address"
+        # ``MovedInV6`` is an ImportError on purpose: CPython discards a module
+        # ``__getattr__``'s message on the ``from tsdynamics import X`` path
+        # unless it inherits ImportError, and the corpus uses that spelling.
+        with pytest.raises(ImportError, match=rf"ts\.errors\.{name}"):
+            getattr(ts, name)
 
 
 def test_errors_the_module_left_the_listing_but_is_bound_forever():
@@ -249,7 +264,7 @@ def test_moved_in_v6_cannot_be_both_and_says_so():
     """The two-base class the design wanted is impossible; this is why one was chosen."""
     assert issubclass(MovedInV6, ImportError)
     assert not issubclass(MovedInV6, AttributeError)
-    assert issubclass(MovedInV6, ts.TSDynamicsError)
+    assert issubclass(MovedInV6, ts.errors.TSDynamicsError)
     with pytest.raises(TypeError, match="lay-out conflict"):
         type("Both", (AttributeError, ImportError), {})
 
@@ -625,7 +640,7 @@ _DECLARED_SUBMODULE_EXPORTS = {
     "tsdynamics": {"analysis", "systems", "viz"},
     "tsdynamics.analysis": set(getattr(analysis, "_CATEGORY_SUBPACKAGES", ())) | {"results"},
     "tsdynamics.viz": {"transforms", "spec"},
-    "tsdynamics.engine": {"compile", "problem", "run", "symbols"},
+    "tsdynamics._engine": {"compile", "problem", "run", "symbols"},
     "tsdynamics.systems": {"continuous", "discrete"},
 }
 
@@ -660,10 +675,10 @@ def test_no_all_entry_is_shadowed(pkg_name):
 #
 # The three sweeps above cover packages, and modules a package *advertises*.
 # Neither reaches a public module a curated listing does not mention — and that
-# is most of them: ``dir(tsdynamics.engine)`` is four names, so
-# ``tsdynamics.engine.events`` was invisible to the gate while offering ``math``,
+# is most of them: ``dir(tsdynamics._engine)`` is four names, so
+# ``tsdynamics._engine.events`` was invisible to the gate while offering ``math``,
 # ``np``, ``dataclass``, ``field``, ``Any``, ``Problem`` and two tolerance
-# constants next to its four real ones.  ``import tsdynamics.engine.events`` is a
+# constants next to its four real ones.  ``import tsdynamics._engine.events`` is a
 # line a user can type, so its listing is a listing.
 #
 # The mechanism is the contract's, stated once: **a module that declares
@@ -758,13 +773,18 @@ _UNCURATED_MODULE_LISTINGS: dict[str, str] = {
 def test_the_module_sweep_actually_finds_modules():
     """Guard the guard: a discovery that collapsed would certify an empty set."""
     mods = _public_modules()
-    assert len(mods) >= 100, mods
+    # Was >= 100.  Privatising engine/solvers/utils moved 19 modules out of the
+    # public sweep, which is the point of this round; the floor tracks it rather
+    # than being nudged each time.
+    assert len(mods) >= 90, mods
     assert not _IMPORT_FAILURES, f"public modules that fail to import: {_IMPORT_FAILURES}"
+    # Sentinels from three different subpackages, all still PUBLIC.  The old
+    # trio named engine/solvers/utils modules, which this round made private —
+    # so they would now assert the opposite of what the sweep is for.
     assert {
-        "tsdynamics.engine.events",
-        "tsdynamics.solvers.explicit",
-        "tsdynamics.utils.tolerances",
         "tsdynamics.viz.compose",
+        "tsdynamics.analysis.lyapunov",
+        "tsdynamics.data.trajectory",
     } <= set(mods)
 
 
@@ -843,23 +863,23 @@ def test_the_uncurated_module_backlog_is_self_cleaning():
 #: omitting it offered ``SolverSpec`` / ``SolverCaps`` / ``register`` from three
 #: more addresses than the one that owns them.
 _CURATED_MODULE_LISTINGS: dict[str, list[str]] = {
-    "tsdynamics.engine.events": ["Event", "EventSolution", "crossings", "integrate_events"],
-    "tsdynamics.engine.reference": [],
-    "tsdynamics.engine.run_methods": [],
-    "tsdynamics.engine.sde_run": ["sde_ensemble_final", "sde_integrate_dense"],
-    "tsdynamics.engine.stepper": ["make_ode_stepper", "step_advance", "step_advance_to_event"],
-    "tsdynamics.solvers.explicit": [],
-    "tsdynamics.solvers.implicit": [],
-    "tsdynamics.solvers.stochastic": [],
-    "tsdynamics.utils.escape": [
+    "tsdynamics._engine.events": ["Event", "EventSolution", "crossings", "integrate_events"],
+    "tsdynamics._engine.reference": [],
+    "tsdynamics._engine.run_methods": [],
+    "tsdynamics._engine.sde_run": ["sde_ensemble_final", "sde_integrate_dense"],
+    "tsdynamics._engine.stepper": ["make_ode_stepper", "step_advance", "step_advance_to_event"],
+    "tsdynamics._solvers.explicit": [],
+    "tsdynamics._solvers.implicit": [],
+    "tsdynamics._solvers.stochastic": [],
+    "tsdynamics._utils.escape": [
         "ESCAPE_GROWTH",
         "ESCAPE_SCALE",
         "Unbounded",
         "detect_unbounded",
         "escaped",
     ],
-    "tsdynamics.utils.plot_namespace": ["PlotNamespace", "plot_namespace", "plot_seam_error"],
-    "tsdynamics.utils.tolerances": [
+    "tsdynamics._utils.plot_namespace": ["PlotNamespace", "plot_namespace", "plot_seam_error"],
+    "tsdynamics._utils.tolerances": [
         "BASIN_ATOL",
         "BASIN_RTOL",
         "DDE_ATOL",
@@ -888,11 +908,11 @@ def test_the_split_out_engine_seams_are_still_reachable_through_run():
     """Hiding is a DISCOVERY change, never a REACHABILITY one (§11.1).
 
     ``engine/run.py`` re-exports the five split-out seams' names — including the
-    ``_``-prefixed ones — so ``tsdynamics.engine.run.<X>`` keeps working for every
+    ``_``-prefixed ones — so ``tsdynamics._engine.run.<X>`` keeps working for every
     ``X``.  Curating the seams' own ``dir()`` must not touch that, and the private
     names are the half a ``__all__`` edit could plausibly have broken.
     """
-    from tsdynamics.engine import run
+    from tsdynamics._engine import run
 
     for name in (
         # public, now listed on the seam that owns them
@@ -942,8 +962,8 @@ def test_the_split_out_engine_seams_are_still_reachable_through_run():
 #:
 #: Adding a name below is a review, not an accident: that is the entire point.
 _CURATED_PACKAGE_LISTINGS: dict[str, list[str]] = {
-    "tsdynamics.engine": ["compile", "problem", "run", "symbols"],
-    "tsdynamics.engine.compile": [
+    "tsdynamics._engine": ["compile", "problem", "run", "symbols"],
+    "tsdynamics._engine.compile": [
         "DelaySlot",
         "LoweredSDE",
         "Tape",
@@ -967,7 +987,7 @@ _CURATED_PACKAGE_LISTINGS: dict[str, list[str]] = {
         "tape_cache_stats",
         "tape_jacobian_is_smooth",
     ],
-    "tsdynamics.engine.problem": [
+    "tsdynamics._engine.problem": [
         "DDEProblem",
         "DelaySlot",
         "MapProblem",
@@ -980,7 +1000,7 @@ _CURATED_PACKAGE_LISTINGS: dict[str, list[str]] = {
         "ode_problem",
         "sde_problem",
     ],
-    "tsdynamics.engine.run": [
+    "tsdynamics._engine.run": [
         "BACKENDS",
         "EngineNotAvailableError",
         "Event",
@@ -1027,7 +1047,7 @@ _CURATED_PACKAGE_LISTINGS: dict[str, list[str]] = {
         "plot_transforms",
         "renderers",
     ],
-    "tsdynamics.solvers": [
+    "tsdynamics._solvers": [
         "DEFAULT_METHOD",
         "Resolution",
         "STIFF_METHOD",
@@ -1049,7 +1069,7 @@ _CURATED_PACKAGE_LISTINGS: dict[str, list[str]] = {
         "select",
         "unregister",
     ],
-    "tsdynamics.solvers.select": [
+    "tsdynamics._solvers.select": [
         "DEFAULT_METHOD",
         "Resolution",
         "STIFF_METHOD",
@@ -1064,7 +1084,7 @@ _CURATED_PACKAGE_LISTINGS: dict[str, list[str]] = {
         "resolve",
         "select",
     ],
-    "tsdynamics.utils": [
+    "tsdynamics._utils": [
         "BASIN_ATOL",
         "BASIN_RTOL",
         "DDE_ATOL",
@@ -1126,8 +1146,8 @@ def _container_leak(obj: object) -> list[str]:
 
 def _received_records() -> dict[str, object]:
     """One instance of each record a user is handed and then tab-completes."""
-    from tsdynamics.engine.compile import DelaySlot
-    from tsdynamics.utils.escape import Unbounded
+    from tsdynamics._engine.compile import DelaySlot
+    from tsdynamics._utils.escape import Unbounded
 
     return {
         # ── this slot ────────────────────────────────────────────────────────
@@ -1229,8 +1249,8 @@ def test_hiding_a_record_s_plumbing_costs_no_capability():
     *discovery* change.  If any of this ever fails, the hide was a removal and
     must be reverted.
     """
-    from tsdynamics.engine.compile import DelaySlot
-    from tsdynamics.utils.escape import Unbounded
+    from tsdynamics._engine.compile import DelaySlot
+    from tsdynamics._utils.escape import Unbounded
 
     found = ts.systems.find("delay")
     assert len(found) >= 5 and isinstance(found, list)
@@ -1299,13 +1319,13 @@ def test_internal_submodules_are_demoted_but_fully_reachable(name):
 @pytest.mark.parametrize(
     "stmt",
     [
-        "from tsdynamics.engine import run",
+        "from tsdynamics._engine import run",
         "from tsdynamics.families import SystemBase, ParamSet",
         "from tsdynamics.data import Box, Trajectory",
         "from tsdynamics.derived import PoincareMap",
         "from tsdynamics.registry import all_systems",
-        "from tsdynamics.solvers import recommend",
-        "from tsdynamics.utils.grids import make_output_grid",
+        "from tsdynamics._solvers import recommend",
+        "from tsdynamics._utils.grids import make_output_grid",
         "from tsdynamics.errors import ConvergenceError",
         "from tsdynamics.plugins import ALL_GROUPS",
     ],
