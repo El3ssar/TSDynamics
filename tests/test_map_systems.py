@@ -59,9 +59,13 @@ _STEPS = 200
 def test_map_iterate_shape_and_finiteness(map_entry) -> None:
     m = map_entry.cls()
     traj = m.run(steps=_STEPS, max_retries=15)
-    assert traj.t.shape == (_STEPS,)
-    assert traj.y.shape == (_STEPS, m.dim)
-    np.testing.assert_array_equal(traj.t, np.arange(_STEPS))
+    # ``steps=N`` yields N + 1 rows: the initial condition, then N iterates —
+    # exactly as a flow returns its ``ic`` at ``t0``.  Before v6 a map returned N
+    # rows starting at f(ic), so ``t[0] = 0`` was labelling x_1, ``traj["x"][n]``
+    # was x_{n+1}, and every cobweb began one iterate late.
+    assert traj.t.shape == (_STEPS + 1,)
+    assert traj.y.shape == (_STEPS + 1, m.dim)
+    np.testing.assert_array_equal(traj.t, np.arange(_STEPS + 1))
     assert np.all(np.isfinite(traj.y))
 
 
@@ -77,10 +81,12 @@ def test_map_explicit_ic_is_used_but_never_latched() -> None:
     h = ts.systems.Henon()
     ic = np.array([0.2, 0.3])
     traj = h.run(steps=50, ic=ic)
-    # A map's grid starts at the FIRST ITERATE (a flow's starts at the IC), so
-    # the evidence the IC was used is f(ic), not ic.
+    # A map's grid starts at the INITIAL CONDITION, exactly as a flow's does, so
+    # row 0 IS the ic and row 1 is f(ic).  It used to start at f(ic), which made
+    # ``t[0] = 0`` label the first iterate and put every cobweb one step out.
     a, b = 1.4, 0.3
-    np.testing.assert_array_almost_equal(traj.y[0], [1 - a * ic[0] ** 2 + ic[1], b * ic[0]])
+    np.testing.assert_array_almost_equal(traj.y[0], ic)
+    np.testing.assert_array_almost_equal(traj.y[1], [1 - a * ic[0] ** 2 + ic[1], b * ic[0]])
     assert h.ic is None
 
 

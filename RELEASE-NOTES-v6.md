@@ -28,7 +28,7 @@ different family is refused *by name*, with the mathematical reason
 iterations").
 
 `method=` became **`solver=`**: `solver=` picks a numerical kernel, `method=`
-picks an *estimator* on an analysis (`max_lyapunov(method="kantz")`).
+picks an *estimator* on an analysis (`lyapunov_from_data(method="kantz")`).
 
 **2. Analyses are free functions.**
 
@@ -44,16 +44,29 @@ convenience that silently pre-ran with the family's defaults reported
 **K = −0.026** for Lorenz's 0–1 test where the honest answer is **0.999**.
 
 Discovery replaces them, and it is generated, not hand-written:
-`ts.analysis.<TAB>` is 53 names, `print(ts.analysis.__doc__)` groups all 50 by
+`ts.analysis.<TAB>` is 52 names, `print(ts.analysis.__doc__)` groups all 49 by
 *what you are holding*, and `ts.analysis.find(lorenz)` / `find("is this chaotic")`
 answer the two questions people actually ask.
 
-**3. The top level is seventeen names.**
+**3. The top level is eleven names.**
 
 Five classes you subclass, `Trajectory`, `plot`, three registries
-(`systems` / `analysis` / `viz`), six exception classes, `__version__`.
-Everything else lives at exactly one address one dot down, and a wrong guess
-prints it. `ts.systems` is now searchable too — `names()` / `find()` / `get()`.
+(`systems` / `analysis` / `viz`), `__version__`. Everything else lives at exactly
+one address one dot down, and a wrong guess prints it. `ts.systems` is now
+searchable too — `names()` / `find()` / `get()`.
+
+The typed exceptions are **not** among them, and the reason is measurable rather
+than a matter of taste: the hierarchy is purely additive — `InvalidParameterError`
+*is* a `ValueError`, `ConvergenceError` *is* a `RuntimeError` — so `except
+ValueError` already catches a bad `dt` and nothing you write needs this library's
+spelling. They are a refinement for telling one failure from another, and they
+live at `ts.errors.<Name>`.
+
+The machinery packages stopped resolving too: `ts.engine`, `ts.solvers` and
+`ts.utils` are `_engine` / `_solvers` / `_utils` on disk, so 165 names of FFI
+shims, tape internals and solver tables left the surface. `ts.data`,
+`ts.derived`, `ts.registry` and `ts.errors` stay — each has real user-facing
+traffic.
 
 **4. The result repr *is* the answer.**
 
@@ -72,7 +85,7 @@ says *indeterminate at this horizon* rather than inventing a regime.
 
 ```python
 ts.plot(traj)                                    # the default view
-ts.plot(traj, "phase_portrait", primitive="density")
+ts.plot(traj, "phase_portrait", components=["x", "z"], primitive="density")
 ts.plot(a, b, "phase_portrait")                  # two orbits, one figure
 ts.plot(vdp, t1, t2, "vector_field", "nullclines")
 ts.viz.grid(p1, p2, p3, cols=2, share_color=True)
@@ -84,6 +97,43 @@ and a finished `Plot` handed back in is just another thing to draw. That closure
 is why grids-of-different-plots, movies-of-anything and escape-and-return all
 work with no extra API. `p.fig` / `p.ax` / `p.axes` is the matplotlib escape
 hatch — one dot, never a rewrite.
+
+**And the layout algebra nests, so the brackets mean what they look like:**
+
+```python
+(ts.plot(a) | ts.plot(b)) / ts.plot(c)              # two on top, one spanning below
+ts.plot(a) / (ts.plot(b) | ts.plot(c))              # one on top, two below
+(ts.plot(a) | ts.plot(b)) / (ts.plot(c) | ts.plot(d))   # a real 2x2
+((ts.plot(a) | ts.plot(b)) / ts.plot(c)) | ts.plot(d)   # arbitrary depth
+```
+
+`|` is a row, `/` is a column, `+` overlays. A chain of the same operator stays
+flat — `a | b | c` is one row of three, not a row containing a row — and a group
+carrying the other operator nests. Rendering is a nested matplotlib `GridSpec`;
+plotly declines a nested composite and falls back rather than draw a wrong
+picture.
+
+Every transform's own options are now reachable from the object, so you can steer
+any of the 39 without leaving the REPL:
+
+```python
+help(logistic.plot.orbit_diagram)
+# orbit_diagram(*, param='r', values=None, points=100, transient=500, ...)
+ts.plot(logistic, "orbit_diagram", param="r", values=(2.8, 4.0, 600), points=120)
+```
+
+**Writing your own plot is three lines and no imports:**
+
+```python
+@ts.viz.transforms.register()
+def energy(traj):
+    """Squared distance from the origin against time."""
+    return {"x": traj.t, "y": (traj.y**2).sum(axis=1)}
+
+ts.plot(traj, "energy")
+```
+
+Source, frame, kind and primitives are inferred from the channels you return.
 
 ---
 
@@ -130,6 +180,12 @@ length — Gray–Scott's 20-value sweep went from 6.23 s to 0.10 s.
 | `result.summary()` | `repr(result)` / `print(result)` |
 | `PlotSpec` | `Plot` (the same class; `ts.viz.Plot`) |
 | `p.grid(...)` on a plot | `p.gridlines(...)` (`ts.viz.grid` is the panel arranger) |
+| `max_lyapunov(system)` | `ts.analysis.lyapunov_spectrum(system, k=1)` |
+| `subject.to_plot_spec(...)` | `ts.plot(subject)` — it already returns the Plot without drawing |
+| `ts.plot(x, kind="psd")` | `ts.plot(x, "psd")` — a picture is named positionally |
+| `ts.TSDynamicsError` and the five other typed exceptions | `ts.errors.<Name>` (or just `except ValueError` / `RuntimeError`) |
+| `ts.engine` · `ts.solvers` · `ts.utils` | private; import `tsdynamics._engine` &c. if you really need them |
+| `traj[["x","z"]]` | `traj["x","z"]` — and it returns a `Trajectory`, not a bare array |
 
 **Deleted outright, with no replacement here.** The generic time-series layer —
 `analysis/entropy/`, `analysis/surrogate/` and the whole `transforms/` package
@@ -138,6 +194,44 @@ governing rule is *phase-space methods stay; generic series statistics go*, and
 they live in a companion library now. What stayed is what reconstructs or
 measures phase space: delay embedding, recurrence/RQA, `lyapunov_from_data`, the
 sagitta sampling tools.
+
+---
+
+## Things that were quietly wrong, and now are not
+
+These are the fixes you cannot see in a signature, so they are worth listing.
+
+**A runaway orbit is now flagged everywhere.** A trajectory whose state escaped
+says so on its own printout, and the flag reaches the estimators: a correlation
+dimension taken from an orbit that hit 1.6e9 used to answer `D = 0.48954` with
+`R^2 = 0.9976` marked *trusted*, and `lyapunov_from_data` called a monotone
+blow-up *chaotic* to four significant figures. An escaping orbit produces the
+straightest log-log curve in the library, which is exactly why the fit
+diagnostics could not catch it.
+
+**`trace_determinant` was drawing a lie on any flow above two coordinates.** It
+plotted the trace and determinant of a 2x2 *slice* under axes reading `tr J` /
+`det J`. Lorenz's origin drew at (-11, -270) where the real 3x3 Jacobian has
+(-13.667, **+720**) — wrong on both axes and the opposite sign on one. The axes
+now name the slice and it warns. Every other transform was checked against an
+independent oracle (the system's own `rhs`, `numpy.linalg`, analytic equilibria,
+textbook constants) and came out right.
+
+**A map's `run(steps=n)` returns `n + 1` rows, starting at your initial
+condition** — as a flow always did. It used to start at the *second* iterate, so
+`traj["x"][n]` was `x_{n+1}` and every cobweb began one step late.
+
+**`.show()` opens a window.** It was a silent no-op: the renderer builds a bare
+figure (right for a library) and `plt.show()` only displays *pyplot-managed*
+ones. It also displayed a re-render rather than the figure `p.ax` handed you, so
+hand edits vanished.
+
+**Movies write 5-45x faster**, and every animation knob now refuses a value it
+cannot use instead of ignoring it.
+
+**`system.rhs(u, t)` is public** — the vector field itself, beside the `jacobian`
+that is its derivative. It is the 20th name on a system and the only one this
+release added.
 
 ---
 

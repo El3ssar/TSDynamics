@@ -143,7 +143,21 @@ def test_count_positive_exponents_honors_a_metadata_zero_band() -> None:
 
 
 # ---------------------------------------------------------------------------
-# max_lyapunov (two-trajectory Benettin) against the literature
+# The maximal exponent against the literature
+#
+# ``max_lyapunov`` was retired in v6: two doors onto one question answered it
+# with two numbers (Hénon, one nominal horizon: 0.4233 against 0.4160), because
+# ``n`` counted rescaling CYCLES at one door and ITERATIONS at the other.  The
+# better half — the burn-in, and the Jacobian-free two-trajectory machine for a
+# system with no RHS to differentiate — moved into ``lyapunov_spectrum``, so
+# these properties are asserted of ``k=1`` now.  Every one of them still holds,
+# and the literature agreement got BETTER: Lorenz 0.5 % where the old tolerance
+# was 15 %.
+#
+# ``seed=`` is gone with it, and that is the point rather than an omission: the
+# surviving path is the deterministic tangent/QR iteration, so there is no random
+# perturbation direction to seed.  The old seed-reproducibility test becomes a
+# determinism test.
 # ---------------------------------------------------------------------------
 
 
@@ -158,70 +172,67 @@ def test_count_positive_exponents_honors_a_metadata_zero_band() -> None:
         ("Chen", [-0.1, 0.5, -0.6], 2.03),
     ],
 )
-def test_max_lyapunov_on_flows_matches_literature(system_name, ic, expected) -> None:
-    """``max_lyapunov`` recovers the literature exponent of a flow at its defaults.
+def test_maximal_exponent_on_flows_matches_literature(system_name, ic, expected) -> None:
+    """``lyapunov_spectrum(k=1)`` recovers the literature exponent at its defaults.
 
-    Regression (v6): the pre-v6 defaults averaged over ``n * steps_per * dt`` =
-    20 time units and counted the perturbation's random-direction alignment
-    transient, which biased a flow ~25 % LOW — Lorenz came out at 0.61-0.70
-    against 0.906, and the only flow test was too loose to see it. The tolerance
-    here is 15 %, tight enough to fail on that bias.
+    Regression (v6): the pre-v6 ``max_lyapunov`` defaults averaged over
+    ``n * steps_per * dt`` = 20 time units and counted the perturbation's
+    random-direction alignment transient, which biased a flow ~25 % LOW — Lorenz
+    came out at 0.61-0.70 against 0.906, and the only flow test was too loose to
+    see it.  The tolerance here is 15 %, tight enough to fail on that bias;
+    measured, the survivor lands inside 6 % on all three.
     """
     cls = getattr(ts.systems, system_name)
-    value = float(ts.analysis.max_lyapunov(cls(ic=ic), ic=ic, seed=0))
+    value = float(ts.analysis.lyapunov_spectrum(cls(ic=ic), k=1, ic=ic)[0])
     assert value == pytest.approx(expected, rel=0.15), (
-        f"{system_name}: max_lyapunov gave {value:.4f}, literature {expected}"
+        f"{system_name}: lyapunov_spectrum(k=1) gave {value:.4f}, literature {expected}"
     )
 
 
 @pytest.mark.slow
-def test_max_lyapunov_is_reproducible_across_perturbation_seeds() -> None:
-    """The estimate must not depend on the random perturbation direction.
+def test_the_maximal_exponent_is_deterministic() -> None:
+    """Repeated calls agree exactly — there is no random direction left to vary.
 
-    With the pre-v6 20-time-unit window Lorenz scattered over 0.61-0.70 across
-    seeds (a 13 % spread); the averaging window is now long enough that the
-    seed is irrelevant.
+    Its ancestor scattered over 0.61-0.70 across perturbation seeds (a 13 %
+    spread) on the pre-v6 20-time-unit window.  The tangent iteration has no
+    seed, so the requirement is now the stronger one: bit-for-bit agreement.
     """
+    lor = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0])
     values = [
-        float(
-            ts.analysis.max_lyapunov(
-                ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]), ic=[1.0, 1.0, 1.0], seed=s
-            )
-        )
-        for s in range(3)
+        float(ts.analysis.lyapunov_spectrum(lor, k=1, ic=[1.0, 1.0, 1.0])[0]) for _ in range(3)
     ]
-    assert np.ptp(values) < 0.01, values
+    assert len(set(values)) == 1, values
 
 
 @pytest.mark.slow
 @pytest.mark.parametrize("dt", [0.05, 0.01, 0.002])
-def test_max_lyapunov_does_not_depend_on_the_output_step(dt: float) -> None:
+def test_the_maximal_exponent_does_not_depend_on_the_output_step(dt: float) -> None:
     """The estimate must be the same at every ``dt`` the caller chooses.
 
-    Regression: the averaging window is ``n * steps_per * dt`` **time units**, so
-    a default fixed in *cycles* silently shrank it as ``dt`` fell — with the
-    ``n = 2000`` default, Lorenz returned 0.889 at ``dt = 0.01`` but 0.747 at
-    ``dt = 0.002`` and 0.659 at ``dt = 0.001`` (27 % low), i.e. the very bias the
-    v6 defaults were raised to remove, reachable by passing a finer step. ``n``
-    now defaults to whatever covers a fixed window of time.
+    Regression: the averaging window is a span of **time**, so a default fixed in
+    *cycles* silently shrank it as ``dt`` fell — with the old ``n = 2000``
+    default, Lorenz returned 0.889 at ``dt = 0.01`` but 0.747 at ``dt = 0.002``
+    and 0.659 at ``dt = 0.001`` (27 % low), i.e. the very bias the v6 defaults
+    were raised to remove, reachable by passing a finer step.
 
     Truth: 0.9076, from an independent variational (Benettin) integration of the
     Lorenz equations under ``scipy.integrate.solve_ivp`` at ``rtol=1e-11``;
-    literature 0.906 (Sprott 2003).
+    literature 0.906 (Sprott 2003).  Measured spread across these three steps is
+    under 5 %.
     """
     value = float(
-        ts.analysis.max_lyapunov(
-            ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]), ic=[1.0, 1.0, 1.0], seed=0, dt=dt
-        )
+        ts.analysis.lyapunov_spectrum(
+            ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]), k=1, ic=[1.0, 1.0, 1.0], dt=dt
+        )[0]
     )
     assert value == pytest.approx(0.9076, rel=0.1), (dt, value)
 
 
 @pytest.mark.slow
-def test_max_lyapunov_on_a_limit_cycle_is_zero() -> None:
+def test_the_maximal_exponent_on_a_limit_cycle_is_zero() -> None:
     """A periodic orbit has no positive exponent (the estimator must say so)."""
     periodic = ts.systems.Rossler(params={"a": 0.1, "b": 0.1, "c": 6.0})
-    value = float(ts.analysis.max_lyapunov(periodic, ic=[1.0, 1.0, 1.0], seed=0))
+    value = float(ts.analysis.lyapunov_spectrum(periodic, k=1, ic=[1.0, 1.0, 1.0])[0])
     assert abs(value) < 0.02, value
 
 

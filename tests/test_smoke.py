@@ -140,6 +140,8 @@ def test_henon_iterates() -> None:
     import tsdynamics as ts
 
     traj = ts.systems.Henon().run(steps=200)
-    assert traj.y.shape == (200, 2)
-    assert traj.t.shape == (200,)
+    # N + 1 rows: the initial condition, then N iterates — as a flow returns its
+    # ``ic`` at ``t0``.  It used to start at f(ic), one iterate late.
+    assert traj.y.shape == (201, 2)
+    assert traj.t.shape == (201,)
     assert np.all(np.isfinite(traj.y))
