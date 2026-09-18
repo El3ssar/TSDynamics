@@ -1266,3 +1266,37 @@ class BelousovZhabotinsky(ContinuousSystem):
         zdot = (c6 / z0) * rf + c7 * xc * z + c8 * z * v + c9 * z - kf * z
         vdot = c10 * xc * ybar + c11 * ybar + c12 * xc**2 + c13 * z * v - kf * v
         return xdot * t0, zdot * t0, vdot * t0
+
+
+__all__ = [
+    "BelousovZhabotinsky",
+    "Brusselator",
+    "CaTwoPlus",
+    "CaTwoPlusQuasiperiodic",
+    "CellCycle",
+    "CircadianRhythm",
+    "ExcitableCell",
+    "FitzHughNagumo",
+    "ForcedBrusselator",
+    "ForcedFitzHughNagumo",
+    "ForcedVanDerPol",
+    "GlycolyticOscillation",
+    "HastingsPowell",
+    "HindmarshRose",
+    "IsothermalChemical",
+    "ItikBanksTumor",
+    "Oregonator",
+    "Selkov",
+    "TurchinHanski",
+    "VanDerPol",
+]
+
+
+def __dir__() -> list[str]:
+    """Expose only the catalogue classes (``__all__``) to ``dir()`` / autocomplete.
+
+    ``__all__`` governs ``import *`` and nothing else, so without this the module
+    also offers every helper it imported — SymEngine's ``sin``/``cos``/``exp``,
+    ``numpy`` — as though they were part of this library's surface.
+    """
+    return sorted(__all__)

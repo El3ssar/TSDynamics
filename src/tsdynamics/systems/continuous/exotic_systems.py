@@ -650,3 +650,34 @@ class Hopfield(ContinuousSystem):
             s = sum(k[i][j] * Y(j) for j in range(6))
             out.append(-Y(i) / tau + (1 + tanh(eps * s)) / 2 - beta)
         return tuple(out)
+
+
+__all__ = [
+    "ArnoldWeb",
+    "BeerRNN",
+    "CellularNeuralNetwork",
+    "Hopfield",
+    "HyperBao",
+    "HyperCai",
+    "HyperJha",
+    "HyperLu",
+    "HyperPang",
+    "HyperQi",
+    "HyperWang",
+    "HyperXu",
+    "LorenzStenflo",
+    "NewtonLiepnik",
+    "NuclearQuadrupole",
+    "Qi",
+    "Robinson",
+]
+
+
+def __dir__() -> list[str]:
+    """Expose only the catalogue classes (``__all__``) to ``dir()`` / autocomplete.
+
+    ``__all__`` governs ``import *`` and nothing else, so without this the module
+    also offers every helper it imported — SymEngine's ``sin``/``cos``/``exp``,
+    ``numpy`` — as though they were part of this library's surface.
+    """
+    return sorted(__all__)

@@ -413,3 +413,24 @@ class Pickover(DiscreteMap):
         row1 = [-a * c * np.sin(a * x), a * np.cos(a * y)]
         row2 = [b * np.cos(b * x), -b * d * np.sin(b * y)]
         return row1, row2
+
+
+__all__ = [
+    "Bedhead",
+    "Bogdanov",
+    "GumowskiMira",
+    "Hopalong",
+    "Pickover",
+    "Svensson",
+    "ZeraouliaSprott",
+]
+
+
+def __dir__() -> list[str]:
+    """Expose only the catalogue classes (``__all__``) to ``dir()`` / autocomplete.
+
+    ``__all__`` governs ``import *`` and nothing else, so without this the module
+    also offers every helper it imported — SymEngine's ``sin``/``cos``/``exp``,
+    ``numpy`` — as though they were part of this library's surface.
+    """
+    return sorted(__all__)

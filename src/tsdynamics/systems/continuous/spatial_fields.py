@@ -344,3 +344,13 @@ class SwiftHohenberg(ContinuousSystem):
                 # u_t = r u - (1 + ∇²)² u - u³ = r u - (u + 2 ∇²u + ∇⁴u) - u³
                 rhs.append(r * u0 - (u0 + 2.0 * lap + bih) - u0 * u0 * u0)
         return rhs
+
+
+def __dir__() -> list[str]:
+    """Expose only the catalogue classes (``__all__``) to ``dir()`` / autocomplete.
+
+    ``__all__`` governs ``import *`` and nothing else, so without this the module
+    also offers every helper it imported — SymEngine's ``sin``/``cos``/``exp``,
+    ``numpy`` — as though they were part of this library's surface.
+    """
+    return sorted(__all__)

@@ -206,3 +206,23 @@ class VossDelay(DelaySystem):
         xt = Y(0, t - tau)
         f = -10.44 * xt**3 - 13.95 * xt**2 - 3.63 * xt + 0.85
         return [-alpha * Y(0) + f]
+
+
+__all__ = [
+    "IkedaDelay",
+    "MackeyGlass",
+    "PiecewiseCircuit",
+    "ScrollDelay",
+    "SprottDelay",
+    "VossDelay",
+]
+
+
+def __dir__() -> list[str]:
+    """Expose only the catalogue classes (``__all__``) to ``dir()`` / autocomplete.
+
+    ``__all__`` governs ``import *`` and nothing else, so without this the module
+    also offers every helper it imported — SymEngine's ``sin``/``cos``/``exp``,
+    ``numpy`` — as though they were part of this library's surface.
+    """
+    return sorted(__all__)

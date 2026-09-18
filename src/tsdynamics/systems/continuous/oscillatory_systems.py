@@ -458,3 +458,26 @@ class Lissajous2D(ContinuousSystem):
         dxdt = A * (-a * sin(a * t))
         dydt = B * (-b * sin(b * t + delta))
         return dxdt, dydt
+
+
+__all__ = [
+    "Aizawa",
+    "AnishchenkoAstakhov",
+    "Lissajous2D",
+    "Lissajous3D",
+    "MooreSpiegel",
+    "ShimizuMorioka",
+    "StickSlipOscillator",
+    "StuartLandau",
+    "Torus",
+]
+
+
+def __dir__() -> list[str]:
+    """Expose only the catalogue classes (``__all__``) to ``dir()`` / autocomplete.
+
+    ``__all__`` governs ``import *`` and nothing else, so without this the module
+    also offers every helper it imported — SymEngine's ``sin``/``cos``/``exp``,
+    ``numpy`` — as though they were part of this library's surface.
+    """
+    return sorted(__all__)

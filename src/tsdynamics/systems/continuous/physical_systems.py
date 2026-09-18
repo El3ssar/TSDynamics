@@ -346,3 +346,25 @@ class WindmiReduced(ContinuousSystem):
         vdot = b1 * i - b2 * abs(p) ** (1 / 2) - b3 * v
         pdot = vsw**2 - abs(p) ** (5 / 4) * vsw ** (1 / 2) * (1 + tanh(z_clamped)) / 2
         return idot, vdot, pdot
+
+
+__all__ = [
+    "Blasius",
+    "Colpitts",
+    "DoublePendulum",
+    "FluidTrampoline",
+    "JerkCircuit",
+    "Laser",
+    "SwingingAtwood",
+    "WindmiReduced",
+]
+
+
+def __dir__() -> list[str]:
+    """Expose only the catalogue classes (``__all__``) to ``dir()`` / autocomplete.
+
+    ``__all__`` governs ``import *`` and nothing else, so without this the module
+    also offers every helper it imported — SymEngine's ``sin``/``cos``/``exp``,
+    ``numpy`` — as though they were part of this library's surface.
+    """
+    return sorted(__all__)

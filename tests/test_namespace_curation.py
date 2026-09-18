@@ -1463,3 +1463,99 @@ def test_scope_surgery_remedy_names_only_survivors():
     assert "rqa" in ts.analysis.__all__
     assert "embed" in ts.analysis.__all__
     assert "lyapunov_from_data" in ts.analysis.__all__
+
+
+# ---------------------------------------------------------------------------
+# No reachable module offers a name it merely imported
+# ---------------------------------------------------------------------------
+
+
+def _foreign_names(module: object) -> list[str]:
+    """Return the public names on ``module`` that belong to another library.
+
+    ``__all__`` governs ``import *`` and nothing else, so a module that imports
+    ``symengine.sin`` or ``numpy as np`` offers them on ``dir()`` — and 175 of
+    the catalogue's classes sat in modules doing exactly that, so a page holding
+    51 systems tab-completed 58 names.  The fix is ``__dir__``; this is the gate.
+
+    A ``X | Y`` type union reports ``__module__ == "typing"`` and is a false
+    positive, so a name the module itself declares in ``__all__`` is exempt.
+    """
+    import types
+
+    declared = set(getattr(module, "__all__", ()))
+    out = []
+    for name in dir(module):
+        if name.startswith("_") or name in declared:
+            continue
+        value = getattr(module, name, None)
+        owner = getattr(value, "__module__", None)
+        if isinstance(value, types.ModuleType):
+            if not (value.__name__ or "").startswith("tsdynamics"):
+                out.append(name)
+        elif owner and not owner.startswith("tsdynamics") and owner != "builtins":
+            out.append(name)
+    return out
+
+
+def test_no_reachable_module_offers_a_borrowed_name():
+    """Every module a user can tab into lists only names this library owns.
+
+    Measured before the fix: 18 reachable modules leaked 50 names — SymEngine's
+    ``sin``/``cos``/``exp``/``sqrt``/``tanh``/``Min``, ``numpy as np``,
+    ``ClassVar``.  A module whose own path is ``_``-private is exempt: nobody
+    tab-completes into it.
+    """
+    import importlib
+    import pkgutil
+
+    import tsdynamics
+
+    offenders = {}
+    for info in pkgutil.walk_packages(tsdynamics.__path__, "tsdynamics."):
+        if any(part.startswith("_") for part in info.name.split(".")):
+            continue
+        try:
+            module = importlib.import_module(info.name)
+        except Exception:  # pragma: no cover - an optional backend, not our business
+            continue
+        leaked = _foreign_names(module)
+        if leaked:
+            offenders[info.name] = leaked
+
+    assert not offenders, (
+        "these modules offer names they only imported — give each a __dir__ "
+        f"returning sorted(__all__):\n{offenders}"
+    )
+
+
+def test_every_catalogue_module_lists_the_classes_it_defines():
+    """``__all__`` on a catalogue module is the classes defined there, all of them.
+
+    The ``__dir__`` above is only honest if ``__all__`` is complete: a system
+    missing from it would vanish from its own module's tab surface while still
+    being registered and importable.
+    """
+    import importlib
+    import inspect
+    import pkgutil
+
+    import tsdynamics.systems as systems
+    from tsdynamics.families.base import SystemBase
+
+    for info in pkgutil.walk_packages(systems.__path__, "tsdynamics.systems."):
+        if any(part.startswith("_") for part in info.name.split(".")):
+            continue
+        module = importlib.import_module(info.name)
+        defined = {
+            name
+            for name, value in vars(module).items()
+            if not name.startswith("_")
+            and inspect.isclass(value)
+            and issubclass(value, SystemBase)
+            and value.__module__ == info.name
+        }
+        if not defined:  # a category __init__, which re-exports rather than defines
+            continue
+        listed = set(getattr(module, "__all__", ()))
+        assert defined <= listed, f"{info.name}.__all__ omits {sorted(defined - listed)}"

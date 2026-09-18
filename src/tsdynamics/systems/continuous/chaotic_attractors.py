@@ -2179,3 +2179,67 @@ class ThomasLabyrinth(Thomas):
     reference = "Thomas (1999), Int. J. Bifurc. Chaos 9, 1889-1905"
     doi = "10.1142/s0218127499001383"
     default_ic = [-4.96, 1.03, -4.688]
+
+
+__all__ = [
+    "Arneodo",
+    "Chua",
+    "Coullet",
+    "Dadras",
+    "Duffing",
+    "GenesioTesi",
+    "GuckenheimerHolmes",
+    "Halvorsen",
+    "HenonHeiles",
+    "HyperLorenz",
+    "HyperRossler",
+    "HyperYan",
+    "HyperYangChen",
+    "KuramotoSivashinsky",
+    "Lorenz",
+    "Lorenz84",
+    "Lorenz96",
+    "LorenzBounded",
+    "LorenzCoupled",
+    "MultiChua",
+    "NoseHoover",
+    "PehlivanWei",
+    "RabinovichFabrikant",
+    "RikitakeDynamo",
+    "Rossler",
+    "Rucklidge",
+    "SprottA",
+    "SprottB",
+    "SprottC",
+    "SprottD",
+    "SprottE",
+    "SprottF",
+    "SprottG",
+    "SprottH",
+    "SprottI",
+    "SprottJ",
+    "SprottJerk",
+    "SprottK",
+    "SprottL",
+    "SprottM",
+    "SprottMore",
+    "SprottN",
+    "SprottO",
+    "SprottP",
+    "SprottQ",
+    "SprottR",
+    "SprottS",
+    "SprottTorus",
+    "Thomas",
+    "ThomasLabyrinth",
+]
+
+
+def __dir__() -> list[str]:
+    """Expose only the catalogue classes (``__all__``) to ``dir()`` / autocomplete.
+
+    ``__all__`` governs ``import *`` and nothing else, so without this the module
+    also offers every helper it imported — SymEngine's ``sin``/``cos``/``exp``,
+    ``numpy`` — as though they were part of this library's surface.
+    """
+    return sorted(__all__)

@@ -2240,13 +2240,28 @@ Nothing else in the library learns a new name when one is added.
     tested; only the tab surface shrinks. `families/_hidden.py::hide` and
     `viz/_visibility.py` are the two mechanisms — **never** an underscore rename,
     which is what would cost capability.
-  - **A module that declares `__all__` MUST define `__dir__` returning
+  - **Every REACHABLE module declares `__all__` AND defines `__dir__` returning
     `sorted(__all__)`.** `__all__` governs only `import *`; it has zero effect on
     TAB. Before this rule 44 modules leaked 329 non-API names, mostly their own
     imports (symengine's `sin`/`cos`/`exp` looked like library helpers on 38
-    catalogue modules). Gate: `tests/test_namespace_curation.py`, whose backlog
-    table is split "no new offender" (fast tier) / "delete the stale row"
-    (`full`), so one slot's correct fix cannot redden everyone else.
+    catalogue modules). The rule is stated for *reachable* modules — one whose
+    own path carries a `_` component is exempt, because nobody tab-completes into
+    it, and counting those was how an earlier measurement over-reported the
+    remaining work 34/126 when the user-visible figure was 18/50.
+    **The 16 catalogue modules were the last holdouts**: 15 of them declared no
+    `__all__` at all, so `chaotic_attractors` offered `ClassVar`, `exp` and `np`
+    beside its 50 systems. Each now lists the classes it defines (175 in total)
+    and carries the `__dir__`; reachable leaks are **0**.
+    Gates (`tests/test_namespace_curation.py`):
+    `test_no_reachable_module_offers_a_borrowed_name` sweeps every reachable
+    module (a `X | Y` union reports `__module__ == "typing"`, so a name the
+    module declares in its own `__all__` is exempt — that is what `ts.data.Region`
+    and `engine.problem.Problem` are), and
+    `test_every_catalogue_module_lists_the_classes_it_defines` keeps `__all__`
+    complete, since a `__dir__` over a partial `__all__` would *hide a system*
+    from its own module. The older backlog table stays split "no new offender"
+    (fast tier) / "delete the stale row" (`full`), so one slot's correct fix
+    cannot redden everyone else.
   - **Corollary, learned the hard way:** a name a library *prints back* must be
     a name the reader can then tab-complete. `Geometry.parts` was hidden while
     two of `Geometry`'s own errors ended *"iterate g.parts"*; it is listed again,

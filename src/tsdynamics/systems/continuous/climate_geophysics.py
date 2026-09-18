@@ -619,3 +619,30 @@ class InteriorSquirmer(ContinuousSystem):
             dr = dr + (gn * cn + an * sn) * (n * rn * (r**2 - 1)) / r
             vth = vth + (an * cn - gn * sn) * (2 * r + (r**2 - 1) * n / r) * rn
         return dr, vth / r, 1
+
+
+__all__ = [
+    "ArnoldBeltramiChildress",
+    "AtmosphericRegime",
+    "BickleyJet",
+    "BlinkingRotlet",
+    "BlinkingVortex",
+    "DoubleGyre",
+    "Hadley",
+    "InteriorSquirmer",
+    "LidDrivenCavityFlow",
+    "OscillatingFlow",
+    "RayleighBenard",
+    "SaltonSea",
+    "VallisElNino",
+]
+
+
+def __dir__() -> list[str]:
+    """Expose only the catalogue classes (``__all__``) to ``dir()`` / autocomplete.
+
+    ``__all__`` governs ``import *`` and nothing else, so without this the module
+    also offers every helper it imported — SymEngine's ``sin``/``cos``/``exp``,
+    ``numpy`` — as though they were part of this library's surface.
+    """
+    return sorted(__all__)

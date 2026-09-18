@@ -838,3 +838,35 @@ class Tsucs2(DequanLi):
     doi = "10.1007/s11071-013-0922-8"
     params = {"a": 40.0, "c": 0.833, "d": 0.5, "eps": 0.65, "f": 20.0, "k": 0.0}
     default_ic = [1.297, 1.1214, 50.029]
+
+
+__all__ = [
+    "Bouali",
+    "Bouali2",
+    "BurkeShaw",
+    "Chen",
+    "ChenLee",
+    "DequanLi",
+    "LiuChen",
+    "LuChen",
+    "LuChenCheng",
+    "PanXuZhou",
+    "QiChen",
+    "Sakarya",
+    "SanUmSrisuchinwong",
+    "Tsucs2",
+    "WangSun",
+    "YuWang",
+    "YuWang2",
+    "ZhouChen",
+]
+
+
+def __dir__() -> list[str]:
+    """Expose only the catalogue classes (``__all__``) to ``dir()`` / autocomplete.
+
+    ``__all__`` governs ``import *`` and nothing else, so without this the module
+    also offers every helper it imported — SymEngine's ``sin``/``cos``/``exp``,
+    ``numpy`` — as though they were part of this library's surface.
+    """
+    return sorted(__all__)

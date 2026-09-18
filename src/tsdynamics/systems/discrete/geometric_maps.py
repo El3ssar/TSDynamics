@@ -211,3 +211,21 @@ class Chebyshev(DiscreteMap):
         # chain rule: d/dx arccos(x) = -1/sqrt(1-x^2), the two minuses cancel
         x = X
         return [a * np.sin(a * np.arccos(x)) / np.sqrt(1 - x**2)]
+
+
+__all__ = [
+    "Baker",
+    "Chebyshev",
+    "Circle",
+    "Tent",
+]
+
+
+def __dir__() -> list[str]:
+    """Expose only the catalogue classes (``__all__``) to ``dir()`` / autocomplete.
+
+    ``__all__`` governs ``import *`` and nothing else, so without this the module
+    also offers every helper it imported — SymEngine's ``sin``/``cos``/``exp``,
+    ``numpy`` — as though they were part of this library's surface.
+    """
+    return sorted(__all__)
