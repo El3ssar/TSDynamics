@@ -3,7 +3,7 @@
 The engine lowers a system's symbolic dynamics to an IR :class:`Tape` that is a
 pure function of the *math* (kernel body, dimension, structural parameters, DDE
 delays, ``with_jacobian``) — **not** of the control-parameter values, which are
-read live at runtime.  :mod:`tsdynamics.engine.compile` therefore memoises the
+read live at runtime.  :mod:`tsdynamics._engine.compile` therefore memoises the
 lowered tape so a control-parameter sweep reuses one tape instead of re-lowering
 a byte-identical one per value.
 
@@ -25,9 +25,9 @@ import numpy as np
 import pytest
 
 import tsdynamics as ts
-from tsdynamics.engine import compile as comp
-from tsdynamics.engine import run as runmod
-from tsdynamics.engine.problem import ode_problem
+from tsdynamics._engine import compile as comp
+from tsdynamics._engine import run as runmod
+from tsdynamics._engine.problem import ode_problem
 
 _rust = pytest.importorskip("tsdynamics._rust")
 

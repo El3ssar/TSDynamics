@@ -2,7 +2,7 @@
 Stochastic differential equation family — ``StochasticSystem`` (stream E-SDE).
 
 The home for the SDE family base class. Per the resolved noise contract
-(ROADMAP §11, **diagonal-Itô**), a stochastic system is defined by
+(**diagonal-Itô**), a stochastic system is defined by
 
 - ``_drift(y, t, **params)`` — the deterministic part, exactly like an ODE's
   ``_equations``; and
@@ -12,14 +12,15 @@ The home for the SDE family base class. Per the resolved noise contract
 so the SDE is ``dX_k = f_k(X, t) dt + g_k(X, t) dW_k`` with independent
 ``dW_k`` (Itô interpretation). Both are written symbolically with the SymEngine
 ``y``/``t`` accessors, just like every other family, and lower to instruction
-tapes through :func:`tsdynamics.engine.compile.lower_sde` (drift + diffusion,
+tapes through :func:`tsdynamics._engine.compile.lower_sde` (drift + diffusion,
 the diffusion carrying ``∂g/∂u`` for Milstein).
 
 Solvers (the real engine, ``tsdyn-solvers``/``tsdyn-engine``): **Euler–Maruyama**
 (strong order 0.5) and **Milstein** (strong order 1.0, which reads ``∂g/∂u``).
-The default ``backend="interp"`` (and ``"jit"``) dispatches the two-tape SDE call
+The default ``backend="jit"`` (and ``"interp"``) dispatches the two-tape SDE call
 to the compiled Rust engine (``tsdynamics._rust``, the FFI surface in
-``tsdyn-core``; stream E-WIRE) — the interpreter and the Cranelift JIT.
+``tsdyn-core``; stream E-WIRE) — the Cranelift JIT and the SSA-tape interpreter,
+which agree bit-for-bit.
 ``backend="reference"`` runs a dependency-light **pure-Python reference
 integrator** that mirrors the engine's semantics — the same drift/diffusion
 tapes, the same diagonal Wiener substrate (a faithful port of the engine's
@@ -51,13 +52,26 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import numpy as np
 
-from tsdynamics.errors import ConvergenceError, InvalidParameterError
-from tsdynamics.utils.grids import make_output_grid
+from tsdynamics._utils.grids import make_output_grid
+from tsdynamics.errors import ConvergenceError, InvalidParameterError, remedy
 
-from .base import SystemBase, Trajectory
+from ._kwargs import reject_unknown_run_keywords
+from .base import Absent, SystemBase, Trajectory, resolve_transient
+
+#: ``StochasticSystem.run``'s keywords, in signature order.
+_SDE_RUN_KEYWORDS = (
+    "final_time",
+    "dt",
+    "t0",
+    "ic",
+    "transient",
+    "solver",
+    "seed",
+    "backend",
+)
 
 if TYPE_CHECKING:
-    from tsdynamics.engine.problem import SDEProblem
+    from tsdynamics._engine.problem import SDEProblem
 
 __all__ = ["StochasticSystem"]
 
@@ -184,7 +198,7 @@ def _sde_step(
     Euler–Maruyama: ``u + f h + g ⊙ dW``. Milstein adds the diagonal correction
     ``½ g ⊙ g' ⊙ (dW² − h)`` using ``g' = diag(∂g/∂u)``.
     """
-    from tsdynamics.engine.compile import eval_tape, eval_tape_jac
+    from tsdynamics._engine.compile import eval_tape, eval_tape_jac
 
     f = eval_tape(drift, u, p, t)
     if method == "milstein":
@@ -279,7 +293,7 @@ class StochasticSystem(SystemBase, ABC):
                 return [sigma * y(0)]
 
         gbm = GeometricBrownianMotion()
-        traj = gbm.integrate(final_time=1.0, dt=0.01, ic=[1.0], seed=0)
+        traj = gbm.run(final_time=1.0, dt=0.01, ic=[1.0], seed=0)
 
     Notes
     -----
@@ -293,12 +307,14 @@ class StochasticSystem(SystemBase, ABC):
     _default_step_dt: ClassVar[float] = 0.01
 
     #: The default runtime backend (see :attr:`SystemBase._default_backend`).
-    #: ``"interp"`` — the Rust SDE engine.  Unlike the other families the SDE
-    #: engine path does not go through ``run.integrate`` (which cannot carry the
-    #: noise seed/step); it uses the dedicated ``run.sde_integrate_dense`` /
+    #: ``"jit"`` — the Rust SDE engine on Cranelift-compiled code, with the
+    #: compiled-evaluator cache paying the compile once per distinct system (it
+    #: was ``"interp"`` before v6).  Unlike the other families the SDE engine
+    #: path does not go through ``run.integrate`` (which cannot carry the noise
+    #: seed/step); it uses the dedicated ``run.sde_integrate_dense`` /
     #: ``run.sde_ensemble_final`` seam.  ``"reference"`` is the wheel-free
     #: pure-Python oracle.
-    _default_backend: ClassVar[str] = "interp"
+    _default_backend: ClassVar[str] = "jit"
 
     #: Parameters whose values affect the symbolic *structure* of the dynamics
     #: (e.g. integer loop bounds); baked in at lowering time, like the ODE family.
@@ -342,8 +358,110 @@ class StochasticSystem(SystemBase, ABC):
     # System protocol
     # ------------------------------------------------------------------ #
 
+    #: The output grid AND the Ito increment ``run`` uses when given no ``dt``.
+    _default_dt: ClassVar[float] = 0.02
+
+    #: The one-word family, read by :attr:`SystemBase.family`.
+    _family: ClassVar[str] = "sde"
+
+    def rhs(self, u: Any, t: float = 0.0) -> np.ndarray:
+        """Return the **drift** ``f(u, t)`` — the deterministic skeleton's field.
+
+        The twin of :meth:`jacobian`, and named on the same principle: an SDE has
+        two kernels, so "the right-hand side" is ambiguous by itself, and this
+        one is the drift — the field whose Jacobian :meth:`jacobian` returns and
+        whose equilibria the deterministic analyses find.  The diffusion is not a
+        vector field over ``(u, t)`` alone (it multiplies ``dW``), so it has no
+        place here.
+
+        Parameters
+        ----------
+        u : array-like, shape (dim,)
+        t : float, optional
+
+        Returns
+        -------
+        ndarray, shape (dim,)
+
+        Examples
+        --------
+        >>> import tsdynamics as ts
+        >>> ou = ts.systems.OrnsteinUhlenbeck()
+        >>> ou.rhs([1.0]).shape
+        (1,)
+        """
+        import symengine
+
+        from tsdynamics._engine.symbols import state_time_symbols
+
+        dim = int(cast(int, self.dim))
+        y, t_sym = state_time_symbols()
+        names = list(cast(Any, self.params))
+        syms = {k: symengine.Symbol(k) for k in names}
+        f = list(type(self)._drift(y, t_sym, **syms))
+        state = [symengine.Symbol(f"_u{i}") for i in range(dim)]
+        subs = {y(i): state[i] for i in range(dim)}
+        args = state + [t_sym] + [syms[k] for k in names]
+        fn = symengine.Lambdify(args, [symengine.sympify(e).subs(subs) for e in f])
+        vals = [float(self.params[k]) for k in names]
+        arg = np.concatenate([np.asarray(u, dtype=float).ravel(), [t], vals])
+        return np.asarray(fn(arg), dtype=float).reshape(dim)
+
+    def jacobian(self, u: Any, t: float = 0.0) -> np.ndarray:
+        """Return the **drift** Jacobian ``d f/d u`` at state ``u``.
+
+        An SDE has two kernels, so "the Jacobian" is ambiguous by itself; this
+        one is the drift's, which is the object linear stability of the
+        deterministic skeleton is read from.  The diffusion's own derivative
+        (Milstein's correction) is built by the lowering, not exposed here.
+
+        Parameters
+        ----------
+        u : array-like, shape (dim,)
+        t : float, optional
+
+        Returns
+        -------
+        ndarray, shape (dim, dim)
+
+        Examples
+        --------
+        >>> import tsdynamics as ts
+        >>> ts.systems.OrnsteinUhlenbeck().jacobian([1.0]).shape
+        (1, 1)
+        """
+        import symengine
+
+        from tsdynamics._engine.symbols import state_time_symbols
+
+        dim = int(cast(int, self.dim))
+        y, t_sym = state_time_symbols()
+        names = list(cast(Any, self.params))
+        syms = {k: symengine.Symbol(k) for k in names}
+        f = list(type(self)._drift(y, t_sym, **syms))
+        rows = [[symengine.sympify(f[i]).diff(y(j)) for j in range(dim)] for i in range(dim)]
+        # ``y(i)`` is a Function application, not a Symbol, and Lambdify needs
+        # symbols — substitute after differentiating, exactly as the ODE family's
+        # lambdified cache does.
+        state = [symengine.Symbol(f"_u{i}") for i in range(dim)]
+        subs = {y(i): state[i] for i in range(dim)}
+        args = state + [t_sym] + [syms[k] for k in names]
+        fn = symengine.Lambdify(
+            args, [symengine.sympify(e).subs(subs) for row in rows for e in row]
+        )
+        vals = [float(self.params[k]) for k in names]
+        arg = np.concatenate([np.asarray(u, dtype=float).ravel(), [t], vals])
+        return np.asarray(fn(arg), dtype=float).reshape(dim, dim)
+
+    #: An SDE's kernel is a drift/diffusion pair.
+    jacobian_sym = Absent(
+        "an SDE is a drift/diffusion pair, so a single symbolic Jacobian would "
+        "silently answer about the drift alone",
+        "system.jacobian(u)   # the DRIFT Jacobian, named as such",
+    )
+
     @property
-    def is_discrete(self) -> bool:
+    def _is_discrete(self) -> bool:
         """SDEs are continuous-time systems."""
         return False
 
@@ -353,9 +471,10 @@ class StochasticSystem(SystemBase, ABC):
         *,
         t: float | None = None,
         params: dict[str, Any] | None = None,
-        method: str | None = None,
+        solver: str | None = None,
         seed: int | None = None,
         dt: float | None = None,
+        **unknown: Any,
     ) -> None:
         """
         (Re)start the incremental stepper from state ``u`` at time ``t``.
@@ -368,7 +487,7 @@ class StochasticSystem(SystemBase, ABC):
             Start time (default 0.0).
         params : dict, optional
             Parameter overrides applied (in place) before restarting.
-        method : str, optional
+        solver : str, optional
             ``"euler_maruyama"`` (default) or ``"milstein"``.
         seed : int, optional
             Seed for the noise stream (random if omitted) — set it for a
@@ -376,16 +495,26 @@ class StochasticSystem(SystemBase, ABC):
         dt : float, optional
             Default step size for :meth:`step` (default ``0.01``).
         """
+        reject_unknown_run_keywords(
+            self,
+            unknown,
+            family="sde",
+            accepted=("t", "params", "solver", "seed", "dt"),
+            verb="reinit",
+        )
         if params:
             for k, v in params.items():
                 self.params[k] = v
         t0 = float(t) if t is not None else 0.0
-        ic_arr = self.resolve_ic(u)
-        canon = self._resolve_method(method)
-        base_seed = _resolve_seed(seed)
-        step_dt = float(dt) if dt is not None else type(self)._default_step_dt
-
-        problem = self._problem(ic=ic_arr, t0=t0, method=canon)
+        # ``resolve_ic`` commits the IC before the method resolution and the tape
+        # lowering below, either of which can raise — a failed ``reinit`` must
+        # leave the object exactly as it was.
+        with self._ic_rollback():
+            ic_arr = self._resolve_ic(u)
+            canon = self._resolve_method(solver)
+            base_seed = _resolve_seed(seed)
+            step_dt = float(dt) if dt is not None else type(self)._default_step_dt
+            problem = self._problem(ic=ic_arr, t0=t0, method=canon)
         self._stepper = {
             "method": canon,
             "drift": problem.drift,
@@ -400,7 +529,13 @@ class StochasticSystem(SystemBase, ABC):
 
     def step(self, n_or_dt: float | None = None) -> np.ndarray:
         """
-        Advance by ``dt`` (default ``0.01``) and return the new state.
+        Advance by ``n_or_dt`` and return the new state.
+
+        ``n_or_dt`` is a **time increment**, in the same unit as ``final_time``,
+        and for an SDE it is also the noise scale (the increment is drawn
+        ``~ N(0, dt)``); omitting it uses the stepper's ``dt`` — the ``dt=`` given
+        to :meth:`reinit`, else ``_default_step_dt`` (``0.01``, the number every
+        continuous family uses).
 
         The first call performs an implicit :meth:`reinit`. Each call draws a
         fresh diagonal Wiener increment from the stepper's seeded stream, so
@@ -445,17 +580,40 @@ class StochasticSystem(SystemBase, ABC):
         """Return the current stepper time."""
         return self._t_now
 
-    def trajectory(
-        self,
-        final_time: float = 100.0,
-        *,
-        dt: float = 0.02,
-        transient: float = 0.0,
-        **kwargs: Any,
-    ) -> Trajectory:
-        """Protocol-uniform trajectory: ``integrate`` plus optional transient drop."""
-        traj = self.integrate(final_time=transient + final_time, dt=dt, **kwargs)
-        return traj.after(transient) if transient > 0 else traj
+    @staticmethod
+    def _reject_flow_keywords(kwargs: dict[str, Any], where: str = "integrate()/run()") -> None:
+        """Refuse an adaptive-solver keyword with the family-aware typed error.
+
+        An SDE is integrated by a fixed-step scheme, so ``rtol`` / ``atol`` /
+        ``max_step`` have nothing to control and ``events`` has no continuous
+        extension to root-find on.  The ODE and map doors already name the
+        offending keyword and explain the family; this gives the SDE door the
+        same answer instead of a bare interpreter ``TypeError``.
+        """
+        if not kwargs:
+            return
+        bad = sorted(kwargs)[0]
+        adaptive = {"rtol", "atol", "max_step"}
+        if bad in adaptive:
+            hint = (
+                f"{bad} controls an adaptive solver's error estimate, but an SDE is "
+                f"integrated by a fixed-step scheme (euler_maruyama / milstein): dt is "
+                f"both the discretisation and the noise scale, so accuracy is set by dt "
+                f"alone."
+            )
+        elif bad == "events":
+            hint = (
+                "events needs a continuous extension to root-find a crossing on, which "
+                "a fixed-step stochastic scheme does not have; sample the path and "
+                "locate crossings on the returned trajectory instead."
+            )
+        else:
+            hint = "check the keyword spelling (final_time, dt, t0, ic, method, seed, backend)."
+        raise InvalidParameterError(
+            f"{bad} is not a valid StochasticSystem.{where} keyword, got {kwargs[bad]!r}. "
+            + hint
+            + remedy("OrnsteinUhlenbeck().run(final_time=10, dt=0.01)")
+        )
 
     # ------------------------------------------------------------------ #
     # Trajectory production — the canonical ``run`` verb
@@ -464,107 +622,154 @@ class StochasticSystem(SystemBase, ABC):
     def run(
         self,
         final_time: float = 100.0,
-        dt: float = 0.02,
-        **kwargs: Any,
-    ) -> Trajectory:
-        """
-        Produce a trajectory — the one canonical verb for every family.
-
-        ``run`` is the unified trajectory producer: it answers the same call for
-        flows, maps, DDEs and SDEs, dispatching on :attr:`is_discrete`.  For a
-        stochastic system (this family) it integrates the SDE, so ``run`` is a
-        thin alias of :meth:`integrate` and forwards every keyword to it
-        unchanged.
-
-        Parameters
-        ----------
-        final_time : float
-            End of the integration window. Default 100.0.
-        dt : float
-            Fixed step size *and* output sampling interval (for an SDE the step
-            is the noise scale).
-        **kwargs
-            Forwarded verbatim to :meth:`integrate` (``t0``, ``ic``, ``method``,
-            ``seed``, ``backend``).
-
-        Returns
-        -------
-        Trajectory
-            Identical to :meth:`integrate` — ``run`` adds no behaviour.
-
-        See Also
-        --------
-        integrate : The family-specific spelling (a permanent alias of ``run``).
-        """
-        return self.integrate(final_time=final_time, dt=dt, **kwargs)
-
-    # ------------------------------------------------------------------ #
-    # Integration
-    # ------------------------------------------------------------------ #
-
-    def integrate(
-        self,
-        final_time: float = 100.0,
-        dt: float = 0.02,
+        dt: float | None = None,
         *,
         t0: float = 0.0,
         ic: Any | None = None,
-        method: str | None = None,
+        transient: float = 0.0,
+        solver: str | None = None,
         seed: int | None = None,
         backend: str | None = None,
+        **solver_options: Any,
     ) -> Trajectory:
         """
         Integrate the SDE and return a :class:`~tsdynamics.families.Trajectory`.
 
+        ``run`` is **the** trajectory verb — one word on flows, maps, delay and
+        stochastic systems.  ``integrate`` and ``trajectory`` were two more names
+        for this method and are gone in v6.
+
+        There is no ``rtol``/``atol`` here: an Ito scheme takes fixed ``dt``
+        steps and carries no embedded error estimate, so ``dt`` is both the
+        discretisation and the output grid.
+
         Parameters
         ----------
         final_time : float, default 100.0
-            End of the integration window.
+            End of the integration window, **in time units** — the horizon word
+            for a flow.
         dt : float, default 0.02
-            Fixed step size *and* output sampling interval — for an SDE the step
-            is the noise scale (each increment is drawn ``~ N(0, dt)``), so the
-            output grid and the discretisation share one ``dt``.
+            Fixed step size *and* output sampling interval, **in time units**.
+            For an SDE the step **is** the noise scale (each increment is drawn
+            ``~ N(0, dt)``), so the output grid and the discretisation share one
+            ``dt`` — unlike a deterministic flow, coarsening it changes the path,
+            not just the sampling.
         t0 : float, default 0.0
-            Start time (the IC is the state at ``t0``).
+            Where the integration **starts**, in time units (the IC is the state
+            at ``t0``).
         ic : array-like, optional
-            Initial state. Falls back to ``self.ic``, then ``U[0, 1)^dim``.
-        method : str, optional
+            Initial state at ``t0`` — ``dim`` numbers, one per state component.
+            Falls back to ``self.ic``, then a ``U[0, 1)^dim`` draw.
+        solver : str, optional
             ``"euler_maruyama"`` (default, order 0.5) or ``"milstein"``
             (order 1.0).
         seed : int, optional
-            Seed for the noise realisation (random if omitted). The resolved seed
-            is recorded in ``traj.meta["seed"]`` so a run can be reproduced.
+            Makes the whole run reproducible: it seeds the **noise realisation**
+            *and* the random initial-condition draw.  (Every other family has
+            only the second source of randomness, so there ``seed=`` means the
+            draw alone — this is the one family where it also fixes the path.)
+            Random if omitted; the resolved seed is recorded in
+            ``traj.meta["seed"]``, and the IC seed in ``traj.meta["ic_seed"]``.
 
             .. note::
-               ``integrate(seed=s)`` draws its noise from the **raw** seed ``s``,
-               whereas a single-row batch ``ensemble([ic], seed=s)[0]`` draws from
-               the **per-index** stream ``seed_for(s, 0)`` (the
-               parallel-equals-serial contract of :meth:`ensemble`).  These two
-               derived seeds differ, so the two calls trace **different** sample
-               paths for the same ``s`` — by design, not a bug.  To reproduce one
-               ``ensemble`` trajectory standalone, integrate with that index's
-               derived seed.
-        backend : str, optional
-            Defaults to ``_default_backend`` (``"interp"``).  ``"interp"`` /
-            ``"jit"`` dispatch the two-tape
-            SDE call to the compiled Rust engine (:mod:`tsdynamics._rust`) via the
+                ``integrate(seed=s)`` draws its noise from the **raw** seed ``s``,
+                whereas a single-row batch ``ensemble([ic], seed=s)[0]`` draws from
+                the **per-index** stream ``seed_for(s, 0)`` (the
+                parallel-equals-serial contract of :meth:`ensemble`).  These two
+                derived seeds differ, so the two calls trace **different** sample
+                paths for the same ``s`` — by design, not a bug.  To reproduce one
+                ``ensemble`` trajectory standalone, integrate with that index's
+                derived seed.
+        backend : {"jit", "interp", "reference"}, optional
+            Defaults to ``_default_backend`` (``"jit"``, the Cranelift JIT served
+            from the compiled-evaluator cache).  ``"jit"`` / ``"interp"`` (the
+            bit-for-bit identical SSA-tape interpreter) dispatch the two-tape SDE
+            call to the compiled Rust engine (:mod:`tsdynamics._rust`) via the
             dedicated ``run.sde_integrate_dense`` seam.  The engine path reproduces
-            the reference to floating-point tolerance under a fixed seed (see the
-            module docstring on the Box–Muller ULP) and raises
-            :class:`~tsdynamics.engine.run.EngineNotAvailableError` if the
-            extension is not built.
+            the ``"reference"`` pure-Python oracle to floating-point tolerance
+            under a fixed seed (see the module docstring on the Box–Muller ULP)
+            and raises :class:`~tsdynamics._engine.run.EngineNotAvailableError` if
+            the extension is not built.
+
+            .. versionchanged:: 6.0
+                The default moved from ``"interp"`` to ``"jit"``, once the v6
+                compiled-evaluator cache removed the JIT's per-call recompile.
+        transient : float, optional
+            Leading stretch of the path to discard, in **time units** (the same
+            unit as ``final_time``).  The window is extended to
+            ``transient + final_time`` and everything before ``t0 + transient``
+            dropped.  One word on every family, in that family's **own horizon
+            unit**: time here, **iterations** on a map.
+
+            .. versionadded:: 6.0
 
         Returns
         -------
         Trajectory
-            Supports tuple-unpacking: ``t, y = sys.integrate(...)``.
+            A container of samples: ``len(traj)`` time points, iterating
+            yields ``(t_i, y_i)`` pairs; ``traj.unpack()`` gives the two
+            column arrays ``(t, y)``.
+
+        Raises
+        ------
+        InvalidParameterError
+            If an adaptive-solver keyword (``rtol`` / ``atol`` / ``max_step``) or
+            ``events`` is passed.  An SDE is integrated by a **fixed-step**
+            scheme, so there is no error control to tune and no continuous
+            extension to root-find a crossing on; the keyword is refused by name
+            rather than silently ignored.
         """
-        from tsdynamics.engine import run
+        reject_unknown_run_keywords(self, solver_options, family="sde", accepted=_SDE_RUN_KEYWORDS)
+        dt = self._default_dt if dt is None else dt
+        method = solver
+        transient = resolve_transient(transient, discrete=False)
+        if transient > 0.0:
+            traj = self.run(
+                final_time=final_time + transient,
+                dt=dt,
+                t0=t0,
+                ic=ic,
+                solver=method,
+                seed=seed,
+                backend=backend,
+            )
+            return traj.after(t0 + transient)
+        # The SDE family does not route through ``_dispatch`` (the generic seam
+        # cannot carry the noise seed), so it needs the IC rollback guard of its
+        # own: a diverging / interrupted path must leave ``self.ic`` untouched.
+        with self._ic_rollback():
+            return self._integrate_resolved(
+                final_time=final_time,
+                dt=dt,
+                t0=t0,
+                ic=ic,
+                method=method,
+                seed=seed,
+                backend=backend,
+            )
+
+    def _integrate_resolved(
+        self,
+        *,
+        final_time: float,
+        dt: float,
+        t0: float,
+        ic: Any | None,
+        method: str | None,
+        seed: int | None,
+        backend: str | None,
+    ) -> Trajectory:
+        """Run :meth:`run`'s body (wrapped by its IC rollback guard)."""
+        from tsdynamics._engine import run
 
         backend = backend if backend is not None else self._default_backend
         canon = self._resolve_method(method)
         base_seed = _resolve_seed(seed)
-        ic_arr = self.resolve_ic(ic)
+        # ``seed=`` makes the *whole run* reproducible, so it seeds the random-IC
+        # draw as well as the noise stream — the uniform contract every family's
+        # trajectory producer now honours.  It is inert unless a draw actually
+        # happens (an explicit ``ic``, ``self.ic`` or ``default_ic`` all win).
+        ic_arr = self._resolve_ic(ic, seed=seed)
         problem = self._problem(ic=ic_arr, t0=t0, method=canon)
         t_eval = make_output_grid(t0, final_time, dt)
 
@@ -595,7 +800,7 @@ class StochasticSystem(SystemBase, ABC):
             ),
         )
 
-    def ensemble(
+    def _ensemble_final(
         self,
         ics: Any,
         *,
@@ -605,6 +810,7 @@ class StochasticSystem(SystemBase, ABC):
         method: str | None = None,
         seed: int | None = None,
         backend: str | None = None,
+        **kwargs: Any,
     ) -> np.ndarray:
         """
         Integrate a batch of initial conditions and return their final states.
@@ -618,30 +824,41 @@ class StochasticSystem(SystemBase, ABC):
         row of ``NaN`` rather than aborting the batch.
 
         .. note::
-           Because every trajectory is seeded by index, ``ensemble([ic], seed=s)``
-           draws from ``seed_for(s, 0)``, which differs from the **raw** seed ``s``
-           used by ``integrate(seed=s)``.  The two calls therefore trace different
-           sample paths for the same ``s`` — by design (the index seeding is what
-           makes a batch reproducible and parallel-safe).
+            Because every trajectory is seeded by index, ``ensemble([ic], seed=s)``
+            draws from ``seed_for(s, 0)``, which differs from the **raw** seed ``s``
+            used by ``integrate(seed=s)``.  The two calls therefore trace different
+            sample paths for the same ``s`` — by design (the index seeding is what
+            makes a batch reproducible and parallel-safe).
 
         Parameters
         ----------
         ics : array-like, shape (n, dim)
             The batch of initial conditions.
         final_time, dt, t0, method, seed
-            As in :meth:`integrate` (``seed`` is the ensemble's base seed).
-        backend : str, optional
-            Defaults to ``_default_backend`` (``"interp"``).  ``"interp"`` /
-            ``"jit"`` fan the batch out on the compiled engine's rayon pool;
-            ``"reference"`` is a pure-Python loop.  All seed each trajectory by index, so the final
-            states match across backends to floating-point tolerance.
+            As in :meth:`run` (``seed`` is the ensemble's base seed).
+        backend : {"jit", "interp", "reference"}, optional
+            Defaults to ``_default_backend`` (``"jit"``).  ``"jit"`` / ``"interp"``
+            fan the batch out on the compiled engine's rayon pool;
+            ``"reference"`` is a pure-Python loop.  All seed each trajectory by
+            index, so the final states match across backends to floating-point
+            tolerance.
+
+            .. versionchanged:: 6.0
+                Default moved from ``"interp"`` to ``"jit"`` (see
+                :meth:`run`).
 
         Returns
         -------
         ndarray, shape (n, dim)
             Final states (rows of ``NaN`` for diverged trajectories).
         """
-        from tsdynamics.engine import run
+        from tsdynamics._engine import run
+
+        # ``**kwargs`` exists so the adaptive-solver keywords reach the same
+        # family-aware typed error they get at ``integrate`` / ``run``, rather
+        # than a bare interpreter ``TypeError`` (and so the signature stays a
+        # true widening of ``SystemBase.ensemble``).
+        self._reject_flow_keywords(kwargs, where="ensemble()")
 
         backend = backend if backend is not None else self._default_backend
         canon = self._resolve_method(method)
@@ -693,8 +910,8 @@ class StochasticSystem(SystemBase, ABC):
     # ------------------------------------------------------------------ #
 
     def _problem(self, *, ic: np.ndarray, t0: float, method: str) -> SDEProblem:
-        """Build the :class:`~tsdynamics.engine.problem.SDEProblem` for ``method``."""
-        from tsdynamics.engine.problem import sde_problem
+        """Build the :class:`~tsdynamics._engine.problem.SDEProblem` for ``method``."""
+        from tsdynamics._engine.problem import sde_problem
 
         return sde_problem(
             self,
@@ -731,16 +948,51 @@ class StochasticSystem(SystemBase, ABC):
 
     @classmethod
     def _resolve_method(cls, method: str | None) -> str:
-        """Canonicalise a scheme name; raise on an unknown one."""
+        """Canonicalise a scheme name; raise on an unknown one.
+
+        The refusal speaks the **same words** as every other family's solver
+        door — ``unknown solver 'X'. Did you mean: …?`` then the listing scoped
+        to this family — because a user meets one vocabulary, not one per
+        family.  Two things were missing here and are measured defects rather
+        than polish:
+
+        * **No nearest match.**  ``solver="milstien"`` (one transposition) got a
+          bare listing, where every other door would have said *"Did you mean:
+          'milstein'?"*.
+        * **No reason for an ODE kernel.**  ``solver="rk45"`` on an SDE is not a
+          typo, it is the right word for different dynamics, so the message
+          names the mathematics: a deterministic kernel has nowhere to put the
+          Wiener increment.
+        """
         if method is None:
             return cls._default_method
         canon = _METHODS.get(str(method).lower())
-        if canon is None:
-            raise InvalidParameterError(
-                f"unknown SDE method {method!r}; choose from "
-                f"{sorted(set(_METHODS.values()))} (aliases: {sorted(_METHODS)})."
+        if canon is not None:
+            return canon
+
+        from tsdynamics import _solvers as solvers
+        from tsdynamics.errors import _nearest
+
+        raw = str(method)
+        names = sorted(set(_METHODS.values()))
+        # Rank over the ALIASES (so "em" and "euler-maruyama" can be matched),
+        # then report the canonical name each one resolves to, de-duplicated.
+        near = list(dict.fromkeys(_METHODS[n] for n in _nearest(raw, sorted(_METHODS))))
+        msg = f"unknown solver {raw!r}."
+        if near:
+            msg += " Did you mean: " + ", ".join(repr(n) for n in near) + "?"
+        msg += f"\n    Available for an sde problem: {names}"
+        try:
+            deterministic = solvers.resolve(raw).name
+        except InvalidParameterError:
+            deterministic = ""
+        if deterministic:
+            msg += (
+                f"\n    {deterministic!r} is a deterministic kernel: it integrates dx = f dt and has"
+                "\n    nowhere to put the Wiener increment dW. An SDE needs a scheme that draws the"
+                "\n    noise — 'euler_maruyama' (order 0.5) or 'milstein' (order 1.0)."
             )
-        return canon
+        raise InvalidParameterError(msg)
 
 
 def _resolve_seed(seed: int | None) -> int:

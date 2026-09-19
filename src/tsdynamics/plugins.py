@@ -1,23 +1,31 @@
-"""Entry-point plugin discovery — the external-plugin half of D4 (ROADMAP §4).
+"""Entry-point plugin discovery — the external-plugin half of D4.
 
 Third-party packages extend TSDynamics *without forking* by declaring Python
 packaging **entry points**.  On import, TSDynamics walks the relevant groups and
 loads whatever it finds, so an installed plugin's systems, solvers, analyses or
-transforms register themselves automatically.
+renderers register themselves automatically.
 
-The five group names below are the frozen contract a plugin author declares
+The six group names below are the frozen contract a plugin author declares
 against in their own ``pyproject.toml``::
 
-    [project.entry-points."tsdynamics.solvers"]
+    [project.entry-points."tsdynamics._solvers"]
     my_method = "my_pkg.solvers:MY_SPEC"
+
+**A declared group is a promise, and a promise nothing loads is a lie.**
+:data:`SYSTEMS_GROUP` has been advertised here since F2 and no consumer has ever
+called :func:`load_plugins` on it, so a third-party system package declaring
+``tsdynamics.systems`` entry points was silently ignored.  Each group in
+:data:`ALL_GROUPS` must have exactly one consumer that loads it;
+``tests/test_registry.py::test_every_declared_plugin_group_has_a_consumer`` is
+the gate, and it names the module expected to do the loading.
 
 This module is deliberately *generic*: it discovers and loads entry points and
 imports submodules, but knows nothing about what a system/solver/analysis/
-transform *is*.  Each consuming subpackage interprets the loaded objects in its
-own terms (e.g. :mod:`tsdynamics.solvers` turns them into solver specs).
+renderer *is*.  Each consuming subpackage interprets the loaded objects in its
+own terms (e.g. :mod:`tsdynamics._solvers` turns them into solver specs).
 
-Stream **F2** owns this mechanism; it is consumed by ``tsdynamics.solvers``
-(also F2) and, later, by the analyses/transforms registries.
+Stream **F2** owns this mechanism; it is consumed by ``tsdynamics._solvers``
+(also F2) and by the analyses/renderers registries.
 """
 
 from __future__ import annotations
@@ -32,18 +40,36 @@ from typing import Any, Protocol
 
 # ── Entry-point group names (the frozen plugin contract) ───────────────────────
 SYSTEMS_GROUP = "tsdynamics.systems"
-SOLVERS_GROUP = "tsdynamics.solvers"
+SOLVERS_GROUP = "tsdynamics._solvers"
 ANALYSES_GROUP = "tsdynamics.analyses"
-TRANSFORMS_GROUP = "tsdynamics.transforms"
 RENDERERS_GROUP = "tsdynamics.renderers"
+#: Out-of-tree **plot transforms** (see :mod:`tsdynamics.viz.transforms`).  Each
+#: entry point resolves to a ``PlotTransform`` record, registered verbatim into
+#: :data:`tsdynamics.registry.plot_transforms` under the entry point's name — so
+#: a third-party plot is genuinely first-class: it declares its own
+#: compatibility row, appears in ``ts.viz.compatibility()``, and is reachable as
+#: ``ts.plot(subject, "<name>")`` with no edit to this library.
+#:
+#: Deliberately **not** named ``tsdynamics.transforms``: that word belongs to the
+#: generic time-series layer the v6 scope surgery deleted, and reusing it would
+#: re-litigate a settled scope decision on every grep.
+PLOT_TRANSFORMS_GROUP = "tsdynamics.plot_transforms"
+#: Out-of-tree **plot primitives** (see :mod:`tsdynamics.viz.transforms`).  A
+#: *transform* turns a subject into geometry; a *primitive* turns that geometry
+#: into layers, so the two are separate extension points and need separate
+#: groups.  v6 completes the set: the six extension doors are systems, solvers,
+#: analyses, renderers, plot transforms and plot primitives, and every one of
+#: them is now reachable from outside the library.
+PLOT_PRIMITIVES_GROUP = "tsdynamics.plot_primitives"
 
 #: Every plugin group TSDynamics recognises.
 ALL_GROUPS: tuple[str, ...] = (
     SYSTEMS_GROUP,
     SOLVERS_GROUP,
     ANALYSES_GROUP,
-    TRANSFORMS_GROUP,
     RENDERERS_GROUP,
+    PLOT_TRANSFORMS_GROUP,
+    PLOT_PRIMITIVES_GROUP,
 )
 
 
@@ -105,7 +131,7 @@ def load_plugins(group: str, *, strict: bool = False) -> dict[str, Any]:
 def import_submodules(package: ModuleType) -> dict[str, ModuleType]:
     """Import every public submodule of *package*, returning ``name -> module``.
 
-    This is the "directory scan at import" primitive (ROADMAP §4d): importing a
+    This is the "directory scan at import" primitive: importing a
     submodule runs its top-level code, so a module that registers something on
     import (a solver spec, an analysis, …) becomes active simply by existing in
     the package.  Submodules whose names start with ``_`` are skipped, leaving
@@ -150,14 +176,13 @@ def register_entry_points(
     """Load the plugins in *group* and register each into *registry* by name.
 
     The generic-registry counterpart of
-    :func:`tsdynamics.solvers.discover_plugins`: it wires the
-    ``tsdynamics.analyses`` and ``tsdynamics.transforms`` plugin kinds into their
-    :class:`~tsdynamics.registry.Registry` consumers (the two of the four D4
-    plugin kinds that otherwise have no consumer).
+    :func:`tsdynamics._solvers.discover_plugins`: it wires the
+    ``tsdynamics.analyses`` and ``tsdynamics.renderers`` plugin kinds into their
+    :class:`~tsdynamics.registry.Registry` consumers.
 
     Each entry point resolves to the object to register **verbatim** under the
-    entry point's own name — an analysis function, a transform callable, … —
-    unlike :mod:`~tsdynamics.solvers`, whose plugins resolve to ``SolverSpec``
+    entry point's own name — an analysis function, a renderer callable, … —
+    unlike :mod:`~tsdynamics._solvers`, whose plugins resolve to ``SolverSpec``
     metadata.  Names already present are left untouched, so this is safe to call
     repeatedly (e.g. after installing a new plugin).  Plugin load failures are
     isolated by :func:`load_plugins` (warn-and-skip unless *strict*).
@@ -166,10 +191,10 @@ def register_entry_points(
     ----------
     registry : Registry
         The generic registry to populate (``registry.analyses`` /
-        ``registry.transforms``).
+        ``registry.renderers``).
     group : str
         The entry-point group to load (:data:`ANALYSES_GROUP` /
-        :data:`TRANSFORMS_GROUP`).
+        :data:`RENDERERS_GROUP`).
     strict : bool, default False
         Forwarded to :func:`load_plugins`: re-raise the first load failure
         instead of warning and continuing.
@@ -192,8 +217,9 @@ __all__ = [
     "SYSTEMS_GROUP",
     "SOLVERS_GROUP",
     "ANALYSES_GROUP",
-    "TRANSFORMS_GROUP",
     "RENDERERS_GROUP",
+    "PLOT_TRANSFORMS_GROUP",
+    "PLOT_PRIMITIVES_GROUP",
     "ALL_GROUPS",
     # The generic discovery / loading primitives the consuming subpackages use.
     "iter_entry_points",

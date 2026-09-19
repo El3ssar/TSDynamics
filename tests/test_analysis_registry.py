@@ -1,7 +1,7 @@
-"""Registry-driven meta-QA over the generic analysis/transform registries.
+"""Registry-driven meta-QA over the generic analysis registry.
 
-Stream I-QA: these tests sweep the D4 plugin registries
-(:data:`tsdynamics.registry.analyses` / :data:`~tsdynamics.registry.transforms`)
+Stream I-QA: these tests sweep the D4 plugin registry
+(:data:`tsdynamics.registry.analyses`)
 once per registered entry, asserting the invariants every public quantifier must
 satisfy — callable, documented, round-trips through its own registry, and (when
 re-exported) agrees with the top-level package attribute.  A set of curated
@@ -9,9 +9,8 @@ headline-name guards then catches a stream's self-registration silently breaking
 or a public name disappearing.
 
 These are pure structural/contract checks (no Hypothesis needed): the
-parametrized fixtures ``analysis_entry`` / ``transform_entry`` (provided by
-``conftest.py``) yield one :class:`~tsdynamics.registry.RegistryEntry` per
-registered analysis/transform.
+parametrized fixture ``analysis_entry`` (provided by ``conftest.py``) yields one
+:class:`~tsdynamics.registry.RegistryEntry` per registered analysis.
 """
 
 from __future__ import annotations
@@ -24,7 +23,6 @@ import numpy as np
 import pytest
 
 import tsdynamics as ts
-import tsdynamics.transforms as tx  # noqa: F401  (import populates registry.transforms)
 from tsdynamics import registry
 from tsdynamics.analysis._result import AnalysisResult
 from tsdynamics.derived import PoincareSection
@@ -65,51 +63,19 @@ def test_analysis_entry_roundtrips(analysis_entry):
     assert registry.analyses.entry(analysis_entry.name).obj is analysis_entry.obj
 
 
-def test_analysis_entry_top_level_export(analysis_entry):
-    """If re-exported at top level, ``ts.<name>`` is the *same* object (no shadowing)."""
-    # Lenient: not every analysis is advertised at the top level; only the ones
-    # that ARE must agree with the registered object.
-    if hasattr(ts, analysis_entry.name):
-        assert getattr(ts, analysis_entry.name) is analysis_entry.obj
+def test_analysis_entry_is_reachable_at_its_one_public_address(analysis_entry):
+    """``ts.analysis.<name>`` IS the registered object, and it is the only address.
 
-
-# ---------------------------------------------------------------------------
-# Parametrized contract: transforms (one run per registered transform)
-# ---------------------------------------------------------------------------
-
-
-def test_transform_entry_is_callable(transform_entry):
-    """Every registered transform must be callable."""
-    assert callable(transform_entry.obj)
-
-
-def test_transform_entry_documented(transform_entry):
-    """Every registered public transform carries a non-empty docstring."""
-    doc = transform_entry.obj.__doc__
-    assert isinstance(doc, str)
-    assert doc.strip(), f"transform {transform_entry.name!r} has an empty docstring"
-
-
-def test_transform_entry_metadata_is_mapping(transform_entry):
-    """Entry name is a non-empty str and metadata behaves as a mapping."""
-    assert isinstance(transform_entry.name, str)
-    assert transform_entry.name.strip()
-    assert isinstance(transform_entry.metadata, Mapping)
-    as_dict = dict(transform_entry.metadata)
-    assert set(as_dict) == set(transform_entry.metadata)
-
-
-def test_transform_entry_roundtrips(transform_entry):
-    """The entry is reachable under its own name and resolves to the same object."""
-    assert transform_entry.name in registry.transforms
-    assert registry.transforms.get(transform_entry.name) is transform_entry.obj
-    assert registry.transforms.entry(transform_entry.name).obj is transform_entry.obj
-
-
-def test_transform_entry_top_level_export(transform_entry):
-    """If re-exported on ``tsdynamics.transforms``, the attribute is the same object."""
-    if hasattr(tx, transform_entry.name):
-        assert getattr(tx, transform_entry.name) is transform_entry.obj
+    v6 took the analyses off the 17-name top level, so ``ts.<name>`` raises a
+    redirect naming ``ts.analysis.<name>``.  This is the gate for that: one
+    concept, one spelling, and the spelling resolves to the registered object.
+    """
+    name = analysis_entry.name
+    assert getattr(ts.analysis, name) is analysis_entry.obj
+    assert name in ts.analysis.__all__
+    with pytest.raises((AttributeError, ImportError)) as err:
+        getattr(ts, name)
+    assert f"ts.analysis.{name}" in str(err.value)
 
 
 # ---------------------------------------------------------------------------
@@ -120,14 +86,13 @@ def test_transform_entry_top_level_export(transform_entry):
 # loudly instead of the sweep above simply running over fewer entries.
 # ---------------------------------------------------------------------------
 
-#: Headline analyses spanning every Tier-3 A-* stream — Lyapunov, chaos
-#: indicators, fixed points / orbits, dimensions, embedding, entropy,
-#: recurrence, surrogates and basins.  A subset (the registry may carry more).
+#: Headline analyses spanning every surviving A-* stream — Lyapunov, chaos
+#: indicators, fixed points / orbits, dimensions, embedding, recurrence and
+#: basins.  A subset (the registry may carry more).
 _EXPECTED_ANALYSES = frozenset(
     {
         # A-LYAP
         "lyapunov_spectrum",
-        "max_lyapunov",
         "kaplan_yorke_dimension",
         "lyapunov_from_data",
         # A-CHAOS
@@ -148,38 +113,17 @@ _EXPECTED_ANALYSES = frozenset(
         "embed",
         "optimal_delay",
         "embedding_dimension",
-        # A-ENT
-        "permutation_entropy",
-        "sample_entropy",
-        "lz76_complexity",
         # A-RQA
         "recurrence_matrix",
         "rqa",
         "windowed_rqa",
-        # A-SURR
-        "surrogates",
-        "surrogate_test",
         # A-BASIN
-        "find_attractors",
-        "basins_of_attraction",
-    }
-)
-
-#: Headline transforms — spectral measures + Butterworth filter family +
-#: feature extraction (stream T-XFORM).
-_EXPECTED_TRANSFORMS = frozenset(
-    {
-        "detrend",
-        "normalize",
-        "power_spectral_density",
-        "spectral_entropy",
-        "spectral_centroid",
-        "dominant_frequency",
-        "lowpass",
-        "highpass",
-        "bandpass",
-        "bandstop",
-        "extract_features",
+        "attractors",
+        "basins",
+        # A-FIELDS (promoted public in v6)
+        "flow_field",
+        "ftle_field",
+        "nullclines",
     }
 )
 
@@ -189,31 +133,22 @@ def test_analyses_registry_has_expected_members():
     names = set(registry.analyses.names())
     missing = _EXPECTED_ANALYSES - names
     assert not missing, f"analyses registry is missing headline members: {sorted(missing)}"
-    # The full A-* fan-out registers well over forty quantifiers; a smaller
+    # The surviving A-* fan-out registers well over thirty quantifiers; a smaller
     # count means a whole subpackage failed to self-register.
-    assert len(registry.analyses) >= 40
-
-
-def test_transforms_registry_has_expected_members():
-    """Every headline transform is registered (after importing tsdynamics.transforms)."""
-    names = set(registry.transforms.names())
-    missing = _EXPECTED_TRANSFORMS - names
-    assert not missing, f"transforms registry is missing headline members: {sorted(missing)}"
-    assert len(registry.transforms) >= 10
+    assert len(registry.analyses) >= 30
 
 
 def test_registries_are_distinct_kinds():
     """The two generic registries are tagged with their distinct kind labels."""
     assert registry.analyses.kind == "analysis"
-    assert registry.transforms.kind == "transform"
+    assert registry.renderers.kind == "renderer"
     # Distinct container instances — they must not be the same object.
-    assert registry.analyses is not registry.transforms
+    assert registry.analyses is not registry.renderers
 
 
 def test_registry_names_match_entry_names():
     """``names()`` and ``all()`` agree element-for-element (no stale/aliased keys)."""
-    for reg in (registry.analyses, registry.transforms):
-        assert reg.names() == [e.name for e in reg.all()]
+    assert registry.analyses.names() == [e.name for e in registry.analyses.all()]
 
 
 # ---------------------------------------------------------------------------
@@ -234,6 +169,35 @@ def test_registry_names_match_entry_names():
 _RESULT_CARVE_OUTS: dict[str, type] = {
     "poincare_section": PoincareSection,
 }
+
+#: Registered analyses that return a **plain value** — an array, a float, a
+#: tuple, a list of small records.  v6 promoted these onto the public surface
+#: (CONTRACT §5.7: the eight ``planar`` field analyses had no door at all, and a
+#: user who wanted FTLE *numbers* rather than a picture could not reach them), and
+#: promoting them collided with §4.2 r1 ("every registered analysis returns an
+#: ``AnalysisResult``").  §2.4's 53-name listing is the harder contract, so they
+#: are registered, and the honest record of the exception is THIS table plus the
+#: registry's own ``returns=`` field: an analysis either DECLARES the result class
+#: it returns, or it is listed here.  Giving the 13 result wrappers is a v6.1
+#: item (it moves the returned *type*, in two files this slot does not own).
+_PLAIN_VALUE_ANALYSES: frozenset[str] = frozenset(
+    {
+        "autocorrelation",
+        "correlation_sum",
+        "dimension_spectrum",
+        "escape_time_field",
+        "estimate_dt_from_sagitta",
+        "flow_field",
+        "ftle_field",
+        "invariant_density",
+        "nullclines",
+        "sagitta_profile",
+        "set_distance",
+        "streamlines",
+        "trace_determinant",
+        "transient_time_field",
+    }
+)
 
 
 def _return_annotation_types(fn: object) -> tuple[object, ...]:
@@ -272,6 +236,13 @@ def test_analysis_returns_analysis_result(analysis_entry):
     name = analysis_entry.name
     types = _return_annotation_types(analysis_entry.obj)
 
+    if name in _PLAIN_VALUE_ANALYSES:
+        assert analysis_entry.metadata.get("returns") is None, (
+            f"{name!r} is listed as a plain-value analysis but DECLARES returns="
+            f"{analysis_entry.metadata['returns']!r}; drop it from _PLAIN_VALUE_ANALYSES"
+        )
+        return
+
     if name in _RESULT_CARVE_OUTS:
         expected = _RESULT_CARVE_OUTS[name]
         assert expected in types, (
@@ -282,6 +253,14 @@ def test_analysis_returns_analysis_result(analysis_entry):
     assert any(isinstance(t, type) and issubclass(t, AnalysisResult) for t in types), (
         f"analysis {name!r} must return an AnalysisResult subclass "
         f"(got return annotation {types or 'none'})"
+    )
+    declared = analysis_entry.metadata.get("returns")
+    assert declared is not None and issubclass(declared, AnalysisResult), (
+        f"analysis {name!r} must DECLARE its result class on the decorator "
+        f"(returns=...), got {declared!r}"
+    )
+    assert declared in types, (
+        f"analysis {name!r} declares returns={declared.__name__} but is annotated {types}"
     )
 
 
@@ -303,23 +282,22 @@ def _logistic_series() -> np.ndarray:
 # annotation sweep above.
 def _runtime_cases() -> list[tuple[str, object]]:
     series = _logistic_series()
-    traj = _henon().iterate(steps=600, ic=[0.1, 0.1])
+    traj = _henon().run(steps=600, ic=[0.1, 0.1])
     spectrum = [0.42, -1.62]
     return [
-        ("lyapunov_spectrum", lambda: ts.lyapunov_spectrum(_henon(), k=2, n=1500, ic=[0.1, 0.1])),
-        ("max_lyapunov", lambda: ts.max_lyapunov(_henon(), n=150, ic=[0.1, 0.1])),
-        ("kaplan_yorke_dimension", lambda: ts.kaplan_yorke_dimension(spectrum)),
-        ("zero_one_test", lambda: ts.zero_one_test(series)),
-        ("permutation_entropy", lambda: ts.permutation_entropy(series)),
-        ("lz76_complexity", lambda: ts.lz76_complexity(series)),
-        ("correlation_dimension", lambda: ts.correlation_dimension(traj)),
-        ("embed", lambda: ts.embed(series, 3, 1)),
-        ("optimal_delay", lambda: ts.optimal_delay(series, max_delay=20)),
-        ("mutual_information", lambda: ts.mutual_information(series, max_delay=20)),
-        ("surrogates", lambda: ts.surrogates(series, "shuffle", 4, seed=0)),
-        ("surrogate_test", lambda: ts.surrogate_test(series, n=19, seed=0)),
-        ("recurrence_matrix", lambda: ts.recurrence_matrix(traj, recurrence_rate=0.05)),
-        ("fixed_points", lambda: ts.fixed_points(_henon(), seed=0)),
+        (
+            "lyapunov_spectrum",
+            lambda: ts.analysis.lyapunov_spectrum(_henon(), k=2, n=1500, ic=[0.1, 0.1]),
+        ),
+        ("kaplan_yorke_dimension", lambda: ts.analysis.kaplan_yorke_dimension(spectrum)),
+        ("zero_one_test", lambda: ts.analysis.zero_one_test(series)),
+        ("correlation_dimension", lambda: ts.analysis.correlation_dimension(traj)),
+        ("embed", lambda: ts.analysis.embed(series, 3, 1)),
+        ("optimal_delay", lambda: ts.analysis.optimal_delay(series, max_delay=20)),
+        ("mutual_information", lambda: ts.analysis.mutual_information(series, max_delay=20)),
+        ("recurrence_matrix", lambda: ts.analysis.recurrence_matrix(traj, recurrence_rate=0.05)),
+        ("rqa", lambda: ts.analysis.rqa(traj, recurrence_rate=0.05)),
+        ("fixed_points", lambda: ts.analysis.fixed_points(_henon(), seed=0)),
     ]
 
 

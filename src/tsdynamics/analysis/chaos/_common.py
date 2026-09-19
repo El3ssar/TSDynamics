@@ -38,12 +38,31 @@ if TYPE_CHECKING:
 # ── observable coercion (0--1 test) ──────────────────────────────────────────
 
 
-def _as_observable(data: object, component: int | None = None) -> np.ndarray:
+def column_of(data: object, components: int | str) -> int:
+    """Resolve ``components`` to a **column** index of an ``(N, dim)`` point set.
+
+    A component name is looked up in the subject's own ``variables`` (a
+    :class:`~tsdynamics.data.Trajectory` carries them); an integer is used as
+    given.  Raising here — rather than letting ``arr[:, name]`` fail inside
+    NumPy — is what makes ``components="w"`` on a Lorenz answer with the three
+    names that exist.
+    """
+    if isinstance(components, str):
+        names = tuple(getattr(data, "variables", ()) or ())
+        if components in names:
+            return names.index(components)
+        known = f" This subject's components are: {', '.join(names)}." if names else ""
+        raise ValueError(f"no component named {components!r}.{known}")
+    return int(components)
+
+
+def _as_observable(data: object, components: int | str = 0) -> np.ndarray:
     """Coerce a scalar observable to a 1-D ``float`` array.
 
     Accepts a 1-D array-like, or a :class:`~tsdynamics.data.Trajectory`
-    (duck-typed via its ``.y`` attribute).  A multi-component trajectory needs a
-    ``component`` index (or a pre-extracted column such as ``traj["x"]``).
+    (duck-typed via its ``.y`` attribute).  ``components`` selects **one column**
+    of a multi-component point set, by index or by name; it defaults to ``0``,
+    so a 3-D flow needs no extra argument.
 
     Raises
     ------
@@ -53,24 +72,22 @@ def _as_observable(data: object, component: int | None = None) -> np.ndarray:
         If the series is not one-dimensional after component selection, or is
         too short to be informative.
     """
-    if hasattr(data, "integrate") or hasattr(data, "_equations") or hasattr(data, "_step"):
+    if hasattr(data, "run") or hasattr(data, "_equations") or hasattr(data, "_step"):
         raise TypeError(
             "the 0-1 test consumes a sampled observable, not a live system; "
-            "integrate/iterate first and pass one component, e.g. "
-            "zero_one_test(sys.integrate(...).component('x'))."
+            "run it first and pass one component, e.g. "
+            "zero_one_test(sys.run(...)['x'])."
         )
     y = getattr(data, "y", None)
     arr = np.asarray(y if y is not None else data, dtype=float)
     if arr.ndim == 2:
-        if component is not None:
-            arr = arr[:, int(component)]
-        elif arr.shape[1] == 1:
-            arr = arr[:, 0]
-        else:
+        index = column_of(data, components)
+        if not -arr.shape[1] <= index < arr.shape[1]:
             raise ValueError(
-                f"observable has {arr.shape[1]} components; pass a 1-D series "
-                "(e.g. traj['x']) or component=<index>."
+                f"components={components!r} is out of range: this observable has "
+                f"{arr.shape[1]} components."
             )
+        arr = arr[:, index]
     arr = np.ravel(arr)
     if arr.ndim != 1:
         shape = np.shape(cast("npt.ArrayLike", data))
@@ -185,14 +202,26 @@ def _pearson(x: np.ndarray, y: np.ndarray) -> float:
 def _resolve_region(system: SystemBase, region: object, *, margin: float = 0.1) -> Box:
     """Coerce a region argument to a :class:`~tsdynamics.data.Box`.
 
-    Accepts a ``Box``, an ``(lo, hi)`` pair, or ``None`` — in which case the box
-    is the (``margin``-expanded) bounding box of a burn-in orbit of ``system``.
+    Reads the region through :func:`tsdynamics.data.as_region` — the library's
+    one region grammar, **one ``(lo, hi)`` bound per state component** — and
+    accepts a ``Box`` / ``Ball`` / ``Grid`` unchanged.  ``None`` uses the
+    (``margin``-expanded) bounding box of a burn-in orbit of ``system``.
     """
     if isinstance(region, Box):
         return region
     if region is not None:
-        lo, hi = cast("tuple[npt.ArrayLike, npt.ArrayLike]", region)
-        return Box(np.asarray(lo, dtype=float), np.asarray(hi, dtype=float))
+        from tsdynamics.data import Ball, as_region
+
+        resolved = as_region(
+            region,
+            dim=int(getattr(system, "dim", 2) or 2),
+            analysis="expansion_entropy",
+            system=system,
+            args="",
+        )
+        if isinstance(resolved, Ball):
+            return Box(resolved.center - resolved.r, resolved.center + resolved.r)
+        return Box(np.asarray(resolved.lo, dtype=float), np.asarray(resolved.hi, dtype=float))
     pts = _sample_orbit_box(system)
     lo, hi = pts.min(axis=0), pts.max(axis=0)
     pad = margin * (hi - lo)
@@ -204,7 +233,8 @@ def _sample_orbit_box(system: SystemBase, n: int = 2000, transient: int = 500) -
     """Collect a burn-in orbit to bound an auto-region (backend-free)."""
     from tsdynamics.families import ContinuousSystem, DiscreteMap
 
-    x = np.asarray(system.resolve_ic(None), dtype=float).ravel()
+    with system._ic_rollback():
+        x = np.asarray(system._resolve_ic(None), dtype=float).ravel()
     if isinstance(system, DiscreteMap):
         step, _ = _map_fns(system)
         for _ in range(transient):

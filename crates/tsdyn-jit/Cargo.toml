@@ -13,12 +13,23 @@ tsdyn-ir.workspace = true
 # JIT-specific deps are declared here by the owning crate, not pinned in the
 # workspace table (see crates/Cargo.toml). All cranelift-* crates move in
 # lock-step, so one version line keeps them consistent.
-cranelift-codegen = "0.131"
-cranelift-frontend = "0.131"
-cranelift-module = "0.131"
+#
+# 0.131 -> 0.135 (v6 WP3-perf). Two breaking API changes, both handled in
+# `codegen.rs`: memory-operation flags split into the value type `MemFlagsData`
+# and an interned handle `MemFlags` (load/store take `impl Into<MemFlagsData>`,
+# so the value is passed directly), and `FunctionBuilder::finalize` now takes the
+# module's `TargetFrontendConfig`. Verified answer-preserving: the
+# `interpreter_equivalence` fuzz test and the Python `interp == jit` gates still
+# hold bit-for-bit, and generated-code runtime is unchanged. The one measurable
+# difference is *compile* latency, ~6-12% slower (Lorenz 193 -> 216 us, a 256-node
+# method-of-lines chain 9.39 -> 9.96 ms) — a cost the compiled-evaluator cache in
+# `cache.rs` now pays once per tape rather than once per FFI call.
+cranelift-codegen = "0.135"
+cranelift-frontend = "0.135"
+cranelift-module = "0.135"
 # `cranelift-jit` detects the host ISA internally (via cranelift-native), so we
 # do not depend on cranelift-native directly — `JITBuilder::new` pulls it in.
-cranelift-jit = "0.131"
+cranelift-jit = "0.135"
 
 [dev-dependencies]
 # The cross-validation tests check the JIT against the production interpreter
@@ -27,3 +38,8 @@ cranelift-jit = "0.131"
 # production build (resolver "2" keeps dev-dep features out of `cargo build`).
 tsdyn-vm.workspace = true
 tsdyn-ir = { workspace = true, features = ["reference"] }
+criterion.workspace = true
+
+[[bench]]
+name = "compile"
+harness = false

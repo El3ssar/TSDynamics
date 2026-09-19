@@ -7,8 +7,14 @@ synchronous channels (:func:`_as_channels`).  Both accept a
 :class:`~tsdynamics.data.Trajectory`, a raw array, or a plain sequence, so the
 public functions read a trajectory and a NumPy array the same way.
 
-The :class:`~tsdynamics.data.Trajectory` is duck-typed (``.y`` / ``.component``)
+The :class:`~tsdynamics.data.Trajectory` is duck-typed (``.y`` / ``.variables``)
 to avoid an import cycle through :mod:`tsdynamics.families` / :mod:`tsdynamics.data`.
+
+**The duck test and the column selection both read only ``.y`` / ``.variables``**,
+never a ``Trajectory`` *method*.  v6 shrinks that class to twelve names — the
+component-by-name helper this module used to call (``traj.component(i)``) is one
+of the casualties — and a probe that tests for a method which is about to be
+deleted answers ``False`` for every trajectory in the library the day it goes.
 """
 
 from __future__ import annotations
@@ -17,15 +23,43 @@ from typing import Any
 
 import numpy as np
 
+from .._common import reject_system
+
 __all__: list[str] = []
 
 
 def _is_trajectory(x: Any) -> bool:
     """Return whether ``x`` quacks like a :class:`~tsdynamics.data.Trajectory`."""
-    return hasattr(x, "y") and hasattr(x, "component") and not isinstance(x, np.ndarray)
+    return hasattr(x, "y") and hasattr(x, "t") and not isinstance(x, np.ndarray)
 
 
-def _as_series(x: Any, component: int | str | None = None) -> np.ndarray:
+def _trajectory_column(x: Any, component: int | str) -> np.ndarray:
+    """Select one component of a trajectory by index or by declared name.
+
+    Reads ``x.y`` and ``x.variables`` directly rather than calling a method on
+    the trajectory, so this survives the v6 shrink of that class (§2.3).
+    """
+    y = np.asarray(x.y, dtype=float)
+    if y.ndim == 1:
+        y = y[:, None]
+    names = tuple(getattr(x, "variables", ()) or ())
+    if isinstance(component, str):
+        if component not in names:
+            raise ValueError(
+                f"{component!r} is not a component of this trajectory; it has "
+                f"{names if names else y.shape[1]}."
+            )
+        index = names.index(component)
+    else:
+        index = int(component)
+    if not -y.shape[1] <= index < y.shape[1]:
+        raise ValueError(f"component {component!r} is out of range for {y.shape[1]} components.")
+    return np.asarray(y[:, index], dtype=float)
+
+
+def _as_series(
+    x: Any, component: int | str | None = None, *, analysis: str | None = None
+) -> np.ndarray:
     """Coerce ``x`` into a contiguous 1-D ``float64`` array (one scalar series).
 
     Parameters
@@ -38,6 +72,9 @@ def _as_series(x: Any, component: int | str | None = None) -> np.ndarray:
         Which column/component to extract from a multi-component input.  Required
         when the input has more than one component; for a single-component input
         it must be left ``None`` (or ``0``).
+    analysis : str, optional
+        Name of the calling public function, used only to open the
+        ``System``-was-passed error message.
 
     Returns
     -------
@@ -46,32 +83,37 @@ def _as_series(x: Any, component: int | str | None = None) -> np.ndarray:
 
     Raises
     ------
+    InvalidInputError
+        If ``x`` is a ``System`` rather than measured data
+        (:func:`~tsdynamics.analysis._common.reject_system`) -- every embedding
+        routine is data-first.
     ValueError
         If ``component`` is ambiguous/meaningless, the series is not 1-D after
         selection, has fewer than two samples, or contains non-finite values.
     """
+    reject_system(x, analysis=analysis)
     if _is_trajectory(x):
         if component is None:
             if x.y.ndim == 1 or x.y.shape[1] == 1:
                 arr = np.asarray(x.y, dtype=float).ravel()
             else:
                 raise ValueError(
-                    "trajectory has multiple components; pass component= to select one "
-                    f"(e.g. component=0 or a name from {getattr(x, 'variables', None)})."
+                    "trajectory has multiple components; pass components= to select one "
+                    f"(e.g. components=0 or a name from {getattr(x, 'variables', None)})."
                 )
         else:
-            arr = np.asarray(x.component(component), dtype=float).ravel()
+            arr = _trajectory_column(x, component).ravel()
     else:
         a = np.asarray(x, dtype=float)
         if a.ndim == 1:
             if component not in (None, 0):
-                raise ValueError("component= is meaningless for a 1-D series.")
+                raise ValueError("components= is meaningless for a 1-D series.")
             arr = a
         elif a.ndim == 2:
             if a.shape[1] == 1 and component in (None, 0):
                 arr = a[:, 0]
             elif component is None:
-                raise ValueError(f"input has {a.shape[1]} columns; pass component= to select one.")
+                raise ValueError(f"input has {a.shape[1]} columns; pass components= to select one.")
             else:
                 arr = a[:, int(component)]
         else:
@@ -85,7 +127,7 @@ def _as_series(x: Any, component: int | str | None = None) -> np.ndarray:
     return arr
 
 
-def _as_channels(x: Any) -> np.ndarray:
+def _as_channels(x: Any, *, analysis: str | None = None) -> np.ndarray:
     """Coerce ``x`` into a contiguous ``(N, d)`` array of synchronous channels.
 
     Used by multivariate embedding.  Accepts a
@@ -96,6 +138,9 @@ def _as_channels(x: Any) -> np.ndarray:
     Parameters
     ----------
     x : array-like or Trajectory
+    analysis : str, optional
+        Name of the calling public function, used only to open the
+        ``System``-was-passed error message.
 
     Returns
     -------
@@ -103,10 +148,14 @@ def _as_channels(x: Any) -> np.ndarray:
 
     Raises
     ------
+    InvalidInputError
+        If ``x`` is a ``System`` rather than measured data
+        (:func:`~tsdynamics.analysis._common.reject_system`).
     ValueError
         If the channels have unequal length, the result is not 2-D, there are
         fewer than two samples, or any value is non-finite.
     """
+    reject_system(x, analysis=analysis)
     if _is_trajectory(x):
         arr = np.asarray(x.y, dtype=float)
     else:

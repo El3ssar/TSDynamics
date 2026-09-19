@@ -46,7 +46,7 @@ re-baselines against:
 - **DOCS-ENG-ENGINEFIG** — re-renders the ODE figures through the shipped engine
   (replacing today's SciPy `_rhs_numeric` path) and must regenerate this corpus,
   proving the engine render is the same picture.
-- **DOCS-ENG-PLOTSEAM** — introduces a `to_plot_spec()`-driven figure generator
+- **DOCS-ENG-PLOTSEAM** — introduces a `__plot_spec__()`-driven figure generator
   whose output is validated against this same golden set.
 
 ## Re-baselining (after an intentional change)

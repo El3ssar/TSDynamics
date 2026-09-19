@@ -43,6 +43,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       python: ${{ steps.filter.outputs.python }}
+      workflows: ${{ steps.filter.outputs.workflows }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
@@ -52,13 +53,90 @@ jobs:
             python:
               - 'src/**'
               - 'tests/**'
+              - 'conftest.py'
               - 'crates/**'
               - 'pyproject.toml'
               - 'uv.lock'
               - '.github/workflows/ci.yml'
+              - '.github/workflows/release.yml'
+              - '.github/workflows/nightly.yml'
+            workflows:
+              - '.github/workflows/**'
         # Post-M3 the Rust engine IS load-bearing for the Python suite (it is the
         # sole integration backend), so a `crates/**` change must run the Python
         # tests too — the engine wheel is rebuilt before they run.
+        #
+        # The ROOT `conftest.py` is load-bearing for collection (it registers the
+        # `--changed` option and the repo-root sys.path entry), so a change there
+        # must run the suite — it is not under `tests/`.
+        #
+        # `release.yml` and `nightly.yml` have no `pull_request` trigger of their
+        # own, so a PR that edits the publish pipeline or the nightly sweep would
+        # otherwise run ZERO jobs. Listing them here at least runs lint/typecheck/
+        # tests against the change, and the `workflow-lint` job below parses them.
+
+  # Every workflow file gets *some* PR validation. `release.yml` (the publish
+  # pipeline) and `nightly.yml` carry no `pull_request` trigger of their own, so
+  # without this job a PR rewriting the release pipeline would run nothing at all
+  # and land unparsed. This is a cheap structural check — the YAML parses, and
+  # every workflow declares the keys GitHub requires (`on:`, `jobs:`, and a
+  # `runs-on`/`uses` per job) — not a full semantic lint.
+  workflow-lint:
+    name: Lint (workflow YAML)
+    needs: changes
+    if: needs.changes.outputs.workflows == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Install PyYAML
+        run: python -m pip install --disable-pip-version-check pyyaml
+
+      - name: Parse and structurally validate every workflow
+        run: |
+          python - <<'PY'
+          import pathlib
+          import sys
+
+          import yaml
+
+          bad = []
+          # Both suffixes: the paths-filter that gates this job is
+          # `.github/workflows/**`, so a `.yaml` workflow must be linted too.
+          workflows = pathlib.Path(".github/workflows")
+          paths = sorted({*workflows.glob("*.yml"), *workflows.glob("*.yaml")})
+          if not paths:
+              sys.exit("no workflow files found — did the directory move?")
+          for path in paths:
+              try:
+                  doc = yaml.safe_load(path.read_text())
+              except yaml.YAMLError as exc:
+                  bad.append(f"{path}: unparseable YAML: {exc}")
+                  continue
+              if not isinstance(doc, dict):
+                  bad.append(f"{path}: top level is not a mapping")
+                  continue
+              # PyYAML resolves the bare key `on` to the boolean True (YAML 1.1).
+              if "on" not in doc and True not in doc:
+                  bad.append(f"{path}: missing `on:` trigger")
+              jobs = doc.get("jobs")
+              if not isinstance(jobs, dict) or not jobs:
+                  bad.append(f"{path}: missing or empty `jobs:`")
+                  continue
+              for name, job in jobs.items():
+                  if not isinstance(job, dict):
+                      bad.append(f"{path}: job `{name}` is not a mapping")
+                  elif "runs-on" not in job and "uses" not in job:
+                      bad.append(f"{path}: job `{name}` has neither `runs-on` nor `uses`")
+              print(f"OK  {path} ({len(jobs)} job(s))")
+          if bad:
+              print("\n".join(f"::error::{line}" for line in bad))
+              sys.exit(1)
+          PY
 
   lint:
     name: Lint (ruff)
@@ -113,7 +191,7 @@ jobs:
         run: uv run --no-sync mypy --strict src/tsdynamics
 
   # Compile the abi3 engine wheel ONCE per OS. It is cp312-abi3, so a single wheel
-  # serves both Python 3.12 and 3.13 on that OS — the test matrix below downloads
+  # serves every CPython >= 3.12 on that OS — the test matrix below downloads
   # it instead of every cell recompiling the Rust engine via `uv sync`.
   build-engine:
     name: Build engine wheel (${{ matrix.label }})
@@ -159,10 +237,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # The engine wheel is cp312-abi3, so ONE build per OS serves every
+          # CPython >= 3.12 — adding an interpreter cell costs a test run, not a
+          # Rust rebuild. `requires-python` is >=3.12,<4.0, so 3.14 is supported
+          # and must be exercised.
           - { os: ubuntu-latest, python: "3.12", engine: linux }
           - { os: ubuntu-latest, python: "3.13", engine: linux }
+          - { os: ubuntu-latest, python: "3.14", engine: linux }
           - { os: macos-latest, python: "3.12", engine: macos }
           - { os: macos-latest, python: "3.13", engine: macos }
+          - { os: macos-latest, python: "3.14", engine: macos }
     steps:
       # Full history + the PR base, so `pytest --changed` can diff against it.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -299,13 +383,14 @@ jobs:
   ci-summary:
     name: CI summary
     if: always()
-    needs: [changes, lint, typecheck, build-engine, test-fast, test-slow, test-viz]
+    needs:
+      [changes, workflow-lint, lint, typecheck, build-engine, test-fast, test-slow, test-viz]
     runs-on: ubuntu-latest
     steps:
       - name: Gate on required jobs
         run: |
-          echo "changes=${{ needs.changes.result }} lint=${{ needs.lint.result }} typecheck=${{ needs.typecheck.result }} build-engine=${{ needs.build-engine.result }} test-fast=${{ needs.test-fast.result }} test-slow=${{ needs.test-slow.result }} test-viz=${{ needs.test-viz.result }}"
-          for r in "${{ needs.changes.result }}" "${{ needs.lint.result }}" "${{ needs.typecheck.result }}" "${{ needs.build-engine.result }}" "${{ needs.test-fast.result }}" "${{ needs.test-slow.result }}" "${{ needs.test-viz.result }}"; do
+          echo "changes=${{ needs.changes.result }} workflow-lint=${{ needs.workflow-lint.result }} lint=${{ needs.lint.result }} typecheck=${{ needs.typecheck.result }} build-engine=${{ needs.build-engine.result }} test-fast=${{ needs.test-fast.result }} test-slow=${{ needs.test-slow.result }} test-viz=${{ needs.test-viz.result }}"
+          for r in "${{ needs.changes.result }}" "${{ needs.workflow-lint.result }}" "${{ needs.lint.result }}" "${{ needs.typecheck.result }}" "${{ needs.build-engine.result }}" "${{ needs.test-fast.result }}" "${{ needs.test-slow.result }}" "${{ needs.test-viz.result }}"; do
             case "$r" in
               failure|cancelled)
                 echo "::error::a required job did not pass ($r)"

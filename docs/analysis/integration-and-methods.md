@@ -15,7 +15,7 @@ stiffness selection does, and which backend runs the numbers — followed by the
 
 <figure markdown>
 ![A single Lorenz integrate call shown two ways — the strange attractor traced in state space beside the x, y and z component time series it samples on the output grid](../assets/figures/analysis/integrate.svg){ loading=lazy }
-<figcaption>One <code>Lorenz().integrate(...)</code> call returns one <code>Trajectory</code>. The same data is the strange attractor in state space (left, indigo) and the stacked <code>x(t)</code>, <code>y(t)</code>, <code>z(t)</code> time series it samples on the output grid (right) — <code>traj.y</code> is <code>(T, dim)</code>, <code>traj["x"]</code> is one column of it.</figcaption>
+<figcaption>One <code>Lorenz().run(...)</code> call returns one <code>Trajectory</code>. The same data is the strange attractor in state space (left, indigo) and the stacked <code>x(t)</code>, <code>y(t)</code>, <code>z(t)</code> time series it samples on the output grid (right) — <code>traj.y</code> is <code>(T, dim)</code>, <code>traj["x"]</code> is one column of it.</figcaption>
 </figure>
 
 ## Two verbs: `integrate` and `iterate`
@@ -27,10 +27,10 @@ Both return a single [`Trajectory`](index.md).
 import tsdynamics as ts
 
 # flows — integrate over a time span, sampled on an output grid
-traj = ts.systems.Lorenz().integrate(final_time=100.0, dt=0.01)
+traj = ts.systems.Lorenz().run(final_time=100.0, dt=0.01)
 
 # maps — iterate a fixed number of steps
-orbit = ts.systems.Henon().iterate(steps=10_000)
+orbit = ts.systems.Henon().run(steps=10_000)
 ```
 
 For a flow there are **two grids in play**. The *internal* steps — chosen by the
@@ -49,17 +49,17 @@ wrapper produces one.
 ```python
 traj.t, traj.y               # the arrays: (T,) and (T, dim)
 traj.dim, traj.n_steps       # 3, 10001
-t, y = traj                  # tuple-unpacking compatibility
+t, y = traj.unpack()         # the two arrays in one go
 
 traj["x"]                    # named component → (T,)   (needs class `variables`)
-traj[["x", "z"]]             # multiple components → (T, 2)
+traj["x", "z"]               # several names → a Trajectory that names its own columns
 traj[100:200]                # row slicing → new Trajectory (t and y together)
 traj.component(2)            # by index
 
 traj.after(20.0)             # drop the transient: keep t >= 20
 traj.minmax()                # per-component (minima, maxima)
 traj.standardize()           # zero mean, unit std per component (records the transform)
-traj.neighbors(q, k=3)       # (distances, indices) of the k nearest points to q (cached KD-tree)
+traj.neighbors(traj.y[0], k=3)   # the k nearest .state / .distance / .index (cached KD-tree)
 ```
 
 Slicing keeps `t` and `y` together and preserves the metadata, so a
@@ -70,9 +70,9 @@ condition used:
 
 ```python
 traj.meta
-# {'system': 'Lorenz', 'params': {...}, 'tsdynamics': '5.2.6', 'engine': 'rust',
-#  'family': 'ode', 'method': 'rk45', 'backend': 'interp', 'dt': 0.01, 't0': 0.0,
-#  'rtol': 1e-06, 'atol': 1e-09, 'ic': array([...])}
+# {'system': 'Lorenz', 'params': {...}, 'tsdynamics': '<version>', 'engine': 'rust',
+#  'family': 'ode', 'method': 'rk45', 'backend': 'jit', 'dt': 0.01, 't0': 0.0,
+#  'rtol': 1e-09, 'atol': 1e-12, 'ic': array([...])}
 ```
 
 A result you cannot trace is a result you cannot reproduce; the snapshot makes
@@ -106,22 +106,31 @@ lor.set_state(u + 1e-9)          # overwrite the state in place
     A delay system's instantaneous state is a *history function* over
     $[t - \tau_{\max},\, t]$, not a point, so overwriting it with a single vector
     is not meaningful. `DelaySystem.set_state` raises `NotImplementedError`; use
-    `reinit(u)` to restart from a constant past instead. This is also why
-    `max_lyapunov` (which needs `set_state`) excludes DDEs.
+    `reinit(u)` to restart from a constant past instead. This is also why the
+    Jacobian-free two-trajectory estimator (which needs `set_state`) excludes
+    DDEs.
 
 The protocol is what the rest of the toolkit is written against — orbit diagrams,
-Poincaré maps and `max_lyapunov` are all loops over `step()`. When a prepackaged
+Poincaré maps and the two-trajectory Lyapunov estimator are all loops over
+`step()`. When a prepackaged
 analysis does not fit, you drive it directly; see
 [the Analysis toolkit](index.md#beyond-the-prepackaged-routines).
 
 ## Choosing a solver
 
-The `method=` keyword selects the integration kernel. The default is `rk45`
+The **`solver=`** keyword selects the integration kernel. The default is `rk45`
 (Dormand–Prince 5(4)), a robust general-purpose adaptive explicit solver that
 serves most non-stiff systems well.
 
+!!! note "`solver=` picks a kernel; `method=` picks an estimator"
+    One concept, one spelling. `solver=` is a keyword of `run` / `reinit` /
+    `ensemble`; `method=` selects an *estimation algorithm* on an analysis
+    (`optimal_delay(x, method="mi")`, `fixed_points(sys, method="interval")`).
+    `run(method=...)` raises and names `solver=`.
+
 ```python
-traj = sys.integrate(final_time=100.0, dt=0.02, method="dop853", rtol=1e-9, atol=1e-12)
+# skip-doctest — `sys` is any continuous system of yours
+traj = sys.run(final_time=100.0, dt=0.02, solver="dop853", rtol=1e-9, atol=1e-12)
 ```
 
 There are three broad regimes:
@@ -139,7 +148,7 @@ There are three broad regimes:
   nonlinear) system each step using the Jacobian, so they stay stable on stiff
   problems where an explicit kernel would need a punishingly small step.
   `bdf` (variable-order 1–5) is the recommended stiff default. The engine builds
-  the Jacobian-carrying tape automatically for these kernels — `method="bdf"`
+  the Jacobian-carrying tape automatically for these kernels — `solver="bdf"`
   just works, no hand-written Jacobian required.
 
 A system that is *known* to be stiff should declare `_default_method = "bdf"`
@@ -149,24 +158,60 @@ Several catalogue systems already do (e.g. `KuramotoSivashinsky`, `Duffing`).
 !!! note "Tolerances tune accuracy, not the output grid"
     `rtol` / `atol` govern the **internal** adaptive steps. Tightening them
     refines the path the solver actually traces; it does not change where the
-    result is sampled. To sample more densely, shrink `dt`. DDEs start from
-    looser defaults (`rtol = atol = 1e-3`) — delay systems are sensitive, and
-    that is the safe starting point.
+    result is sampled. To sample more densely, shrink `dt`.
+
+### The default tolerances
+
+| Surface | `rtol` | `atol` | Why |
+| --- | --- | --- | --- |
+| ODE `integrate` / `run` / `ensemble` / `step` / events / ODE Lyapunov | `1e-9` | `1e-12` | the library default |
+| DDE `integrate` | `1e-3` | `1e-3` | the method of steps lands on every sample, so `dt` bounds the step and the tolerance is inert |
+| DDE `lyapunov_spectrum` | `1e-7` | `1e-9` | same march, tighter for the variational renormalisation |
+| basin cell march | `1e-6` | `1e-9` | thousands of two-node integrations for a *topological* classification |
+
+Every one of these is a named constant in `tsdynamics._utils.tolerances`
+(`DEFAULT_RTOL`, `DDE_RTOL`, `BASIN_RTOL`, …) rather than a literal repeated
+across the code, so "what is the default?" has exactly one answer per surface and
+a deliberate exception is visible rather than accidental.
+
+!!! info "Changed in v6: the ODE default tightened to `1e-9` / `1e-12`"
+    This is the other half of the dense-output change. Before v6 the adaptive
+    stepper was *forced to land on every output sample*, so a fine `dt` silently
+    bought accuracy `rtol` had never asked for — Lorenz to `T=10` at `rtol=1e-6`
+    delivered `1.3e-3` at `dt=10` but `4.3e-10` at `dt=0.001`, and `rtol=1e-4`
+    through `1e-10` returned *bit-identical* arrays on a fine grid. With native
+    continuous extensions, `dt` is honestly an output grid and `rtol` honestly
+    sets accuracy — but a user who never touched `rtol` would therefore have
+    *lost* the subsidy. The default was tightened to give it back.
+
+    Measured at the defaults (`dt=0.02`, `T=5`, error at the final time versus
+    SciPy `DOP853` at `rtol=1e-13`) over fifteen catalogue systems: a **median
+    1459×** accuracy improvement for a **median 1.74×** wall-clock cost. Lorenz
+    goes `2.2e-4 → 1.9e-7`, Halvorsen `1.5e-3 → 2.9e-7`. Chaotic systems amplify
+    integration error exponentially and are this library's core subject, so the
+    trade is taken. Pass `rtol=1e-6, atol=1e-9` explicitly for the old one.
+
+    The three surfaces in the table above that kept a looser number are the ones
+    dense output never touched, and for each the tighter tolerance was measured
+    to change nothing while costing 2–3×: the basin march, for instance, runs
+    2.27× (smooth Duffing) to 3.01× (fractal magnetic pendulum) slower at
+    `1e-9`/`1e-12` for **0.00 %** of basin labels changing.
 
 ## Automatic stiffness selection
 
 If you do not know whether a system is stiff, ask the library to find out:
 
 ```python
-traj = sys.integrate(final_time=100.0, dt=0.02, method="auto")
+# skip-doctest — `sys` is any continuous system of yours
+traj = sys.run(final_time=100.0, dt=0.02, solver="auto")
 traj.meta["method"]    # the kernel that was actually used, e.g. "rk45" or "bdf"
 ```
 
-`method="auto"` lowers the problem, probes the Jacobian spectrum at the start
+`solver="auto"` lowers the problem, probes the Jacobian spectrum at the start
 state with the one-point `solvers.recommend` heuristic, and selects `bdf` on a
 stiff right-hand side or `rk45` otherwise. The resolved kernel is recorded in
 `traj.meta["method"]`, so the choice is always visible after the fact. It is
-honoured consistently across every entry point — `integrate`, `ensemble`, the
+honoured consistently across every entry point — `run`, `ensemble`, the
 resumable stepping protocol, and the events seam.
 
 Because the probe is taken at a single point, it is **initial-condition
@@ -174,22 +219,23 @@ dependent**: it is a convenience, not an oracle. A system you *know* to be
 reliably stiff should still declare `_default_method = "bdf"` rather than lean on
 `"auto"`. For maps, which have no solver kernel, `"auto"` is a harmless no-op.
 
-## Backends: `interp`, `jit`, `reference`
+## Backends: `jit`, `interp`, `reference`
 
-Orthogonal to *which* solver runs is *what* executes it. The same `method=` runs
+Orthogonal to *which* solver runs is *what* executes it. The same `solver=` runs
 on any of three backends, selected with `backend=`:
 
 | `backend` | What it is | When to use it |
 | --------- | ---------- | -------------- |
-| `"interp"` | The Rust SSA-tape interpreter (the default) | Everyday integration — no warmup, no compile step |
-| `"jit"` | The Cranelift JIT — compiles the tape to native code | Long or repeated runs where the per-step compiled speed pays for itself; bit-for-bit identical results to `interp` |
+| `"jit"` | The Cranelift JIT — compiles the tape to native code — **the default** | Everyday integration. The compile is memoised per distinct system, so it is paid once and the steady state is ~1.5× faster than the interpreter |
+| `"interp"` | The Rust SSA-tape interpreter | When you want to skip the compile entirely; bit-for-bit identical results to `jit` |
 | `"reference"` | A dependency-light pure-Python SciPy oracle (ODEs + maps) | Cross-validation and wheel-free environments — the answer key, not the fast path |
 
 ```python
-traj = sys.integrate(final_time=100.0, dt=0.01, backend="jit")
+# skip-doctest — `sys` is any continuous system of yours
+traj = sys.run(final_time=100.0, dt=0.01, backend="interp")
 ```
 
-`interp` and `jit` lower the *same* tape, so they agree bit-for-bit; `reference`
+`jit` and `interp` lower the *same* tape, so they agree bit-for-bit; `reference`
 is an independent implementation kept as a correctness oracle. Not every family
 supports `reference` — DDEs have no pure-Python integrator and reject it loudly
 rather than silently degrading.
@@ -198,14 +244,14 @@ rather than silently degrading.
 
 Every solver lives in the solver registry — a `name → SolverSpec` table with
 capability flags. The table below is the **complete registry**, generated
-directly from `tsdynamics.solvers.all_specs()`. Each `method=` string accepted by
-`integrate` is one row here. (The `name` column is the exact `method=` value;
-common aliases such as `"RK45"` / `"dopri5"` resolve to `rk45`.)
+directly from `tsdynamics._solvers.all_specs()`. Each `solver=` string accepted by
+`run` is one row here. (The `name` column is the exact `solver=` value; common
+aliases such as `"RK45"` / `"dopri5"` resolve to `rk45`.)
 
 <!--
   GENERATED TABLE — regenerate after adding/removing a solver with:
 
-      from tsdynamics import solvers
+      from tsdynamics import _solvers as solvers
       for name, spec in solvers.all_specs().items():
           c = spec.caps
           print(name, c.kind, c.adaptive, c.needs_jacobian,
@@ -284,11 +330,11 @@ The registry is the single source of truth. Any solver — built-in or shipped b
 a plugin — appears in `solvers.all_specs()` with its capability flags and
 description, which is exactly what this table renders. A new kernel registered
 through the solver registry therefore documents itself: it becomes selectable by
-`method=` and shows up here on the next docs build, with no separate
+`solver=` and shows up here on the next docs build, with no separate
 documentation step. The `origin` column distinguishes registry-`builtin`
 kernels from out-of-tree contributions; today every solver is `builtin`.
 
 ## See also
 
 - [Analysis toolkit](index.md) — the `Trajectory` object, the stepping protocol, and the quantifiers
-- [Systems](../systems/index.md) — the 171 built-in systems you can integrate
+- [Systems](../systems/index.md) — the 177 built-in systems you can integrate

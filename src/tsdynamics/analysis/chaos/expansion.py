@@ -31,10 +31,11 @@ from typing import Any, ClassVar
 import numpy as np
 
 from tsdynamics.data import Box, sampler
-from tsdynamics.errors import InvalidParameterError
+from tsdynamics.errors import InvalidInputError, InvalidParameterError, remedy
 from tsdynamics.families import ContinuousSystem, DiscreteMap
 
-from .._result import AnalysisResult, ScalingResult
+from .._common import reject_data
+from .._result import ScalingResult, _build_meta
 from .._tangent import flow_fns, map_fns, rk4_variational
 from . import _common as _c
 
@@ -48,59 +49,128 @@ class ExpansionEntropyResult(ScalingResult):
     A :class:`~tsdynamics.analysis._result.ScalingResult` — the entropy is the
     slope of :math:`\ln E(t)` against :math:`t` — so it inherits the canonical
     ``estimate`` / ``abscissa`` / ``ordinate`` / ``fit_region`` schema, the result
-    surface (``.meta`` / ``.summary()`` / ``.to_dict()`` / the ``.plot`` seam) and
-    ``float(result)`` (the entropy :math:`H`).  Domain-named ``@property`` aliases
-    (:attr:`entropy`, :attr:`times`, :attr:`log_growth`, :attr:`fit_slice`)
-    preserve the original field names.
+    surface (``.meta`` / the readout ``repr`` / ``.to_dict()`` / the ``.plot`` seam) and
+    ``float(result)`` (the entropy :math:`H`).  The domain names for the curve
+    are :attr:`entropy`, :attr:`times` and ``ordinate``.
 
     Attributes
     ----------
-    estimate : float
-        The estimated expansion entropy :math:`H`.  Aliased :attr:`entropy`.
-    abscissa : ndarray
-        The :math:`t` grid (iterations for maps, time for flows).  Aliased
-        :attr:`times`.
+    entropy : float
+        The estimated expansion entropy :math:`H`.  ``float(result)`` returns
+        it; it is the domain name for the inherited ``estimate`` field.
+    times : ndarray
+        The :math:`t` grid (iterations for maps, time for flows) — the domain
+        name for the inherited ``abscissa`` field.
     ordinate : ndarray
-        :math:`\ln E(t)` at each :math:`t`.  Aliased :attr:`log_growth`.
+        :math:`\ln E(t)` at each :math:`t`.
     fit_region : tuple[int, int]
-        Inclusive ``(lo, hi)`` indices of the fitted range.  Aliased
-        :attr:`fit_slice`.
+        Inclusive ``(lo, hi)`` indices of the fitted range.
     n_samples : int
         Number of initial conditions sampled in the region.
     n_survivors : int
         How many of them stayed in the region for the whole run.
+
+    .. versionchanged:: 6.0
+        ``fit_slice`` and ``log_growth`` are **gone** — both were measured exact
+        duplicates (of :attr:`fit_region` and ``ordinate``), and ``log_growth``
+        had no reference anywhere in the repository.  ``abscissa`` is still
+        readable but is off ``dir()``: :attr:`times` is the name this estimator's
+        curve is known by.
     """
 
     _repr_fields: ClassVar[tuple[str, ...]] = ("entropy", "stderr", "n_survivors", "n_samples")
+
+    #: R2 — the domain name for the horizontal axis here is :attr:`times`.
+    _HIDDEN_ATTRIBUTES: ClassVar[frozenset[str]] = frozenset({"abscissa"})
 
     n_samples: int = 0
     n_survivors: int = 0
 
     @property
     def entropy(self) -> float:
-        """The estimated expansion entropy (alias of :attr:`estimate`)."""
+        """The estimated expansion entropy (the domain name for ``estimate``)."""
         return float(self.estimate)
 
     @property
     def times(self) -> np.ndarray:
-        """The :math:`t` grid (alias of :attr:`abscissa`)."""
+        """The :math:`t` grid the growth curve was measured on."""
         return self.abscissa
 
-    @property
-    def log_growth(self) -> np.ndarray:
-        r"""The :math:`\ln E(t)` curve (alias of :attr:`ordinate`)."""
-        return self.ordinate
+    def _quantity(self) -> str:
+        r"""Return ``H0`` — the symbol expansion entropy is known by."""
+        return "H0"
 
     @property
-    def fit_slice(self) -> tuple[int, int]:
-        """The fitted index range (alias of :attr:`fit_region`)."""
-        return self.fit_region
+    def applicable(self) -> bool:
+        r"""Whether enough trajectories survived the region for the fit to mean anything.
 
-    def __repr__(self) -> str:  # noqa: D105
-        return (
-            f"ExpansionEntropyResult(entropy={self.entropy:.4g} ± {self.stderr:.2g}, "
-            f"survivors={self.n_survivors}/{self.n_samples})"
-        )
+        ``False`` on a degenerate fit — fewer than two survivors, or a
+        ``stderr`` of exactly zero, which is what an empty survivor set produces.
+        Before v6 the "indistinguishable from zero" guard was written
+        ``se > 0.0 and abs(h) < 2*se``, so ``0 ± 0`` fell straight through to the
+        **most** confident branch and a run where nothing survived printed
+        ``H0 = 0 ± 0   non-chaotic (H0 ≤ 0)``.
+
+        Returns
+        -------
+        bool
+        """
+        se = float(self.stderr)
+        return bool(self.n_survivors >= 2 and np.isfinite(se) and se > 0.0)
+
+    @property
+    def chaotic(self) -> bool | None:
+        r"""Whether :math:`H_0 > 0` — Hunt & Ott's definition of chaos.
+
+        ``None`` — never ``False`` — when the fit is not :attr:`applicable` or
+        the slope is within two standard errors of zero.
+
+        Returns
+        -------
+        bool or None
+        """
+        h, se = float(self.estimate), float(self.stderr)
+        if not self.applicable or not np.isfinite(h):
+            return None
+        if abs(h) < 2.0 * se:
+            return None
+        return bool(h > 0.0)
+
+    def _interpretation(self) -> str | None:
+        r"""Name the dynamics: a **positive** expansion entropy is chaos.
+
+        Hunt & Ott (2015) define chaos as :math:`H_0 > 0`, so this is the one
+        place the sign genuinely is the verdict.  It is read against the fit's
+        own standard error rather than against zero, so a slope indistinguishable
+        from flat is not sold as a positive one — and a fit with **no** surviving
+        trajectories (``0 ± 0``) says so rather than taking the confident branch.
+        """
+        h = float(self.estimate)
+        if not np.isfinite(h):
+            return None
+        if not self.applicable:
+            return (
+                f"not applicable — {self.n_survivors} of {self.n_samples} samples "
+                "stayed in the region"
+            )
+        if not self.trusted:
+            return self._fit_quality_clause()
+        verdict = self.chaotic
+        if verdict is None:
+            return "indistinguishable from zero (H0 within 2 s.e. of 0)"
+        return "chaotic (H0 > 0)" if verdict else "non-chaotic (H0 ≤ 0)"
+
+    def _derived(self) -> dict[str, Any]:
+        r"""Export the entropy, the applicability flag and the verdict."""
+        data = super()._derived()
+        data.update(entropy=self.entropy, applicable=self.applicable, chaotic=self.chaotic)
+        return data
+
+    def _context(self) -> str | None:
+        """Return how many sampled initial conditions survived the whole run."""
+        bits = [b for b in (self._system_label(),) if b]
+        bits.append(f"{self.n_survivors}/{self.n_samples} survivors")
+        return ", ".join(bits)
 
 
 def expansion_entropy(
@@ -125,7 +195,9 @@ def expansion_entropy(
         The restricting region :math:`S`.  ``None`` uses the (10%-expanded)
         bounding box of a burn-in orbit.
     n_samples : int, default 1000
-        Number of initial conditions sampled uniformly in the region.
+        Number of **initial conditions** sampled uniformly in the region — the
+        same quantity ``attractors`` / ``fixed_points`` spell ``n_seeds`` and
+        ``basin_fractions`` / ``continuation`` spell ``n``.
     n : int, optional
         Number of iterations (maps).  Default 15.  (Kept modest: the raw tangent
         product is not renormalised, so very long horizons overflow.)
@@ -147,8 +219,11 @@ def expansion_entropy(
 
     Raises
     ------
-    NotImplementedError
-        If ``system`` is neither a discrete map nor a continuous flow.
+    InvalidInputError
+        If ``system`` is measured data rather than a model, or is neither a
+        discrete map nor a continuous flow.  A ``TypeError`` subclass, like every
+        other wrong-subject refusal in the analysis layer — it used to be a
+        ``NotImplementedError``, so ``except TypeError`` missed it here alone.
     InvalidParameterError
         If ``n_samples < 1``; if the step count is degenerate (``n < 1`` for a
         map, ``final_time <= 0`` or ``dt <= 0`` for a flow); if ``dt`` is passed
@@ -166,14 +241,24 @@ def expansion_entropy(
     ----------
     Hunt & Ott, "Defining chaos", *Chaos* **25** (2015) 097618.
     """
+    # Measured data first, and through the shared guard (see ``gali``): expansion
+    # entropy re-integrates the equations' tangent dynamics from a lattice of
+    # starts, so a point set cannot stand in for the model.
+    reject_data(system, analysis="expansion_entropy")
     if isinstance(system, DiscreteMap):
         mode = "map"
     elif isinstance(system, ContinuousSystem):
         mode = "flow"
     else:
-        raise NotImplementedError(
-            f"expansion_entropy supports discrete maps and continuous flows, not "
-            f"{type(system).__name__}."
+        raise InvalidInputError(
+            f"expansion_entropy evolves the tangent dynamics of a map or a continuous "
+            f"flow, and {type(system).__name__} is neither (a delay system's tangent "
+            f"space is the infinite-dimensional history, and a derived wrapper has no "
+            f"equations of its own)."
+            + remedy(
+                "ts.analysis.expansion_entropy(system, region)",
+                lead="Measure it on the underlying system:",
+            )
         )
 
     n_samples = int(n_samples)
@@ -232,9 +317,7 @@ def expansion_entropy(
         intercept=intercept,
         n_samples=int(n_samples),
         n_survivors=int(survivors),
-        meta=AnalysisResult.build_meta(
-            system, analysis="expansion_entropy", n_samples=int(n_samples)
-        ),
+        meta=_build_meta(system, analysis="expansion_entropy", n_samples=int(n_samples)),
     )
 
 

@@ -30,12 +30,16 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ..._visibility import listing_dir
+
 if TYPE_CHECKING:
     import plotly.graph_objects as go
 
     from ...spec import PlotSpec
 
 __all__ = ["to_html", "write_html"]
+
+__dir__ = listing_dir(__all__)
 
 
 def _as_figure(figure_or_spec: Any) -> go.Figure:

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from ..._visibility import listing_dir
 from ..caps import RendererCapabilities
 
 if TYPE_CHECKING:
@@ -30,8 +31,47 @@ if TYPE_CHECKING:
 
 __all__ = ["register"]
 
+__dir__ = listing_dir(__all__)
+
 #: The registry name the matplotlib backend registers under.
 _BACKEND_NAME = "matplotlib"
+
+#: Extensions ``Figure.savefig`` writes — **measured**, not assumed.  ``.pgf`` was
+#: missing (it works) and ``.webp`` was declared but unreachable, because a single
+#: undivided ``writes`` set mixed still formats with movie formats.
+_WRITES_STATIC: frozenset[str] = frozenset(
+    {
+        ".png",
+        ".pdf",
+        ".svg",
+        ".svgz",
+        ".jpg",
+        ".jpeg",
+        ".eps",
+        ".ps",
+        ".pgf",
+        ".tif",
+        ".tiff",
+        ".webp",
+    }
+)
+# ``.gif`` is deliberately **absent** here even though ``savefig`` accepts it.
+# A gif is a movie container, and ``savefig`` fills it with exactly one frame —
+# so ``ts.plot(traj).save("x.gif")`` wrote an 18 KB file that looked like a
+# working animation and was a still.  Its sibling ``.mp4`` already refused by
+# name ("'.mp4' is a movie format and this Plot is not animated"); the two
+# formats now answer the same question the same way.  An *animated* plot writes
+# ``.gif`` through ``_WRITES_ANIMATED`` below, which is the only honest gif.
+
+#: Extensions :class:`~matplotlib.animation.FuncAnimation`'s own ``save`` writes
+#: (ffmpeg / pillow) — the **only** way this library writes a movie, since plotly's
+#: animation core is single-panel HTML, so an animated composite must land here.
+#: Measured: the four formats ``savefig`` refuses outright (``.apng`` ``.m4v``
+#: ``.mov`` ``.webm``) **are** writable here, and ``.mp4`` — the headline movie
+#: format — is animated-only.  Declaring both halves in one undivided set is what
+#: made ``p.save("x.mp4")`` on a static plot raise matplotlib's raw
+#: ``ValueError: Format 'mp4' is not supported``.
+_WRITES_ANIMATED: frozenset[str] = frozenset({".mp4", ".gif", ".webm", ".mov", ".m4v", ".apng"})
 
 
 def _matplotlib_available() -> bool:
@@ -83,7 +123,12 @@ def register(registry: Registry) -> bool:
     if _BACKEND_NAME in registry:
         return False
 
-    capabilities = RendererCapabilities.all_kinds(_BACKEND_NAME, supports_3d=True)
+    capabilities = RendererCapabilities.all_kinds(
+        _BACKEND_NAME,
+        supports_3d=True,
+        writes=_WRITES_STATIC,
+        writes_animated=_WRITES_ANIMATED,
+    )
 
     def _render(spec: Any, /, **kw: Any) -> Any:
         # Import the drawing core lazily so registration pulls matplotlib in only

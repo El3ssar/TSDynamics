@@ -4,6 +4,11 @@ Tests for DDE systems (``DelaySystem`` subclasses).
 Registry-driven; per-system non-equilibrium histories live in
 ``tests/_sampling.py`` (a guard test asserts completeness).  DDE integration
 (the engine method-of-steps) is slow, so integration tests are marked ``slow``.
+
+Scope note: the sweeps here check shape and finiteness.  The per-system
+*dynamical* assertions (the orbit is bounded, non-degenerate and recurrent, from
+the same ``DDE_HISTORIES`` starts) are in ``tests/test_catalogue_dynamics.py``,
+which covers the DDE family alongside the flows and maps.
 """
 
 from __future__ import annotations
@@ -41,7 +46,7 @@ def test_dde_zero_delay_raises() -> None:
     """A zero or negative delay parameter must raise rather than silently break the engine."""
     import tsdynamics as ts
 
-    mg = ts.MackeyGlass(params={"tau": 0.0})
+    mg = ts.systems.MackeyGlass(params={"tau": 0.0})
     with pytest.raises(ValueError, match="must be strictly positive"):
         mg._delays()
 
@@ -55,7 +60,7 @@ def test_dde_zero_delay_raises() -> None:
 def test_dde_integration_shape_and_finiteness(dde_entry) -> None:
     sys = dde_entry.cls()
     history = DDE_HISTORIES[dde_entry.name]
-    traj = sys.integrate(final_time=5.0, dt=0.1, history=history)
+    traj = sys.run(final_time=5.0, dt=0.1, history=history)
     assert traj.t.ndim == 1
     assert traj.y.ndim == 2
     assert traj.y.shape[0] == traj.t.shape[0]
@@ -67,7 +72,9 @@ def test_dde_integration_shape_and_finiteness(dde_entry) -> None:
 def test_dde_time_starts_at_zero() -> None:
     import tsdynamics as ts
 
-    traj = ts.MackeyGlass().integrate(final_time=3.0, dt=0.1, history=DDE_HISTORIES["MackeyGlass"])
+    traj = ts.systems.MackeyGlass().run(
+        final_time=3.0, dt=0.1, history=DDE_HISTORIES["MackeyGlass"]
+    )
     assert traj.t[0] == pytest.approx(0.0)
 
 
@@ -75,17 +82,28 @@ def test_dde_time_starts_at_zero() -> None:
 def test_dde_constant_history_accepted() -> None:
     import tsdynamics as ts
 
-    traj = ts.MackeyGlass().integrate(final_time=3.0, dt=0.2, history=lambda s: [1.5])
+    traj = ts.systems.MackeyGlass().run(final_time=3.0, dt=0.2, history=lambda s: [1.5])
     assert traj.y.shape[1] == 1
     assert np.all(np.isfinite(traj.y))
 
 
 @pytest.mark.slow
 def test_dde_ic_used_when_no_history() -> None:
-    """With no history, ``constant_past(ic)`` is used and the IC drives integration."""
+    """With no history, ``constant_past(ic)`` is used and the IC drives integration.
+
+    It drives it *without latching*: v6 stopped ``run(ic=)`` mutating
+    ``self.ic``, so a later bare ``run()`` cannot silently start somewhere the
+    caller never asked for.  This asserted the latch, which made it a test of
+    the defect rather than of the docstring above it.
+    """
     import tsdynamics as ts
 
-    mg = ts.MackeyGlass()
-    traj = mg.integrate(final_time=3.0, dt=0.5, ic=[1.5])
+    mg = ts.systems.MackeyGlass()
+    traj = mg.run(final_time=3.0, dt=0.5, ic=[1.5])
     assert np.all(np.isfinite(traj.y))
-    np.testing.assert_array_almost_equal(mg.ic, [1.5])
+    np.testing.assert_array_almost_equal(traj.y[0], [1.5])
+    # a different IC is a different past, so it is genuinely a different run
+    other = mg.run(final_time=3.0, dt=0.5, ic=[0.7])
+    np.testing.assert_array_almost_equal(other.y[0], [0.7])
+    assert not np.allclose(traj.y, other.y)
+    assert mg.ic is None  # ...and neither call latched

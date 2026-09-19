@@ -2,7 +2,7 @@ r"""
 Quantifiers of a basin diagram.
 
 These read a basin *image* — a labelled grid from
-:func:`~tsdynamics.analysis.basins.basins.basins_of_attraction` (or a raw integer
+:func:`~tsdynamics.analysis.basins.basins.basins` (or a raw integer
 array) — and need no further integration, so they are cheap and exact on a
 synthetic label grid:
 
@@ -23,13 +23,99 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, ClassVar
 
 import numpy as np
 
+from ...errors import InvalidInputError, InvalidParameterError, invalid_value, remedy
+from .._common import reject_system as _reject_system
 from .._result import AnalysisResult, ScalarResult
+from .._result_json import _sig
 from ._common import _as_label_array
 from .basins import BasinsResult
+
+#: Minimum number of basins for the Wada test to mean anything: the Wada property
+#: is DEFINED as every boundary point touching three or more basins (Kennedy &
+#: Yorke 1991), so with two basins there is nothing to test — see
+#: :attr:`WadaResult.applicable`.
+_WADA_MIN_BASINS = 3
+
+#: Below this R^2 the uncertainty-exponent power-law fit is not read as one, so
+#: the repr withholds the predictability verdict rather than naming a regime off
+#: a line that does not describe the data.
+_FIT_ACCEPTABLE_R2 = 0.9
+
+#: alpha at or below which the boundary is called final-state sensitive.  Grebogi
+#: et al. (1983): alpha = D - D_0, so alpha = 1 is a smooth boundary and a small
+#: alpha means halving the initial uncertainty barely improves predictability.
+_FINAL_STATE_SENSITIVE_ALPHA = 0.8
+
+#: Fewest uncertainty radii a power-law verdict may be read from.  Below four,
+#: :data:`_FIT_ACCEPTABLE_R2` is passed by construction rather than by
+#: measurement — a straight line through two points scores ``R² = 1``.
+_MIN_UNCERTAINTY_RADII = 4
+
+#: How much the LOCAL slope of ``log f`` vs ``log eps`` may decay across the
+#: probed window and still be read as one power law: ``last / first`` must be at
+#: least this.
+#:
+#: This is the gate that stops the verdict being a property of the grid rather
+#: than of the system.  Measured on an unforced double-well oscillator — whose
+#: boundary is a saddle's stable manifold, provably **smooth**, D0 = 1 — over
+#: grids of 30/40/60/80/100 cells per side::
+#:
+#:     n     alpha   R^2      last/first local slope   verdict before   after
+#:     30    0.676   0.9726   0.32                     FRACTAL (wrong)  withheld
+#:     40    0.789   0.9926   0.48                     FRACTAL (wrong)  withheld
+#:     60    0.883   0.9980   0.84                     smooth           smooth
+#:     80    0.909   0.9975   0.76                     smooth           smooth
+#:     100   0.941   0.9989   0.85                     smooth           smooth
+#:
+#: Note ``R^2 = 0.9926`` on the 40-cell run that answered "fractal boundary":
+#: :math:`R^2` measures how straight the fitted line is, **not** whether the
+#: underlying relation is a power law, so it cannot see the systematic decay.
+#: The local slope can, and 0.6 separates the two regimes with margin on both
+#: sides (0.48 | 0.76).  An engineer reading "fractal boundary" concludes the
+#: safety margin is meaningless and stops, so the cost of a false positive here
+#: is a project, not a re-run.
+_SLOPE_STABLE_RATIO = 0.6
+
+
+def _resolve_attractor_id(result: BasinsResult, attractor_id: int | None) -> int:
+    """Pick which attractor to measure, or say which ones there are.
+
+    ``resilience`` is the one basin metric that is *about* a particular
+    attractor, so it cannot be defaulted in general — but a single-attractor
+    image has only one answer, and when there is a real choice the caller needs
+    the ids that exist, not the word "attractor_id".
+    """
+    present = sorted(int(i) for i in np.unique(result.labels) if int(i) >= 1)
+    if attractor_id is not None:
+        if int(attractor_id) not in present:
+            raise invalid_value(
+                "attractor_id",
+                attractor_id,
+                options=present,
+                hint="those are the basin labels present in this image.",
+            )
+        return int(attractor_id)
+    if len(present) == 1:
+        return present[0]
+    if not present:
+        raise InvalidInputError(
+            "this basin image has no attractor to measure — every cell diverged or "
+            "went unlabelled, so there is no basin and no boundary."
+            + remedy(
+                "res = ts.analysis.basins(system, [(-2.0, 2.0, 200), (-2.0, 2.0, 200)])",
+                lead="Widen the region (or raise max_steps) so trajectories settle:",
+            )
+        )
+    raise InvalidInputError(
+        f"resilience measures one attractor's distance to its basin boundary, so it "
+        f"needs to know which: this image holds {len(present)} attractors, "
+        f"labelled {present}." + remedy(f"ts.analysis.resilience(res, attractor_id={present[0]})")
+    )
+
 
 __all__ = [
     "BasinEntropy",
@@ -63,14 +149,27 @@ class BasinEntropy(AnalysisResult):
         Number of boxes the grid was partitioned into.
     n_boundary_boxes : int
         Number of boxes containing more than one basin.
-    box_size : int
-        Box side length in cells.
-    log_base : float
-        Base of the logarithm (``e`` by default).
     fractal_boundary : bool
         ``True`` when :math:`S_{bb} > \log 2`, the sufficient fractal-boundary
         criterion of Daza et al. (2016).
+
+    Notes
+    -----
+    ``box_size`` (the box side length in cells) and ``log_base`` (the base of the
+    logarithm, ``e`` by default) are the caller's own settings echoed back, so
+    they are carried and exported but kept off ``dir()`` — R1, contract §11.3.
+    Both still resolve and both appear in :meth:`to_dict`.
     """
+
+    #: R1 — inputs echoed back.  The measurements here are the two entropies and
+    #: the two box counts.
+    _HIDDEN_ATTRIBUTES: ClassVar[frozenset[str]] = frozenset({"box_size", "log_base"})
+
+    #: The repr and ``to_dict`` both write Daza's own casing — ``Sb`` / ``Sbb`` —
+    #: so both must resolve and both must be listed.  They did neither: the repr
+    #: printed ``Sb = 0.4057 · Sbb = 0.5617`` while only the lower-case fields
+    #: existed, which is a name the library teaches and then does not have.
+    _extra_attribute_names: ClassVar[tuple[str, ...]] = ("Sb", "Sbb")
 
     sb: float = 0.0
     sbb: float = 0.0
@@ -80,11 +179,49 @@ class BasinEntropy(AnalysisResult):
     log_base: float = 0.0
     fractal_boundary: bool = False
 
-    def __repr__(self) -> str:  # noqa: D105
+    @property
+    def Sb(self) -> float:  # noqa: N802
+        """Basin entropy, in Daza's casing — the same number as :attr:`sb`."""
+        return float(self.sb)
+
+    @property
+    def Sbb(self) -> float:  # noqa: N802
+        """Boundary basin entropy, in Daza's casing — the same number as :attr:`sbb`."""
+        return float(self.sbb)
+
+    def _answer(self) -> str:
+        """Return the two entropies."""
+        return f"Sb = {_sig(self.sb, 4)} · Sbb = {_sig(self.sbb, 4)}"
+
+    def _interpretation(self) -> str | None:
+        r"""Report the sufficient fractal-boundary criterion, and only that.
+
+        Daza et al. (2016) prove :math:`S_{bb} > \ln 2` is *sufficient* for a
+        fractal boundary; it is not necessary, so failing it means "not
+        established by this test", never "smooth".
+        """
+        return "fractal boundary (Sbb > ln 2)" if self.fractal_boundary else None
+
+    def _printed_names(self) -> dict[str, str]:
+        """Map ``Sb`` / ``Sbb`` — what the repr typesets — to ``sb`` / ``sbb``."""
+        return {"Sb": "sb", "Sbb": "sbb"}
+
+    def _details(self) -> tuple[str, ...]:
+        """Return the box partition the entropies were computed over."""
         return (
-            f"BasinEntropy(Sb={self.sb:.4g}, Sbb={self.sbb:.4g}, "
-            f"fractal_boundary={self.fractal_boundary})"
+            f"({self.n_boundary_boxes}/{self.n_boxes} boxes on the boundary, "
+            f"box size {self.box_size}, log base {_sig(self.log_base, 4)})",
         )
+
+    def _derived(self) -> dict[str, Any]:
+        """Export the answers under the NAMES THE REPR PRINTS, as well as the fields.
+
+        The repr says ``Sb`` and ``Sbb``, the fields are ``sb`` and ``sbb``, and
+        ``to_dict()["Sbb"]`` was a ``KeyError`` for a word the library had just
+        shown the reader.  Everywhere else in this library a wrong guess is
+        translated; a name printed at the user is not even a guess.
+        """
+        return {"Sb": float(self.sb), "Sbb": float(self.sbb)}
 
 
 @dataclass(frozen=True)
@@ -104,20 +241,45 @@ class UncertaintyExponent(AnalysisResult):
         State-space (grid) dimension :math:`D`.
     epsilons : ndarray
         Perturbation radii used (in state-space units).
-    f : ndarray
-        Fraction of :math:`\varepsilon`-uncertain cells at each radius.
+    uncertain_fractions : ndarray
+        Fraction of :math:`\varepsilon`-uncertain cells at each radius — the
+        measured curve :math:`f(\varepsilon)` whose slope is :attr:`alpha`.
+        Pairs with :attr:`epsilons`, same length, same order.
     r_squared : float
         Coefficient of determination of the log-log fit.
+
+    .. versionchanged:: 6.0
+        The curve was called ``f``.  A one-letter field on a public result reads
+        as a throwaway local, not as the measurement the exponent is read from,
+        and it sat next to ``epsilons`` — its own abscissa — spelled in full.
+        ``result.f`` now raises, naming :attr:`uncertain_fractions`.
+        ``slope_drift`` is still readable but off ``dir()``: it is the
+        intermediate behind the public :attr:`resolved` verdict.
     """
+
+    #: The readable form of ``slope_drift`` is the :attr:`resolved` verdict,
+    #: which is what the repr prints and what a caller acts on.
+    _HIDDEN_ATTRIBUTES: ClassVar[frozenset[str]] = frozenset({"slope_drift"})
+
+    #: The repr and ``to_dict`` both write Grebogi's ``D0`` for the boundary
+    #: dimension, so it must resolve and be listed — it did neither.
+    _extra_attribute_names: ClassVar[tuple[str, ...]] = ("D0",)
 
     alpha: float = 0.0
     boundary_dimension: float = 0.0
     state_dimension: int = 0
     epsilons: np.ndarray = field(default_factory=lambda: np.empty(0), repr=False, compare=False)
-    f: np.ndarray = field(default_factory=lambda: np.empty(0), repr=False, compare=False)
+    uncertain_fractions: np.ndarray = field(
+        default_factory=lambda: np.empty(0), repr=False, compare=False
+    )
     r_squared: float = 0.0
 
-    def to_plot_spec(self, kind: str | None = None) -> Any:
+    @property
+    def D0(self) -> float:  # noqa: N802
+        """Boundary dimension in Grebogi's casing — the same number as :attr:`boundary_dimension`."""
+        return float(self.boundary_dimension)
+
+    def __plot_spec__(self, kind: str | None = None) -> Any:
         r"""Describe the uncertainty exponent as its log--log scaling fit.
 
         The uncertainty exponent *is* a scaling estimate:
@@ -126,7 +288,7 @@ class UncertaintyExponent(AnalysisResult):
         :math:`\log\varepsilon` with the fitted slope :math:`\alpha`.  This builds
         that spec directly — a ``SCATTER`` of the curve, the fit region marked,
         and the fit line drawn from the slope :math:`\alpha` and an intercept
-        recovered from the curve mean — so a single ``result.plot.scaling()``
+        recovered from the curve mean — so a single ``result.plot()``
         renders it like every other dimension / Lyapunov-from-data scaling result.
         The :mod:`tsdynamics.viz.spec` import is lazy, so building a spec never
         pulls a plotting library.
@@ -135,7 +297,7 @@ class UncertaintyExponent(AnalysisResult):
         ----------
         kind : str, optional
             Override the semantic kind.  ``None`` uses ``SCALING_FIT``; the
-            ``.plot.scaling()`` seam passes ``"scaling_fit"`` explicitly, which
+            ``scaling_fit`` transform passes ``"scaling_fit"`` explicitly, which
             resolves to the same kind.
 
         Returns
@@ -145,7 +307,7 @@ class UncertaintyExponent(AnalysisResult):
         from .. import _plotbuilder as pb
 
         eps = np.asarray(self.epsilons, dtype=float)
-        f = np.asarray(self.f, dtype=float)
+        f = np.asarray(self.uncertain_fractions, dtype=float)
         positive = (eps > 0.0) & (f > 0.0)
         log_eps = np.log(eps[positive])
         log_f = np.log(f[positive])
@@ -169,11 +331,177 @@ class UncertaintyExponent(AnalysisResult):
             meta=self.meta,
         )
 
-    def __repr__(self) -> str:  # noqa: D105
+    def _answer(self) -> str:
+        """Return the exponent and the boundary dimension it implies."""
         return (
-            f"UncertaintyExponent(alpha={self.alpha:.4g}, "
-            f"D0={self.boundary_dimension:.4g}, R2={self.r_squared:.4g})"
+            f"α = {_sig(self.alpha, 4)} · D0 = {_sig(self.boundary_dimension, 4)} "
+            f"in a {int(self.state_dimension)}-D state space"
         )
+
+    @property
+    def applicable(self) -> bool:
+        r"""Whether enough radii were measured for a power law to be read off.
+
+        ``False`` below :data:`_MIN_UNCERTAINTY_RADII` radii: :math:`R^2` clears
+        any acceptance level trivially on two or three points, so the verdict was
+        gated on a diagnostic that could not fail — measured, a two-radius run
+        printed ``final-state sensitive (fractal boundary)``.
+
+        Returns
+        -------
+        bool
+        """
+        return int(np.asarray(self.epsilons).size) >= _MIN_UNCERTAINTY_RADII
+
+    @property
+    def slope_drift(self) -> float:
+        r"""Ratio of the **last** local slope to the **first**, across the window.
+
+        A power law has one slope everywhere, so this is ``1`` for a converged
+        measurement and falls towards ``0`` as the uncertain fraction saturates
+        against its ceiling of 1.  It is the diagnostic :math:`R^2` cannot be:
+        :math:`R^2` says how straight the fitted line is, not whether the
+        relation is a power law at all (measured, ``R² = 0.9926`` on a fit whose
+        local slope had already halved).
+
+        Returns
+        -------
+        float
+            ``nan`` when there are fewer than three usable radii, or when a local
+            slope is non-positive (the fraction did not grow with the radius).
+        """
+        eps = np.asarray(self.epsilons, dtype=float)
+        frac = np.asarray(self.uncertain_fractions, dtype=float)
+        keep = (eps > 0.0) & (frac > 0.0)
+        eps, frac = eps[keep], frac[keep]
+        if eps.size < 3:
+            return float("nan")
+        slopes = np.diff(np.log(frac)) / np.diff(np.log(eps))
+        if slopes.size < 2 or slopes[0] <= 0.0 or slopes[-1] <= 0.0:
+            return float("nan")
+        return float(slopes[-1] / slopes[0])
+
+    @property
+    def resolved(self) -> bool:
+        r"""Whether the power law is converged enough for :math:`\alpha` to be read.
+
+        ``False`` when the local slope decays by more than
+        :data:`_SLOPE_STABLE_RATIO` across the probed radii — the uncertain
+        fraction has saturated, so the fitted :math:`\alpha` is a **lower bound**
+        set by the grid rather than a measurement of the boundary.
+        """
+        drift = self.slope_drift
+        return bool(np.isfinite(drift) and drift >= _SLOPE_STABLE_RATIO)
+
+    @property
+    def final_state_sensitive(self) -> bool | None:
+        r"""Whether :math:`\alpha \ll 1` — a fractal basin boundary.
+
+        The one adjective-named spelling of the verdict (contract §4.2 rule 10).
+        ``None`` — never ``False`` — when the test does not apply or the power
+        law itself did not fit.
+
+        Returns
+        -------
+        bool or None
+        """
+        if not self.applicable or not self.resolved:
+            return None
+        if not np.isfinite(self.r_squared) or self.r_squared < _FIT_ACCEPTABLE_R2:
+            return None
+        return bool(self.alpha <= _FINAL_STATE_SENSITIVE_ALPHA)
+
+    def _interpretation(self) -> str | None:
+        r"""Say what the exponent means for predictability.
+
+        Grebogi et al. (1983): the uncertain fraction scales as
+        :math:`f \sim \varepsilon^{\alpha}`, so :math:`\alpha \ll 1` means halving
+        the uncertainty in the initial condition barely reduces the chance of
+        predicting the wrong attractor — *final-state sensitivity*.  The verdict
+        is withheld when the power law itself did not fit, and when there were
+        too few radii for the fit to be a measurement at all.
+        """
+        n = int(np.asarray(self.epsilons).size)
+        if not self.applicable:
+            return f"not applicable — {n} radii is too few to read a power law"
+        if not self.resolved:
+            # The verdict used to be a property of the GRID, not of the system:
+            # the same smooth boundary read "fractal" at 40 cells a side and
+            # "smooth" at 60, with nothing saying it had changed its mind.
+            return (
+                f"inconclusive at this resolution — α ≥ {_sig(self.alpha, 3)} is a "
+                "LOWER bound (the uncertain fraction has saturated); refine the grid"
+            )
+        verdict = self.final_state_sensitive
+        if verdict is None:
+            return "no clean power law (R² below the acceptance level)"
+        if verdict:
+            return "final-state sensitive (fractal boundary)"
+        if self.contradicted_by_basin_entropy:
+            # One picture, two tests, opposite answers.  Daza's is sufficient,
+            # this one is a fit, so the fit is the one that has to give ground —
+            # and either way a reader must not be handed "smooth" alone.
+            sbb = self.meta.get("basin_entropy_sbb") if self.meta else None
+            number = f"Sbb = {_sig(float(sbb), 4)}" if sbb is not None else "Sbb"
+            return (
+                f"DISPUTED — α ≈ 1 reads smooth, but basin_entropy on this same image "
+                f"has {number} > ln 2, which is SUFFICIENT for a fractal boundary; "
+                f"believe the sufficient test and refine the grid"
+            )
+        return "smooth boundary (α ≈ 1)"
+
+    @property
+    def contradicted_by_basin_entropy(self) -> bool:
+        r"""Whether :func:`basin_entropy` proves fractal where this fit reads smooth.
+
+        Only one direction is a contradiction.  :math:`S_{bb} > \ln 2` is
+        *sufficient* for a fractal boundary and not necessary (Daza et al.
+        2016), so failing it says "not established", never "smooth" — but
+        *passing* it while :math:`\alpha \approx 1` is two answers to one
+        question about one image.
+        """
+        if self.final_state_sensitive is not False or not self.meta:
+            return False
+        return bool(self.meta.get("basin_entropy_fractal"))
+
+    def _derived(self) -> dict[str, Any]:
+        """Export the applicability flags and the verdict the repr reports.
+
+        The repr prints ``D0``; ``boundary_dimension`` is the field it comes
+        from, so both spellings are exported — a reader who saw ``D0`` in the
+        repr should not get a ``KeyError`` for typing it back.
+        """
+        return {
+            "applicable": self.applicable,
+            "final_state_sensitive": self.final_state_sensitive,
+            "resolved": self.resolved,
+            "slope_drift": self.slope_drift,
+            "contradicted_by_basin_entropy": self.contradicted_by_basin_entropy,
+        }
+
+    def _printed_names(self) -> dict[str, str]:
+        """Map ``D0`` — what the repr typesets — to ``boundary_dimension``."""
+        return {"D0": "boundary_dimension"}
+
+    def _details(self) -> tuple[str, ...]:
+        """Return the fit quality, the radius range, and the refinement line."""
+        eps = np.asarray(self.epsilons, dtype=float)
+        span = f", ε ∈ [{_sig(eps.min(), 3)}, {_sig(eps.max(), 3)}]" if eps.size else ""
+        drift = self.slope_drift
+        wobble = f", local slope × {_sig(drift, 2)} across the window" if np.isfinite(drift) else ""
+        lines = [f"(R² = {_sig(self.r_squared, 5)}{span}{wobble})"]
+        if self.applicable and not self.resolved:
+            grid = self.meta.get("grid_shape") if self.meta else None
+            finer = (
+                " × ".join(str(2 * int(n)) for n in grid)
+                if isinstance(grid, (tuple, list)) and grid
+                else "a finer grid"
+            )
+            lines.append(
+                f"re-image at {finer} and compare — α drifts upward until the "
+                "uncertain fraction is well below 1"
+            )
+        return tuple(lines)
 
 
 @dataclass(frozen=True)
@@ -183,10 +511,16 @@ class WadaResult(AnalysisResult):
 
     Attributes
     ----------
-    is_wada : bool
-        ``True`` when there are at least three basins and the fraction of
-        boundary cells seeing *all* basins reaches ``threshold`` at the largest
-        radius (a sufficient grid criterion, not a proof).
+    wada : bool or None
+        The verdict: ``True`` when there are at least three basins and the
+        fraction of boundary cells seeing *all* basins reaches the acceptance
+        threshold at the largest radius (a sufficient grid criterion, not a
+        proof).  ``None`` — never ``False`` — when the test does not
+        :attr:`apply <applicable>`.
+    W : float or None
+        The measured Wada fraction at the largest radius.
+    applicable : bool
+        Whether the test could be run at all (it needs ≥ 3 basins).
     n_basins : int
         Number of attractor basins (colours) considered.
     radii : ndarray
@@ -196,9 +530,19 @@ class WadaResult(AnalysisResult):
         radius (:math:`W` of Daza et al., 2015).
     n_boundary_cells : int
         Number of boundary cells.
-    threshold : float
-        Acceptance fraction at the largest radius.
+
+    .. versionchanged:: 6.0
+        ``is_wada`` (the raw stored flag) and ``threshold`` (the caller's own
+        acceptance fraction) are off ``dir()``.  One verdict had **three**
+        spellings — ``wada``, ``is_wada`` and ``W`` — and only ``wada`` knows
+        about :attr:`applicable`, so ``is_wada`` read ``False`` on an image where
+        nothing had been measured.  Both still resolve; ``is_wada`` is in
+        ``to_dict()`` and ``W`` in ``to_dict(full=True)``.
     """
+
+    #: C-5 + R1: one verdict, one spelling (:attr:`wada`, the applicable-aware
+    #: one), and the acceptance threshold is an input echoed back.
+    _HIDDEN_ATTRIBUTES: ClassVar[frozenset[str]] = frozenset({"is_wada", "threshold"})
 
     is_wada: bool = False
     n_basins: int = 0
@@ -207,9 +551,74 @@ class WadaResult(AnalysisResult):
     n_boundary_cells: int = 0
     threshold: float = 0.0
 
-    def __repr__(self) -> str:  # noqa: D105
-        w = self.fractions[-1] if self.fractions.size else float("nan")
-        return f"WadaResult(is_wada={self.is_wada}, n_basins={self.n_basins}, W={w:.3g})"
+    @property
+    def applicable(self) -> bool:
+        """Whether the Wada test could be run on this image at all.
+
+        The Wada property is *defined* as every boundary point being on the
+        boundary of **three or more** basins, so the test needs at least three
+        basins and at least one boundary cell.  When either is missing,
+        :func:`wada_property` early-returns zeros — and a ``W = 0`` reads as a
+        *measured negative* ("we looked, the boundaries are not Wada") when the
+        truth is that nothing was measured.  This flag separates the two, and
+        :meth:`_answer` prints the reason instead of the number.
+
+        Derived from the fields the result already carries, so no estimator
+        change: it is exactly the condition ``wada_property`` tests before it
+        early-returns.
+        """
+        return self.n_basins >= _WADA_MIN_BASINS and self.n_boundary_cells > 0
+
+    @property
+    def W(self) -> float | None:  # noqa: N802 - W is the published symbol (Daza 2015)
+        """The Wada fraction at the largest radius, or ``None`` when inapplicable."""
+        if not self.applicable or not self.fractions.size:
+            return None
+        return float(self.fractions[-1])
+
+    def _answer(self) -> str:
+        """Return the Wada fraction, or the reason the test does not apply."""
+        if not self.applicable:
+            if self.n_basins < _WADA_MIN_BASINS:
+                return (
+                    f"not applicable — the Wada test needs ≥ {_WADA_MIN_BASINS} basins, "
+                    f"this image has {self.n_basins}"
+                )
+            return "not applicable — this image has no basin boundary cells"
+        return f"W = {_sig(self.W, 4)} at radius {int(self.radii[-1])}"
+
+    @property
+    def wada(self) -> bool | None:
+        """Whether the boundary is Wada — the one adjective-named verdict spelling.
+
+        ``None`` — never ``False`` — when the test does not :attr:`apply
+        <applicable>`.  This is **the** spelling: it is the one every other
+        classifying result uses (contract §4.2 rule 10), and the only one that
+        distinguishes a measured *no* from *nothing was measured*.  The raw
+        stored flag ``is_wada`` is still readable (and still exported) but is
+        off ``dir()``, because it answers ``False`` in both cases.
+
+        Returns
+        -------
+        bool or None
+        """
+        return bool(self.is_wada) if self.applicable else None
+
+    def _interpretation(self) -> str | None:
+        """Name the verdict, but only when the test applied."""
+        if not self.applicable:
+            return None
+        return "Wada basins" if self.is_wada else f"not Wada (W < {_sig(self.threshold, 3)})"
+
+    def _details(self) -> tuple[str, ...]:
+        """Return the boundary size the fraction was measured over."""
+        if not self.applicable:
+            return ()
+        return (f"({self.n_boundary_cells} boundary cells, {self.n_basins} basins)",)
+
+    def _derived(self) -> dict[str, Any]:
+        """Export ``applicable`` and ``W`` — ``W`` is ``None`` when nothing was measured."""
+        return {"applicable": self.applicable, "W": self.W, "wada": self.wada}
 
 
 # ---------------------------------------------------------------------------
@@ -264,7 +673,7 @@ def basin_entropy(
     "Basin entropy: a new tool to analyze uncertainty in dynamical systems",
     *Scientific Reports* **6**, 31416 (2016).
     """
-    labels = _as_label_array(basins)
+    labels = _as_label_array(basins, analysis="basin_entropy")
     if box_size < 1:
         raise ValueError(f"box_size must be >= 1, got {box_size}")
     log = np.log(base)
@@ -387,7 +796,7 @@ def uncertainty_exponent(
     C. Grebogi, S. W. McDonald, E. Ott and J. A. Yorke, "Final state sensitivity:
     an obstruction to predictability", *Physics Letters A* **99**, 415 (1983).
     """
-    labels = _as_label_array(basins)
+    labels = _as_label_array(basins, analysis="uncertainty_exponent")
     radii = tuple(int(r) for r in radii)
     if len(radii) < 2:
         raise ValueError("need at least two radii to fit a slope.")
@@ -399,7 +808,23 @@ def uncertainty_exponent(
 
     positive = fractions > 0.0
     if positive.sum() < 2:
-        raise ValueError("not enough non-zero f(epsilon) values to fit (no boundary?).")
+        n_basins = len({int(i) for i in np.unique(labels) if int(i) >= 1})
+        why = (
+            f"this image holds only {n_basins} basin, so it has no boundary between "
+            f"basins to be uncertain about"
+            if n_basins < 2
+            else "the grid is too coarse for any cell to straddle a boundary"
+        )
+        raise InvalidParameterError(
+            f"uncertainty_exponent measures how the uncertain fraction f(eps) shrinks "
+            f"with eps, and f(eps) is zero at all but {int(positive.sum())} of the "
+            f"probed radii — {why}."
+            + remedy(
+                "res = ts.analysis.basins(system, [(-2.0, 2.0, 400), (-2.0, 2.0, 400)])",
+                "ts.analysis.uncertainty_exponent(res)",
+                lead="Image a region that contains more than one attractor, more finely:",
+            )
+        )
 
     log_eps = np.log(epsilons[positive])
     log_f = np.log(fractions[positive])
@@ -411,14 +836,38 @@ def uncertainty_exponent(
 
     alpha = float(slope)
     dim = labels.ndim
+    # Ask the OTHER boundary test about the SAME image, and carry its answer.
+    # Daza et al. (2016) prove ``Sbb > ln 2`` is *sufficient* for a fractal
+    # boundary; this estimator fits a power law.  When the proof-style test fires
+    # and the fit says "smooth", one of them is wrong about this picture, and a
+    # reader running both — which the library invites, they sit side by side in
+    # ``find("basin")`` — deserves to be told by whichever they called rather
+    # than left to notice.  It is a label-image computation (no integration), so
+    # it costs nothing next to the march that produced the image.
+    sbb: float | None = None
+    try:
+        other = basin_entropy(basins, include_diverged=include_diverged)
+    except (ValueError, InvalidInputError):  # pragma: no cover - a boundary-free image
+        established = False
+    else:
+        established = bool(other.fractal_boundary)
+        sbb = float(other.sbb)
     return UncertaintyExponent(
         alpha=alpha,
         boundary_dimension=float(dim - alpha),
         state_dimension=dim,
         epsilons=epsilons,
-        f=fractions,
+        uncertain_fractions=fractions,
         r_squared=float(r2),
-        meta={"analysis": "uncertainty_exponent", "state_dimension": int(dim)},
+        meta={
+            "analysis": "uncertainty_exponent",
+            "state_dimension": int(dim),
+            # What the verdict's resolution hedge names when it asks for a
+            # finer image — the user should never have to work out "2n" itself.
+            "grid_shape": tuple(int(n) for n in labels.shape),
+            "basin_entropy_sbb": sbb,
+            "basin_entropy_fractal": established,
+        },
     )
 
 
@@ -515,7 +964,7 @@ def wada_property(
     """
     from scipy.ndimage import maximum_filter
 
-    labels = _as_label_array(basins)
+    labels = _as_label_array(basins, analysis="wada_property")
     colors = [int(c) for c in np.unique(labels) if c >= 1]
     radii = tuple(int(r) for r in radii)
     valid = None if include_diverged else (labels != -1)  # -1 == DIVERGED/escape
@@ -561,7 +1010,7 @@ def wada_property(
 # ---------------------------------------------------------------------------
 
 
-def resilience(result: BasinsResult, attractor_id: int) -> ScalarResult:
+def resilience(result: BasinsResult, attractor_id: int | None = None) -> ScalarResult:
     r"""
     Minimal-fatal-shock resilience of an attractor: its distance to the boundary.
 
@@ -574,8 +1023,10 @@ def resilience(result: BasinsResult, attractor_id: int) -> ScalarResult:
     ----------
     result : BasinsResult
         A basin image carrying its grid and attractors.
-    attractor_id : int
-        Which attractor (basin label) to measure.
+    attractor_id : int, optional
+        Which attractor (basin label) to measure.  A basin image with exactly
+        **one** attractor needs no choice, so it may be omitted there; with two
+        or more it is required, and the error lists the ids actually present.
 
     Returns
     -------
@@ -608,9 +1059,22 @@ def resilience(result: BasinsResult, attractor_id: int) -> ScalarResult:
     """
     from scipy.ndimage import distance_transform_edt
 
+    # The shared builder (CONTRACT §5.6) answers the system door; the bespoke
+    # branch below still answers the *data* door, because it names the keyword
+    # (``attractor_id=``) that no generic message can know about.
+    _reject_system(result, analysis="resilience")
     if not isinstance(result, BasinsResult):
-        raise TypeError("resilience needs a BasinsResult (it requires the grid + attractors).")
+        raise InvalidInputError(
+            f"resilience measures a state-space distance, so it needs the full "
+            f"BasinsResult (with its grid and attractors), not a "
+            f"{type(result).__name__}."
+            + remedy(
+                "res = ts.analysis.basins(system, [(-2.0, 2.0, 200), (-2.0, 2.0, 200)])",
+                "ts.analysis.resilience(res, attractor_id=1)",
+            )
+        )
     labels = result.labels
+    attractor_id = _resolve_attractor_id(result, attractor_id)
     grid = result.grid
     assert grid is not None  # a BasinsResult fed to resilience always carries its grid
     if labels.shape != tuple(grid.shape):
@@ -658,7 +1122,10 @@ def resilience(result: BasinsResult, attractor_id: int) -> ScalarResult:
     # boundary, i.e. the MINIMUM distance-to-boundary over the attractor's spatial
     # extent (its sampled point cloud) — an extended attractor (limit cycle /
     # strange set) can graze the boundary far from its single representative.
-    att = result.attractors[int(attractor_id)]
+    # ``by_id``, not ``[]``: since v6 an AttractorSet is a SEQUENCE and ``[]`` is a
+    # positional lookup (CONTRACT §4.2 rule 6 / M25), while ``attractor_id`` here is
+    # the basin LABEL painted into the image.
+    att = result.attractors.by_id(int(attractor_id))
     pts = np.atleast_2d(np.asarray(att.points, dtype=float))
     if pts.size:
         dists, idx = _edt_at(pts)
@@ -669,9 +1136,30 @@ def resilience(result: BasinsResult, attractor_id: int) -> ScalarResult:
     if not np.isfinite(value):  # empty / off-basin cloud → fall back to the centre
         dist, _ = _edt_at(np.atleast_2d(att.center))
         value = float(dist[0])
+    # The answer is a distance read off a CELL GRID, so it is quantised: it is
+    # always an exact number of cells, and (because the grid edge and the
+    # attractor's own cell both round outward) it is biased slightly high —
+    # measured against a direct 72-direction bisection on a two-well oscillator,
+    # +7.8% at 40x40, +6.4% at 80x80, +1.4% at 160x160.  Erring high is the
+    # dangerous direction for a safety margin, so the readout carries the
+    # resolution instead of six significant figures.
+    quantum = float(np.max(spacing))
+    grid_words = " × ".join(str(int(n)) for n in np.asarray(grid.shape)[free])
     return ScalarResult(
         value=value,
-        meta={"analysis": "resilience", "attractor_id": int(attractor_id)},
+        meta={
+            "analysis": "resilience",
+            "attractor_id": int(attractor_id),
+            "quantization": quantum,
+            "quantization_reason": (
+                # "1 cells" is the commonest reading of all — a margin one cell
+                # wide is exactly when the reader must not be distracted by the
+                # grammar of the sentence telling them so.
+                f"{value / quantum:.0f} cell{'' if round(value / quantum) == 1 else 's'} "
+                f"on a {grid_words} grid — "
+                "refine the grid to tighten, and read it as an upper bound"
+            ),
+        },
     )
 
 

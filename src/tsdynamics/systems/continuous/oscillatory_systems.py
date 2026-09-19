@@ -3,6 +3,91 @@ from symengine import cos, pi, sign, sin
 from tsdynamics.families import ContinuousSystem
 
 
+class StuartLandau(ContinuousSystem):
+    """
+    Stuart–Landau equation — the normal form of a supercritical Hopf bifurcation.
+
+    The universal amplitude equation for a system just past an oscillatory
+    instability: every supercritical Hopf bifurcation reduces to this form near
+    onset, which is why it is *the* canonical limit cycle.  In complex amplitude
+    ``A = x + i y`` it reads ``A' = (mu + i omega) A - (1 + i b) |A|^2 A``;
+    written in real coordinates with ``r^2 = x^2 + y^2``,
+
+    .. code-block:: text
+
+        x' = mu x - omega y - r^2 (x - b y)
+        y' = omega x + mu y - r^2 (y + b x)
+
+    The radial and angular dynamics decouple exactly: ``r' = mu r - r^3`` and
+    ``theta' = omega - b r^2``.  For ``mu <= 0`` the origin is a stable focus;
+    for ``mu > 0`` it is unstable and every other orbit spirals onto the
+    circular limit cycle of radius ``sqrt(mu)``, traversed at the constant
+    angular velocity ``omega - b mu``.  The defaults ``mu = 1``, ``omega = 1``,
+    ``b = 0.5`` therefore give the **unit circle**, of period
+    ``2 pi / (omega - b mu) = 4 pi ≈ 12.566``.
+
+    Everything about the cycle is analytic, which makes this the reference
+    system for checking limit-cycle machinery: its Floquet/Lyapunov spectrum is
+    exactly ``(0, -2 mu)`` — one exponent along the flow, and the transverse one
+    from ``d/dr (mu r - r^3)`` at ``r = sqrt(mu)``.
+
+    Parameters
+    ----------
+    mu : float
+        Distance past the Hopf bifurcation.  ``mu < 0`` ⇒ stable focus at the
+        origin; ``mu > 0`` ⇒ limit cycle of radius ``sqrt(mu)``.
+    omega : float
+        Linear (small-amplitude) angular frequency at the bifurcation.
+    b : float
+        Nonlinear frequency shift (shear / non-isochronicity): the cycle's
+        angular velocity is ``omega - b mu``, so ``b = 0`` makes the oscillator
+        isochronous.
+
+    Notes
+    -----
+    Introduced by Stuart (1960) — building on Landau's 1944 phenomenological
+    amplitude equation — as the weakly nonlinear amplitude equation for wave
+    disturbances in parallel shear flow.
+    """
+
+    params = {"b": 0.5, "mu": 1.0, "omega": 1.0}
+    dim = 2
+    variables = ("x", "y")
+    reference = "Stuart (1960), J. Fluid Mech. 9, 353-370"
+    doi = "10.1017/s002211206000116x"
+    default_ic = [1.0, 0.0]
+    #: Analytic, not measured: the cycle is the circle ``r = sqrt(mu)`` and the
+    #: transverse exponent is ``d/dr(mu r - r^3)|_{r=sqrt(mu)} = -2 mu``.
+    known_lyapunov = {
+        "spectrum": [0.0, -2.0],
+        "atol": 0.02,
+        "source": "analytic: r' = mu r - r^3 gives the transverse exponent -2*mu",
+        "kwargs": {"final_time": 2000.0, "dt": 0.05},
+    }
+
+    @staticmethod
+    def _equations(Y, t, *, b, mu, omega):
+        x, y = Y(0), Y(1)
+        r2 = x**2 + y**2
+        xdot = mu * x - omega * y - r2 * (x - b * y)
+        ydot = omega * x + mu * y - r2 * (y + b * x)
+        return xdot, ydot
+
+    @staticmethod
+    def _jacobian(Y, t, b, mu, omega):
+        x, y = Y(0), Y(1)
+        r2 = x**2 + y**2
+        row1 = [
+            mu - 2 * x**2 + 2 * b * x * y - r2,
+            -omega - 2 * x * y + 2 * b * y**2 + b * r2,
+        ]
+        row2 = [
+            omega - 2 * x * y - 2 * b * x**2 - b * r2,
+            mu - 2 * y**2 - 2 * b * x * y - r2,
+        ]
+        return row1, row2
+
+
 class ShimizuMorioka(ContinuousSystem):
     """
     Shimizu–Morioka model — a Lorenz-like flow with simplified nonlinearity.
@@ -23,6 +108,7 @@ class ShimizuMorioka(ContinuousSystem):
 
     params = {"a": 0.85, "b": 0.5}
     dim = 3
+    variables = ("x", "y", "z")
     reference = "Shimizu & Morioka (1980), Phys. Lett. A 76, 201-204"
     doi = "10.1016/0375-9601(80)90466-1"
 
@@ -64,6 +150,7 @@ class MooreSpiegel(ContinuousSystem):
 
     params = {"a": 10, "b": 4, "eps": 9}
     dim = 3
+    variables = ("x", "y", "z")
     reference = "Moore & Spiegel (1966), Astrophys. J. 143, 871-887"
     doi = "10.1086/148562"
 
@@ -108,6 +195,7 @@ class AnishchenkoAstakhov(ContinuousSystem):
 
     params = {"eta": 0.5, "mu": 1.2}
     dim = 3
+    variables = ("x", "y", "z")
     reference = "Anishchenko et al. (2007), Nonlinear Dynamics of Chaotic and Stochastic Systems"
     doi = "10.1007/978-3-540-38168-6"
 
@@ -139,6 +227,7 @@ class Aizawa(ContinuousSystem):
 
     params = {"a": 0.95, "b": 0.7, "c": 0.6, "d": 3.5, "e": 0.25, "f": 0.1}
     dim = 3
+    variables = ("x", "y", "z")
     reference = "Aizawa & Uezu (1982), Prog. Theor. Phys. 67, 982-985"
     doi = "10.1143/PTP.67.982"
 
@@ -191,6 +280,7 @@ class StickSlipOscillator(ContinuousSystem):
         "w": 2,
     }
     dim = 3
+    variables = ("x", "v", "th")
     reference = "Awrejcewicz & Holicke (1999), Int. J. Bifurc. Chaos"
     doi = "10.1142/s0218127499000341"
 
@@ -226,6 +316,7 @@ class Torus(ContinuousSystem):
 
     params = {"a": 0.5, "n": 15.3, "r": 1}
     dim = 3
+    variables = ("x", "y", "z")
     reference = "Strogatz (1994), Nonlinear Dynamics and Chaos"
 
     @staticmethod
@@ -276,6 +367,7 @@ class Lissajous3D(ContinuousSystem):
         "delta_z": pi / 4,
     }
     dim = 3
+    variables = ("x", "y", "z")
 
     @staticmethod
     def _equations(Y, t, *, A, B, C, a, b, c, delta_y, delta_z):
@@ -337,6 +429,7 @@ class Lissajous2D(ContinuousSystem):
 
     params = {"A": 1, "B": 1, "a": 3, "b": 2, "delta": pi / 2}
     dim = 2
+    variables = ("x", "y")
 
     @staticmethod
     def _equations(Y, t, *, A, B, a, b, delta):
@@ -365,3 +458,26 @@ class Lissajous2D(ContinuousSystem):
         dxdt = A * (-a * sin(a * t))
         dydt = B * (-b * sin(b * t + delta))
         return dxdt, dydt
+
+
+__all__ = [
+    "Aizawa",
+    "AnishchenkoAstakhov",
+    "Lissajous2D",
+    "Lissajous3D",
+    "MooreSpiegel",
+    "ShimizuMorioka",
+    "StickSlipOscillator",
+    "StuartLandau",
+    "Torus",
+]
+
+
+def __dir__() -> list[str]:
+    """Expose only the catalogue classes (``__all__``) to ``dir()`` / autocomplete.
+
+    ``__all__`` governs ``import *`` and nothing else, so without this the module
+    also offers every helper it imported — SymEngine's ``sin``/``cos``/``exp``,
+    ``numpy`` — as though they were part of this library's surface.
+    """
+    return sorted(__all__)

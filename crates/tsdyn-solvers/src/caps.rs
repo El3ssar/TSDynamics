@@ -113,12 +113,24 @@ pub struct Caps {
     /// [`Solver::interpolate`](crate::Solver::interpolate).
     ///
     /// `false` (the default for every constructor) means the kernel offers no
-    /// interpolant of its own; the engine's event/dense-output layer then falls
-    /// back to a cubic-Hermite continuous extension built from the step
-    /// endpoints and their derivatives, which needs only the
-    /// [`Evaluator`](tsdyn_ir::Evaluator).  So this flag is purely an
-    /// *optimisation/accuracy* signal — every kernel gets O(h⁴) dense output
-    /// regardless — and existing kernels need no change (ROADMAP §13d: the
+    /// interpolant of its own.  The two consumers then behave *differently*, and
+    /// the difference is deliberate:
+    ///
+    /// * **Event detection** falls back to a cubic-Hermite continuous extension
+    ///   built from the step endpoints and their derivatives, which needs only
+    ///   the [`Evaluator`](tsdyn_ir::Evaluator).  Every kernel therefore gets
+    ///   O(h⁴) crossing refinement regardless.
+    /// * **Dense grid output** (`integrate_grid`) does **not** fall back: a
+    ///   kernel without a native interpolant keeps the land-on-every-output-sample
+    ///   march, bit-for-bit.  Measured, an endpoint Hermite extension is 13–384×
+    ///   worse than the native one for the order-5 kernels and up to ~1e7× worse
+    ///   for an order-8 one, so adopting it as a universal floor would trade "the
+    ///   answer depends on the output grid" for "the answer is far worse than the
+    ///   stepper computed".  So for the grid path this flag gates *whether dense
+    ///   output happens at all* — which is exactly what keeps the v6 change's
+    ///   blast radius to the three kernels that set it.
+    ///
+    /// Either way existing kernels need no change (ROADMAP §13d: the
     /// event/dense-output capability is additive, behind this flag).
     pub dense: bool,
 }
@@ -207,8 +219,9 @@ mod tests {
     #[test]
     fn dense_defaults_off_and_is_opt_in() {
         // Every kernel built through the constructors gets `dense = false`, so
-        // the engine's endpoint-Hermite fallback drives them and existing
-        // kernels need no change (ROADMAP §13d).
+        // event refinement uses the engine's endpoint-Hermite fallback, grid
+        // output keeps the land-on-every-sample march, and existing kernels need
+        // no change (ROADMAP §13d).
         assert!(!Caps::explicit(ProblemKinds::of(ProblemKind::Ode)).dense);
         assert!(!Caps::implicit(ProblemKinds::of(ProblemKind::Ode)).dense);
         // `with_dense()` is the explicit opt-in, composable in const context.

@@ -8,14 +8,108 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import numpy as np
 
-from tsdynamics.errors import ConvergenceError, InvalidInputError, InvalidParameterError
+from tsdynamics._utils.tolerances import (
+    DDE_ATOL,
+    DDE_LYAPUNOV_ATOL,
+    DDE_LYAPUNOV_RTOL,
+    DDE_RTOL,
+)
+from tsdynamics.errors import (
+    ConvergenceError,
+    InvalidInputError,
+    InvalidParameterError,
+    remedy,
+)
+from tsdynamics.errors import _nearest as nearest
 
-from .base import SystemBase, Trajectory
+from ._kwargs import reject_unknown_run_keywords
+from .base import Absent, SystemBase, Trajectory, resolve_transient
+
+#: ``DelaySystem.run``'s keywords, in signature order.
+_DDE_RUN_KEYWORDS = (
+    "final_time",
+    "dt",
+    "ic",
+    "history",
+    "transient",
+    "solver",
+    "rtol",
+    "atol",
+    "backend",
+    "seed",
+)
 
 if TYPE_CHECKING:
     from .base import ParamSet
 
 __all__ = ["DelaySystem"]
+
+
+def _unknown_dde_solver_message(method: str) -> str:
+    """Build the DDE's own 'unknown solver' message (nearest match, then why).
+
+    The shared registry message cannot be reused verbatim here, and the reason
+    is a wrong answer rather than a matter of taste: its stiff hint is read from
+    ``solvers.STIFF_METHOD``, which has an ``"ode"`` entry and no ``"dde"`` one,
+    so it falls back to ``"bdf"``.  Measured, that made
+    ``MackeyGlass().run(solver="LSODA")`` answer *"Did you mean: 'bdf',
+    'trbdf2'?"* — two kernels the method of steps cannot drive, neither of them
+    present in the very listing printed on the next line.  A library that hands
+    back a line which does not run is worse than one that hands back nothing.
+
+    A delay system has no single square Jacobian to freeze (the tangent space is
+    the history space), so there is no stiff DDE kernel to name; the honest
+    advice is to shorten ``dt``, which is what bounds the step in the method of
+    steps.
+    """
+    from tsdynamics import _solvers as solvers
+
+    names = solvers.available_for("dde")
+    near = nearest(solvers.normalize(method), names)
+    msg = f"unknown solver {method!r}."
+    if near:
+        msg += " Did you mean: " + ", ".join(repr(n) for n in near) + "?"
+    msg += f"\n    Available for a dde problem: {names}"
+    msg += (
+        "\n    The method of steps drives EXPLICIT kernels only — a delay system has no"
+        "\n    single Jacobian to freeze, so there is no stiff DDE kernel to offer."
+        "\n    For a stiff delay system, shorten dt rather than changing solver."
+    )
+    return msg
+
+
+def _resolve_dde_solver(method: str) -> str:
+    """Validate a DDE ``solver=`` name at the door, against the DDE's own kernels.
+
+    Before v6 round 8 this door validated nothing: the raw string was handed
+    down to the engine, so ``solver="milstein"`` — an SDE scheme, on a
+    *deterministic* delay system — travelled all the way into Rust and came back
+    as a bare ``ValueError`` quoting a 24-name kernel dump that itself offered
+    ``euler_maruyama`` and ``milstein`` to a DDE.  The name is refused here now,
+    by the family that was asked.
+
+    One case is deliberately **not** answered here: a real but *implicit* ODE
+    kernel (``bdf``, ``rosenbrock``, …).  The engine already refuses those by
+    naming the mathematics — *"DDE integration supports explicit methods only;
+    'bdf' is implicit"* — which says more than any capability listing, so it is
+    left to speak.  ``"auto"`` likewise passes through: it is a documented no-op
+    on this family and resolves downstream to the DDE default.
+    """
+    from tsdynamics import _solvers as solvers
+
+    if solvers.normalize(method) == "auto":
+        return method
+    try:
+        canonical = solvers.resolve(method).name
+    except InvalidParameterError:
+        raise InvalidParameterError(_unknown_dde_solver_message(method)) from None
+    if canonical not in solvers.available_for("dde") and not solvers.is_implicit(canonical):
+        # A real kernel belonging to another family (the SDE schemes).  The
+        # registry's capability message is exactly right — it names the family
+        # the kernel *does* serve and lists this one's — so let it raise.
+        solvers.resolve(method, family="dde")
+    return canonical
+
 
 # ---------------------------------------------------------------------------
 # Type alias for history functions
@@ -42,12 +136,33 @@ class DelaySystem(SystemBase, ABC):
 
     Lowering
     --------
-    Each system is lowered once to an in-process IR tape with no warmup.  Delay
+    Each system is lowered once to an in-process IR tape, then JIT-compiled on
+    first use (both memoised, so neither cost repeats).  Delay
     values directly affect the history-buffer structure, so they are baked into
     the tape rather than read live like the other parameters; a delay change
     re-lowers, while ordinary parameters are read live with no re-lowering.
 
-    DDEs typically need looser tolerances than ODEs (start with ``rtol=atol=1e-3``).
+    Tolerances
+    ----------
+    The DDE family keeps its **own**, looser default —
+    :data:`~tsdynamics._utils.tolerances.DDE_RTOL` /
+    :data:`~tsdynamics._utils.tolerances.DDE_ATOL` (``1e-3`` / ``1e-3``) — rather
+    than the ODE :data:`~tsdynamics._utils.tolerances.DEFAULT_RTOL` /
+    :data:`~tsdynamics._utils.tolerances.DEFAULT_ATOL`.  The reason is *not* that
+    the solver struggles when tightened (it does not: all six built-in DDEs
+    complete at ``rtol=1e-12``/``atol=1e-15``).  It is that the tolerance is
+    largely **inert** here: the method of steps lands on every output sample, so
+    ``dt`` already bounds the internal step below the natural error.  Measured
+    over all six built-in DDEs at the default ``dt=0.02`` to ``T=10``, five
+    return a **bit-identical** final state at ``rtol=1e-3`` and at
+    ``rtol=1e-9``; the sixth (``IkedaDelay``, the only one whose step is
+    tolerance-bound) costs 1.4x for a 6x accuracy gain.  Tighten it explicitly if
+    you need that.
+
+    .. versionchanged:: 6.0
+        The ODE default tightened to ``1e-9``/``1e-12`` to compensate for native
+        dense output.  DDEs never had dense output — the march always landed on
+        every sample — so they lost nothing and this default is unchanged.
 
     History
     -------
@@ -62,19 +177,24 @@ class DelaySystem(SystemBase, ABC):
 
     Examples
     --------
+    >>> import tsdynamics as ts
     >>> mg = MackeyGlass()
     >>> hist = lambda s: [1.0 + 0.1 * np.sin(0.2 * s)]
-    >>> traj = mg.integrate(final_time=500, history=hist)
-    >>> exps = mg.lyapunov_spectrum(n_exp=2, ic=traj.y[-1])
+    >>> traj = mg.run(final_time=500, history=hist)
+    >>> exps = ts.analysis.lyapunov_spectrum(mg, k=2, ic=traj.y[-1])
     """
 
-    _default_rtol: ClassVar[float] = 1e-3
-    _default_atol: ClassVar[float] = 1e-3
+    #: The DDE family's own integration tolerances (see the class docstring for
+    #: the measurement that justifies keeping them looser than the ODE default).
+    _default_rtol: ClassVar[float] = DDE_RTOL
+    _default_atol: ClassVar[float] = DDE_ATOL
 
     #: The default runtime backend (see :attr:`SystemBase._default_backend`).
-    #: ``"interp"`` — the Rust method-of-steps DDE engine (the sole DDE backend
-    #: since the M3 migration retired the v2 backends).
-    _default_backend: ClassVar[str] = "interp"
+    #: ``"jit"`` — the Rust method-of-steps DDE engine driven by the Cranelift
+    #: JIT, with the compiled-evaluator cache paying the compile once per
+    #: distinct system.  Was ``"interp"`` before v6.  There is no ``"reference"``
+    #: DDE integrator, so the two engine evaluators are the only options.
+    _default_backend: ClassVar[str] = "jit"
 
     #: Names of parameters that hold delay values (must be positive floats).
     #: Subclasses with custom delay-naming conventions should override this.
@@ -90,7 +210,12 @@ class DelaySystem(SystemBase, ABC):
     _past_ic: np.ndarray | None = None
     _state_now: np.ndarray | None = None
     _t_now: float = 0.0
-    _default_step_dt: ClassVar[float] = 0.1
+    _step_backend: str | None = None
+    #: Bare ``step()`` advance, in time units.  The same number the other two
+    #: continuous families use: it was ``0.1`` here, which made ``step()`` mean
+    #: a different amount of dynamics on a DDE than on an ODE for no
+    #: mathematical reason (the method of steps bounds nothing at 0.1).
+    _default_step_dt: ClassVar[float] = 0.01
 
     # ------------------------------------------------------------------ #
     # Subclass interface
@@ -187,8 +312,46 @@ class DelaySystem(SystemBase, ABC):
     # System protocol — incremental stepping (forward-only)
     # ------------------------------------------------------------------ #
 
+    #: The output sampling interval ``run`` uses when given no ``dt``.  The
+    #: method of steps lands on every sample, so it *does* bound the step here.
+    _default_dt: ClassVar[float] = 0.02
+
+    #: The solver kernel each delay window is integrated with by default.
+    _default_method: ClassVar[str] = "rk45"
+
+    #: The one-word family, read by :attr:`SystemBase.family`.
+    _family: ClassVar[str] = "dde"
+
+    #: A delay system's right-hand side is not a function of one state vector.
+    jacobian = Absent(
+        "a delay system's right-hand side reads the state at several past times, "
+        "so d f/d u at one point is not defined without those",
+        "ts.analysis.lyapunov_spectrum(system, k=1, dt=0.5)",
+    )
+
+    #: A delay system's kernel is lowered with its delay slots baked in.
+    jacobian_sym = Absent(
+        "a delay system's right-hand side reads the state at several past times, "
+        "so there is no single square Jacobian to hand back",
+        "ts.analysis.lyapunov_spectrum(system, k=1, dt=0.5)",
+    )
+
+    #: ...and for the same reason there is no f(u, t) to evaluate.
+    rhs = Absent(
+        "a delay system's right-hand side reads the state at several past times, "
+        "so f(u, t) at one point is not evaluable without the whole history",
+        "system.run(final_time=200.0, dt=0.5)",
+    )
+
+    #: A delay system's state is a whole history function.
+    set_state = Absent(
+        "a delay system's state is a whole history function on [-tau_max, 0], not "
+        "a point, so it cannot be seated from one",
+        "mg.reinit(history=lambda s: [1.0 + 0.1 * np.sin(0.2 * s)])",
+    )
+
     @property
-    def is_discrete(self) -> bool:
+    def _is_discrete(self) -> bool:
         """DDEs are continuous-time systems."""
         return False
 
@@ -200,21 +363,59 @@ class DelaySystem(SystemBase, ABC):
         params: dict[str, Any] | None = None,
         rtol: float | None = None,
         atol: float | None = None,
-        **kwargs: Any,
+        backend: str | None = None,
+        **unknown: Any,
     ) -> None:
         """
         (Re)start the incremental stepper from a constant past equal to ``u``.
 
         DDE state is a history *function*; the protocol restart uses a
         constant past (the same convention as ``lyapunov_spectrum``).  For a
-        custom history, use :meth:`integrate` with ``history=`` and continue
-        from ``traj.y[-1]``.
+        custom history, call :meth:`run` with ``history=`` and continue from
+        ``traj.y[-1]``.
 
         Stepping is forward-only and re-integrates from the constant past on the
         Rust DDE engine each call (the method of steps has no stateful one-step
-        restart), so it is correct but ``O(steps²)`` — use :meth:`integrate` for
-        a full trajectory.
+        restart), so it is correct but ``O(steps²)`` — use :meth:`run` for a full
+        trajectory.
+
+        Parameters
+        ----------
+        u : array-like, optional
+            The **constant past** to restart from — ``dim`` numbers, held for
+            every ``s ≤ 0``.
+        t : float, optional
+            Must be ``0.0``: a delay system's clock is pinned to its history
+            window ``[-tau_max, 0]``.
+        params : dict, optional
+            Parameter overrides applied to this system **in place**.
+        rtol, atol : float, optional
+            Tolerances for the per-step march.  Default
+            :data:`~tsdynamics._utils.tolerances.DDE_RTOL` / ``DDE_ATOL``.
+        backend : {"jit", "interp"}, optional
+            Which evaluator drives the per-step march — the same word
+            :meth:`run` takes, accepted here for the same reason
+            :meth:`ContinuousSystem.reinit` accepts it: a stepping loop must be
+            able to choose its engine.  ``"reference"`` is refused (there is no
+            pure-Python delay integrator).
         """
+        reject_unknown_run_keywords(
+            self,
+            unknown,
+            family="dde",
+            accepted=("t", "params", "rtol", "atol", "backend"),
+            verb="reinit",
+        )
+        if backend is not None:
+            from tsdynamics._engine.run import resolve_backend
+
+            if resolve_backend(backend) == "reference":
+                raise InvalidParameterError(
+                    f"{type(self).__name__}.reinit(backend='reference'): there is no "
+                    "pure-Python delay integrator, so a DDE has no reference path."
+                    + remedy(f"{type(self).__name__}().reinit(backend='interp')")
+                )
+            self._step_backend = backend
         if params:
             for k, v in params.items():
                 self.params[k] = v
@@ -222,24 +423,37 @@ class DelaySystem(SystemBase, ABC):
             raise NotImplementedError(
                 "DelaySystem.reinit only supports t=0 (the past starts there)."
             )
-        self._past_ic = self.resolve_ic(u)
+        # ``resolve_ic`` commits the resolved IC to ``self.ic`` before anything
+        # else, so a malformed ``u`` must leave the object exactly as it was —
+        # the same contract ``integrate`` gets from ``_dispatch``.
+        with self._ic_rollback():
+            past_ic = self._resolve_ic(u)
+        self._past_ic = past_ic
         self._step_rtol = rtol
         self._step_atol = atol
         self._state_now = self._past_ic.copy()
         self._t_now = 0.0
 
     def step(self, n_or_dt: float | None = None) -> np.ndarray:
-        """Advance by ``dt`` (default 0.1, forward-only) and return the new state."""
+        """Advance by ``n_or_dt`` time units and return the new state (forward-only).
+
+        ``n_or_dt`` is a **time increment** here, as on every continuous family;
+        omitting it advances by ``_default_step_dt`` (``0.01``, the same number
+        :class:`~tsdynamics.families.ContinuousSystem` and
+        :class:`~tsdynamics.families.StochasticSystem` use — it was ``0.1``, a
+        difference no mathematics asked for).  A map counts iterations instead.
+        """
         if self._past_ic is None:
             self.reinit()
         dt = float(n_or_dt) if n_or_dt is not None else self._default_step_dt
         self._t_now = self._t_now + dt
-        traj = self.integrate(
+        traj = self.run(
             final_time=self._t_now,
             dt=min(dt, self._t_now),
             ic=self._past_ic,
             rtol=self._step_rtol if self._step_rtol is not None else self._default_rtol,
             atol=self._step_atol if self._step_atol is not None else self._default_atol,
+            backend=self._step_backend,
         )
         state = np.asarray(traj.y[-1], dtype=float)
         if not np.isfinite(state).all():
@@ -256,115 +470,94 @@ class DelaySystem(SystemBase, ABC):
         assert self._state_now is not None
         return self._state_now.copy()
 
-    def set_state(self, u: Any) -> None:
-        """Not available for DDEs — their state is a whole history function."""
-        raise NotImplementedError(
-            f"{type(self).__name__}.set_state is impossible for delay systems: the "
-            f"instantaneous state is a history function over [t - max_delay, t], not a "
-            f"point.  Use reinit(u) to restart from a constant past, or integrate(...) "
-            f"with a history callable."
-        )
-
     def time(self) -> float:
         """Return the current stepper time."""
         return self._t_now
-
-    def trajectory(
-        self,
-        final_time: float = 100.0,
-        *,
-        dt: float = 0.02,
-        transient: float = 0.0,
-        **kwargs: Any,
-    ) -> Trajectory:
-        """Protocol-uniform trajectory: ``integrate`` plus optional transient drop."""
-        traj = self.integrate(final_time=transient + final_time, dt=dt, **kwargs)
-        return traj.after(transient) if transient > 0 else traj
-
-    # ------------------------------------------------------------------ #
-    # Trajectory production — the canonical ``run`` verb
-    # ------------------------------------------------------------------ #
-
-    def run(
-        self,
-        final_time: float = 100.0,
-        dt: float = 0.02,
-        **kwargs: Any,
-    ) -> Trajectory:
-        """
-        Produce a trajectory — the one canonical verb for every family.
-
-        ``run`` is the unified trajectory producer: it answers the same call for
-        flows, maps, DDEs and SDEs, dispatching on :attr:`is_discrete`.  For a
-        delay system (this family) it integrates the DDE, so ``run`` is a thin
-        alias of :meth:`integrate` and forwards every keyword to it unchanged.
-
-        Parameters
-        ----------
-        final_time : float
-            Integration end time. Default 100.0.
-        dt : float
-            Output sampling interval.
-        **kwargs
-            Forwarded verbatim to :meth:`integrate` (``ic``, ``history``,
-            ``rtol``, ``atol``, ``backend``, ``method``).
-
-        Returns
-        -------
-        Trajectory
-            Identical to :meth:`integrate` — ``run`` adds no behaviour.
-
-        See Also
-        --------
-        integrate : The family-specific spelling (a permanent alias of ``run``).
-        """
-        return self.integrate(final_time=final_time, dt=dt, **kwargs)
 
     # ------------------------------------------------------------------ #
     # Integration
     # ------------------------------------------------------------------ #
 
-    def integrate(
+    def run(
         self,
         final_time: float = 100.0,
-        dt: float = 0.02,
+        dt: float | None = None,
         *,
         ic: Any | None = None,
         history: History = None,
+        transient: float = 0.0,
+        solver: str | None = None,
         rtol: float | None = None,
         atol: float | None = None,
         backend: str | None = None,
-        method: str = "rk45",
-        **kwargs: Any,
+        seed: int | None = None,
+        **solver_options: Any,
     ) -> Trajectory:
         """
-        Integrate the DDE and return a :class:`~tsdynamics.families.Trajectory`.
+        Integrate the delay system and return a :class:`~tsdynamics.families.Trajectory`.
+
+        ``run`` is **the** trajectory verb — one word on flows, maps, delay and
+        stochastic systems.  ``integrate`` and ``trajectory`` were two more names
+        for this method and are gone in v6.
+
+        The signature is **closed**.  Before v6 this method accepted — and
+        silently dropped — ``max_step``, ``t0``, ``events`` and outright typos:
+        the run completed, the number was wrong, and nothing said so.
 
         Parameters
         ----------
         final_time : float
-            Integration end time. Default 100.0.
-        dt : float
-            Output sampling interval.
+            End of the integration window, **in time units** — the horizon word
+            for a flow.  Default 100.0.
+        dt : float, optional
+            Output sampling interval, **in time units**.  ``None`` (the default)
+            means this family's ``_default_dt``, which ``system.info`` prints
+            under ``defaults``.  The method of steps lands on every sample, so
+            ``dt`` also bounds the internal step here (see ``rtol``/``atol``).
         ic : array-like, optional
-            Used for constant past when ``history`` is ``None``.
-            Falls back to ``self.ic``, then random.
+            The **constant** past, used when ``history`` is ``None`` — ``dim``
+            numbers, one per state component, held for every ``s ≤ 0``.  Falls
+            back to ``self.ic``, then a random draw.
         history : callable, optional
-            ``h(s) → sequence`` of length ``dim`` for ``s ≤ 0``.
-            If ``None``, a constant past equal to ``ic`` is used.
+            The past, as a function of the **lag**: ``h(s)`` is called with
+            ``s ≤ 0`` (``s = 0`` is the start of the run, ``s = -tau`` one
+            delay before it) and must return ``dim`` numbers — the state at that
+            moment of the pre-history.  It is never called with ``s > 0``.
+            ``None`` (the default) uses a constant past equal to ``ic``::
+
+                mg.run(final_time=500.0, history=lambda s: [1.0 + 0.1 * np.sin(0.2 * s)])
+
+            A constant past sitting exactly on a fixed point has no dynamics to
+            grow, which is why the Lyapunov exponents of such a run are ~0.
         rtol, atol : float
-            Integration tolerances.  DDEs typically need 1e-3; very tight
-            tolerances can stall the solver.
-        backend : str, optional
-            Which engine integrates the DDE.  Defaults to ``_default_backend``
-            (``"interp"``).  ``"interp"`` / ``"jit"`` route — through the shared
-            engine seam (:func:`tsdynamics.engine.run.integrate`) — to the Rust
+            Integration tolerances.  Default
+            :data:`~tsdynamics._utils.tolerances.DDE_RTOL` /
+            :data:`~tsdynamics._utils.tolerances.DDE_ATOL` (both ``1e-3``) — the
+            DDE family's own, deliberately looser than the ODE default because
+            the method of steps lands on every output sample, so ``dt`` bounds
+            the step and the tolerance is largely inert.  See the class
+            docstring for the measurement.  Tightening is *safe* (no stall) if
+            you need it.
+        backend : {"jit", "interp"}, optional
+            Which evaluator drives the DDE engine.  Defaults to
+            ``_default_backend`` (``"jit"``).  Both route — through the shared
+            engine seam (:func:`tsdynamics._engine.run.integrate`) — to the Rust
             method-of-steps engine (history ring buffer + cubic-Hermite dense
             interpolation; stream E-DDE), reusing the explicit solver kernels.
+
+            - ``"jit"`` (default) — the Cranelift JIT, compiled once per distinct
+              system and served from the process-wide compiled-evaluator cache.
+            - ``"interp"`` — the SSA-tape interpreter; bit-for-bit identical, and
+              the way to avoid the one-off compile.
+
             Only **constant** delays lower; a state-dependent delay raises.
             ``backend="reference"`` is unsupported for DDEs (there is no
             pure-Python delay integrator).
-        method : str, default "rk45"
+
+            .. versionchanged:: 6.0
+                The default moved from ``"interp"`` to ``"jit"``, once the v6
+                compiled-evaluator cache removed the JIT's per-call recompile.
+        solver : str, default "rk45"
             The explicit kernel (``"rk45"``, ``"tsit5"``, ``"dop853"``,
             ``"rk4"``); the method of steps drives explicit kernels only.
             ``"auto"`` is an explicit **no-op** here — it resolves to the DDE
@@ -372,13 +565,49 @@ class DelaySystem(SystemBase, ABC):
             an ODE-only feature: the one-point heuristic reads only the
             instantaneous Jacobian and would ignore the delay terms that shape a
             DDE's spectrum (it could even select an implicit kernel the
-            method-of-steps engine cannot drive), so pass another explicit
-            ``method=`` directly if you need one.
+            method-of-steps engine cannot drive), so name another explicit
+            kernel with ``solver=`` if you need one.
+        seed : int, optional
+            Seed for the **random initial-condition draw** (the constant past when
+            ``history`` is ``None``) — the same meaning ``seed=`` has on every
+            other family's trajectory producer and on the constructor.  (An SDE
+            has a second source of randomness, so there ``seed=`` seeds the
+            noise path as well as the draw.)  Inert unless a draw actually
+            happens: an explicit ``ic``, an already-resolved ``self.ic`` and a
+            class-level ``default_ic`` all take priority.  The resolved seed is
+            recorded on ``traj.meta["ic_seed"]``.
+
+            .. versionadded:: 6.0
+        transient : float, optional
+            Leading stretch of the run to discard, in **time units** (the same
+            unit as ``final_time``).  The window is extended to
+            ``transient + final_time`` and everything before ``transient``
+            dropped.  One word on every family, in that family's **own horizon
+            unit**: time here, **iterations** on a map.
+
+            .. versionadded:: 6.0
 
         Returns
         -------
         Trajectory
         """
+        reject_unknown_run_keywords(self, solver_options, family="dde", accepted=_DDE_RUN_KEYWORDS)
+        dt = self._default_dt if dt is None else dt
+        method = _resolve_dde_solver(self._default_method if solver is None else solver)
+        transient = resolve_transient(transient, discrete=False)
+        if transient > 0.0:
+            traj = self.run(
+                final_time + transient,
+                dt,
+                ic=ic,
+                history=history,
+                rtol=rtol,
+                atol=atol,
+                backend=backend,
+                solver=method,
+                seed=seed,
+            )
+            return traj.after(transient)
         backend = backend if backend is not None else self._default_backend
         return self._integrate_engine(
             final_time,
@@ -389,6 +618,7 @@ class DelaySystem(SystemBase, ABC):
             atol=atol,
             backend=backend,
             method=method,
+            seed=seed,
         )
 
     # ------------------------------------------------------------------ #
@@ -406,12 +636,13 @@ class DelaySystem(SystemBase, ABC):
         atol: float | None,
         backend: str,
         method: str,
+        seed: int | None = None,
     ) -> Trajectory:
         """Integrate the DDE on the Rust method-of-steps engine (stream E-DDE).
 
         Routes through the shared engine-dispatch seam
-        (:func:`tsdynamics.engine.run.integrate`), which lowers the delay system
-        (via :func:`tsdynamics.engine.compile.lower_dde`) to a tape over
+        (:func:`tsdynamics._engine.run.integrate`), which lowers the delay system
+        (via :func:`tsdynamics._engine.compile.lower_dde`) to a tape over
         ``dim + n_slots`` inputs (the delay slots), samples the past, and drives
         the Rust method-of-steps integrator — a history ring buffer with
         cubic-Hermite dense interpolation, reusing the explicit solver kernels.
@@ -419,15 +650,17 @@ class DelaySystem(SystemBase, ABC):
         ``TapeCompileError``, and ``backend="reference"`` raises (there is no
         pure-Python delay integrator).
 
-        DDE tolerances default to ``_default_rtol`` / ``_default_atol`` (both
-        ``1e-3``) and are resolved here before handing off, since the generic
-        seam's ODE-style ``1e-6`` / ``1e-9`` defaults are too tight for delay
-        systems.
+        DDE tolerances default to ``_default_rtol`` / ``_default_atol``
+        (:data:`~tsdynamics._utils.tolerances.DDE_RTOL` /
+        :data:`~tsdynamics._utils.tolerances.DDE_ATOL`, both ``1e-3``) and are
+        resolved here before handing off, so the generic seam's ODE-style
+        ``1e-9`` / ``1e-12`` default never reaches a delay system.
         """
         rtol = rtol if rtol is not None else self._default_rtol
         atol = atol if atol is not None else self._default_atol
         return self._dispatch(
             backend=backend,
+            seed=seed,
             final_time=final_time,
             dt=dt,
             ic=ic,
@@ -441,28 +674,28 @@ class DelaySystem(SystemBase, ABC):
     # Lyapunov spectrum
     # ------------------------------------------------------------------ #
 
-    def lyapunov_spectrum(
+    def _lyapunov_spectrum(
         self,
         final_time: float = 200.0,
         dt: float = 0.1,
         *,
         ic: Any | None = None,
-        n_exp: int = 1,
-        burn_in: float = 50.0,
+        k: int = 1,
+        transient: float = 50.0,
         rtol: float | None = None,
         atol: float | None = None,
         backend: str | None = None,
         **kwargs: Any,
     ) -> np.ndarray:
         """
-        Estimate the ``n_exp`` leading Lyapunov exponents of the delay system.
+        Estimate the ``k`` leading Lyapunov exponents of the delay system.
 
         The **engine** estimator (stream E-DDE-LYAP, result stored in
-        ``self.meta['lyapunov_spectrum']``) integrates the extended variational
+        the DDE Lyapunov estimator) integrates the extended variational
         DDE on the Rust engine with a function-space Benettin renormalisation
         (:func:`tsdynamics.families._dde_lyapunov.dde_lyapunov_spectrum`):
-        ``backend="interp"`` / ``"jit"``.  ``"reference"`` is rejected (the engine
-        has no pure-Python DDE integrator).
+        ``backend="jit"`` (the default) / ``"interp"``.  ``"reference"`` is
+        rejected (the engine has no pure-Python DDE integrator).
 
         Parameters
         ----------
@@ -473,17 +706,29 @@ class DelaySystem(SystemBase, ABC):
         ic : array-like, optional
             Initial state. Provide the end-state of a prior ``integrate``
             call so the trajectory starts on the attractor (recommended).
-        n_exp : int
+        k : int
             Number of leading exponents to estimate. DDEs have infinitely
             many; choose consciously. Default 1.
-        burn_in : float
-            Discard interval. Default 50.0.
+        transient : float
+            Discard this much time before averaging, in **time units**. Default
+            50.0.  Spelled ``transient`` on every entry point in the library —
+            it was ``burn_in`` here until v6.
         rtol, atol : float, optional
             Integration tolerances.  The engine path renormalises every delay
-            window and uses defaults of ``1e-7`` / ``1e-9``.
-        backend : str, optional
-            ``"interp"`` or ``"jit"``.  Defaults to :attr:`_default_backend`
-            (``"interp"``).
+            window and defaults to
+            :data:`~tsdynamics._utils.tolerances.DDE_LYAPUNOV_RTOL` /
+            :data:`~tsdynamics._utils.tolerances.DDE_LYAPUNOV_ATOL` (``1e-7`` /
+            ``1e-9``) — tighter than plain DDE integration, looser than the ODE
+            default, and measured to agree with ``1e-9``/``1e-12`` to within the
+            estimator's own finite-time scatter on all six built-in DDEs.
+        backend : {"jit", "interp"}, optional
+            Which evaluator drives the engine.  Defaults to
+            :attr:`_default_backend` (``"jit"``, the Cranelift JIT);
+            ``"interp"`` is the bit-for-bit identical SSA-tape interpreter.
+
+            .. versionchanged:: 6.0
+                Default moved from ``"interp"`` to ``"jit"`` (see
+                :meth:`run`).
 
         Notes
         -----
@@ -493,7 +738,7 @@ class DelaySystem(SystemBase, ABC):
 
         Returns
         -------
-        ndarray, shape (n_exp,)
+        ndarray, shape (k,)
         """
         backend = backend if backend is not None else self._default_backend
         from tsdynamics.families._dde_lyapunov import dde_lyapunov_spectrum
@@ -505,23 +750,14 @@ class DelaySystem(SystemBase, ABC):
             )
         exps = dde_lyapunov_spectrum(
             self,
-            n_exp=n_exp,
+            k=k,
             final_time=final_time,
             dt=dt,
-            burn_in=burn_in,
+            burn_in=transient,
             ic=ic,
             backend=backend,
-            rtol=rtol if rtol is not None else 1e-7,
-            atol=atol if atol is not None else 1e-9,
-        )
-        self.meta.record(
-            "lyapunov_spectrum",
-            exps,
-            backend=backend,
-            n_exp=n_exp,
-            final_time=final_time,
-            dt=dt,
-            burn_in=burn_in,
+            rtol=rtol if rtol is not None else DDE_LYAPUNOV_RTOL,
+            atol=atol if atol is not None else DDE_LYAPUNOV_ATOL,
         )
         return exps
 

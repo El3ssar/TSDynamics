@@ -1,6 +1,6 @@
 """Engine-free spec-shape tests for the GAPFILL-A draw-views.
 
-Stream GAPFILL-A: the enriched :meth:`tsdynamics.data.Trajectory.to_plot_spec`
+Stream GAPFILL-A: the enriched :meth:`tsdynamics.data.Trajectory.__plot_spec__`
 (discrete-map scatter, multi-component overlay time series, spacetime image) plus
 the parameterised pure spec builders in :mod:`tsdynamics.viz.producers`
 (arbitrary component triple, colour-by-time / -speed, DDE delay-embedding, vector
@@ -27,11 +27,23 @@ from tsdynamics.viz.spec import PlotKind, PlotSpec
 
 
 class _FakeSystem:
-    """A minimal stand-in carrying ``is_discrete`` / ``variables``."""
+    """A minimal stand-in carrying ``family`` / ``variables``, like a real system.
+
+    ``family`` is the v6 spelling (``"ode"`` / ``"map"`` / …); ``is_discrete`` was
+    removed.  A test stand-in that keeps a removed attribute alive is how a
+    rename passes its own suite while every real system silently answers the
+    default — so this fake declares the live name and *derives* the dead one,
+    which is deletable the moment the last reader is repointed.
+    """
 
     def __init__(self, *, is_discrete: bool, variables: tuple[str, ...] | None) -> None:
-        self.is_discrete = is_discrete
+        self.family = "map" if is_discrete else "ode"
         self.variables = variables
+
+    @property
+    def is_discrete(self) -> bool:
+        """Deprecated spelling of ``family == "map"`` — for readers not yet repointed."""
+        return self.family == "map"
 
 
 def _flow_traj(dim: int = 3, n: int = 40, variables: tuple[str, ...] | None = None) -> Trajectory:
@@ -64,13 +76,13 @@ def _roundtrips(spec: PlotSpec) -> None:
 
 
 # ---------------------------------------------------------------------------
-# to_plot_spec enrichments
+# __plot_spec__ enrichments
 # ---------------------------------------------------------------------------
 
 
 def test_map_orbit_is_scatter_not_line():
     """A discrete-map orbit auto-dispatches to a SCATTER mark, not a LINE."""
-    spec = _map_traj(dim=2).to_plot_spec()
+    spec = _map_traj(dim=2).__plot_spec__()
     assert spec.kind == PlotKind.PHASE_PORTRAIT_2D
     assert [lyr.kind for lyr in spec.layers] == [PlotKind.SCATTER]
     _roundtrips(spec)
@@ -78,9 +90,9 @@ def test_map_orbit_is_scatter_not_line():
 
 def test_flow_phase_portrait_is_line():
     """A flow phase portrait stays a connected LINE / LINE3D."""
-    spec2 = _flow_traj(dim=2).to_plot_spec()
+    spec2 = _flow_traj(dim=2).__plot_spec__()
     assert spec2.layers[0].kind == PlotKind.LINE
-    spec3 = _flow_traj(dim=3).to_plot_spec()
+    spec3 = _flow_traj(dim=3).__plot_spec__()
     assert spec3.kind == PlotKind.PHASE_PORTRAIT_3D
     assert spec3.layers[0].kind == PlotKind.LINE3D
     _roundtrips(spec2)
@@ -92,7 +104,7 @@ def test_map_1d_orbit_time_series_scatter():
     t = np.arange(20, dtype=float)
     y = np.cos(t)[:, None]
     traj = Trajectory(t, y, _FakeSystem(is_discrete=True, variables=("x",)))
-    spec = traj.to_plot_spec()
+    spec = traj.__plot_spec__()
     assert spec.kind == PlotKind.TIME_SERIES
     assert spec.layers[0].kind == PlotKind.SCATTER
     _roundtrips(spec)
@@ -100,7 +112,7 @@ def test_map_1d_orbit_time_series_scatter():
 
 def test_forced_time_series_overlays_components_with_legend():
     """Forcing kind='time_series' on a 3-D flow overlays one LINE per component."""
-    spec = _flow_traj(dim=3, variables=("x", "y", "z")).to_plot_spec(kind="time_series")
+    spec = _flow_traj(dim=3, variables=("x", "y", "z")).__plot_spec__(kind="time_series")
     assert spec.kind == PlotKind.TIME_SERIES
     assert len(spec.layers) == 3
     assert all(lyr.kind == PlotKind.LINE for lyr in spec.layers)
@@ -111,7 +123,7 @@ def test_forced_time_series_overlays_components_with_legend():
 
 def test_spacetime_branch_is_image():
     """kind='spacetime' images component index vs time as a single IMAGE."""
-    spec = _flow_traj(dim=6).to_plot_spec(kind="spacetime")
+    spec = _flow_traj(dim=6).__plot_spec__(kind="spacetime")
     assert spec.kind == PlotKind.SPACETIME
     assert spec.layers[0].kind == PlotKind.IMAGE
     assert spec.colorbar is not None
@@ -198,31 +210,33 @@ def test_producer_phase_portrait_bad_component_count():
 def test_producer_delay_embedding_from_series():
     """delay_embedding builds x(t) vs x(t-tau) from a scalar series."""
     x = np.sin(np.linspace(0, 10, 200))
-    spec = producers.delay_embedding(x, tau=5, label="m")
+    spec = producers.delay_embedding(x, delay=5, label="m")
     assert spec.kind == PlotKind.PHASE_PORTRAIT_2D
     lyr = spec.layers[0]
     assert lyr.data["x"].shape[0] == x.shape[0] - 5
     np.testing.assert_allclose(lyr.data["x"], x[:-5])
     np.testing.assert_allclose(lyr.data["y"], x[5:])
-    assert spec.x.label == "m(t)" and spec.y.label == "m(t - 5)"
+    # A bare array has no time axis, so the lag is stated in the unit it IS —
+    # samples.  ``m(t - 5)`` read as a time on an axis whose t is a time.
+    assert spec.x.label == "m(t)" and spec.y.label == "m(t - 5 samples)"
     _roundtrips(spec)
 
 
 def test_producer_delay_embedding_from_trajectory_component():
     """delay_embedding can read a named component of a trajectory."""
     traj = _flow_traj(dim=3, variables=("x", "y", "z"))
-    spec = producers.delay_embedding(traj, tau=3, component="y")
+    spec = producers.delay_embedding(traj, delay=3, components="y")
     np.testing.assert_allclose(spec.layers[0].data["x"], traj.y[:-3, 1])
     _roundtrips(spec)
 
 
-def test_producer_delay_embedding_validates_tau():
-    """tau must be >= 1 and shorter than the series."""
+def test_producer_delay_embedding_validates_delay():
+    """delay must be >= 1 and shorter than the series."""
     x = np.arange(10.0)
     with pytest.raises(ValueError):
-        producers.delay_embedding(x, tau=0)
+        producers.delay_embedding(x, delay=0)
     with pytest.raises(ValueError):
-        producers.delay_embedding(x, tau=10)
+        producers.delay_embedding(x, delay=10)
 
 
 # ---------------------------------------------------------------------------

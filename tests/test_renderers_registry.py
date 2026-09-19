@@ -1,8 +1,8 @@
 """Meta-QA over the visualization renderers registry (stream WS-VIZREG / VIZ-MPL-CORE).
 
-The renderers registry (:data:`tsdynamics.registry.renderers`) is the third
+The renderers registry (:data:`tsdynamics.registry.renderers`) is the second
 generic :class:`~tsdynamics.registry.Registry` container, mirroring
-:data:`~tsdynamics.registry.analyses` / :data:`~tsdynamics.registry.transforms`.
+:data:`~tsdynamics.registry.analyses`.
 
 As of stream VIZ-MPL-CORE the matplotlib reference renderer is the **first real
 backend**, which flips visualization from *deferred* to *live*: the registry
@@ -15,12 +15,12 @@ the installed matplotlib backend on the **first render**, so
 These tests freeze that live contract:
 
 - the registry exists, is a :class:`~tsdynamics.registry.Registry` tagged
-  ``"renderer"``, and is a *distinct* instance from the analyses/transforms ones;
+  ``"renderer"``, and is a *distinct* instance from the analyses one;
 - it is **empty at import** — a fresh ``import tsdynamics`` registers no backend
   and pulls in **no plot library** (core stays plotting-free; registration is
   lazy, only on first render);
-- :mod:`tsdynamics.viz` wires entry-point discovery (the ``tsdynamics.renderers``
-  group) exactly like analyses/transforms;
+- :mod:`tsdynamics.viz` wires entry-point discovery (the ``tsdynamics.viz.renderers``
+  group) exactly like analyses;
 - with **no** backend registered (forced empty), resolving through
   :meth:`tsdynamics.viz.spec.PlotSpec.render` raises a *helpful*,
   message-carrying ``VisualizationNotInstalled`` (the canonical named exception,
@@ -45,8 +45,9 @@ import pytest
 
 from tsdynamics import registry
 from tsdynamics.registry import Registry
-from tsdynamics.viz import RENDERERS_GROUP, PlotKind, PlotSpec, discover_plugins
-from tsdynamics.viz.spec import Layer
+from tsdynamics.viz import RENDERERS_GROUP, discover_plugins
+from tsdynamics.viz.spec import Layer, PlotKind
+from tsdynamics.viz.spec import Plot as PlotSpec
 
 # ---------------------------------------------------------------------------
 # The registry exists, is the right kind, and is distinct
@@ -65,12 +66,11 @@ def test_renderers_in_registry_all():
 
 
 def test_renderers_registry_is_distinct_instance():
-    """The three generic registries are distinct container instances."""
+    """The two generic registries are distinct container instances."""
     assert registry.renderers is not registry.analyses
-    assert registry.renderers is not registry.transforms
     # …and distinctly tagged.
-    kinds = {registry.analyses.kind, registry.transforms.kind, registry.renderers.kind}
-    assert kinds == {"analysis", "transform", "renderer"}
+    kinds = {registry.analyses.kind, registry.renderers.kind}
+    assert kinds == {"analysis", "renderer"}
 
 
 def test_renderers_registry_empty_at_import():
@@ -136,7 +136,7 @@ def test_importing_viz_pulls_no_plot_library():
 
 
 # ---------------------------------------------------------------------------
-# Entry-point discovery is wired like analyses/transforms
+# Entry-point discovery is wired like analyses
 # ---------------------------------------------------------------------------
 
 
@@ -268,17 +268,25 @@ def test_render_dispatches_to_a_registered_backend(_temp_backend):
     assert seen["kw"] == {"dpi": 120}
 
 
-def test_render_unknown_backend_raises_naming_keyerror(_temp_backend):
-    """With at least one backend registered, an unknown name is a naming KeyError.
+def test_render_unknown_backend_lists_the_backends_that_are_installed(_temp_backend):
+    """An unknown ``backend=`` must name the choices, not just the mistake.
 
-    (When the registry is empty the no-backend ``VisualizationNotInstalled`` wins;
-    once a backend exists, an unrecognized name surfaces the registry's
-    name-not-found ``KeyError`` instead — the registry's own helpful lookup.)
+    (When the registry is empty the no-backend ``VisualizationNotInstalled``
+    wins.)  It is an ``InvalidParameterError`` — the library's type for a bad
+    option value — and not the registry's bare ``KeyError``, whose ``__str__``
+    is ``repr(arg)`` and would print the remedy's newlines as literal ``\\n``.
     """
+    from tsdynamics.errors import InvalidParameterError
+
+    name, _ = _temp_backend
     spec = _scaling_spec()
-    with pytest.raises(KeyError) as excinfo:
+    with pytest.raises(InvalidParameterError) as excinfo:
         spec.render("definitely_not_a_backend")
-    assert "definitely_not_a_backend" in str(excinfo.value)
+    message = str(excinfo.value)
+    assert "definitely_not_a_backend" in message
+    assert name in message  # the registered backends are listed
+    # ... and one of them is offered as a runnable line.
+    assert any(f"spec.render({n!r})" in message for n in registry.renderers.names())
 
 
 # ---------------------------------------------------------------------------
@@ -319,11 +327,12 @@ def test_render_matplotlib_returns_a_figure():
 # An Agg golden/smoke pass: a minimal spec for *every* 2-D semantic PlotKind must
 # render to a Figure with axes and no exception.  3-D phase-portrait kinds (whose
 # only sensible layer is a 3-D mark) are excluded — they are the VIZ-MPL-3D
-# follow-up — as are the deferred animation kinds.
+# follow-up.  (The two legacy animation kinds that were also excluded here are
+# gone from the vocabulary in v6 — animation is the orthogonal ``Animation``
+# modifier — so there is nothing left to subtract for them.)
 _THREE_D_KINDS = frozenset({PlotKind.PHASE_PORTRAIT_3D})
-_ANIMATION_KINDS = frozenset({PlotKind.TRAJECTORY_ANIMATION, PlotKind.ENSEMBLE_ANIMATION})
 _TWO_D_SEMANTIC_KINDS = sorted(
-    PlotKind.semantic_kinds() - _THREE_D_KINDS - _ANIMATION_KINDS,
+    PlotKind.semantic_kinds() - _THREE_D_KINDS,
     key=lambda k: k.value,
 )
 
@@ -337,7 +346,6 @@ def _minimal_layers_for(kind: PlotKind) -> list[Layer]:
     if kind in (
         PlotKind.IMAGE,
         PlotKind.SPACETIME,
-        PlotKind.SPECTROGRAM,
         PlotKind.RECURRENCE_PLOT,
         PlotKind.BASINS_IMAGE,
     ):
@@ -345,14 +353,12 @@ def _minimal_layers_for(kind: PlotKind) -> list[Layer]:
         return [Layer(PlotKind.IMAGE, {"z": img})]
     if kind in (PlotKind.VECTOR_FIELD, PlotKind.PHASE_PORTRAIT_FIELD):
         return [Layer(PlotKind.QUIVER, {"x": x, "y": y, "u": y, "v": x, "c": y})]
-    if kind in (PlotKind.CATEGORICAL_BAR, PlotKind.FEATURE_BARS):
+    if kind is PlotKind.CATEGORICAL_BAR:
         return [Layer(PlotKind.BAR, {"cat": np.arange(3.0), "y": np.array([1.0, 2.0, 3.0])})]
     if kind == PlotKind.ENSEMBLE_FAN:
         return [Layer(PlotKind.AREA, {"x": x, "lo": y - 0.1, "hi": y + 0.1, "y": y})]
     if kind in (PlotKind.DIMENSION_SPECTRUM, PlotKind.SCALING_FIT):
         return [Layer(PlotKind.ERRORBAR, {"x": x, "y": y, "err": np.full_like(x, 0.05)})]
-    if kind == PlotKind.HISTOGRAM_NULL:
-        return [Layer(PlotKind.HISTOGRAM, {"x": y})]
     if kind in (
         PlotKind.PHASE_PORTRAIT_2D,
         PlotKind.POINCARE_SECTION,
@@ -363,8 +369,8 @@ def _minimal_layers_for(kind: PlotKind) -> list[Layer]:
         PlotKind.FIXED_POINTS_OVERLAY,
     ):
         return [Layer(PlotKind.SCATTER, {"x": x, "y": y})]
-    # default: a line (TIME_SERIES, COBWEB, POWER_SPECTRUM, DIAGNOSTIC_CURVE,
-    # COMPLEXITY_CURVE, LINE_FAMILY, LYAPUNOV_SPECTRUM, CONTINUATION, …)
+    # default: a line (TIME_SERIES, COBWEB, DIAGNOSTIC_CURVE, LINE_FAMILY,
+    # LYAPUNOV_SPECTRUM, CONTINUATION, …)
     return [Layer(PlotKind.LINE, {"x": x, "y": y})]
 
 
@@ -379,7 +385,15 @@ def test_every_2d_kind_renders_on_agg(kind):
         from tsdynamics.viz.spec import Colorbar
 
         colorbar = Colorbar()
-    spec = PlotSpec(kind=kind, layers=_minimal_layers_for(kind), colorbar=colorbar)
+    # Since v6 a COMPOSITE *must* carry at least one panel (the construction
+    # invariant in ``PlotSpec.__post_init__`` — a panel-less composite used to
+    # render as a blank figure).  Give it one; every other kind is single-panel.
+    panels = (
+        [PlotSpec(kind=PlotKind.TIME_SERIES, layers=_minimal_layers_for(PlotKind.TIME_SERIES))]
+        if kind is PlotKind.COMPOSITE
+        else []
+    )
+    spec = PlotSpec(kind=kind, layers=_minimal_layers_for(kind), colorbar=colorbar, panels=panels)
     fig = spec.render("matplotlib")
     try:
         assert isinstance(fig, Figure)

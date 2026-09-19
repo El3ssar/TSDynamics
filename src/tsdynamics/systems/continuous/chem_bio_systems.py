@@ -3,6 +3,38 @@ from symengine import Max, cos, exp, pi, sin, sqrt
 from tsdynamics.families import ContinuousSystem
 
 
+#: Shared ``known_lyapunov`` claim for the unforced **planar** limit-cycle
+#: systems in this module.  It is analytic, not measured: the Poincare-Bendixson
+#: theorem forbids chaos in a two-dimensional autonomous flow, so the exact count
+#: of positive Lyapunov exponents is zero for every one of them.
+#:
+#: ``zero_band`` only ever *widens* the near-zero band the counter already
+#: derives from the spectrum (``max(zero_band, floor, 1e-3 * max|lambda|)``), so
+#: it can only guard against a *positive* finite-time overshoot of the cycle's
+#: own (exactly zero) tangential exponent.  Only VanDerPol overshoots at all
+#: here - measured spectra at these settings are VanDerPol ``+4.1e-5``,
+#: Brusselator ``-6.1e-4``, FitzHughNagumo ``-3.4e-4``, Selkov ``-1.2e-4``, and
+#: a negative estimate is never counted whatever the band.  All four therefore
+#: pass with no override at all; ``5e-3`` is deliberate headroom (~120x on the
+#: one positive value, against the ~26x the derived band alone would give) so a
+#: solver change that widens the scatter cannot flake this gate.  Do not read it
+#: as a required tolerance.
+def _planar_no_chaos() -> dict[str, object]:
+    """Return a FRESH ``known_lyapunov`` for a planar (chaos-free) flow.
+
+    A function, not a shared module-level dict: four classes use this, and a
+    module-level constant made ``VanDerPol.known_lyapunov is Selkov.known_lyapunov``
+    true, so an in-place edit of one system's metadata silently rewrote three
+    others'.  Each call hands back its own copy.
+    """
+    return {
+        "n_positive": 0,
+        "zero_band": 5e-3,
+        "source": ("analytic: Poincare-Bendixson forbids chaos in a planar autonomous flow"),
+        "kwargs": {"final_time": 2000.0, "dt": 0.05},
+    }
+
+
 class GlycolyticOscillation(ContinuousSystem):
     """
     Decroly–Goldbeter multiply-regulated biochemical oscillator.
@@ -46,6 +78,7 @@ class GlycolyticOscillation(ContinuousSystem):
         "s2": 22.2222,
     }
     dim = 3
+    variables = ("a", "b", "c")
     reference = "Decroly & Goldbeter (1982), Proc. Natl. Acad. Sci. U.S.A. 79, 6917-6921"
     doi = "10.1073/pnas.79.22.6917"
 
@@ -58,6 +91,73 @@ class GlycolyticOscillation(ContinuousSystem):
         bdot = q1 * s1 * phi - s2 * eta
         cdot = q2 * s2 * eta - k * c
         return adot, bdot, cdot
+
+
+class Selkov(ContinuousSystem):
+    """
+    Sel'kov model of glycolysis — the planar glycolytic oscillator.
+
+    The classic **two-dimensional** kinetic model of self-oscillations in
+    glycolysis: the substrate fructose-6-phosphate is turned into the product
+    ADP by phosphofructokinase, and the product activates the enzyme that makes
+    it.  That single product-activation loop is enough to destabilise the steady
+    state through a Hopf bifurcation and produce a stable limit cycle — the
+    minimal chemical mechanism for a biochemical clock.  (The three-variable
+    :class:`GlycolyticOscillation` of Decroly & Goldbeter is the multiply
+    regulated extension of the same idea; this is the planar reduction.)
+
+    The dimensionless form used here is the standard one,
+
+    .. code-block:: text
+
+        x' = -x + a y + x^2 y
+        y' =  b - a y - x^2 y
+
+    with ``x`` the (scaled) product ADP and ``y`` the (scaled) substrate F6P.
+    The unique equilibrium sits at ``(x*, y*) = (b, b / (a + b^2))``; it is
+    unstable — and the limit cycle exists — for ``b^2`` between the two Hopf
+    roots ``(1 - 2a ∓ sqrt(1 - 8a)) / 2``.  At the defaults ``a = 0.1``,
+    ``b = 0.6`` that window is ``b ∈ (0.420, 0.790)``, so the default run
+    settles onto a limit cycle of period ≈ 9.296.
+
+    Parameters
+    ----------
+    a : float
+        Scaled rate of the reverse (substrate-releasing) step of the enzyme —
+        equivalently the enzyme's affinity ratio.  Oscillations require the
+        small value ``a < 1/8``.
+    b : float
+        Scaled constant supply rate of the substrate.  It is the natural
+        bifurcation parameter: the equilibrium is ``x* = b``, and crossing
+        either Hopf root in ``b`` creates or destroys the limit cycle.
+
+    Notes
+    -----
+    The dimensionless two-variable form is the one popularised by Strogatz,
+    *Nonlinear Dynamics and Chaos* §7.3, from Sel'kov's original kinetic model.
+    """
+
+    params = {"a": 0.1, "b": 0.6}
+    dim = 2
+    variables = ("x", "y")
+    reference = "Sel'kov (1968), Eur. J. Biochem. 4, 79-86"
+    doi = "10.1111/j.1432-1033.1968.tb00175.x"
+    default_ic = [0.574662, 0.795244]
+    known_lyapunov = _planar_no_chaos()
+
+    @staticmethod
+    def _equations(Y, t, *, a, b):
+        x, y = Y(0), Y(1)
+        xdot = -x + a * y + x**2 * y
+        ydot = b - a * y - x**2 * y
+        return xdot, ydot
+
+    @staticmethod
+    def _jacobian(Y, t, a, b):
+        x, y = Y(0), Y(1)
+        row1 = [-1 + 2 * x * y, a + x**2]
+        row2 = [-2 * x * y, -a - x**2]
+        return row1, row2
 
 
 class Oregonator(ContinuousSystem):
@@ -92,6 +192,7 @@ class Oregonator(ContinuousSystem):
         "epsilon": 1e-2,
     }
     dim = 3  # Three variables: X, Y, Z (reduced forms of the chemical species)
+    variables = ("x", "y", "z")
     reference = "Field & Noyes (1974), J. Chem. Phys. 60, 1877-1884"
     doi = "10.1063/1.1681288"
     # Classic stiff system (Field–Noyes); an explicit solver cannot integrate
@@ -148,6 +249,7 @@ class IsothermalChemical(ContinuousSystem):
 
     params = {"delta": 1.0, "kappa": 2.5, "mu": 0.29786, "sigma": 0.013}
     dim = 3
+    variables = ("alpha", "beta", "gamma")
     reference = "Petrov, Scott & Showalter (1992), J. Chem. Phys. 97, 6191-6198"
     doi = "10.1063/1.463727"
 
@@ -158,6 +260,63 @@ class IsothermalChemical(ContinuousSystem):
         betadot = (alpha * beta**2 + alpha - beta) / sigma
         gammadot = (beta - gamma) / delta
         return alphadot, betadot, gammadot
+
+
+class Brusselator(ContinuousSystem):
+    """
+    Brusselator — the planar autocatalytic chemical oscillator.
+
+    Prigogine and Lefever's two-variable model of a trimolecular autocatalytic
+    reaction scheme, the textbook example of a dissipative structure: with the
+    reactant concentrations held fixed, the cubic autocatalysis ``x^2 y``
+    destabilises the steady state through a supercritical Hopf bifurcation and
+    the system settles onto a stable limit cycle.
+
+    .. code-block:: text
+
+        x' = a - (b + 1) x + x^2 y
+        y' = b x - x^2 y
+
+    with ``x`` the autocatalyst (activator) and ``y`` the inhibitor.  The unique
+    equilibrium is ``(x*, y*) = (a, b/a)``; its Jacobian has trace ``b - 1 - a^2``
+    and determinant ``a^2 > 0``, so the Hopf bifurcation is exactly at
+    ``b = 1 + a^2`` and the equilibrium is unstable (limit cycle) for larger
+    ``b``.  At the defaults ``a = 1``, ``b = 3`` the threshold is ``b = 2``, so
+    the default run relaxes onto a limit cycle of period ≈ 7.157.
+
+    :class:`ForcedBrusselator` is this system driven by an external periodic
+    force (an autonomous 3-D flow).
+
+    Parameters
+    ----------
+    a : float
+        Constant feed of the activator ``x`` (the reactant A).
+    b : float
+        Feed of the species driving the autocatalytic loop (the reactant B) —
+        the bifurcation parameter, with the Hopf bifurcation at ``b = 1 + a^2``.
+    """
+
+    params = {"a": 1.0, "b": 3.0}
+    dim = 2
+    variables = ("x", "y")
+    reference = "Prigogine & Lefever (1968), J. Chem. Phys. 48, 1695-1700"
+    doi = "10.1063/1.1668896"
+    default_ic = [1.274373, 4.177555]
+    known_lyapunov = _planar_no_chaos()
+
+    @staticmethod
+    def _equations(Y, t, *, a, b):
+        x, y = Y(0), Y(1)
+        xdot = a - (b + 1) * x + x**2 * y
+        ydot = b * x - x**2 * y
+        return xdot, ydot
+
+    @staticmethod
+    def _jacobian(Y, t, a, b):
+        x, y = Y(0), Y(1)
+        row1 = [2 * x * y - (b + 1), x**2]
+        row2 = [b - 2 * x * y, -(x**2)]
+        return row1, row2
 
 
 class ForcedBrusselator(ContinuousSystem):
@@ -190,6 +349,7 @@ class ForcedBrusselator(ContinuousSystem):
 
     params = {"a": 0.4, "b": 1.2, "f": 0.05, "w": 0.81}
     dim = 3
+    variables = ("x", "y", "z")
     reference = "Prigogine (1980), From Being to Becoming, W.H. Freeman"
 
     @staticmethod
@@ -257,6 +417,7 @@ class CircadianRhythm(ContinuousSystem):
         "vs": 6,
     }
     dim = 5
+    variables = ("m", "fc", "fs", "fn", "th")
     reference = "Leloup, Gonze & Goldbeter (1999); Gonze, Leloup & Goldbeter (2000)"
     doi = "10.1177/074873099129000948"
 
@@ -352,6 +513,7 @@ class CaTwoPlus(ContinuousSystem):
         "p": 1,
     }
     dim = 3
+    variables = ("z", "y", "a")
     reference = "Houart, Dupont & Goldbeter (1999), Bull. Math. Biol. 61, 507-530"
     doi = "10.1006/bulm.1999.0095"
 
@@ -437,6 +599,7 @@ class ExcitableCell(ContinuousSystem):
         "vn": -30,
     }
     dim = 3
+    variables = ("v", "n", "c")
     reference = "Chay (1985), Physica D 16, 233-242"
     doi = "10.1016/0167-2789(85)90060-0"
 
@@ -517,6 +680,7 @@ class CellCycle(ContinuousSystem):
         "vi": 0.05,
     }
     dim = 6
+    variables = ("c1", "m1", "x1", "c2", "m2", "x2")
     reference = "Romond, Rustici, Gonze & Goldbeter (1999), Ann. N.Y. Acad. Sci. 879, 180-193"
     doi = "10.1111/j.1749-6632.1999.tb10419.x"
 
@@ -586,6 +750,7 @@ class HindmarshRose(ContinuousSystem):
         "tz": 0.8,
     }
     dim = 3
+    variables = ("x", "y", "z")
     reference = "Hindmarsh & Rose (1984), Proc. R. Soc. Lond. B 221, 87-102"
     doi = "10.1098/rspb.1984.0024"
 
@@ -604,6 +769,66 @@ class HindmarshRose(ContinuousSystem):
         row2 = [-3 * a * x**2 - 2 * (d - b) * x, 0, 1]
         row3 = [-s / tz, 0, -1 / tz]
         return row1, row2, row3
+
+
+class VanDerPol(ContinuousSystem):
+    """
+    Van der Pol oscillator — the archetypal self-sustained relaxation oscillator.
+
+    Van der Pol's triode equation ``x'' - mu (1 - x^2) x' + x = 0``, written as
+    the planar system in the phase plane ``(x, y = x')``:
+
+    .. code-block:: text
+
+        x' = y
+        y' = mu (1 - x^2) y - x
+
+    The damping coefficient ``mu (1 - x^2)`` is *negative* for ``|x| < 1`` and
+    positive for ``|x| > 1``, so small oscillations are pumped and large ones
+    are damped: every orbit except the unstable focus at the origin converges to
+    one and the same stable limit cycle.  This is the canonical example of a
+    structurally stable limit cycle and of the Poincaré–Bendixson picture.
+
+    The single parameter selects the character of the cycle.  At the default
+    ``mu = 1`` the oscillation is moderately nonlinear (limit-cycle period
+    ≈ 6.663, amplitude ≈ 2.009) and the phase portrait is the textbook oval;
+    as ``mu`` grows the motion becomes strongly **relaxational** — slow crawls
+    along the branches of the cubic Liénard nullcline punctuated by fast jumps
+    (measured at ``mu = 10``: peak ``|x'|`` is ~150x its median, against ~2.7 at
+    ``mu = 1``).  Setting ``mu = 0`` gives the undamped harmonic oscillator.
+
+    :class:`ForcedVanDerPol` is this oscillator under an external periodic
+    drive (an autonomous 3-D flow that can be chaotic).
+
+    Parameters
+    ----------
+    mu : float
+        Nonlinear damping strength.  ``mu = 0`` is the harmonic oscillator,
+        ``mu ~ 1`` a moderately nonlinear limit cycle, ``mu >> 1`` a relaxation
+        oscillator with a slow–fast (stiff) cycle.
+    """
+
+    params = {"mu": 1.0}
+    dim = 2
+    variables = ("x", "y")
+    reference = "van der Pol (1926), London Edinburgh Dublin Philos. Mag. J. Sci. 2, 978-992"
+    doi = "10.1080/14786442608564127"
+    default_ic = [1.971011, -0.316765]
+    known_lyapunov = _planar_no_chaos()
+
+    @staticmethod
+    def _equations(Y, t, *, mu):
+        x, y = Y(0), Y(1)
+        xdot = y
+        ydot = mu * (1 - x**2) * y - x
+        return xdot, ydot
+
+    @staticmethod
+    def _jacobian(Y, t, mu):
+        x, y = Y(0), Y(1)
+        row1 = [0, 1]
+        row2 = [-2 * mu * x * y - 1, mu * (1 - x**2)]
+        return row1, row2
 
 
 class ForcedVanDerPol(ContinuousSystem):
@@ -633,6 +858,7 @@ class ForcedVanDerPol(ContinuousSystem):
 
     params = {"a": 1.2, "mu": 8.53, "w": 0.63}
     dim = 3
+    variables = ("x", "y", "z")
     reference = "van der Pol (1926), London Edinburgh Dublin Philos. Mag. J. Sci. 2, 978-992"
     doi = "10.1080/14786442608564127"
 
@@ -643,6 +869,73 @@ class ForcedVanDerPol(ContinuousSystem):
         xdot = y
         zdot = w
         return xdot, ydot, zdot
+
+
+class FitzHughNagumo(ContinuousSystem):
+    """
+    FitzHugh–Nagumo model — the planar excitable / relaxation neuron.
+
+    FitzHugh's two-variable reduction of the Hodgkin–Huxley nerve-membrane
+    equations (the "Bonhoeffer–van der Pol" system; realised as a tunnel-diode
+    circuit by Nagumo, Arimoto & Yoshizawa, *Proc. IRE* **50**, 2061, 1962).  A
+    fast voltage-like variable ``v`` with cubic nonlinearity is coupled to a
+    slow linear recovery variable ``w``:
+
+    .. code-block:: text
+
+        v' = v - v^3/3 - w + curr
+        w' = gamma (v + a - b w)
+
+    Because ``gamma`` is small the system is slow–fast: ``v`` relaxes quickly
+    onto one of the outer branches of the cubic nullcline ``w = v - v^3/3 +
+    curr`` while ``w`` drifts slowly along it, giving spike-shaped relaxation
+    oscillations.  The single equilibrium is where that cubic meets the straight
+    ``w``-nullcline ``w = (v + a) / b``; when it sits on the *middle* (unstable)
+    branch of the cubic the system oscillates, and when it sits on an outer
+    branch the system is **excitable** — at rest, but firing one large spike in
+    response to a super-threshold kick.
+
+    With the classical constants ``a = 0.7``, ``b = 0.8``, ``gamma = 0.08`` the
+    stimulus ``curr`` selects the regime: the default ``curr = 0.5`` is
+    oscillatory (limit cycle of period ≈ 39.47), while ``curr = 0`` gives the
+    excitable resting state near ``(v, w) ≈ (-1.20, -0.62)``.
+
+    :class:`ForcedFitzHughNagumo` is this model under an additional periodic
+    stimulus (an autonomous 3-D flow).
+
+    Parameters
+    ----------
+    a, b : float
+        Constants of the linear recovery nullcline ``w = (v + a) / b``.
+    gamma : float
+        Recovery timescale; ``gamma << 1`` makes ``w`` the slow variable and the
+        oscillation relaxational.
+    curr : float
+        Constant applied stimulus current — the bifurcation parameter selecting
+        the excitable (``curr = 0``) or the oscillatory (``curr = 0.5``) regime.
+    """
+
+    params = {"a": 0.7, "b": 0.8, "curr": 0.5, "gamma": 0.08}
+    dim = 2
+    variables = ("v", "w")
+    reference = "FitzHugh (1961), Biophys. J. 1, 445-466"
+    doi = "10.1016/s0006-3495(61)86902-6"
+    default_ic = [1.636907, 0.755567]
+    known_lyapunov = _planar_no_chaos()
+
+    @staticmethod
+    def _equations(Y, t, *, a, b, curr, gamma):
+        v, w = Y(0), Y(1)
+        vdot = v - v**3 / 3 - w + curr
+        wdot = gamma * (v + a - b * w)
+        return vdot, wdot
+
+    @staticmethod
+    def _jacobian(Y, t, a, b, curr, gamma):
+        v, w = Y(0), Y(1)
+        row1 = [1 - v**2, -1]
+        row2 = [gamma, -gamma * b]
+        return row1, row2
 
 
 class ForcedFitzHughNagumo(ContinuousSystem):
@@ -683,6 +976,7 @@ class ForcedFitzHughNagumo(ContinuousSystem):
         "omega": 0.043650793650793655,
     }
     dim = 3
+    variables = ("v", "w", "z")
     reference = "FitzHugh (1961), Biophys. J. 1, 445-466"
     doi = "10.1016/s0006-3495(61)86902-6"
 
@@ -728,6 +1022,7 @@ class TurchinHanski(ContinuousSystem):
 
     params = {"a": 8, "d": 0.04, "e": 0.5, "g": 0.1, "h": 0.8, "r": 8.12, "s": 1.25}
     dim = 3
+    variables = ("n", "p", "z")
     reference = "Turchin & Hanski (1997), Am. Nat. 149, 842-874"
     doi = "10.1086/286027"
 
@@ -770,6 +1065,7 @@ class HastingsPowell(ContinuousSystem):
 
     params = {"a1": 5.0, "a2": 0.1, "b1": 3.0, "b2": 2.0, "d1": 0.4, "d2": 0.01}
     dim = 3
+    variables = ("x", "y", "z")
     reference = "Hastings & Powell (1991), Ecology 72, 896-903"
     doi = "10.2307/1940591"
 
@@ -825,6 +1121,7 @@ class ItikBanksTumor(ContinuousSystem):
         "r3": 4.5,
     }
     dim = 3
+    variables = ("x", "y", "z")
     reference = "Itik & Banks (2010), Int. J. Bifurcation Chaos 20, 71-79"
     doi = "10.1142/s0218127410025417"
 
@@ -969,3 +1266,37 @@ class BelousovZhabotinsky(ContinuousSystem):
         zdot = (c6 / z0) * rf + c7 * xc * z + c8 * z * v + c9 * z - kf * z
         vdot = c10 * xc * ybar + c11 * ybar + c12 * xc**2 + c13 * z * v - kf * v
         return xdot * t0, zdot * t0, vdot * t0
+
+
+__all__ = [
+    "BelousovZhabotinsky",
+    "Brusselator",
+    "CaTwoPlus",
+    "CaTwoPlusQuasiperiodic",
+    "CellCycle",
+    "CircadianRhythm",
+    "ExcitableCell",
+    "FitzHughNagumo",
+    "ForcedBrusselator",
+    "ForcedFitzHughNagumo",
+    "ForcedVanDerPol",
+    "GlycolyticOscillation",
+    "HastingsPowell",
+    "HindmarshRose",
+    "IsothermalChemical",
+    "ItikBanksTumor",
+    "Oregonator",
+    "Selkov",
+    "TurchinHanski",
+    "VanDerPol",
+]
+
+
+def __dir__() -> list[str]:
+    """Expose only the catalogue classes (``__all__``) to ``dir()`` / autocomplete.
+
+    ``__all__`` governs ``import *`` and nothing else, so without this the module
+    also offers every helper it imported — SymEngine's ``sin``/``cos``/``exp``,
+    ``numpy`` — as though they were part of this library's surface.
+    """
+    return sorted(__all__)

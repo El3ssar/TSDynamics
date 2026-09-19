@@ -50,7 +50,7 @@ def _step_grid(t0, dt):
     tf = t0 + dt
     if tf - t0 > 1e-9:
         return np.array([t0, tf], dtype=np.float64)
-    from tsdynamics.utils.grids import make_output_grid
+    from tsdynamics._utils.grids import make_output_grid
 
     return make_output_grid(t0, tf, dt)
 
@@ -68,7 +68,7 @@ def test_step_grid_matches_helper_across_dt_threshold():
     the degenerate single-node band the naive direct shortcut gets wrong — the exact
     bug an earlier ``1e-12`` cutover shipped, caught here).
     """
-    from tsdynamics.utils.grids import make_output_grid
+    from tsdynamics._utils.grids import make_output_grid
 
     rng = np.random.default_rng(20240620)
     n_checked = 0
@@ -104,18 +104,18 @@ def test_step_does_not_call_make_output_grid(monkeypatch):
     def _boom(*_a, **_k):
         raise AssertionError("make_output_grid must not be called from step()")
 
-    sys = ts.Rossler()
+    sys = ts.systems.Rossler()
     sys.reinit([1.0, 1.0, 1.0])
     sys.step(0.01)  # warm: tape + step context cached by reinit
 
-    monkeypatch.setattr("tsdynamics.engine.run.make_output_grid", _boom)
+    monkeypatch.setattr("tsdynamics._engine.run.make_output_grid", _boom)
     # step keeps working: it never touches the helper…
     state = sys.step(0.01)
     assert state.shape == (3,)
     assert np.all(np.isfinite(state))
     # …but integrate still routes through it (sanity: the sabotage is effective).
     with pytest.raises(AssertionError):
-        ts.Rossler().integrate(final_time=0.1, dt=0.01, ic=[1.0, 1.0, 1.0])
+        ts.systems.Rossler().run(final_time=0.1, dt=0.01, ic=[1.0, 1.0, 1.0])
 
 
 def test_step_keeps_make_output_grid_footgun_guards():
@@ -129,15 +129,15 @@ def test_step_keeps_make_output_grid_footgun_guards():
     """
     from tsdynamics.errors import InvalidParameterError
 
-    sys = ts.Rossler()
+    sys = ts.systems.Rossler()
     sys.reinit([1.0, 1.0, 1.0])
     for bad in (0.0, -1.0):
-        with pytest.raises(InvalidParameterError, match="dt must be > 0"):
+        with pytest.raises(InvalidParameterError, match="dt must be finite and > 0"):
             sys.step(bad)
 
     # A start time so large that ``t0 + dt == t0`` is a non-forward window — the
     # same case ``make_output_grid``'s second guard catches.
-    far = ts.Rossler()
+    far = ts.systems.Rossler()
     far.reinit([1.0, 1.0, 1.0], t=1e16)
     assert 1e16 + 1.0 == 1e16  # guards the premise of the test
     with pytest.raises(InvalidParameterError, match="run forward in time"):
@@ -151,7 +151,7 @@ def test_step_keeps_make_output_grid_footgun_guards():
 
 def test_tape_arrays_cached_and_reused():
     """``reinit`` caches ``Tape.to_arrays()``; the hot loop reuses the same tuple."""
-    sys = ts.Rossler()
+    sys = ts.systems.Rossler()
     sys.reinit([1.0, 1.0, 1.0])
 
     cached = sys._step_tape_arrays
@@ -177,9 +177,9 @@ def test_reinit_refreshes_cached_arrays_for_relowered_tape():
     cache must follow the tape it currently steps, or the stepper would feed the
     engine a stale tape.
     """
-    small = ts.Lorenz96(N=5)
+    small = ts.systems.Lorenz96(N=5)
     small.reinit(np.ones(5))
-    big = ts.Lorenz96(N=8)
+    big = ts.systems.Lorenz96(N=8)
     big.reinit(np.ones(8))
     # outputs[] length == dim, so the cached arrays track the re-lowered tape.
     assert small._step_tape_arrays[4].size == 5
@@ -198,7 +198,7 @@ def _reference_chain(make, ic, dt, n, **kw):
     t = 0.0
     out = []
     for _ in range(n):
-        traj = sys.integrate(final_time=t + dt, dt=dt, t0=t, ic=state, **kw)
+        traj = sys.run(final_time=t + dt, dt=dt, t0=t, ic=state, **kw)
         state = np.asarray(traj.y[-1], dtype=float)
         t += dt
         out.append(state)
@@ -220,8 +220,8 @@ def test_step_exact_with_jacobian_carrying_stiff_tape():
     cached marshalling feeds the engine the identical Jacobian-carrying tape.
     """
     ic = [1.0, 1.0, 1.0]
-    ref = _reference_chain(ts.Oregonator, ic, 0.01, 200, method="bdf")
-    got = _stepped(ts.Oregonator, ic, 0.01, 200, method="bdf")
+    ref = _reference_chain(ts.systems.Oregonator, ic, 0.01, 200, solver="bdf")
+    got = _stepped(ts.systems.Oregonator, ic, 0.01, 200, solver="bdf")
     assert got.shape == ref.shape
     assert np.array_equal(got, ref)
 
@@ -229,16 +229,16 @@ def test_step_exact_with_jacobian_carrying_stiff_tape():
 def test_step_exact_with_structural_parameter_tape():
     """``step`` == per-``dt`` ``integrate`` bit-for-bit on a structural-``N`` tape."""
     ic = [2.0, 2.0, 2.0, 2.0, 2.0, 5.0]
-    ref = _reference_chain(lambda: ts.Lorenz96(N=6), ic, 0.01, 200)
-    got = _stepped(lambda: ts.Lorenz96(N=6), ic, 0.01, 200)
+    ref = _reference_chain(lambda: ts.systems.Lorenz96(N=6), ic, 0.01, 200)
+    got = _stepped(lambda: ts.systems.Lorenz96(N=6), ic, 0.01, 200)
     assert np.array_equal(got, ref)
 
 
 def test_step_exact_on_jit_backend():
     """The hoist preserves the answer on the Cranelift JIT backend too."""
     ic = [1.0, 1.0, 1.0]
-    ref = _reference_chain(ts.Rossler, ic, 0.01, 200, backend="jit")
-    got = _stepped(ts.Rossler, ic, 0.01, 200, backend="jit")
+    ref = _reference_chain(ts.systems.Rossler, ic, 0.01, 200, backend="jit")
+    got = _stepped(ts.systems.Rossler, ic, 0.01, 200, backend="jit")
     assert np.array_equal(got, ref)
 
 
@@ -251,17 +251,17 @@ def test_step_exact_non_autonomous_nonzero_t0():
     """
     ic = [0.3, -0.4]
     t_start = 13.37
-    sys = ts.Lissajous2D()
-    sys.reinit(list(ic), t=t_start, method="rk45")
+    sys = ts.systems.Lissajous2D()
+    sys.reinit(list(ic), t=t_start, solver="rk45")
     got = np.array([sys.step(0.02).copy() for _ in range(150)])
 
     # Reference: chain single-``dt`` integrate() from the same live (state, time).
-    ref_sys = ts.Lissajous2D()
+    ref_sys = ts.systems.Lissajous2D()
     state = np.asarray(ic, dtype=float)
     t = t_start
     ref = []
     for _ in range(150):
-        traj = ref_sys.integrate(final_time=t + 0.02, dt=0.02, t0=t, ic=state, method="rk45")
+        traj = ref_sys.run(final_time=t + 0.02, dt=0.02, t0=t, ic=state, solver="rk45")
         state = np.asarray(traj.y[-1], dtype=float)
         t += 0.02
         ref.append(state)
@@ -276,10 +276,12 @@ def test_step_exact_tiny_dt_across_threshold():
     span — so the two must still agree exactly on both sides of the threshold.
     """
     for dt in (5e-13, 1e-12, 2e-12, 1e-9, 1e-6, 1e-2):
-        sys = ts.Lorenz()
-        sys.reinit([1.0, 1.0, 1.0], method="rk45")
+        sys = ts.systems.Lorenz()
+        sys.reinit([1.0, 1.0, 1.0], solver="rk45")
         got = sys.step(dt)
-        ref = ts.Lorenz().integrate(final_time=dt, dt=dt, t0=0.0, ic=[1.0, 1.0, 1.0], method="rk45")
+        ref = ts.systems.Lorenz().run(
+            final_time=dt, dt=dt, t0=0.0, ic=[1.0, 1.0, 1.0], solver="rk45"
+        )
         assert np.array_equal(got, np.asarray(ref.y[-1], dtype=float)), f"mismatch at dt={dt}"
 
 
@@ -291,8 +293,8 @@ def test_step_reads_params_live_mid_loop():
     exactly as the pre-hoist path did.  The over-eager version of this refactor would
     snapshot params into ``reinit`` and silently freeze them; this pins against that.
     """
-    sys = ts.Rossler()
-    sys.reinit([1.0, 1.0, 1.0], method="rk45")
+    sys = ts.systems.Rossler()
+    sys.reinit([1.0, 1.0, 1.0], solver="rk45")
     for _ in range(20):
         sys.step(0.05)
     state, t = sys.state(), sys.time()
@@ -302,13 +304,15 @@ def test_step_reads_params_live_mid_loop():
 
     # It must equal a fresh integrate() from the live (state, time) WITH the new c…
     changed = (
-        ts.Rossler()
+        ts.systems.Rossler()
         .with_params(c=9.0)
-        .integrate(final_time=t + 0.05, dt=0.05, t0=t, ic=state, method="rk45")
+        .run(final_time=t + 0.05, dt=0.05, t0=t, ic=state, solver="rk45")
     )
     assert np.array_equal(after, np.asarray(changed.y[-1], dtype=float))
     # …and (negative control) differ from the unchanged-parameter step.
-    unchanged = ts.Rossler().integrate(final_time=t + 0.05, dt=0.05, t0=t, ic=state, method="rk45")
+    unchanged = ts.systems.Rossler().run(
+        final_time=t + 0.05, dt=0.05, t0=t, ic=state, solver="rk45"
+    )
     assert not np.array_equal(after, np.asarray(unchanged.y[-1], dtype=float))
 
 
@@ -325,10 +329,10 @@ def test_step_continuous_matches_run_continuous():
     ``_run_continuous`` marshals them from the ``Problem``.  Identical output
     confirms the split changed nothing numerically.
     """
-    from tsdynamics.engine.problem import ode_problem
-    from tsdynamics.engine.run import _run_continuous, _step_continuous
+    from tsdynamics._engine.problem import ode_problem
+    from tsdynamics._engine.run import _run_continuous, _step_continuous
 
-    sys = ts.Rossler()
+    sys = ts.systems.Rossler()
     prob = ode_problem(sys, ic=[0.3, -0.2, 0.1], t0=2.0)
     t_eval = np.array([2.0, 2.0 + 0.02], dtype=np.float64)
 
@@ -355,10 +359,10 @@ def test_step_continuous_diverges_loudly():
     (defense-in-depth, mirroring :func:`_run_continuous`); either way a blow-up is
     never silently handed back.
     """
-    from tsdynamics.engine.problem import ode_problem
-    from tsdynamics.engine.run import _step_continuous
+    from tsdynamics._engine.problem import ode_problem
+    from tsdynamics._engine.run import _step_continuous
 
-    sys = ts.Lorenz()
+    sys = ts.systems.Lorenz()
     prob = ode_problem(sys, ic=[1e6, 1e6, 1e6], t0=0.0)
     arrays = prob.tape.to_arrays()
     params = prob.params_vec()
@@ -389,8 +393,8 @@ def test_step_continuous_finiteness_guard_message(monkeypatch):
     by forcing the engine call to hand back a poisoned array — confirming the guard
     is wired and names the system, mirroring :func:`_run_continuous`.
     """
-    import tsdynamics.engine._families as families
-    from tsdynamics.engine.run import _step_continuous
+    import tsdynamics._engine._families as families
+    from tsdynamics._engine.run import _step_continuous
 
     # ``_step_continuous`` (and ``_engine_integrate_dense``) live in
     # ``engine._families`` post run-split; patch the FFI shim where it is *looked

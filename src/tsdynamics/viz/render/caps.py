@@ -33,6 +33,15 @@ The pieces
   the chosen backend does **not** honor for the given spec.  The dispatcher emits
   one consolidated :class:`VisualizationDegraded` per render naming the dropped
   knobs; renderers then run with ``warn=False``.
+- :func:`accepted_render_kwargs` / :func:`check_render_kwargs` — the *keyword*
+  half of the same honesty principle.  Every in-tree renderer is registered as a
+  ``**kw`` wrapper around a core that ends in a catch-all, so an unknown render
+  keyword used to be accepted and dropped in silence by all four backends.  These
+  resolve what each backend genuinely reads (its own declaration, the in-tree
+  table, or introspection of its callable) and raise
+  :class:`~tsdynamics.errors.InvalidParameterError` for anything else — while
+  leaving an undeclared out-of-tree backend's documented ``**kwargs``
+  pass-through alone.
 
 This module is **import-light**: it pulls in no plotting backend (only the
 backend-agnostic spec IR), so importing it never drags matplotlib/plotly into
@@ -41,10 +50,11 @@ backend-agnostic spec IR), so importing it never drags matplotlib/plotly into
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
+from .._visibility import dir_without, listing_dir
 from ..spec import PlotKind, PlotSpec
 
 __all__ = [
@@ -52,8 +62,12 @@ __all__ = [
     "RendererCapabilities",
     "RenderResult",
     "VisualizationDegraded",
+    "accepted_render_kwargs",
+    "check_render_kwargs",
     "style_honoring_gaps",
 ]
+
+__dir__ = listing_dir(__all__)
 
 
 class VisualizationDegraded(UserWarning):
@@ -71,6 +85,11 @@ class VisualizationDegraded(UserWarning):
        fields carried by the spec.  The dispatcher emits **one** consolidated
        warning naming all the ignored knobs before calling the renderer;
        renderers then run with ``warn=False`` (the user has already been told).
+    3. **A forced frame mismatch**: ``on="force"`` overlaid two specs that are
+       drawings of *different* spaces or planes (see
+       :func:`tsdynamics.viz._frames.check_overlay`).  The figure is drawn as
+       asked; the warning records that the axes mean two things at once, so the
+       picture may not mean what it looks like.
 
     It is a :class:`UserWarning` (not an error) so the call still returns a
     figure; a *hard* failure (no capable backend at all) raises instead.
@@ -121,6 +140,43 @@ _BACKEND_THEME_GAPS: dict[str, frozenset[str]] = {
     "threejs": _THREEJS_THEME_GAPS,
 }
 
+#: Figure-geometry / presentation :class:`~tsdynamics.viz.style.Theme` fields that
+#: the **plotly** backend does not honor.  ``figsize`` / ``dpi`` /
+#: ``layout_engine`` are matplotlib output-geometry concepts: plotly sizes a
+#: figure from ``layout.width`` / ``layout.height`` (in *pixels*, and only when
+#: explicitly set) and lays it out in the browser, and the backend wires neither —
+#: a ``publication`` theme's ``figsize=(5, 3.5)`` at 300 dpi reaches a plotly
+#: figure as nothing at all.  ``autostyle`` **is** honored (``_core`` /
+#: ``_threed`` both resolve it through
+#: :func:`~tsdynamics.viz.producers.autostyle_enabled`), so it is absent here.
+_PLOTLY_THEME_GEOMETRY_GAPS: frozenset[str] = frozenset({"figsize", "dpi", "layout_engine"})
+
+#: The same four fields for **threejs**, which honors *none* of them: the exporter
+#: emits geometry buffers plus a ``metadata.theme`` block carrying only
+#: ``background`` / ``palette``, and the reference loader sizes its canvas from the
+#: host page.  ``autostyle`` (density-aware line width / opacity) is a raster
+#: stroke concept the WebGL line material does not take.
+_THREEJS_THEME_GEOMETRY_GAPS: frozenset[str] = frozenset(
+    {"figsize", "dpi", "layout_engine", "autostyle"}
+)
+
+
+#: Per-backend **figure-geometry** gaps — the four :class:`~tsdynamics.viz.style.Theme`
+#: fields this phase added (``figsize`` / ``dpi`` / ``layout_engine`` /
+#: ``autostyle``).  They were outside the honoring contract when they landed:
+#: :func:`style_honoring_gaps` returned ``[]`` for matplotlib *and* plotly and, for
+#: threejs, named only the six pre-existing theme fields — so three of the four
+#: were accepted and dropped in silence by two backends.  matplotlib honors all
+#: four (``mpl._core.figure_geometry`` resolves the first three,
+#: :func:`~tsdynamics.viz.producers.autostyle_enabled` the fourth), so it has no
+#: entry.  Sourced from either the resolved theme **or** ``spec.meta`` (what
+#: ``spec.size(...)`` / ``save(size=, dpi=)`` write), because both reach the same
+#: renderer field.
+_BACKEND_GEOMETRY_GAPS: dict[str, frozenset[str]] = {
+    "plotly": _PLOTLY_THEME_GEOMETRY_GAPS,
+    "threejs": _THREEJS_THEME_GEOMETRY_GAPS,
+}
+
 #: Axis/Legend/Colorbar fields that the **threejs** backend does *not* honor.
 #: (the exporter writes position data only; label formatting is not wired into
 #: the loader's three.js scene.)
@@ -137,6 +193,156 @@ _BACKEND_AXIS_GAPS: dict[str, frozenset[str]] = {
 #: They round-trip every field, so by construction they have no honoring gaps —
 #: :func:`style_honoring_gaps` returns ``[]`` for them (design contract §3).
 _SERIALIZING_BACKENDS: frozenset[str] = frozenset({"json"})
+
+# ---------------------------------------------------------------------------
+# Per-backend render-keyword declarations (the "no silently swallowed typo" gate)
+# ---------------------------------------------------------------------------
+
+#: Keywords the dispatcher itself may inject into any renderer call, so every
+#: backend accepts them regardless of what it declares.  ``warn`` is passed by
+#: :func:`~tsdynamics.viz.render.render_spec` after it has emitted the one
+#: consolidated :class:`VisualizationDegraded` warning.
+_DISPATCHER_INJECTED_KWARGS: frozenset[str] = frozenset({"warn"})
+
+#: Canonical backend name → the render keywords that backend actually reads.
+#:
+#: Every in-tree renderer is registered as a ``def _render(spec, /, **kw)``
+#: wrapper around a core function, so the registered callable's signature says
+#: nothing and ``inspect`` cannot recover the truth.  Worse, three of the four
+#: cores end in a ``**_kw`` / ``**_ignored`` catch-all, so a misspelled option was
+#: accepted and dropped in silence by **all four** backends —
+#: ``spec.render(backend=b, totally_bogus_kwarg=42)`` returned a figure, no
+#: warning, on matplotlib, plotly, json and three.js alike.  This table is the
+#: declaration that makes the check possible; it is kept honest by
+#: ``tests/test_viz_dispatch.py::test_declared_render_kwargs_match_each_backend_core``,
+#: which introspects each backend's real core function and fails if the two
+#: disagree.  A backend outside this table (an out-of-tree plugin) is validated by
+#: introspecting its own callable instead — and a plugin whose signature ends in
+#: ``**kwargs`` keeps its documented free pass-through.
+_BUILTIN_RENDER_KWARGS: dict[str, frozenset[str]] = {
+    # tsdynamics.viz.render.mpl._core.render
+    # ``ax`` is matplotlib's alone by construction: it *is* a matplotlib Axes, so
+    # ``spec.render(backend="plotly", ax=...)`` raising here (naming plotly's
+    # accepted set) is the correct answer rather than an oversight.
+    "matplotlib": frozenset({"figsize", "path", "ax"}),
+    # tsdynamics.viz.render.plotly._core.render
+    "plotly": frozenset({"html", "path", "full_html", "include_plotlyjs"}),
+    # tsdynamics.viz.render.json (the registered closure)
+    "json": frozenset({"path", "indent", "raw"}),
+    # tsdynamics.viz.render.threejs (the registered closure)
+    "threejs": frozenset(
+        {
+            "path",
+            "html",
+            "indent",
+            "raw",
+            "max_points",
+            "decimals",
+            "assets",
+            "loader_url",
+            "poster",
+            "axes",
+            "background",
+            "title",
+        }
+    ),
+}
+
+
+def accepted_render_kwargs(backend_name: str, renderer: Any = None) -> frozenset[str] | None:
+    """Return the render keywords ``backend_name`` accepts, or ``None`` for "any".
+
+    Resolution order, most authoritative first:
+
+    1. the backend's own :attr:`RendererCapabilities.render_kwargs` declaration
+       (an out-of-tree backend can be explicit and get the same protection);
+    2. :data:`_BUILTIN_RENDER_KWARGS` for the four in-tree backends;
+    3. introspection of the renderer callable — its named keyword parameters,
+       unless it declares a ``**kwargs`` catch-all, in which case the answer is
+       ``None`` ("accepts anything", the documented pass-through).
+
+    Parameters
+    ----------
+    backend_name : str
+        The resolved backend name (aliases are normalised internally).
+    renderer : callable, optional
+        The renderer callable, used for step 3.
+
+    Returns
+    -------
+    frozenset of str or None
+        The accepted keyword names, or ``None`` when the backend accepts any.
+    """
+    import inspect
+
+    canonical = _normalize_backend_name(backend_name)
+
+    caps = getattr(renderer, "capabilities", None)
+    declared = getattr(caps, "render_kwargs", None)
+    if declared is not None:
+        return frozenset(declared) | _DISPATCHER_INJECTED_KWARGS
+
+    builtin = _BUILTIN_RENDER_KWARGS.get(canonical)
+    if builtin is not None:
+        return builtin | _DISPATCHER_INJECTED_KWARGS
+
+    if renderer is None:
+        return None
+    try:
+        sig = inspect.signature(renderer)
+    except (TypeError, ValueError):  # pragma: no cover - builtin / C callable
+        return None
+    params = list(sig.parameters.values())
+    if any(p.kind is p.VAR_KEYWORD for p in params):
+        return None  # documented free pass-through — cannot know, do not guess
+    # Drop the leading ``spec`` parameter: it is the positional the dispatcher
+    # supplies, not an option, and naming it in "this backend accepts …" would
+    # invite a caller to pass it twice.
+    options = params[1:] if params and params[0].kind is not params[0].KEYWORD_ONLY else params
+    return (
+        frozenset(p.name for p in options if p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY))
+        | _DISPATCHER_INJECTED_KWARGS
+    )
+
+
+def check_render_kwargs(backend_name: str, renderer: Any, kwargs: Mapping[str, Any]) -> None:
+    """Raise if ``kwargs`` carries a keyword ``backend_name`` does not read.
+
+    The gate that turns a silently swallowed typo into an error naming both the
+    offending key and what the chosen backend does accept.  A backend whose
+    accepted set is unknown (:func:`accepted_render_kwargs` returns ``None`` — an
+    out-of-tree renderer with a ``**kwargs`` catch-all and no declaration) is left
+    alone: its pass-through is the documented contract.
+
+    Raises
+    ------
+    tsdynamics.errors.InvalidParameterError
+        Naming each unaccepted keyword and listing the backend's accepted set.
+    """
+    accepted = accepted_render_kwargs(backend_name, renderer)
+    if accepted is None:
+        return
+    unknown = sorted(k for k in kwargs if k not in accepted)
+    if not unknown:
+        return
+    from tsdynamics.errors import InvalidParameterError
+
+    public = sorted(accepted - _DISPATCHER_INJECTED_KWARGS)
+    raise InvalidParameterError(
+        f"backend {backend_name!r} got unexpected render keyword argument(s) "
+        f"{', '.join(repr(u) for u in unknown)}. "
+        f"{backend_name!r} accepts: {', '.join(public) or '(none)'}. "
+        "Backends differ in what they read — pass the keyword to the backend that "
+        "owns it (e.g. figsize=  to matplotlib, include_plotlyjs=  to plotly, "
+        "max_points=  to threejs)."
+    )
+
+
+def _baseline_theme() -> Any:
+    """Return the library's shipped ``default`` theme (the "untouched" reference)."""
+    from tsdynamics.viz.style import THEMES
+
+    return THEMES["default"]
 
 
 def style_honoring_gaps(spec: PlotSpec, backend_name: str) -> list[str]:
@@ -161,6 +367,11 @@ def style_honoring_gaps(spec: PlotSpec, backend_name: str) -> list[str]:
     3. **Theme / axis presentation fields**: theme fields (``font_family``,
        ``grid``, …) and axis/legend/colorbar fields (``label_size``,
        ``tick_rotation``, …) the backend does not serialize or apply.
+    4. **Figure geometry**: the ``figsize`` / ``dpi`` / ``layout_engine`` /
+       ``autostyle`` knobs, whether they arrive from the resolved
+       :class:`~tsdynamics.viz.style.Theme` or from ``spec.meta`` (``spec.size(...)``).
+       matplotlib honors all four; plotly honors only ``autostyle``; three.js
+       honors none.
 
     Only knobs that are **actually set** (non-default / non-None / non-zero for
     optional fields) are reported — a backend ignoring ``spin=0`` (the "hold the
@@ -228,23 +439,52 @@ def style_honoring_gaps(spec: PlotSpec, backend_name: str) -> list[str]:
 
     # ── 3. Theme / axis / legend / colorbar presentation gaps ───────────────
     theme_gaps = _BACKEND_THEME_GAPS.get(canonical_name, frozenset())
-    if theme_gaps and spec._theme is not None:
-        t = spec._theme
-        # Only report when the theme actually sets the field (not None / default).
-        if "foreground" in theme_gaps and t.foreground is not None:
-            gaps.add("theme.foreground")
-        if "font_family" in theme_gaps and t.font_family is not None:
-            gaps.add("theme.font_family")
-        if "font_size" in theme_gaps and t.font_size is not None:
-            gaps.add("theme.font_size")
-        if "title_size" in theme_gaps and t.title_size is not None:
-            gaps.add("theme.title_size")
-        if "grid" in theme_gaps and t.grid:
+    # [M42] ``resolved_theme``, not ``_theme``: a SESSION-DEFAULT theme
+    # (``ts.viz.themes.use("lab")``) is what the renderer actually applies, and
+    # reading the per-plot override alone meant the same theme on the same
+    # backend reported seven dropped fields one way and none the other.
+    #
+    # ``resolved_theme`` is always a full Theme, so "did the caller set this?"
+    # is answered by comparing against the BASELINE default rather than against
+    # ``None`` — otherwise every render of an unthemed plot warns about the
+    # library's own defaults, which is noise, not honesty.
+    if theme_gaps:
+        t = spec.resolved_theme
+        base = _baseline_theme()
+        for field in ("foreground", "font_family", "font_size", "title_size", "grid_color"):
+            if field in theme_gaps:
+                value = getattr(t, field)
+                if value is not None and value != getattr(base, field):
+                    gaps.add(f"theme.{field}")
+        if "grid" in theme_gaps and t.grid and t.grid != base.grid:
             gaps.add("theme.grid")
-        if "grid_color" in theme_gaps and t.grid_color is not None:
-            gaps.add("theme.grid_color")
-        if "grid_alpha" in theme_gaps and t.grid_alpha is not None:
+        if (
+            "grid_alpha" in theme_gaps
+            and t.grid_alpha is not None
+            and t.grid_alpha != base.grid_alpha
+        ):  # noqa: E501
             gaps.add("theme.grid_alpha")
+
+    # ── 3b. Figure-geometry gaps (figsize / dpi / layout_engine / autostyle) ──
+    # These reach a renderer from *two* places — the resolved theme and
+    # ``spec.meta`` (what ``spec.size(...)`` writes) — so both are consulted.  Only
+    # a value that is actually set is reported: ``autostyle`` defaults to ``True``
+    # and ``layout_engine`` to ``None``, and warning about an untouched default
+    # every render would be noise, not honesty.
+    geometry_gaps = _BACKEND_GEOMETRY_GAPS.get(canonical_name, frozenset())
+    if geometry_gaps:
+        gt = spec.resolved_theme
+        gmeta = spec.meta if isinstance(spec.meta, dict) else {}
+        if "figsize" in geometry_gaps and (
+            gt.figsize is not None or gmeta.get("figsize") is not None
+        ):
+            gaps.add("figsize")
+        if "dpi" in geometry_gaps and (gt.dpi is not None or gmeta.get("dpi") is not None):
+            gaps.add("dpi")
+        if "layout_engine" in geometry_gaps and gt.layout_engine is not None:
+            gaps.add("layout_engine")
+        if "autostyle" in geometry_gaps and (not gt.autostyle or "autostyle" in gmeta):
+            gaps.add("autostyle")
 
     axis_gaps = _BACKEND_AXIS_GAPS.get(canonical_name, frozenset())
     if axis_gaps:
@@ -275,6 +515,15 @@ def style_honoring_gaps(spec: PlotSpec, backend_name: str) -> list[str]:
         gaps.update(style_honoring_gaps(panel, backend_name))
 
     return sorted(gaps)
+
+
+def _normalize_extensions(exts: Iterable[str]) -> frozenset[str]:
+    """Normalize an iterable of file extensions to lowercase, dot-prefixed form."""
+    out: set[str] = set()
+    for e in exts:
+        s = str(e).lower()
+        out.add(s if s.startswith(".") else f".{s}")
+    return frozenset(out)
 
 
 def _normalize_backend_name(name: str) -> str:
@@ -336,6 +585,14 @@ class RendererCapabilities:
     data_export : bool, optional
         Whether the backend returns a serializable *payload* (json / three.js)
         rather than a live figure handle.  Default ``False``.
+    render_kwargs : frozenset of str, optional
+        The render keywords this backend actually reads.  ``None`` (the default)
+        means "undeclared": the in-tree backends resolve through
+        :data:`_BUILTIN_RENDER_KWARGS` and an out-of-tree one through
+        introspection of its callable (a ``**kwargs`` catch-all keeps its
+        documented free pass-through).  Declaring the set opts a plugin into the
+        same "an unknown keyword raises instead of being swallowed" protection the
+        in-tree backends get — see :func:`check_render_kwargs`.
     """
 
     name: str
@@ -344,6 +601,75 @@ class RendererCapabilities:
     interactive: bool = False
     web_export: bool = False
     data_export: bool = False
+    #: File extensions (lowercase, **with** the leading dot) this backend can
+    #: write for a **static** plot.  Empty means "writes no still image".
+    writes_static: frozenset[str] = frozenset()
+    #: File extensions this backend can write for an **animated** plot.  A movie
+    #: format lives here and *not* in :attr:`writes_static`: measured,
+    #: ``savefig`` refuses ``.mp4`` / ``.webm`` / ``.mov`` / ``.m4v`` / ``.apng``
+    #: outright, so declaring them in one undivided ``writes`` made ``save`` promise
+    #: four formats it could never produce and reject ``.webp``, which it can.
+    writes_animated: frozenset[str] = frozenset()
+    #: The render keywords this backend reads, or ``None`` (undeclared).  See
+    #: :func:`accepted_render_kwargs`.
+    render_kwargs: frozenset[str] | None = None
+
+    def __dir__(self) -> list[str]:
+        """Expose the **declaration** a backend author writes and a user reads.
+
+        This record is one of the six plugin doors' payloads: a renderer says what
+        it draws (``name`` ``kinds`` ``supports_3d`` ``interactive``
+        ``web_export`` ``data_export``), what it writes (``writes_static``
+        ``writes_animated``, and the undivided ``writes`` that
+        ``ts.viz.renderers.find(writes=".svg")`` reads), and which render keywords
+        it honours (``render_kwargs``).
+
+        :meth:`can_render`, :meth:`can_render_spec` and :meth:`can_save` are the
+        **dispatcher's** questions of that declaration — they are how
+        ``ts.plot(..., backend=…)`` and ``Plot.save`` pick a backend and decide
+        whether to fall back.  Answering them by hand re-decides something the
+        library has already decided.  All three stay public and tested.
+        """
+        return dir_without(self, {"can_render", "can_render_spec", "can_save"})
+
+    @property
+    def writes(self) -> frozenset[str]:
+        """Every extension this backend can write, static **or** animated.
+
+        The undivided view, kept because "which formats does this backend know?"
+        is a real question (``ts.viz.renderers.find(writes=".svg")`` asks it).
+        :meth:`can_save` is the one that decides a *particular* save, because that
+        question always has an animated-or-not half.
+        """
+        return self.writes_static | self.writes_animated
+
+    def can_save(self, ext: str, *, animated: bool = False) -> bool:
+        """Whether this backend can **write** a file with extension ``ext``.
+
+        The other half of the save contract (:meth:`can_render_spec` answers "can
+        you draw it?"; this answers "can you write it?").  :meth:`Plot.save`
+        resolves ``(extension, backend)`` through this predicate and **raises**
+        when no capable writer exists — rather than returning a path it never
+        wrote, which is what it used to do for an animated composite ``.html`` and
+        for ``save(..., backend="threejs")`` with an ``.html`` name.
+
+        Parameters
+        ----------
+        ext : str
+            The output extension, with or without a leading dot; case-insensitive.
+        animated : bool, optional
+            Whether the spec carries an :class:`~tsdynamics.viz.spec.Animation`.
+            The two halves genuinely differ: matplotlib writes ``.png`` only
+            statically and ``.mp4`` only animated, and ``.gif`` both ways.
+
+        Returns
+        -------
+        bool
+        """
+        e = ext.lower()
+        if not e.startswith("."):
+            e = f".{e}"
+        return e in (self.writes_animated if animated else self.writes_static)
 
     @classmethod
     def all_kinds(
@@ -354,11 +680,18 @@ class RendererCapabilities:
         interactive: bool = False,
         web_export: bool = False,
         data_export: bool = False,
+        writes: Iterable[str] = (),
+        writes_animated: Iterable[str] | None = None,
+        render_kwargs: Iterable[str] | None = None,
     ) -> RendererCapabilities:
         """Build capabilities for a backend that draws **every** kind.
 
         The shorthand the reference renderer (and any other "draws anything"
         backend) uses: ``kinds=None`` means no kind is ever declined.
+
+        ``writes`` is the *static* extension set; ``writes_animated`` defaults to
+        it, so a backend with one file writer declares once and a backend whose
+        movie formats differ (matplotlib) declares both.
         """
         return cls(
             name=name,
@@ -367,6 +700,11 @@ class RendererCapabilities:
             interactive=interactive,
             web_export=web_export,
             data_export=data_export,
+            writes_static=_normalize_extensions(writes),
+            writes_animated=_normalize_extensions(
+                writes if writes_animated is None else writes_animated
+            ),
+            render_kwargs=None if render_kwargs is None else frozenset(render_kwargs),
         )
 
     @classmethod
@@ -379,6 +717,9 @@ class RendererCapabilities:
         interactive: bool = False,
         web_export: bool = False,
         data_export: bool = False,
+        writes: Iterable[str] = (),
+        writes_animated: Iterable[str] | None = None,
+        render_kwargs: Iterable[str] | None = None,
     ) -> RendererCapabilities:
         """Build capabilities for a backend that draws only ``kinds``.
 
@@ -392,6 +733,11 @@ class RendererCapabilities:
             interactive=interactive,
             web_export=web_export,
             data_export=data_export,
+            writes_static=_normalize_extensions(writes),
+            writes_animated=_normalize_extensions(
+                writes if writes_animated is None else writes_animated
+            ),
+            render_kwargs=None if render_kwargs is None else frozenset(render_kwargs),
         )
 
     def can_render(self, kind: PlotKind | str) -> bool:
@@ -422,21 +768,19 @@ class RendererCapabilities:
         renderable only when the backend can draw its ``COMPOSITE`` kind **and**
         every panel — so a backend whose composite path tiles panels (plotly)
         still falls back when a panel uses a kind it declines.
+
+        The 3-D test is :attr:`PlotSpec.is_three_d` — the **one** definition, on
+        the spec.  It used to be a private copy here (and two more in the
+        renderers); a capability check that disagreed with a renderer about what
+        "3-D" means is a dispatch bug waiting to happen.
         """
-        if self._is_three_d(spec) and not self.supports_3d:
+        if spec.is_three_d and not self.supports_3d:
             return False
         if not self.can_render(spec.kind):
             return False
         if not all(self.can_render(layer.kind) for layer in spec.layers):
             return False
         return all(self.can_render_spec(panel) for panel in spec.panels)
-
-    @staticmethod
-    def _is_three_d(spec: PlotSpec) -> bool:
-        """Whether ``spec`` needs 3-D drawing support."""
-        if spec.ndim == 3 or spec.z is not None:
-            return True
-        return any(layer.kind in (PlotKind.LINE3D, PlotKind.SURFACE3D) for layer in spec.layers)
 
 
 # ---------------------------------------------------------------------------

@@ -1,5 +1,7 @@
 //! [`JitEvaluator`] — the public, native-code [`Evaluator`].
 
+use std::sync::Arc;
+
 use cranelift_jit::JITModule;
 use tsdyn_ir::{Evaluator, Tape};
 
@@ -102,7 +104,7 @@ impl JitEvaluator {
     /// [`dim`](JitEvaluator::dim).
     #[inline]
     pub fn eval(&self, u: &[f64], p: &[f64], t: f64, _scratch: &mut [f64], deriv: &mut [f64]) {
-        self.debug_check_buffers(u, p, deriv);
+        self.check_buffers(u, p, deriv);
         // SAFETY: the buffers meet the length contract checked above; the
         // compiled function reads `n_state` f64 from `u`, `n_param` from `p`, and
         // writes `dim` f64 to `deriv` — all in bounds.
@@ -126,8 +128,10 @@ impl JitEvaluator {
         deriv: &mut [f64],
         jac: &mut [f64],
     ) {
-        self.debug_check_buffers(u, p, deriv);
-        debug_assert!(
+        self.check_buffers(u, p, deriv);
+        // A real assert for the same reason as `check_buffers`: the compiled
+        // function writes `dim * dim` f64 through `jac.as_mut_ptr()`, unchecked.
+        assert!(
             !self.has_jac || jac.len() >= self.dim * self.dim,
             "jac too small: {} < dim*dim {}",
             jac.len(),
@@ -164,24 +168,40 @@ impl JitEvaluator {
         (deriv, jac)
     }
 
-    /// Debug-only buffer precondition checks (compiled out of release builds, so
-    /// the hot path pays nothing). Surfaces an undersized buffer — the classic
-    /// misuse — with a clear message.
+    /// Buffer precondition checks — **not** `debug_assert!` (stream v6
+    /// WP2-safety).
+    ///
+    /// Almost every other precondition in the engine is a `debug_assert!`, which
+    /// is right: they guard invariants the FFI bridge already validates, and in
+    /// release the fallback is Rust's own bounds check, i.e. a clean panic.
+    /// These three are the exception, and the difference is the `unsafe` block
+    /// they precede. `eval`/`eval_jac` hand `u.as_ptr()` / `deriv.as_mut_ptr()`
+    /// to **compiled native code** that reads and writes a fixed number of `f64`
+    /// with no bounds check of its own. An undersized `deriv` is therefore not a
+    /// panic but an out-of-bounds *write*: silent heap corruption, arbitrarily
+    /// far from the cause.
+    ///
+    /// Both call sites carry a `SAFETY` comment justifying the `unsafe` by "the
+    /// lengths checked above" — a justification that was simply *false* in the
+    /// shipped release wheel, where the checks did not exist. Making them real
+    /// asserts is what makes those comments true. The cost is three
+    /// length compares against cached fields per evaluation, immeasurable beside
+    /// the native call they guard.
     #[inline]
-    fn debug_check_buffers(&self, u: &[f64], p: &[f64], deriv: &[f64]) {
-        debug_assert!(
+    fn check_buffers(&self, u: &[f64], p: &[f64], deriv: &[f64]) {
+        assert!(
             u.len() >= self.n_state,
             "state slice too small: {} < n_state {}",
             u.len(),
             self.n_state
         );
-        debug_assert!(
+        assert!(
             p.len() >= self.n_param,
             "param slice too small: {} < n_param {}",
             p.len(),
             self.n_param
         );
-        debug_assert!(
+        assert!(
             deriv.len() >= self.dim,
             "deriv too small: {} < dim {}",
             deriv.len(),
@@ -236,6 +256,61 @@ impl Evaluator for JitEvaluator {
         jac: &mut [f64],
     ) {
         self.eval_jac(u, p, t, scratch, deriv, jac)
+    }
+}
+
+/// An [`Evaluator`] over a **shared** [`JitEvaluator`].
+///
+/// The engine's seam is `Box<dyn Evaluator>`, i.e. exclusive ownership, but the
+/// compiled-evaluator cache ([`crate::cached_evaluator`]) hands out `Arc`s so one
+/// compile backs every later call on the same tape. This newtype is the adapter:
+/// it forwards each trait method to the shared evaluator and adds nothing else.
+///
+/// `Arc<JitEvaluator>` is `Send + Sync` (see the `unsafe impl Sync` above), so a
+/// boxed `SharedJitEvaluator` is usable everywhere a boxed `JitEvaluator` was —
+/// including as `Box<dyn Evaluator + Send>` for the durable stepper handle and
+/// shared as `&dyn Evaluator` across the rayon ensemble workers.
+pub struct SharedJitEvaluator(Arc<JitEvaluator>);
+
+impl SharedJitEvaluator {
+    /// Wrap a shared compiled evaluator as an [`Evaluator`].
+    pub fn new(inner: Arc<JitEvaluator>) -> Self {
+        SharedJitEvaluator(inner)
+    }
+}
+
+impl Evaluator for SharedJitEvaluator {
+    #[inline]
+    fn dim(&self) -> usize {
+        self.0.dim()
+    }
+    #[inline]
+    fn n_param(&self) -> usize {
+        self.0.n_param()
+    }
+    #[inline]
+    fn n_scratch(&self) -> usize {
+        self.0.n_scratch()
+    }
+    #[inline]
+    fn has_jacobian(&self) -> bool {
+        self.0.has_jacobian()
+    }
+    #[inline]
+    fn eval(&self, u: &[f64], p: &[f64], t: f64, scratch: &mut [f64], deriv: &mut [f64]) {
+        self.0.eval(u, p, t, scratch, deriv)
+    }
+    #[inline]
+    fn eval_jac(
+        &self,
+        u: &[f64],
+        p: &[f64],
+        t: f64,
+        scratch: &mut [f64],
+        deriv: &mut [f64],
+        jac: &mut [f64],
+    ) {
+        self.0.eval_jac(u, p, t, scratch, deriv, jac)
     }
 }
 
@@ -302,6 +377,46 @@ mod tests {
         for (g, w) in got.iter().zip(want.iter()) {
             assert!((g - w).abs() < 1e-15, "got {g}, want {w}");
         }
+    }
+
+    /// The buffer preconditions must be **real** asserts, not `debug_assert!`s.
+    ///
+    /// These three guard an `unsafe` call into compiled native code that writes
+    /// through a raw pointer with no bounds check of its own, so in a release
+    /// build (where `debug_assert!` vanishes) an undersized buffer was an
+    /// out-of-bounds write, not a panic. `#[should_panic]` fails in release if
+    /// the check is ever demoted back — which is exactly the regression to
+    /// catch, since release is what ships.
+    #[test]
+    #[should_panic(expected = "deriv too small")]
+    fn an_undersized_deriv_panics_rather_than_writing_out_of_bounds() {
+        let ev = JitEvaluator::new(&lorenz()).unwrap();
+        let mut deriv = [0.0; 2]; // dim is 3
+        ev.eval(&[1.0, 2.0, 3.0], &LORENZ_P, 0.0, &mut [], &mut deriv);
+    }
+
+    #[test]
+    #[should_panic(expected = "state slice too small")]
+    fn an_undersized_state_panics_rather_than_reading_out_of_bounds() {
+        let ev = JitEvaluator::new(&lorenz()).unwrap();
+        let mut deriv = [0.0; 3];
+        ev.eval(&[1.0, 2.0], &LORENZ_P, 0.0, &mut [], &mut deriv);
+    }
+
+    #[test]
+    #[should_panic(expected = "jac too small")]
+    fn an_undersized_jacobian_panics_rather_than_writing_out_of_bounds() {
+        let ev = JitEvaluator::new(&lorenz()).unwrap();
+        let mut deriv = [0.0; 3];
+        let mut jac = [0.0; 8]; // dim * dim is 9
+        ev.eval_jac(
+            &[1.0, 2.0, 3.0],
+            &LORENZ_P,
+            0.0,
+            &mut [],
+            &mut deriv,
+            &mut jac,
+        );
     }
 
     #[test]

@@ -89,20 +89,27 @@ def test_system_module_scopes_to_its_own_systems() -> None:
 
 
 def test_analysis_area_selects_its_tests_and_crosscut() -> None:
-    plan = cs.classify({"src/tsdynamics/analysis/entropy/core.py"})
+    plan = cs.classify({"src/tsdynamics/analysis/recurrence/rqa.py"})
     assert not plan.full
-    assert {"test_entropy.py", "test_property_entropy.py"} <= plan.selected_files
+    assert {"test_recurrence.py", "test_property_recurrence.py"} <= plan.selected_files
     # The cross-quantifier / analysis-pack gates span several areas → always run.
     assert set(cs._CROSSCUT_ANALYSIS_TESTS) <= plan.selected_files
     assert not plan.systems
 
 
-def test_transforms_change_selects_transform_and_crosscut_tests() -> None:
-    plan = cs.classify({"src/tsdynamics/transforms/spectral.py"})
-    assert not plan.full
-    assert set(cs._TRANSFORM_TESTS) <= plan.selected_files
-    # test_known_quantifiers also uses a transform (spectral_entropy).
-    assert set(cs._CROSSCUT_ANALYSIS_TESTS) <= plan.selected_files
+def test_removed_series_statistics_paths_escalate() -> None:
+    """The deleted generic-statistics areas are unmapped, so a stray path escalates.
+
+    ``analysis/entropy/`` and ``analysis/surrogate/`` (and ``transforms/``) left the
+    tree in the v6 scope surgery.  Nothing should quietly select a shrunken set if
+    such a path ever reappears in a diff — it must fall through to a full run.
+    """
+    for path in (
+        "src/tsdynamics/analysis/entropy/core.py",
+        "src/tsdynamics/analysis/surrogate/generators.py",
+        "src/tsdynamics/transforms/spectral.py",
+    ):
+        assert cs.classify({path}).full, path
 
 
 def test_orbits_area_includes_orbit_diagram_perf() -> None:
@@ -127,12 +134,76 @@ def test_changed_test_file_is_selected() -> None:
     assert "test_smoke.py" in plan.selected_files
 
 
-def test_docs_and_markdown_are_ignored() -> None:
-    plan = cs.classify({"docs/index.md", "README.md", "planning/notes.md"})
+def test_a_docs_page_selects_the_gate_that_executes_it() -> None:
+    """A documentation change runs the doctest gate — the known v6 gap, closed.
+
+    ``tests/test_doctests.py`` *executes* every runnable ``python`` fence on every
+    ``docs/**.md`` page under ``filterwarnings = error``.  Before this rule,
+    ``docs/`` and ``*.md`` sat in the ignore table as "no bearing on the test
+    suite", so ``classify(['docs/analysis/lyapunov.md'])`` selected three cheap
+    registry guards and **not** the gate that runs the page — a docs-only PR could
+    break every example on it and go green.
+    """
+    for page in ("docs/index.md", "docs/analysis/lyapunov.md", "docs/tutorials/basics.md"):
+        plan = cs.classify({page})
+        assert not plan.full, plan.reason
+        assert "test_doctests.py" in plan.selected_files, page
+        assert not plan.systems
+
+
+def test_the_repo_root_files_the_doctest_gate_reads_are_not_ignored() -> None:
+    """``README.md`` / ``CLAUDE.md`` / ``mkdocs.yml`` select the gate that reads them.
+
+    ``test_doctests.py`` checks the catalogue counts written in their prose
+    against the live registry and parses ``mkdocs.yml``'s ``exclude_docs`` block,
+    so none of the three is ignorable.  The two tables are kept from disagreeing
+    by :func:`test_no_file_is_both_docs_gated_and_ignored`.
+    """
+    from _doctest_select import REPO_ROOT
+
+    for name in sorted(cs._DOCS_GATE_FILES):
+        assert (REPO_ROOT / name).exists(), f"{name} is gated but does not exist"
+        plan = cs.classify({name})
+        assert not plan.full, plan.reason
+        assert "test_doctests.py" in plan.selected_files, name
+
+
+def test_docs_tooling_selects_the_tests_that_import_it() -> None:
+    """``docs/_tooling/`` is code the suite imports, not prose.
+
+    The gallery builder, the committed golden-figure corpus and
+    ``editorial.json`` are all read by tests; ignoring the directory hid those
+    dependencies completely.
+    """
+    for path in ("docs/_tooling/gallery.py", "docs/_tooling/editorial.json"):
+        plan = cs.classify({path})
+        assert not plan.full, plan.reason
+        assert set(cs._DOCS_TOOLING_TESTS) <= plan.selected_files, path
+
+
+def test_planning_and_changelog_stay_ignored() -> None:
+    """Only the documentation the suite *reads* is gated; the rest still costs nothing."""
+    plan = cs.classify({"planning/notes.md", "CHANGELOG.md", ".claude/settings.json"})
     assert not plan.full
-    # Only the always-on guards remain — nothing escalated.
     assert plan.selected_files == set(cs._ALWAYS_GUARDS)
     assert not plan.systems
+
+
+def test_no_file_is_both_docs_gated_and_ignored() -> None:
+    """One file, one classification — the two tables may not claim the same name.
+
+    The doc-gate check runs *first*, so an overlap would be a silently dead
+    ignore entry rather than an error.  This makes it loud.
+    """
+    overlap = cs._DOCS_GATE_FILES & cs._IGNORE_FILES
+    assert not overlap, f"claimed by both the docs gate and the ignore table: {sorted(overlap)}"
+    assert not any(p.startswith("docs") for p in cs._IGNORE_PREFIXES)
+
+
+def test_docs_gate_tests_exist() -> None:
+    tests_dir = Path(__file__).parent
+    for name in set(cs._DOCS_GATE_TESTS) | set(cs._DOCS_TOOLING_TESTS):
+        assert (tests_dir / name).exists(), f"docs lane references a missing test file: {name}"
 
 
 def test_no_changes_runs_only_guards() -> None:
@@ -163,8 +234,8 @@ def _fake_item(filename: str, entry: object | None = None) -> object:
 
 
 def test_keep_item_by_selected_file() -> None:
-    plan = cs.Plan(full=False, reason="t", selected_files={"test_entropy.py"})
-    assert cs.keep_item(_fake_item("test_entropy.py"), plan)
+    plan = cs.Plan(full=False, reason="t", selected_files={"test_recurrence.py"})
+    assert cs.keep_item(_fake_item("test_recurrence.py"), plan)
     assert not cs.keep_item(_fake_item("test_dimensions.py"), plan)
 
 
@@ -246,12 +317,53 @@ def test_every_analysis_subpackage_is_mapped() -> None:
     assert not missing, f"unmapped analysis areas (add to _AREA_TESTS): {sorted(missing)}"
 
 
+def test_every_area_test_file_is_in_some_lane() -> None:
+    """Every test file carrying a lane prefix is selected by that lane's change.
+
+    The blind spot this closes: a change anywhere under ``src/tsdynamics/viz/``
+    selected exactly three test files while sixteen ``test_viz_*.py`` existed, so
+    a viz change could reach ``main`` with most of its own tests deselected.  A
+    hand-written tuple over a *growing* family of files is the defect, and it
+    recurs in every area — so the check is generic: for each prefix in
+    :data:`_changed_select.LANE_PREFIXES`, classify a real source path in that
+    area and assert that **no** existing test file with that prefix is missing
+    from the plan.  Adding ``tests/test_viz_newthing.py`` needs no edit here;
+    adding ``tests/test_basins_newthing.py`` fails until it is mapped.
+    """
+    tests_dir = Path(__file__).parent
+    stale: list[str] = []
+    for prefix, probe in sorted(cs.LANE_PREFIXES.items()):
+        assert (Path(__file__).parents[1] / probe).exists(), (
+            f"LANE_PREFIXES probe {probe!r} no longer exists; point it at a real "
+            f"source file in the {prefix!r} lane."
+        )
+        plan = cs.classify({probe})
+        assert not plan.full, f"probe {probe!r} escalated to a full run: {plan.reason}"
+        carrying = sorted(p.name for p in tests_dir.glob(f"{prefix}*.py"))
+        assert carrying, f"no test file carries the lane prefix {prefix!r} — stale table entry."
+        stale += [
+            f"{name} (changing {probe} does not select it)"
+            for name in carrying
+            if name not in plan.selected_files
+        ]
+    assert not stale, "test files in no lane: " + ", ".join(stale)
+
+
+def test_viz_lane_is_discovered_not_hand_listed() -> None:
+    """``viz_tests()`` picks up every ``test_viz_*.py`` on disk, plus the exceptions."""
+    tests_dir = Path(__file__).parent
+    on_disk = {p.name for p in tests_dir.glob("test_viz_*.py")}
+    assert len(on_disk) > 3, "expected the viz test family to be larger than the old hand list"
+    lane = set(cs.viz_tests())
+    assert on_disk <= lane
+    assert set(cs._VIZ_EXTRA_TESTS) <= lane
+
+
 def test_referenced_test_files_exist() -> None:
     tests_dir = Path(__file__).parent
     referenced = (
         set(cs._ALWAYS_GUARDS)
-        | set(cs._TRANSFORM_TESTS)
-        | set(cs._VIZ_TESTS)
+        | set(cs.viz_tests())
         | set(cs._CROSSCUT_ANALYSIS_TESTS)
         | set(cs._SYSTEM_SWEEP_FILES)
     )
@@ -279,24 +391,15 @@ def test_no_system_name_collides_with_known_non_system_param_strings() -> None:
     assert not (non_system_param_ids & names)
 
 
-def test_scripts_ignore_is_safe_no_test_imports_scripts() -> None:
-    """The selector ignores ``scripts/`` — assert no test module imports from it,
-    so ignoring it cannot hide a real test dependency."""
-    import ast
+def test_benchmarks_edit_selects_the_harness_gate() -> None:
+    """Editing the bench harness selects the test that imports it, not a full run.
 
-    def imports_scripts(node: ast.AST) -> bool:
-        if isinstance(node, ast.Import):
-            return any(a.name.split(".")[0] == "scripts" for a in node.names)
-        if isinstance(node, ast.ImportFrom):
-            return (node.module or "").split(".")[0] == "scripts"
-        return False
-
-    this_file = Path(__file__).name
-    tests_dir = Path(__file__).parent
-    offenders = [
-        f.name
-        for f in tests_dir.glob("test_*.py")
-        if f.name != this_file  # skip self (mentions "scripts" in this assertion)
-        and any(imports_scripts(n) for n in ast.walk(ast.parse(f.read_text(encoding="utf-8"))))
-    ]
-    assert not offenders, f"tests import from scripts/ (ignore would hide changes): {offenders}"
+    ``benchmarks/analysis_bench.py`` is loaded by *path* from
+    ``test_perf_regression.py`` (it is not an installed package), so the selector
+    must recognise ``benchmarks/`` explicitly: ignoring it would hide a real test
+    dependency, and leaving it unrecognised would escalate every harness tweak to
+    the whole suite.
+    """
+    plan = cs.classify(["benchmarks/analysis_bench.py"])
+    assert not plan.full, plan.reason
+    assert "test_perf_regression.py" in plan.selected_files

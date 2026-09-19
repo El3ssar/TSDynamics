@@ -52,7 +52,7 @@ def test_resilience_does_not_overestimate_at_domain_edge() -> None:
     aset = AttractorSet({1: att1, 2: att2}, diverged=0, seeds=labels.size)
     res = BasinsResult(labels=labels, grid=grid, attractors=aset)
 
-    r1 = float(ts.resilience(res, 1))
+    r1 = float(ts.analysis.resilience(res, 1))
     # The honest estimate is the distance to the computed domain edge (~0.05) ...
     assert abs(r1 - 0.05) < 0.02
     # ... and it must be far below the 0.75 the unpadded EDT would have reported.
@@ -72,7 +72,7 @@ def test_resilience_minimises_over_attractor_extent() -> None:
     aset = AttractorSet({1: att1, 2: att2}, diverged=0, seeds=labels.size)
     res = BasinsResult(labels=labels, grid=grid, attractors=aset)
 
-    r1 = float(ts.resilience(res, 1))
+    r1 = float(ts.analysis.resilience(res, 1))
     # Closest grazing point (x=0.45) is ~0.05 from the boundary; the centroid
     # (x=0.2) is 0.3 — taking the centroid would overestimate ~6x.
     assert r1 < 0.15

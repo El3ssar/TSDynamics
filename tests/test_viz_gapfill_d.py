@@ -1,4 +1,4 @@
-"""GAPFILL-D: fixed points / orbits / sections ``to_plot_spec`` coverage.
+"""GAPFILL-D: fixed points / orbits / sections ``__plot_spec__`` coverage.
 
 Engine-free, synthetic-data tests for the visualization specs added by stream
 GAPFILL-D:
@@ -9,7 +9,7 @@ GAPFILL-D:
 - :class:`PeriodicOrbit` → a phase-portrait spec plus a Floquet
   ``EIGENVALUE_PLANE`` marking the trivial ``μ ≈ 1`` multiplier distinctly.
 - :class:`OrbitDiagram` → a clean scatter by default; bifurcation onsets carried
-  as ``"vline"`` annotations only under the opt-in ``to_plot_spec(annotate=True)``.
+  as ``"vline"`` annotations only under the opt-in ``__plot_spec__(annotate=True)``.
 - :class:`ReturnMap` → a ``COBWEB`` staircase in addition to its scatter.
 - ``period_diagnostic`` → a ``DIAGNOSTIC_CURVE`` of the autocorrelation / FFT.
 
@@ -79,8 +79,8 @@ def _periodic_orbit(dim: int = 3, continuous: bool = True) -> PeriodicOrbit:
 
 def test_fixed_point_overlay_kind_and_style() -> None:
     """A FixedPoint plots as a FIXED_POINTS_OVERLAY scatter, styled by stability."""
-    stable_spec = _assert_valid_spec(_fixed_point(stable=True).to_plot_spec())
-    unstable_spec = _assert_valid_spec(_fixed_point(stable=False).to_plot_spec())
+    stable_spec = _assert_valid_spec(_fixed_point(stable=True).__plot_spec__())
+    unstable_spec = _assert_valid_spec(_fixed_point(stable=False).__plot_spec__())
     assert stable_spec.kind == PlotKind.FIXED_POINTS_OVERLAY
     assert stable_spec.layers[0].kind == PlotKind.SCATTER
     # stable vs unstable are styled differently (filled vs open marker)
@@ -116,7 +116,7 @@ def test_fixed_point_eigenvalue_plane_flow_has_imag_axis() -> None:
 def test_fixed_point_set_overlay_splits_stable_unstable() -> None:
     """A FixedPointSet draws stable and unstable points as separate layers."""
     fps = FixedPointSet(items=(_fixed_point(stable=True), _fixed_point(stable=False)))
-    spec = _assert_valid_spec(fps.to_plot_spec())
+    spec = _assert_valid_spec(fps.__plot_spec__())
     assert spec.kind == PlotKind.FIXED_POINTS_OVERLAY
     labels = {lyr.label for lyr in spec.layers}
     assert labels == {"stable", "unstable"}
@@ -153,7 +153,7 @@ def test_fixed_point_overlay_on_host_keeps_host_first() -> None:
 def test_fixed_point_set_empty_is_valid() -> None:
     """An empty FixedPointSet still yields a valid (layer-less) overlay + plane."""
     fps = FixedPointSet(items=())
-    overlay = _assert_valid_spec(fps.to_plot_spec())
+    overlay = _assert_valid_spec(fps.__plot_spec__())
     plane = _assert_valid_spec(fps.eigenvalue_plane())
     assert overlay.kind == PlotKind.FIXED_POINTS_OVERLAY
     assert plane.kind == PlotKind.EIGENVALUE_PLANE
@@ -166,7 +166,7 @@ def test_fixed_point_set_empty_is_valid() -> None:
 
 def test_periodic_orbit_phase_portrait_3d() -> None:
     """A 3-D flow cycle plots as a PHASE_PORTRAIT_3D loop."""
-    spec = _assert_valid_spec(_periodic_orbit(dim=3, continuous=True).to_plot_spec())
+    spec = _assert_valid_spec(_periodic_orbit(dim=3, continuous=True).__plot_spec__())
     assert spec.kind == PlotKind.PHASE_PORTRAIT_3D
     assert spec.ndim == 3
     assert any(lyr.kind == PlotKind.LINE3D for lyr in spec.layers)
@@ -218,15 +218,15 @@ def test_orbit_diagram_default_is_clean() -> None:
     they are off by default (opt in with ``annotate=True``).
     """
     od = _orbit_diagram_with_doubling()
-    spec = _assert_valid_spec(od.to_plot_spec())
+    spec = _assert_valid_spec(od.__plot_spec__())
     assert spec.kind == PlotKind.ORBIT_DIAGRAM
     assert not any(a.kind == "vline" for a in spec.annotations)
 
 
 def test_orbit_diagram_annotate_carries_bifurcation_vlines() -> None:
-    """to_plot_spec(annotate=True) annotates detected bifurcation onsets as vlines."""
+    """__plot_spec__(annotate=True) annotates detected bifurcation onsets as vlines."""
     od = _orbit_diagram_with_doubling()
-    spec = _assert_valid_spec(od.to_plot_spec(annotate=True))
+    spec = _assert_valid_spec(od.__plot_spec__(annotate=True))
     assert spec.kind == PlotKind.ORBIT_DIAGRAM
     vlines = [a for a in spec.annotations if a.kind == "vline"]
     assert vlines, "the period-1 → period-2 onset should be annotated"
@@ -239,7 +239,7 @@ def test_orbit_diagram_single_value_has_no_annotations() -> None:
     od = OrbitDiagram(
         param="r", values=np.array([3.2]), points=[np.array([[0.5]])], components=(0,)
     )
-    spec = _assert_valid_spec(od.to_plot_spec())
+    spec = _assert_valid_spec(od.__plot_spec__())
     assert spec.annotations == []
 
 
@@ -259,7 +259,7 @@ def _return_map() -> ReturnMap:
 
 def test_return_map_scatter_still_works() -> None:
     """The default return-map spec stays a RETURN_MAP scatter + diagonal."""
-    spec = _assert_valid_spec(_return_map().to_plot_spec())
+    spec = _assert_valid_spec(_return_map().__plot_spec__())
     assert spec.kind == PlotKind.RETURN_MAP
     assert spec.layers[0].kind == PlotKind.SCATTER
 
@@ -299,13 +299,22 @@ def _sine(period: float = 20.0, n: int = 400) -> np.ndarray:
     return np.sin(2.0 * np.pi * t / period)
 
 
-def test_estimate_period_carries_curve_in_meta() -> None:
-    """estimate_period stays a ScalarResult but stashes the diagnostic curve."""
+def test_estimate_period_is_a_number_and_its_meta_is_provenance() -> None:
+    """``estimate_period`` is a ScalarResult whose ``meta`` records *how*, not *what*.
+
+    .. versionchanged:: 6.0
+       It used to stash the whole autocorrelation curve under
+       ``meta["curve_abscissa"]`` / ``["curve_ordinate"]``, which made
+       ``to_dict()`` for one float tens of thousands of characters of JSON.
+       ``meta`` is provenance; the curve reaches the plot through the transform
+       below (``period_diagnostic``), which recomputes it.
+    """
     res = estimate_period(_sine(period=20.0))
     assert np.isclose(float(res), 20.0, atol=1.0)
-    assert "curve_abscissa" in res.meta
-    assert "curve_ordinate" in res.meta
-    assert np.asarray(res.meta["curve_abscissa"]).size > 0
+    assert res.meta["analysis"] == "estimate_period"
+    assert res.meta["method"] == "autocorrelation"
+    big = [k for k, v in res.meta.items() if np.asarray(v, dtype=object).size > 32]
+    assert not big, f"meta is provenance, not payload; these are arrays: {big}"
 
 
 def test_period_diagnostic_autocorrelation_curve() -> None:

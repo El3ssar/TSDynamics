@@ -15,16 +15,30 @@ the continuation.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
 from ...data import Ball, Box, Grid, set_distance
-from .._result import AnalysisResult, CollectionResult
-from ._common import DIVERGED_COLOR, PALETTE, _palette_indices
+from ...errors import InvalidInputError, remedy
+from .._common import is_data, reject_system
+from .._discovery import wrong_subject
+from .._result import AnalysisResult, CollectionResult, _build_meta
+from .._result_json import _pct, _sig, _spread, _state
+from ._common import (
+    DIVERGED_COLOR,
+    PALETTE,
+    _palette_indices,
+    coerce_region,
+    reject_unknown_fsm,
+)
 from .attractors import Attractor, _reject_unsupported
 from .basins import basin_fractions
+
+#: Attractors whose basin-share trajectory the repr lists before eliding.
+_MAX_TRACKED_IN_REPR = 4
 
 if TYPE_CHECKING:
     from ...data.sampling import _SetMethod
@@ -46,12 +60,22 @@ class ContinuationResult(AnalysisResult):
     param : str
         The swept parameter name.
     values : ndarray
-        Parameter values, in sweep order.
+        **The swept parameter axis, not a measurement** — the values of
+        :attr:`param`, in sweep order.  What was measured at each of them is
+        :attr:`fractions` / :attr:`attractors` / :attr:`diverged`, all indexed
+        by the same position.  (``values`` is the one name in the result layer
+        that means different things on different classes: the *answer* on a
+        spectrum or an embedding, the swept parameter here and on
+        :class:`~tsdynamics.analysis.results.OrbitDiagram`, the observable
+        series on :class:`~tsdynamics.analysis.results.ReturnMap`.)
     fractions : dict[int, ndarray]
         Global attractor id → basin fraction at each value (``nan`` where the
         attractor is absent).
     attractors : list[dict[int, Attractor]]
-        Per value, the located attractors keyed by their *global* (matched) id.
+        Per value, the located attractors keyed by their *global* (matched) id —
+        the records.  For the numbers, use :attr:`centers`, which is the same
+        information as one rectangular ``(n_values, n_ids, dim)`` array rather
+        than three nested containers.
     diverged : ndarray
         Diverged-or-untracked fraction at each value: the diverged share **plus**
         the basin mass of any attractor dropped by ``min_fraction``, so the
@@ -64,16 +88,69 @@ class ContinuationResult(AnalysisResult):
     attractors: list[dict[int, Attractor]] = field(default_factory=list, repr=False, compare=False)
     diverged: np.ndarray = field(default_factory=lambda: np.empty(0), repr=False, compare=False)
 
+    def __array__(self, dtype: Any = None, copy: bool | None = None) -> np.ndarray:
+        """Return the fraction bands as a ``(n_values, n_ids)`` float array.
+
+        Row ``k`` is the basin split at :attr:`values` ``[k]``, column ``j`` the
+        attractor :attr:`ids` ``[j]`` — so ``np.asarray(result)`` is the picture
+        the repr summarises, aligned with the parameter axis.  It used to be a
+        0-d *object* array holding the result itself.
+        """
+        ids = self.ids
+        n = int(np.asarray(self.values).size)
+        arr = np.full((n, len(ids)), np.nan, dtype=float)
+        for j, gid in enumerate(ids):
+            band = np.asarray(self.fractions[gid], dtype=float)
+            arr[: band.size, j] = band[:n]
+        return arr.astype(dtype, copy=bool(copy)) if dtype is not None else arr
+
     @property
     def ids(self) -> list[int]:
         """Sorted global attractor ids seen anywhere in the sweep."""
         return sorted(self.fractions)
 
-    def tipping_points(self, *, threshold: float = 0.0) -> CollectionResult:
-        """Tipping events along this continuation (see :func:`tipping_points`)."""
-        return tipping_points(self, threshold=threshold)
+    @property
+    def centers(self) -> np.ndarray:
+        """Where each tracked attractor sits at each value: ``(n_values, n_ids, dim)``.
 
-    def to_plot_spec(self, kind: str | None = None) -> Any:
+        The numbers behind :attr:`attractors`, which is a *list of dicts of
+        records* — three containers deep before a coordinate.  Row ``k`` is the
+        parameter value :attr:`values` ``[k]``, column ``j`` the attractor
+        :attr:`ids` ``[j]``, and a value where that id is absent is ``nan``, so
+        the array is rectangular and aligns with ``np.asarray(self)`` index for
+        index::
+
+            cont.centers[:, 0, :]     # attractor ids[0]'s path through state space
+
+        An empty sweep gives shape ``(0, 0, 0)``.
+        """
+        ids = self.ids
+        n = int(np.asarray(self.values).size)
+        dim = next(
+            (
+                int(np.asarray(att.center).size)
+                for per_value in self.attractors
+                for att in per_value.values()
+            ),
+            0,
+        )
+        if dim == 0:
+            # No attractor record carries a centre (a toy / synthetic result):
+            # the answer is an EMPTY last axis, not a reshape of an (n, ids)
+            # block, which raises "cannot reshape array of size 12 into (4, 3, 0)".
+            return np.empty((n, len(ids), 0), dtype=float)
+        arr = np.full((n, len(ids), dim), np.nan, dtype=float)
+        index = {gid: j for j, gid in enumerate(ids)}
+        for k, per_value in enumerate(self.attractors[:n]):
+            for gid, att in per_value.items():
+                j = index.get(int(gid))
+                if j is None:
+                    continue
+                center = np.asarray(att.center, dtype=float).ravel()
+                arr[k, j, : center.size] = center[:dim]
+        return arr
+
+    def __plot_spec__(self, kind: str | None = None) -> Any:
         r"""Describe the continuation as a backend-agnostic :class:`PlotSpec`.
 
         Builds a ``CONTINUATION`` spec — the basin fractions **stacked** against
@@ -127,13 +204,18 @@ class ContinuationResult(AnalysisResult):
                 )
             )
 
-        annotations = [
-            pb.vline(
-                float(event["value"]),
-                text=f"{event['kind']} (attractor {event['attractor']})",
+        # Draw the line in the MIDDLE of the bracketing interval, not on the
+        # first sample at which the basin is already gone: there the curve has
+        # visibly been at zero since the previous sample, so the mark read as
+        # arriving late and pointed at the wrong gap.  The event is somewhere in
+        # (lo, hi]; the midpoint is the only point in it that claims nothing.
+        annotations = []
+        for event in tipping_points(self):
+            bracket = event.get("bracket")
+            at = 0.5 * (bracket[0] + bracket[1]) if bracket else float(event["value"])
+            annotations.append(
+                pb.vline(float(at), text=f"{event['kind']} (attractor {event['attractor']})")
             )
-            for event in self.tipping_points()
-        ]
         meta = dict(self.meta) if self.meta else {}
         meta.update(palette=PALETTE, diverged_color=DIVERGED_COLOR, palette_index=swatch)
         return pb.spec(
@@ -150,21 +232,86 @@ class ContinuationResult(AnalysisResult):
             meta=meta,
         )
 
-    def __repr__(self) -> str:  # noqa: D105
-        return (
-            f"ContinuationResult(param={self.param!r}, "
-            f"values=[{self.values[0]:.3g}..{self.values[-1]:.3g}], "
-            f"n_attractors={len(self.fractions)})"
-        )
+    def to_frame(self) -> Any:
+        """Return a tidy frame: one row per ``(value, attractor)``, with the share.
+
+        The base :meth:`~tsdynamics.analysis.results.AnalysisResult.to_frame`
+        builds ONE row of the declared fields, and a continuation's answer — the
+        basin fractions — lives in a ``dict[int, ndarray]``, which a table cell
+        cannot hold, so it was dropped: measured, the frame came back
+        ``(1, 13)`` with the parameter values spread across columns and **no
+        fractions at all**.  A frame that silently omits the payload is worse
+        than no frame.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Columns ``<param>`` · ``attractor`` · ``fraction`` · ``diverged``,
+            plus one ``center_<var>`` column per state component.
+        """
+        pd = self._require_pandas()
+        values = np.asarray(self.values, dtype=float)
+        centers = self.centers
+        names = self.meta.get("variables") if self.meta else None
+        diverged = np.asarray(self.diverged, dtype=float)
+        rows: list[dict[str, Any]] = []
+        for j, gid in enumerate(self.ids):
+            band = np.asarray(self.fractions[gid], dtype=float)
+            for k, value in enumerate(values):
+                row: dict[str, Any] = {
+                    self.param or "parameter": float(value),
+                    "attractor": int(gid),
+                    "fraction": float(band[k]) if k < band.size else float("nan"),
+                    "diverged": float(diverged[k]) if k < diverged.size else float("nan"),
+                }
+                if centers.size and centers.shape[2]:
+                    labels = tuple(str(v) for v in names) if names else None
+                    row.update(_spread("center", centers[k, j], labels))
+                rows.append(row)
+        frame = pd.DataFrame(rows)
+        frame.attrs["meta"] = dict(self.meta) if self.meta else {}
+        return frame
+
+    def _answer(self) -> str:
+        """Return the swept range and how many attractors were tracked through it."""
+        v = np.asarray(self.values, dtype=float)
+        span = f"{self.param} ∈ [{_sig(v[0], 4)}, {_sig(v[-1], 4)}]" if v.size else self.param
+        n = len(self.fractions)
+        tracked = f"{n} attractor" + ("s" if n != 1 else "") + " tracked"
+        return f"{span} · {v.size} values · {tracked}"
+
+    def _details(self) -> tuple[str, ...]:
+        """Return each tracked attractor's first and last basin share.
+
+        An attractor that is **absent** at an end of the sweep has ``nan`` there,
+        and ``nan%`` reads as a failed measurement rather than as the
+        annihilation it is — which is the headline event of a continuation.  It
+        is named instead.
+        """
+
+        def share(value: float) -> str:
+            return "gone" if not np.isfinite(value) else _pct(value)
+
+        lines = []
+        for k in sorted(self.fractions):
+            f = np.asarray(self.fractions[k], dtype=float)
+            if not f.size:
+                continue
+            lines.append(f"#{k}: {share(f[0])} → {share(f[-1])}")
+        if not lines:
+            return ()
+        head = " · ".join(lines[:_MAX_TRACKED_IN_REPR])
+        more = " …" if len(lines) > _MAX_TRACKED_IN_REPR else ""
+        return (f"basin share, first → last: {head}{more}",)
 
 
 def continuation(
     system: Any,
     param: str,
     values: Any,
-    region: Box | Ball | Grid,
+    region: Box | Ball | Grid | Sequence[tuple[float, ...]] | None = None,
     *,
-    n: int = 2000,
+    n_seeds: int = 2000,
     resolution: int | tuple[int, ...] = 100,
     seed: int | None = 0,
     dt: float = 1.0,
@@ -193,8 +340,11 @@ def continuation(
         Parameter values, in the order to walk them.
     region : Box, Ball, or Grid
         The region whose basin fractions are measured at each value.
-    n : int, default 2000
-        Initial conditions sampled per value.
+    n_seeds : int, default 2000
+        Number of random **initial conditions** sampled at each parameter value
+        — the word ``attractors`` / ``fixed_points`` / ``periodic_orbits`` /
+        ``basin_fractions`` all use.  (It was ``n`` before v6 round 8; ``n=``
+        now raises, naming this one.)
     resolution : int or tuple of int, default 100
         Recurrence cells per axis (a Grid uses its own ``counts``).
     seed : int, optional
@@ -234,6 +384,14 @@ def continuation(
     analysis of dynamical systems", *Chaos* **33**, 073151 (2023).
     """
     _reject_unsupported(system, "continuation")
+    reject_unknown_fsm(fsm, analysis="continuation")
+    region = coerce_region(
+        region,
+        analysis="continuation",
+        system=system,
+        want_grid=False,
+        args="param, values, ",
+    )
     values = np.asarray(values, dtype=float)
     fractions: dict[int, list[float]] = {}
     per_value: list[dict[int, Attractor]] = []
@@ -245,7 +403,14 @@ def continuation(
     for k, v in enumerate(values):
         sys_v = system.with_params(**{param: float(v)})
         bf = basin_fractions(
-            sys_v, region, n=n, resolution=resolution, seed=seed, dt=dt, max_steps=max_steps, **fsm
+            sys_v,
+            region,
+            n_seeds=n_seeds,
+            resolution=resolution,
+            seed=seed,
+            dt=dt,
+            max_steps=max_steps,
+            **fsm,
         )
         local = {
             lid: att
@@ -283,7 +448,7 @@ def continuation(
         fractions=frac_arrays,
         attractors=per_value,
         diverged=np.asarray(diverged),
-        meta=AnalysisResult.build_meta(system, analysis="continuation", param=param),
+        meta=_build_meta(system, analysis="continuation", param=param),
     )
 
 
@@ -325,6 +490,40 @@ def _match(
     return mapping, next_global
 
 
+class _TippingEvent(dict):  # type: ignore[type-arg]
+    """One tipping event — a plain ``dict`` that *reads* like a sentence.
+
+    The events are documented as plain mappings and stay exactly that
+    (``event["value"]`` works, ``json.dumps`` works, ``isinstance(e, dict)`` is
+    ``True``); only the rendering changes.  A collection of five raw dicts
+    printed in a repr is a data dump, and the one thing a reader needs off it —
+    *which* state disappeared — was an integer id that is assigned in sweep
+    order, so the same physical well is ``#1`` walking the parameter one way and
+    ``#2`` walking it back.
+    """
+
+    __slots__ = ()
+
+    def __str__(self) -> str:
+        """Render ``F ∈ (0.38, 0.385]  attractor #1 disappears  (the state at x ≈ …)``."""
+        verb = "disappears" if self["kind"] == "disappear" else "appears"
+        where = np.asarray(self.get("where", ()), dtype=float)
+        place = f"  ·  the state at {_state(where)}" if where.size else ""
+        bracket = self.get("bracket")
+        # Say the bracket, not a bare number: the sweep proves the event happens
+        # between two sampled values and proves nothing finer, so printing one of
+        # them to five figures claims a precision the grid does not have.
+        if bracket is not None:
+            lo, hi = bracket
+            head = f"({_sig(lo, 5)}, {_sig(hi, 5)}]"
+        else:  # pragma: no cover - every event records its bracket
+            head = _sig(self["value"], 5)
+        return (
+            f"{head}:  attractor #{self['attractor']} {verb}"
+            f"  ({_pct(self['before'])} → {_pct(self['after'])}){place}"
+        )
+
+
 def tipping_points(result: ContinuationResult, *, threshold: float = 0.0) -> CollectionResult:
     r"""
     Read tipping events off a continuation.
@@ -350,6 +549,24 @@ def tipping_points(result: ContinuationResult, *, threshold: float = 0.0) -> Col
         ``{"value", "attractor", "kind", "before", "after"}`` with ``kind`` in
         ``{"appear", "disappear"}``, sorted by parameter value.
     """
+    # No ``hint=``: the shared builder (CONTRACT §5.6) already knows this is a
+    # *result*-first analysis and which analysis produces its subject, so the
+    # system door and the data door below answer with one body.
+    reject_system(result, analysis="tipping_points")
+    if not isinstance(result, ContinuationResult):
+        if is_data(result):
+            raise wrong_subject("tipping_points", type(result).__name__, "data")
+        raise InvalidInputError(
+            f"tipping_points reads the basin fractions along a parameter sweep, so it "
+            f"needs the ContinuationResult that sweep produced, not a "
+            f"{type(result).__name__} — a single trajectory holds no parameter axis."
+            + remedy(
+                "cont = ts.analysis.continuation(system, 'rho', np.linspace(0.0, 50.0, 40),"
+                " [(-2.0, 2.0), (-2.0, 2.0), (0.0, 50.0)])",
+                "ts.analysis.tipping_points(cont)",
+                lead="Run the continuation first:",
+            )
+        )
     events: list[dict[str, Any]] = []
     vals = result.values
     for gid, frac in result.fractions.items():
@@ -362,19 +579,47 @@ def tipping_points(result: ContinuationResult, *, threshold: float = 0.0) -> Col
                 kind = "appear"
             else:
                 continue
+            # WHERE the attractor was, not only its integer label: ids are
+            # assigned in sweep order, so the same physical well is ``#1``
+            # sweeping from one end and ``#2`` from the other.  A location is
+            # the same state whichever direction you walked.
+            centers = result.centers
+            j = result.ids.index(int(gid))
+            where = np.asarray(centers[i - 1, j], dtype=float) if centers.size else np.empty(0)
+            if not np.all(np.isfinite(where)):
+                where = np.asarray(centers[i, j], dtype=float) if centers.size else np.empty(0)
             events.append(
-                {
-                    "value": float(vals[i]),
-                    "attractor": int(gid),
-                    "kind": kind,
-                    "before": before,
-                    "after": after,
-                }
+                _TippingEvent(
+                    {
+                        "value": float(vals[i]),
+                        # The sweep brackets the event; it does not locate it.
+                        # ``value`` is the first sampled parameter at which the
+                        # basin is already gone, so the true fold lies in the
+                        # half-open interval between the two samples that
+                        # straddle it — and a reader who is handed one number
+                        # with five significant figures has no way to know the
+                        # grid was that coarse.  Recorded so the repr can say it
+                        # and a caller can refine into it.
+                        "bracket": (float(vals[i - 1]), float(vals[i])),
+                        "attractor": int(gid),
+                        "kind": kind,
+                        "before": before,
+                        "after": after,
+                        "where": where,
+                    }
+                )
             )
     events.sort(key=lambda e: (e["value"], e["attractor"]))
     return CollectionResult(
         items=tuple(events),
-        meta={"analysis": "tipping_points", "threshold": float(threshold)},
+        meta={
+            "analysis": "tipping_points",
+            "threshold": float(threshold),
+            # An empty collection is an ANSWER here, not a failure to find one:
+            # "none found" alone reads like the sweep broke.  The repr prints
+            # this clause so the reader learns what the emptiness means.
+            "means_none": "no basin annihilates over the sweep",
+        },
     )
 
 

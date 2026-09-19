@@ -207,6 +207,85 @@ register_solver!(
 mod tests {
     use super::*;
     use crate::caps::SolverKind;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tsdyn_ir::Evaluator;
+
+    /// A stiff 2 × 2 linear system with its exact Jacobian, counting how often
+    /// the kernel asks for a *fresh* Jacobian.
+    ///
+    /// `eval_jac` is called exactly once per `form_factorization`, so the counter
+    /// is a direct count of frozen-Jacobian refreshes (and hence of LU
+    /// factorizations).
+    struct CountingStiff {
+        jac_evals: AtomicUsize,
+    }
+
+    impl Evaluator for CountingStiff {
+        fn dim(&self) -> usize {
+            2
+        }
+        fn n_param(&self) -> usize {
+            0
+        }
+        fn n_scratch(&self) -> usize {
+            0
+        }
+        fn has_jacobian(&self) -> bool {
+            true
+        }
+        fn eval(&self, u: &[f64], _p: &[f64], _t: f64, _scratch: &mut [f64], deriv: &mut [f64]) {
+            deriv[0] = -1000.0 * u[0] + u[1];
+            deriv[1] = 1000.0 * u[0] - u[1];
+        }
+        fn eval_jac(
+            &self,
+            u: &[f64],
+            p: &[f64],
+            t: f64,
+            scratch: &mut [f64],
+            deriv: &mut [f64],
+            jac: &mut [f64],
+        ) {
+            self.jac_evals.fetch_add(1, Ordering::Relaxed);
+            self.eval(u, p, t, scratch, deriv);
+            jac.copy_from_slice(&[-1000.0, 1.0, 1000.0, -1.0]);
+        }
+    }
+
+    /// Frozen-Jacobian / LU reuse is a *performance* contract that no numerical
+    /// test can see (the reused factorization converges to the same root), so
+    /// this pins the refresh count — the exact, machine-independent form of the
+    /// saving the criterion bench in `benches/kernels.rs` can only time.
+    ///
+    /// One `step` runs six implicit substages: two for the full step at shift
+    /// `γ·h`, and two each for the step-doubling half steps at shift `γ·h/2`.
+    /// Substages sharing a shift share one frozen Jacobian and one LU, so a
+    /// correct kernel forms **two** factorizations per step, not six. (The half
+    /// steps' shift differs from the full step's, which is why the count is 2 and
+    /// not 1, and why a *constant* outer `h` does not reduce it further.)
+    #[test]
+    fn frozen_jacobian_is_reused_across_substages_sharing_a_shift() {
+        let ev = CountingStiff {
+            jac_evals: AtomicUsize::new(0),
+        };
+        let mut solver = Sdirk2::new();
+        let mut st = crate::SolverState::for_evaluator(&ev, vec![1.0, 0.0], 0.0, vec![]);
+
+        // Small enough that every step is accepted, so the count is deterministic.
+        let h = 1e-5;
+        for i in 1..=4 {
+            assert!(matches!(
+                solver.step(&ev, &mut st, h),
+                StepOutcome::Accepted { .. }
+            ));
+            assert_eq!(
+                ev.jac_evals.load(Ordering::Relaxed),
+                2 * i,
+                "step {i}: expected 2 factorizations per step (one per distinct \
+                 shift); 6 would mean the substage LU reuse was lost"
+            );
+        }
+    }
 
     #[test]
     fn metadata_is_consistent() {

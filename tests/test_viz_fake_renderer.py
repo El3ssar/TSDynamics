@@ -3,13 +3,13 @@
 Stream VIZ-FALLBACK-GATE (issue #274), the contract counterpart of VIZ-TOPLOTSPEC
 (issue #273).  Visualization in TSDynamics is an *intermediate representation*:
 each result type produces a backend-agnostic :class:`tsdynamics.viz.spec.PlotSpec`
-(``to_plot_spec``), and a future renderer consumes it — no result ever draws.
+(``__plot_spec__``), and a future renderer consumes it — no result ever draws.
 This module is the gate that keeps that contract honest:
 
 1. **Every** concrete :class:`~tsdynamics.analysis._result.AnalysisResult`
    subclass reachable from the analysis package is constructed **synthetically**
    (tiny dummy arrays — no engine, no heavy analysis, fast tier) and its
-   ``to_plot_spec()`` must either return a :class:`PlotSpec` whose ``kind`` is a
+   ``__plot_spec__()`` must either return a :class:`PlotSpec` whose ``kind`` is a
    real :class:`~tsdynamics.viz.spec.PlotKind` *or* raise the documented
    :class:`~tsdynamics.analysis._result.VisualizationNotInstalled` (the base
    fallback's "nothing numeric to draw" path).
@@ -21,7 +21,7 @@ This module is the gate that keeps that contract honest:
    one of the classes this gate covers, so a new result type cannot ship without
    joining the sweep.
 
-The gate has teeth: a result whose ``to_plot_spec`` returns ``None`` (or any
+The gate has teeth: a result whose ``__plot_spec__`` returns ``None`` (or any
 non-``PlotSpec``), an invalid kind, or that neither plots nor raises the
 documented error fails here — see :func:`test_invalid_spec_is_rejected` for the
 explicit negative control.  Engine-free by design (no ``tsdynamics._rust``
@@ -69,8 +69,6 @@ from tsdynamics.analysis.orbits.return_map import ReturnMap
 from tsdynamics.analysis.recurrence.matrix import RecurrenceMatrix
 from tsdynamics.analysis.recurrence.rqa import RQAResult
 from tsdynamics.analysis.recurrence.windowed import WindowedRQA
-from tsdynamics.analysis.surrogate.generators import SurrogateEnsemble
-from tsdynamics.analysis.surrogate.hypothesis import SurrogateTest
 from tsdynamics.data import Grid
 from tsdynamics.viz.render.caps import VisualizationDegraded, style_honoring_gaps
 from tsdynamics.viz.spec import PlotKind, PlotSpec
@@ -218,16 +216,12 @@ def _builders() -> dict[type, object]:
         ),
         # array results
         LyapunovSpectrum: lambda: LyapunovSpectrum(values=np.array([0.91, 0.0, -14.57])),
-        SurrogateEnsemble: lambda: SurrogateEnsemble(
-            values=np.array([[0.0, 1.0, 0.5, 0.2], [0.1, 0.9, 0.4, 0.3]]),
-            meta={"method": "iaaft"},
-        ),
         Embedding: lambda: Embedding(values=np.random.default_rng(0).random((20, 3))),
         # delay-selection diagnostic (mutual information first-minimum)
         MutualInformation: lambda: MutualInformation(
             values=np.array([1.5, 0.9, 0.6, 0.4, 0.5, 0.7]), meta={"analysis": "mutual_information"}
         ),
-        # chaos / recurrence / surrogate dataclasses
+        # chaos / recurrence dataclasses
         ZeroOneResult: lambda: ZeroOneResult(
             value=0.97,
             p=np.cumsum(np.random.default_rng(1).standard_normal(50)),
@@ -235,18 +229,6 @@ def _builders() -> dict[type, object]:
         ),
         GALIResult: lambda: GALIResult(
             k=2, times=np.arange(1.0, 6.0), values=np.array([1.0, 0.6, 0.3, 0.1, 0.02])
-        ),
-        SurrogateTest: lambda: SurrogateTest(
-            data_statistic=1.5,
-            surrogate_statistics=np.array([0.1, 0.2, 0.3, 0.4]),
-            p_value=0.05,
-            z_score=2.1,
-            rejected=True,
-            statistic="time_reversal",
-            method="iaaft",
-            n_surrogates=4,
-            tail="greater",
-            alpha=0.05,
         ),
         RecurrenceMatrix: lambda: RecurrenceMatrix(matrix=_sparse_recurrence(), epsilon=0.5),
         RQAResult: _rqa_result,
@@ -301,7 +283,8 @@ def _builders() -> dict[type, object]:
             boundary_dimension=1.6,
             state_dimension=2,
             epsilons=np.array([0.1, 0.05, 0.025]),
-            f=np.array([0.4, 0.3, 0.2]),
+            # v6 round 9 renamed the one-letter `f` to `uncertain_fractions`.
+            uncertain_fractions=np.array([0.4, 0.3, 0.2]),
             r_squared=0.99,
         ),
         WadaResult: lambda: WadaResult(
@@ -334,11 +317,30 @@ def _all_result_subclasses() -> set[type]:
                 _walk(sub)
 
     _walk(AnalysisResult)
-    # Drop private/test-only helper subclasses (names starting with "_") and any
-    # defined inside test modules (their __module__ is a tests.* module).
-    return {
-        c for c in seen if not c.__name__.startswith("_") and not c.__module__.startswith("tests")
-    }
+    return {c for c in seen if not c.__name__.startswith("_") and not _is_test_local(c)}
+
+
+def _is_test_local(cls: type) -> bool:
+    """Whether ``cls`` is a throwaway subclass defined by the suite itself.
+
+    ``__subclasses__`` is global and permanent, so any other test module that
+    subclasses :class:`AnalysisResult` to probe the machinery leaks into this
+    sweep the moment the two land in the same worker — which is a failure whose
+    cause is *which tests ran together*, the worst kind to debug.
+
+    Two signals, because the obvious one alone does not fire: the test package is
+    imported by basename (``test_result_plain``), never as ``tests.…``, so the
+    original ``__module__.startswith("tests")`` check matched nothing at all.  A
+    class defined **inside a function** carries ``<locals>`` in its
+    ``__qualname__``, which catches the probe subclasses regardless of how the
+    module is named.
+    """
+    module = getattr(cls, "__module__", "")
+    return (
+        "<locals>" in getattr(cls, "__qualname__", "")
+        or module.startswith("tests")
+        or module.split(".")[-1].startswith("test_")
+    )
 
 
 def test_every_result_subclass_has_a_builder() -> None:
@@ -361,10 +363,10 @@ _CASES = sorted(_BUILDERS.items(), key=lambda kv: kv[0].__name__)
 
 
 @pytest.mark.parametrize("cls,build", _CASES, ids=[c.__name__ for c, _ in _CASES])
-def test_result_to_plot_spec_is_valid_or_documented(cls, build, fake_renderer) -> None:
-    """Each result's ``to_plot_spec()`` returns a valid spec or raises the documented error.
+def test_result_plot_spec_is_valid_or_documented(cls, build, fake_renderer) -> None:
+    """Each result's ``__plot_spec__()`` returns a valid spec or raises the documented error.
 
-    The real gate: build the result synthetically, call ``to_plot_spec()``, and
+    The real gate: build the result synthetically, call ``__plot_spec__()``, and
     require a :class:`PlotSpec` with a real :class:`PlotKind` (whose layers each
     carry a real layer-mark kind), *or* the documented
     :class:`VisualizationNotInstalled` for a result with nothing numeric to draw.
@@ -375,17 +377,17 @@ def test_result_to_plot_spec_is_valid_or_documented(cls, build, fake_renderer) -
     assert isinstance(result, cls)
 
     try:
-        spec = result.to_plot_spec()
+        spec = result.__plot_spec__()
     except VisualizationNotInstalled:
         # The documented "no generic spec" path — acceptable per the contract.
         # But it must be a *real* raise, not a swallowed None: re-calling must
         # raise again (no hidden caching that turns it into a silent pass).
         with pytest.raises(VisualizationNotInstalled):
-            result.to_plot_spec()
+            result.__plot_spec__()
         return
 
     # Otherwise it MUST be a valid PlotSpec (not None, not some other object).
-    assert isinstance(spec, PlotSpec), f"{cls.__name__}.to_plot_spec() returned {type(spec)}"
+    assert isinstance(spec, PlotSpec), f"{cls.__name__}.__plot_spec__() returned {type(spec)}"
     assert isinstance(spec.kind, PlotKind)
     for layer in spec.layers:
         assert isinstance(layer.kind, PlotKind), f"{cls.__name__} layer kind invalid"
@@ -424,17 +426,17 @@ def test_invalid_spec_is_rejected(fake_renderer) -> None:
     """Negative control: a result returning a non-spec / None must NOT pass the gate.
 
     Proves the gate is not a tautology — the same assertions used above reject a
-    ``to_plot_spec`` that forgets to return a real :class:`PlotSpec`.
+    ``__plot_spec__`` that forgets to return a real :class:`PlotSpec`.
     """
 
     class _Broken(AnalysisResult):
         def __init__(self) -> None:
             object.__setattr__(self, "meta", {})
 
-        def to_plot_spec(self, kind: str | None = None):  # noqa: D102
+        def __plot_spec__(self, kind: str | None = None):  # noqa: D102
             return None  # the bug the gate must catch
 
-    spec = _Broken().to_plot_spec()
+    spec = _Broken().__plot_spec__()
     with pytest.raises(AssertionError):
         assert isinstance(spec, PlotSpec)
 
@@ -444,7 +446,7 @@ def test_base_fallback_raises_when_nothing_to_plot() -> None:
 
     This is the contract for "valid spec OR a documented error": a result that
     carries only non-numeric fields cannot be drawn generically, so the base
-    ``to_plot_spec`` raises :class:`VisualizationNotInstalled` (caught as
+    ``__plot_spec__`` raises :class:`VisualizationNotInstalled` (caught as
     ``ImportError``) rather than returning ``None``.
     """
 
@@ -457,7 +459,7 @@ def test_base_fallback_raises_when_nothing_to_plot() -> None:
         label: str = "x"
 
     with pytest.raises(VisualizationNotInstalled):
-        _LabelOnly().to_plot_spec()
+        _LabelOnly().__plot_spec__()
     # VisualizationNotInstalled subclasses ImportError (the optional-dep idiom).
     assert issubclass(VisualizationNotInstalled, ImportError)
 

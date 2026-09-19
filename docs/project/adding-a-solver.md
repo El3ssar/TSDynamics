@@ -16,7 +16,9 @@ page is the end-to-end recipe at a level a contributor can follow.
     a solver touches the Rust engine, so you need a
     [Rust toolchain](https://rustup.rs/) and the editable dev install
     (`uv sync --group dev`). The `reference` backend is a SciPy oracle that does
-    **not** run our kernels; test a new kernel with `backend="interp"`.
+    **not** run our kernels; test a new kernel on the engine backends —
+    `backend="jit"` (the default) and `backend="interp"`, which must agree
+    bit-for-bit.
 
 ## The mental model
 
@@ -140,7 +142,9 @@ in `src/tsdynamics/solvers/` (`explicit.py`, `implicit.py`, or `stochastic.py`).
 The capability flags **must match the Rust `Caps`**:
 
 ```python
-from tsdynamics.solvers import SolverSpec, SolverCaps, register
+# skip-doctest — a template: registering a placeholder kernel would put
+# "your_kernel" in the solver table for the rest of the session
+from tsdynamics._solvers import SolverSpec, SolverCaps, register
 
 register(
     SolverSpec(
@@ -160,7 +164,7 @@ Optional friendly aliases go in `select.py::_ALIASES` (keys are normalised —
 lowercased, whitespace / `-` → `_` — so `"RK45"`, `"dopri5"`, and `"rk-45"` all
 resolve). No change to `run.py` is needed: `run.integrate` flows any registered
 method through `solvers.resolve`, so once the spec is registered,
-`integrate(method="your_kernel")` just works and the tolerances thread through
+`run(solver="your_kernel")` just works and the tolerances thread through
 `build_solver`.
 
 ## Tests to update

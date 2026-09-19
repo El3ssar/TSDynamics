@@ -12,9 +12,9 @@ use tsdyn_ir::{Evaluator, Tape};
 use tsdyn_solvers::SolverState;
 
 use super::marshal::{
-    build_evaluator, build_evaluator_send, build_solver, diverge_msg, event_direction,
-    first_step_from_grid, guard_continuous, require_jacobian_if_needed, resolve_solver,
-    EngineError,
+    build_evaluator, build_evaluator_send, build_solver, event_direction, first_step_from_grid,
+    guard_continuous, integrate_failure, require_jacobian_if_needed, resolve_solver,
+    validate_max_step, EngineError, Tolerances,
 };
 
 /// A durable, resumable single-trajectory ODE stepper — the Python-free core of
@@ -56,9 +56,9 @@ pub struct OdeStepper {
     ev: Box<dyn Evaluator + Send>,
     /// The resolved registry solver name (from [`resolve_solver`]).
     method: &'static str,
-    /// User-requested tolerances for the adaptive kernels.
-    rtol: f64,
-    atol: f64,
+    /// User-requested tolerances for the adaptive kernels, validated once at
+    /// construction ([`Tolerances`]) so every `advance` builds a sane controller.
+    tol: Tolerances,
     /// The live integration point, advanced in place by each accepted segment.
     u: Vec<f64>,
     t: f64,
@@ -94,23 +94,23 @@ impl OdeStepper {
             )));
         }
         if let Some(&bad) = ic.iter().take(dim).find(|x| !x.is_finite()) {
-            return Err(EngineError::BadShape(format!(
+            return Err(EngineError::InvalidParameter(format!(
                 "initial state must be finite, found {bad}"
             )));
         }
         if !t0.is_finite() {
-            return Err(EngineError::BadShape(format!(
+            return Err(EngineError::InvalidParameter(format!(
                 "initial time must be finite, got {t0}"
             )));
         }
+        let tol = Tolerances::new(rtol, atol)?;
         let name = resolve_solver(method)?;
         require_jacobian_if_needed(&tape, name)?;
         let ev = build_evaluator_send(tape, jit)?;
         Ok(OdeStepper {
             ev,
             method: name,
-            rtol,
-            atol,
+            tol,
             u: ic[..dim].to_vec(),
             t: t0,
         })
@@ -145,12 +145,12 @@ impl OdeStepper {
             )));
         }
         if let Some(&bad) = u.iter().take(dim).find(|x| !x.is_finite()) {
-            return Err(EngineError::BadShape(format!(
+            return Err(EngineError::InvalidParameter(format!(
                 "state must be finite, found {bad}"
             )));
         }
         if !t.is_finite() {
-            return Err(EngineError::BadShape(format!(
+            return Err(EngineError::InvalidParameter(format!(
                 "time must be finite, got {t}"
             )));
         }
@@ -184,23 +184,27 @@ impl OdeStepper {
     /// The live `(u, t)` is then advanced. `p` is read live each call so a
     /// mid-march parameter change still takes effect. Divergence raises
     /// ([`EngineError::Diverged`]).
-    pub fn advance(&mut self, dt: f64, p: &[f64]) -> Result<Vec<f64>, EngineError> {
+    pub fn advance(&mut self, dt: f64, max_step: f64, p: &[f64]) -> Result<Vec<f64>, EngineError> {
         self.check_params(p)?;
         if !(dt.is_finite() && dt > 0.0) {
-            return Err(EngineError::BadShape(format!(
+            return Err(EngineError::InvalidParameter(format!(
                 "advance step dt must be finite and positive, got {dt}"
             )));
         }
+        validate_max_step(max_step)?;
         let tf = self.t + dt;
         // Mirror the batch path exactly: the two-node grid is `[t, tf]` and the
         // first step is `first_step_from_grid([t, tf]) = tf - t` (NOT the raw `dt` —
         // the subtraction recovers the same float the grid path sees).
         let t_eval = [self.t, tf];
         let dim = self.ev.dim();
-        let mut solver = build_solver(self.method, self.rtol, self.atol);
-        let cfg = IntegrateConfig::new(first_step_from_grid(&t_eval));
+        let mut solver = build_solver(self.method, self.tol);
+        // A two-node grid has no interior point, so dense output cannot apply
+        // here even for a dense-capable kernel: `advance` stays byte-identical
+        // to the per-`dt` `integrate_dense` it is contracted to reproduce.
+        let cfg = IntegrateConfig::new(first_step_from_grid(&t_eval)).with_max_step(max_step);
         let out = integrate_grid(&*self.ev, &mut *solver, &self.u[..dim], p, &t_eval, &cfg)
-            .map_err(|e| EngineError::Diverged(diverge_msg(&e)))?;
+            .map_err(integrate_failure)?;
         // `out` is the flat `(2, dim)` buffer; the last row is the advanced state.
         let last = &out[dim..2 * dim];
         self.u[..dim].copy_from_slice(last);
@@ -232,6 +236,7 @@ impl OdeStepper {
         g: Tape,
         max_span: f64,
         first_step: f64,
+        max_step: f64,
         direction: i32,
         p: &[f64],
     ) -> Result<(bool, f64, Vec<f64>, i32), EngineError> {
@@ -257,19 +262,20 @@ impl OdeStepper {
             )));
         }
         if !(max_span.is_finite() && max_span > 0.0) {
-            return Err(EngineError::BadShape(format!(
+            return Err(EngineError::InvalidParameter(format!(
                 "max_span must be finite and positive, got {max_span}"
             )));
         }
         if !(first_step.is_finite() && first_step > 0.0) {
-            return Err(EngineError::BadShape(format!(
+            return Err(EngineError::InvalidParameter(format!(
                 "first step (the detection dt) must be finite and positive, got {first_step}"
             )));
         }
+        validate_max_step(max_step)?;
         let dir = event_direction(direction)?;
         let g_ev = build_evaluator(g, false)?;
-        let mut solver = build_solver(self.method, self.rtol, self.atol);
-        let cfg = IntegrateConfig::new(first_step);
+        let mut solver = build_solver(self.method, self.tol);
+        let cfg = IntegrateConfig::new(first_step).with_max_step(max_step);
 
         // Build a resumable SolverState seeded from the live point, march it, then
         // copy the advanced live point back. The adaptive step is carried *within*
@@ -289,7 +295,7 @@ impl OdeStepper {
             dir,
             &cfg,
         )
-        .map_err(|e| EngineError::Diverged(diverge_msg(&e)))?;
+        .map_err(integrate_failure)?;
 
         // Commit the advanced live point (one step past the crossing, or `t1`).
         self.u[..dim].copy_from_slice(&st.u[..dim]);

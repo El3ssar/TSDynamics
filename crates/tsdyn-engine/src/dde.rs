@@ -65,7 +65,7 @@ use crate::integrate::{IntegrateConfig, IntegrateError};
 ///
 /// Slot `k` occupies extended-input index `dim + k` and is filled each evaluation
 /// with [`component`](DelaySlot::component) of the history at time `t − `[`delay`](DelaySlot::delay).
-/// Mirrors `tsdynamics.engine.compile.DelaySlot` (Python side of the contract).
+/// Mirrors `tsdynamics._engine.compile.DelaySlot` (Python side of the contract).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DelaySlot {
     /// Which true-state component (`0 ≤ component < dim`) is delayed.
@@ -344,7 +344,9 @@ pub fn integrate_dde_grid(
 ) -> Result<Vec<f64>, IntegrateError> {
     let n_slots = slots.len();
     let n_state = dim + n_slots;
-    let mut out = vec![0.0; t_eval.len() * dim];
+    // Checked: `t_eval.len() * dim` is caller-sized (see `crate::alloc`).
+    let mut out =
+        crate::alloc::try_zeroed(t_eval.len(), dim).map_err(IntegrateError::AllocFailed)?;
     if t_eval.is_empty() {
         return Ok(out);
     }
@@ -391,6 +393,13 @@ pub fn integrate_dde_grid(
     };
     let mut h = cfg.first_step.min(tau_min);
 
+    // ONE poller for the whole grid, not one per segment: a dense grid calls
+    // `advance_to` once per output point, often for a single step, so a
+    // per-segment poller would reset before it ever reached a poll stride.
+    let mut poll = crate::interrupt::Poller::new();
+    // Relative to the whole grid's span, exactly as the ODE integrator does —
+    // and ONE guard for the whole grid, for the same reason the poller is one.
+    let mut stall = crate::integrate::StallGuard::new(cfg, t_eval[t_eval.len() - 1] - t_eval[0]);
     for (k, &target) in t_eval.iter().enumerate() {
         if k == 0 {
             continue;
@@ -408,7 +417,9 @@ pub fn integrate_dde_grid(
             target,
             tau_min,
             cfg,
+            &mut stall,
             &mut dy,
+            &mut poll,
         )?;
         out[k * dim..(k + 1) * dim].copy_from_slice(&st.u);
     }
@@ -432,16 +443,27 @@ fn advance_to(
     t_end: f64,
     tau_min: f64,
     cfg: &IntegrateConfig,
+    stall: &mut crate::integrate::StallGuard,
     dy: &mut [f64],
+    poll: &mut crate::interrupt::Poller,
 ) -> Result<(), IntegrateError> {
     assert!(
         h.is_finite() && *h > 0.0,
         "first step must be finite and positive, got {h}"
     );
+    let stall_floor = stall.floor();
     let mut steps = 0usize;
     while st.t < t_end {
+        // The natural step, before the `tau_min` cap — a delay-capped step is a
+        // forced-short one, not a stalled one, exactly as a landing step is not.
+        if *h < stall_floor {
+            stall.trip(*h, st.t, &st.u)?;
+        }
         if steps >= cfg.max_steps {
             return Err(IntegrateError::StepLimit { t: st.t, steps });
+        }
+        if poll.tick() {
+            return Err(IntegrateError::Interrupted { t: st.t });
         }
         let remaining = t_end - st.t;
         // The natural step, never larger than the smallest delay.

@@ -1,23 +1,23 @@
 ---
-description: The 136 built-in continuous flows — ODE systems run on the native Rust engine, organized into eight categories.
+description: The 142 built-in continuous flows — ODE systems run on the native Rust engine, organized into eight categories.
 ---
 
 <span class="ts-kicker">Systems · Continuous</span>
 
 # Continuous systems
 
-The largest family: **136 ODE systems**, all subclasses of
+The largest family: **142 ODE systems**, all subclasses of
 [`ContinuousSystem`](../../reference/base.md). Each declares its parameters
 and dimension at class level and defines the vector field in one symbolic
 `_equations` method; it is lowered to the native Rust engine in-process and
-runs with no warmup (see
+JIT-compiled on first use, with no build step (see
 [the compilation pipeline](../../theory/compilation.md)).
 
 ```python
 import tsdynamics as ts
 
-ross = ts.Rossler()                              # a=0.2, b=0.2, c=5.7
-traj = ross.integrate(final_time=200.0, dt=0.02)
+ross = ts.systems.Rossler()                              # a=0.2, b=0.2, c=5.7
+traj = ross.run(final_time=200.0, dt=0.02)
 traj["x"]                                        # named components
 ```
 
@@ -40,17 +40,28 @@ defaults, and a phase portrait.
 ## Integrating
 
 ```python
-sys.integrate(
+# skip-doctest — the signature, not a runnable call
+sys.run(
     final_time=100.0,    # end of the window
     dt=0.02,             # OUTPUT grid only — the stepper is adaptive
     t0=0.0,              # start time (warm restarts allowed)
     ic=None,             # initial state; falls back to self.ic, then random
-    method="rk45",       # "rk45" (default), "dop853", "tsit5", "rk4", "bdf", ...
-    rtol=1e-6, atol=1e-9,
+    solver="rk45",       # "rk45" (default), "dop853", "tsit5", "rk4", "bdf", ...
+    rtol=1e-9, atol=1e-12,   # the accuracy knob (tightened in v6 — see below)
 ) -> Trajectory
 ```
 
-`lyapunov_spectrum(final_time=200.0, dt=0.1, burn_in=50.0, n_exp=None, ...)`
+!!! info "Changed in v6: `rtol` is now the accuracy knob"
+    Before v6 the adaptive stepper was forced to land on every output sample, so
+    a fine `dt` silently bought accuracy `rtol` never asked for. Now `dt` is
+    purely an output grid and `rtol` alone sets accuracy — so the default
+    tightened from `1e-6`/`1e-9` to `1e-9`/`1e-12` to carry the accuracy the old
+    forced landing supplied for free. Measured over a fifteen-system sample at
+    the defaults, that is a **median 1459×** improvement in the delivered error
+    for a **median 1.74×** wall-clock cost. Pass `rtol=1e-6, atol=1e-9` for the
+    pre-v6 trade.
+
+`ts.analysis.lyapunov_spectrum(system, final_time=200.0, dt=0.1, transient=50.0, k=None, ...)`
 computes the spectrum from the variational equations — see
 [Lyapunov spectra](../../analysis/lyapunov.md).
 
@@ -62,7 +73,7 @@ parameter that sets the *number of equations*. Such parameters are
 adjustable at runtime:
 
 ```python
-l96 = ts.Lorenz96(N=10, f=8.0)     # N is structural; f is a control param
+l96 = ts.systems.Lorenz96(N=10, f=8.0)     # N is structural; f is a control param
 ```
 
 Changing `f` is free; changing `N` re-lowers the equations for the new size.
@@ -70,4 +81,4 @@ Changing `f` is free; changing `N` re-lowers the equations for the new size.
 ## See also
 
 - [The mental model](../../start/concepts.md) — the `_equations` contract in full
-- [Integrate & iterate](../../analysis/integrate.md) — methods, tolerances, the `Trajectory` object
+- [Integrate & iterate](../../analysis/integration-and-methods.md) — methods, tolerances, the `Trajectory` object

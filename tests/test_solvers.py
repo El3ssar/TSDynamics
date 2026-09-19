@@ -1,8 +1,8 @@
 """Tests for the C-SOLV selection layer — specs, resolution, auto-stiffness.
 
-Covers the C-SOLV acceptance (ROADMAP §6 / §13b):
+Covers the C-SOLV acceptance:
 
-* the in-tree :class:`~tsdynamics.solvers.SolverSpec`s are registered and mirror
+* the in-tree :class:`~tsdynamics._solvers.SolverSpec`s are registered and mirror
   the Rust ``register_solver!`` / ``register_sde_kernel!`` kernels (a parity test
   reads the crate source so the mirror cannot silently drift);
 * ``method=`` **resolves by name/caps** (aliases, case, family filtering) and an
@@ -24,8 +24,8 @@ from pathlib import Path
 import pytest
 
 import tsdynamics as ts
-from tsdynamics import solvers
-from tsdynamics.solvers import SolverCaps, SolverSpec
+from tsdynamics import _solvers as solvers
+from tsdynamics._solvers import SolverCaps, SolverSpec
 
 # The kernels C-SOLV mirrors, with the caps facts the resolver keys on.
 # (name, kind, adaptive, needs_jacobian, family)
@@ -243,7 +243,7 @@ def test_resolve_returns_kernel_and_spec():
 
 
 def test_unknown_method_raises_listing_available():
-    with pytest.raises(ValueError, match=r"unknown solver method 'banana'"):
+    with pytest.raises(ValueError, match=r"unknown solver 'banana'"):
         solvers.resolve("banana")
     # the message lists what is available
     try:
@@ -359,20 +359,20 @@ def test_is_stiff_synthetic_linear():
 
 def test_is_stiff_lorenz_is_false():
     # Lorenz's Jacobian eigenvalues are O(10) — nowhere near a stiff ratio.
-    assert solvers.is_stiff(ts.Lorenz(), ic=[1.0, 1.0, 1.0]) is False
+    assert solvers.is_stiff(ts.systems.Lorenz(), ic=[1.0, 1.0, 1.0]) is False
 
 
 def test_is_stiff_oregonator_is_true():
     # The Oregonator (Field–Noyes BZ model) is a classic stiff system; at a
     # physical concentration point its spectrum spans ~-1e6…-2 (ratio ~5e5).
     # A fixed ic keeps the test off the random default ic.
-    assert solvers.is_stiff(ts.Oregonator(), ic=[1.0, 1.0, 1.0]) is True
+    assert solvers.is_stiff(ts.systems.Oregonator(), ic=[1.0, 1.0, 1.0]) is True
 
 
 def test_is_stiff_is_conservative_on_bad_probe():
     # A non-ODE system has no ∂f/∂u to spectrum-analyse → never reported stiff
     # (selection must not raise on a probe it cannot form).
-    assert solvers.is_stiff(ts.Henon()) is False
+    assert solvers.is_stiff(ts.systems.Henon()) is False
 
 
 def test_recommend_picks_implicit_on_stiff():
@@ -383,7 +383,7 @@ def test_recommend_picks_implicit_on_stiff():
 
 
 def test_recommend_picks_explicit_on_nonstiff():
-    res = solvers.recommend(ts.Lorenz(), ic=[1.0, 1.0, 1.0])
+    res = solvers.recommend(ts.systems.Lorenz(), ic=[1.0, 1.0, 1.0])
     assert res.name == "rk45"
     assert res.build_kwargs == {}
 
@@ -394,13 +394,16 @@ def test_recommend_dde_never_raises():
     # implicit kernel that resolve(..., family="dde") rejects; it stayed latent
     # only because the DDE Jacobian probe in is_stiff could never return True.
     # Removing the "dde" entry makes the explicit fallback the contract.
-    res = solvers.recommend(ts.MackeyGlass(), family="dde")
+    res = solvers.recommend(ts.systems.MackeyGlass(), family="dde")
     assert res.name == solvers.default_method("dde")
     assert res.spec.caps.kind == "explicit"
     assert res.build_kwargs == {}
     # And it holds for any ODE-spectrum a hypothetical DDE could present: even
     # if a probe *were* stiff, the dde branch is skipped (no STIFF_METHOD entry).
-    assert solvers.recommend(ts.MackeyGlass(), family="dde", ratio_threshold=1.0).name == "rk45"
+    assert (
+        solvers.recommend(ts.systems.MackeyGlass(), family="dde", ratio_threshold=1.0).name
+        == "rk45"
+    )
 
 
 # ── plugin solvers are selectable through the same resolver ──────────────────────

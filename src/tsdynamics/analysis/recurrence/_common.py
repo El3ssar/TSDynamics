@@ -18,10 +18,12 @@ from typing import Any, cast
 
 import numpy as np
 
+from .._common import reject_system
+
 __all__: list[str] = []
 
 
-def _as_points(data: Any) -> np.ndarray:
+def _as_points(data: Any, *, analysis: str | None = None) -> np.ndarray:
     """Coerce a trajectory / array / series to a ``(N, dim)`` float array.
 
     Accepts anything with a ``.y`` attribute (a
@@ -35,6 +37,9 @@ def _as_points(data: Any) -> np.ndarray:
     ----------
     data : Trajectory or array-like
         The point set.
+    analysis : str, optional
+        Name of the public function, used only to open the
+        :func:`~tsdynamics.analysis._common.reject_system` message.
 
     Returns
     -------
@@ -43,10 +48,14 @@ def _as_points(data: Any) -> np.ndarray:
 
     Raises
     ------
+    InvalidInputError
+        If ``data`` is a ``System`` rather than a measured series.
     ValueError
-        If the data is not 1-D or 2-D, has fewer than two points, or contains
-        non-finite values.
+        If the data is not 1-D or 2-D, has fewer than two points, contains
+        non-finite values, or is **constant** — a flat series recurs everywhere,
+        so its recurrence plot is all-ones and DET / LAM / ENTR are vacuous.
     """
+    reject_system(data, analysis=analysis)
     y = getattr(data, "y", None)
     arr = np.asarray(y if y is not None else data, dtype=float)
     if arr.ndim == 1:
@@ -59,6 +68,15 @@ def _as_points(data: Any) -> np.ndarray:
         raise ValueError(f"need at least two points, got {arr.shape[0]}.")
     if not np.all(np.isfinite(arr)):
         raise ValueError("point set contains non-finite values (nan/inf).")
+    # Every sibling estimator refuses a constant series by name; these three were
+    # the only data-first doors that did not, so a flat line came back
+    # "DET = 1.000 · LAM = 1.000 · L_max = 1999   deterministic" — every pair of
+    # points recurs, so the plot is all-ones and its line statistics are vacuous.
+    if float(np.ptp(arr)) == 0.0:
+        raise ValueError(
+            "series is constant; every pair of points recurs, so the recurrence plot is "
+            "all-ones and its DET / LAM / ENTR are undefined."
+        )
     return np.ascontiguousarray(arr)
 
 
@@ -121,7 +139,55 @@ def _diagonal_run_lengths(mat: Any) -> np.ndarray:
     return _grouped_consecutive_runs(k[order], row[order])
 
 
-def _vertical_run_lengths(mat: Any) -> np.ndarray:
+def _longest_run_on_diagonal(mat: Any, k: int) -> int:
+    r"""Longest consecutive run on the single diagonal :math:`j - i = k`.
+
+    Used to attribute ``L_max``: a line on the diagonal *immediately* adjacent to
+    the excluded band is **tangential motion** (consecutive samples of a densely
+    sampled flow lying within :math:`\varepsilon` of each other), whereas a line
+    on :math:`k \approx` the period is genuine recurrence.  ``L_max`` alone
+    cannot tell them apart — a clean periodic signal legitimately reaches
+    ``L_max = N - p`` — so the saturation guard asks *which diagonal* carries it.
+    Returns ``0`` when diagonal ``k`` holds no recurrence point.
+    """
+    coo = mat.tocoo()
+    row = np.asarray(coo.row)
+    rows = np.sort(row[(np.asarray(coo.col) - row) == int(k)])
+    if rows.size == 0:
+        return 0
+    breaks = np.flatnonzero(np.diff(rows) != 1)
+    starts = np.concatenate([[0], breaks + 1])
+    ends = np.concatenate([breaks, [rows.size - 1]])
+    return int((ends - starts + 1).max())
+
+
+def _with_line_of_identity(mat: Any) -> Any:
+    r"""``mat`` with the line of identity :math:`R_{ii} = 1` restored.
+
+    A state is trivially within :math:`\varepsilon` of itself, so
+    :math:`R_{ii} = 1` holds *by definition* — it is not an estimate.  The
+    matrices this package builds drop it (it carries no information for the
+    diagonal-line statistics and would be one infinite diagonal line), but the
+    **vertical**-line statistics are defined on the matrix that has it (Marwan et
+    al. 2007), so it must be put back before they are read.  Any diagonal entry
+    already present is idempotently re-set, so passing a matrix that carries the
+    line of identity is a no-op.
+
+    Only ever called for :math:`w = 0` — see :func:`_vertical_run_lengths` for
+    why restoring it inside a nonzero Theiler band is not an option.
+    """
+    from scipy import sparse
+
+    coo = mat.tocoo()
+    n = int(coo.shape[0])
+    diag = np.arange(n, dtype=np.intp)
+    rows = np.concatenate([np.asarray(coo.row, dtype=np.intp), diag])
+    cols = np.concatenate([np.asarray(coo.col, dtype=np.intp), diag])
+    ones = np.ones(rows.size, dtype=bool)
+    return sparse.csc_matrix((ones, (rows, cols)), shape=(n, n))
+
+
+def _vertical_run_lengths(mat: Any, *, theiler: int) -> np.ndarray:
     r"""Lengths of every vertical recurrence line (consecutive rows per column).
 
     A whole-matrix, loop-free replacement for the per-column Python loop.  The
@@ -134,8 +200,30 @@ def _vertical_run_lengths(mat: Any) -> np.ndarray:
     reproduces the per-column runs without materialising any column densely or
     iterating in Python.  Returns an empty array when there are no vertical
     lines.
+
+    **The line of identity is restored iff** ``theiler == 0``.  This is the one
+    place the convention is decided, so ``LAM``, ``TT`` and ``V_max`` cannot
+    disagree about which matrix they were read from:
+
+    * ``theiler == 0`` — the matrix builder excluded the band
+      :math:`|i-j| \le 0`, i.e. *exactly* the line of identity.  Restoring it
+      reproduces the textbook recurrence matrix, on which Marwan et al. (2007)
+      §3.5 define the vertical measures: a laminar sojourn is one vertical line
+      **through** the diagonal, and without :math:`R_{ii}` every such line is
+      bisected by the missing point (measured on 60 identical states followed by
+      140 separated ones: ``TT`` 30.5 and ``V_max`` 59 against the closed-form 60
+      and 60).
+    * ``theiler > 0`` — the caller excluded the whole band :math:`|i-j| \le w`,
+      which *contains* the line of identity.  Putting :math:`R_{ii}` back would
+      fabricate ``N`` isolated recurrence points inside the band that was
+      explicitly removed, giving a matrix that is neither the Marwan one (that
+      has the entire band) nor the Theiler-filtered one — the measures would
+      then describe no recurrence matrix at all.  So the vertical runs are read
+      off the filtered matrix as it stands.  ``rqa`` documents that the vertical
+      measures at ``theiler > 0`` are not comparable to published values; the
+      Theiler window is a *diagonal*-line correction (Theiler 1986).
     """
-    csc = mat.tocsc()
+    csc = (_with_line_of_identity(mat) if int(theiler) == 0 else mat).tocsc()
     csc.sort_indices()  # ascending row indices within each column block
     indices = np.asarray(csc.indices)
     if indices.size == 0:

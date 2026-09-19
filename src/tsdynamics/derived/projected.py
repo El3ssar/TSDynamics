@@ -7,14 +7,16 @@ from typing import Any, cast
 
 import numpy as np
 
-from tsdynamics.errors import InvalidInputError
+from tsdynamics.errors import InvalidInputError, InvalidParameterError, remedy
 from tsdynamics.families import Trajectory
+from tsdynamics.families._hidden import hide
 
 from ._base import DerivedSystem
 
 __all__ = ["ProjectedSystem"]
 
 
+@hide("complete")
 class ProjectedSystem(DerivedSystem):
     """
     View a system through a subset of its components.
@@ -23,6 +25,13 @@ class ProjectedSystem(DerivedSystem):
     *outputs* are projected.  ``set_state`` needs the inverse direction and
     therefore requires a ``complete`` callable mapping a projected state back
     to a full state.
+
+    ``complete`` is withheld from ``dir()`` (``CONTRACT.md`` §11, T2): it is a
+    constructor argument echoed back, not a measurement — you already hold the
+    callable you passed, and reading it off the view answers nothing the code
+    that built the view does not already know.  It remains bound, and
+    :attr:`components` (which the constructor *resolves*, from names to indices)
+    stays listed for exactly the opposite reason.
 
     Parameters
     ----------
@@ -49,22 +58,98 @@ class ProjectedSystem(DerivedSystem):
         complete: Callable[[np.ndarray], Any] | None = None,
     ) -> None:
         super().__init__(system)
-        names = getattr(type(system), "variables", None)
+        self.components = components
+        self.complete = complete
+
+    @staticmethod
+    def _resolve_components(system: Any, components: Any) -> tuple[int, ...]:
+        """Resolve a name/index selection against *system* to a tuple of indices.
+
+        The one reading, shared by the constructor and the :attr:`components`
+        setter, so ``ProjectedSystem(sys, ["x", "z"])`` and
+        ``proj.components = ["x", "z"]`` accept exactly the same grammar and
+        refuse exactly the same mistakes.
+        """
+        if isinstance(components, str | int | np.integer):
+            components = (components,)
+        # The INSTANCE names, not ``type(system).variables``: every system names
+        # every component since v6, but a generated tuple (Lorenz96's ``y0..y4``,
+        # a field system's blocks) lives only on the instance — so reading the
+        # class refused the names of the 5 built-ins that generate theirs, and of
+        # every user system that does not declare them on the class.
+        names = tuple(getattr(system, "variables", ()) or ())
+        width = int(system.dim)
+        try:
+            selection = list(components)
+        except TypeError:
+            raise InvalidInputError(
+                f"components must be a component name, an index, or a sequence of "
+                f"them, got {type(components).__name__}."
+                + remedy(
+                    "ts.derived.ProjectedSystem(system, ['x', 'z'])",
+                    "ts.derived.ProjectedSystem(system, [0, 2])",
+                )
+            ) from None
         idx = []
-        for c in components:
+        for c in selection:
             if isinstance(c, str):
-                if names is None:
-                    raise ValueError(
-                        f"{type(system).__name__} declares no `variables`; "
-                        f"use integer component indices."
+                if c not in names:
+                    raise InvalidParameterError(
+                        f"{type(system).__name__} has no component {c!r}; it names "
+                        f"{names if names else 'nothing'}."
+                        + remedy(f"ts.derived.ProjectedSystem(system, {list(range(2))})")
                     )
                 idx.append(names.index(c))
-            else:
-                idx.append(int(c))
+                continue
+            try:
+                i = int(c)
+            except (TypeError, ValueError):
+                raise InvalidInputError(
+                    f"components entry {c!r} is neither a component name nor an index."
+                    + remedy(f"ts.derived.ProjectedSystem(system, {list(range(2))})")
+                ) from None
+            # An out-of-range index used to be stored verbatim and then surface
+            # from NumPy on the first ``step()`` — ``index 99 is out of bounds``,
+            # about the state array, not about the projection the caller wrote
+            # (``CONTRACT.md`` §11.6 defect 1).
+            if not -width <= i < width:
+                raise InvalidParameterError(
+                    f"{type(system).__name__} has {width} component"
+                    f"{'' if width == 1 else 's'}, so component index {i} does not "
+                    f"exist; valid indices are 0..{width - 1}"
+                    + (f" (named {names})." if names else ".")
+                    + remedy(f"ts.derived.ProjectedSystem(system, {list(range(min(2, width)))})")
+                )
+            idx.append(i % width)
         if not idx:
-            raise ValueError("components must be non-empty")
-        self.components = tuple(idx)
-        self.complete = complete
+            raise InvalidParameterError(
+                "components must name at least one component of the system."
+                + remedy(
+                    "ts.derived.ProjectedSystem(system, ['x', 'z'])",
+                    "ts.derived.ProjectedSystem(system, [0, 2])",
+                )
+            )
+        return tuple(idx)
+
+    @property
+    def components(self) -> tuple[int, ...]:
+        """Which components of the inner system this view hands you, in order.
+
+        This **is** the projection, so it is writable — re-aiming a view is a
+        legitimate customization, and it accepts the same names-or-indices
+        grammar the constructor does (``proj.components = ["x", "z"]``).  The
+        write is validated for the same reason the constructor's is: an
+        out-of-range index used to be stored verbatim and then surface on the
+        next ``step()`` as NumPy's ``index 99 is out of bounds``, an error about
+        the state array rather than about the selection that was written.
+
+        Note that :attr:`dim` and :attr:`variables` both follow it.
+        """
+        return self._components
+
+    @components.setter
+    def components(self, value: Any) -> None:
+        self._components = self._resolve_components(self.system, value)
 
     def _rebuild(self, inner: Any) -> ProjectedSystem:
         return ProjectedSystem(inner, self.components, complete=self.complete)
@@ -75,16 +160,13 @@ class ProjectedSystem(DerivedSystem):
         return len(self.components)
 
     @property
-    def variables(self) -> tuple[str, ...] | None:
+    def variables(self) -> tuple[str, ...]:
         """Component names of the *projected* view (the inner names, subset).
 
-        Overrides :class:`DerivedSystem`'s pass-through (which would return the
-        inner system's *full* names and mislabel the projected columns).  Returns
-        ``None`` when the inner system declares no ``variables``.
+        Overrides :class:`DerivedSystem`'s pass-through, which would return the
+        inner system's *full* names and mislabel the projected columns.
         """
-        inner = getattr(type(self.system), "variables", None)
-        if inner is None:
-            return None
+        inner = tuple(self.system.variables)
         return tuple(inner[i] for i in self.components)
 
     def step(self, n_or_dt: float | int | None = None) -> np.ndarray:
@@ -121,6 +203,10 @@ class ProjectedSystem(DerivedSystem):
                 f"ProjectedSystem.{verb} with a projected-dimensional state "
                 f"(size {u_arr.size}) needs a `complete=` callable to reconstruct the "
                 f"full {self.system.dim}-D state."
+                + remedy(
+                    "ts.derived.ProjectedSystem(system, [0, 2], "
+                    "complete=lambda v: [v[0], 0.0, v[1]])"
+                )
             )
         raise InvalidInputError(
             f"ProjectedSystem.{verb}: state of size {u_arr.size} matches neither the "
@@ -138,10 +224,32 @@ class ProjectedSystem(DerivedSystem):
             u = self._to_full_state(np.asarray(u, dtype=float), verb="reinit")
         self.system.reinit(u, **kwargs)
 
-    def trajectory(self, *args: Any, **kwargs: Any) -> Trajectory:
-        """Full-system trajectory with projected columns."""
-        traj = self.system.trajectory(*args, **kwargs)
-        meta = {**traj.meta, "projected": self.components}
+    def __repr__(self) -> str:
+        """Name the inner system AND which components survive the projection."""
+        names = tuple(self.system.variables)
+        shown = ", ".join(names[i] if 0 <= i < len(names) else str(i) for i in self.components)
+        return f"ProjectedSystem({type(self.system).__name__}, {shown})"
+
+    def run(self, *args: Any, **run_kw: Any) -> Trajectory:
+        """Run the **full** system and keep only the projected columns.
+
+        Takes the inner family's own ``run`` vocabulary verbatim — ``final_time``
+        / ``dt`` for a flow, ``steps`` for a map — so an unknown keyword is
+        refused by the family that owns the word, with its reason.
+
+        Returns
+        -------
+        Trajectory
+            ``(T, len(components))``, back-referencing *this* wrapper so
+            ``traj["x"]`` names the surviving columns.
+        """
+        traj = self.system.run(*args, **run_kw)
+        # Overwrite the INNER system's recorded names: a run records the component
+        # names it was produced with, and ``Trajectory.variables`` reads
+        # ``meta["variables"]`` before the system — so carrying the full tuple
+        # through would leave a 1-column projection with a 2-name record, which
+        # resolves to the generated ``y0`` and mislabels every column.
+        meta = {**traj.meta, "projected": self.components, "variables": self.variables}
         # Back-reference ``self`` (not the inner system): the returned ``y`` holds
         # only the projected columns, and ``self.variables`` names exactly those —
         # so ``traj["x"]`` resolves to the right column and an unknown name raises

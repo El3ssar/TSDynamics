@@ -32,8 +32,8 @@ call — and the analysis toolkit is accurate wherever a literature value exists
 [**Bibliography &rarr;**](bibliography.md)
 
 The original literature, in two parts. The **methods** half cites the papers
-behind the analysis toolkit — the Lyapunov, dimension, entropy, recurrence,
-surrogate and basin routines each trace back to a specific source, never to
+behind the analysis toolkit — the Lyapunov, dimension, recurrence, embedding
+and basin routines each trace back to a specific source, never to
 another library. The **systems** half is the catalogue's provenance: every
 built-in system carries the paper that defined it (and, where one exists, its
 DOI), pulled straight from the [registry](../reference/registry.md) so the page
@@ -48,9 +48,8 @@ source:
 
 - [Top level](../reference/top-level.md) — everything importable straight from `tsdynamics`.
 - [Base classes](../reference/base.md) — `ContinuousSystem`, `DelaySystem`, `DiscreteMap`, `StochasticSystem`, `Trajectory`, and the `System` protocol.
-- [Derived systems](../reference/derived.md) — `PoincareMap`, `StroboscopicMap`, `TangentSystem`, `EnsembleSystem`, `ProjectedSystem`, `WrappedSystem`.
+- [Derived systems](../reference/derived.md) — `PoincareMap`, `StroboscopicMap`, `TangentSystem`, `ProjectedSystem`, `Ensemble`, `WrappedSystem`.
 - [Analysis](../reference/analysis.md) — the full quantifier toolkit.
-- [Transforms](../reference/transforms.md) — spectra, preprocessing, and feature extraction.
 - [Data &amp; state-space](../reference/data.md) — `Trajectory`, regions, samplers, set distances.
 - [Solvers](../reference/solvers.md) — the by-name method registry and auto-stiffness.
 - [Registry](../reference/registry.md) — programmatic discovery of the built-in catalogue.

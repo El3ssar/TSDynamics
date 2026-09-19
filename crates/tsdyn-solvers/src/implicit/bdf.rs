@@ -59,6 +59,7 @@
 //! Like the other implicit kernels it **refuses a Jacobian-less evaluator** rather
 //! than silently degrading to an unstable explicit step.
 
+use super::control::STEP_FLOOR_REL;
 use super::linalg::{build_shifted, lu_factor, lu_solve};
 use crate::caps::{Caps, ProblemKind, ProblemKinds};
 use crate::register_solver;
@@ -519,7 +520,7 @@ impl Solver for Bdf {
                         continue;
                     }
                     self.lu_valid = false;
-                    return self.reject(0.5 * h);
+                    return self.reject(0.5 * h, st.t);
                 }
                 self.lu_valid = true;
                 self.c_lu = c;
@@ -574,7 +575,7 @@ impl Solver for Bdf {
 
         let n_iter = match corrected {
             Some(iters) => iters,
-            None => return self.reject(0.5 * h),
+            None => return self.reject(0.5 * h, st.t),
         };
         if !self.y.iter().all(|x| x.is_finite()) {
             return StepOutcome::Failed;
@@ -598,14 +599,14 @@ impl Solver for Bdf {
         let error_norm = (err_acc / n as f64).sqrt();
 
         if !error_norm.is_finite() {
-            return self.reject(MIN_FACTOR * h);
+            return self.reject(MIN_FACTOR * h, st.t);
         }
         if error_norm > 1.0 {
             // Reject: suggest a smaller step. D is untouched (still the last
             // accepted state, scaled to h); the next attempt rescales from it.
             let factor = MIN_FACTOR.max(safety * error_norm.powf(-1.0 / (order as f64 + 1.0)));
             self.lu_valid = false;
-            return self.reject(factor * h);
+            return self.reject(factor * h, st.t);
         }
 
         // --- Accept ---
@@ -709,10 +710,21 @@ impl Bdf {
     }
 
     /// Build a rejection outcome from a suggested next step, downgrading a
-    /// collapsed (non-finite / non-positive) step to [`StepOutcome::Failed`] so the
-    /// run fails loudly rather than spinning.
-    fn reject(&self, h_next: f64) -> StepOutcome {
-        if h_next.is_finite() && h_next > 0.0 {
+    /// collapsed step to [`StepOutcome::Failed`] so the run fails loudly rather
+    /// than spinning.
+    ///
+    /// "Collapsed" is non-finite, non-positive, **or** below the shared relative
+    /// floor [`STEP_FLOOR_REL`]`· (1 + |t|)`. That last clause is the one this
+    /// kernel used to be missing, and its absence was visible from Python: on a
+    /// finite-time blow-up `bdf` had no way to stop shrinking, so it ground all
+    /// the way to the engine's 1e8-step cap — tens of seconds — where
+    /// `rosenbrock`, `trbdf2` and `sdirk2` (which all reject through
+    /// [`super::control`], and so all had the floor) reported the same
+    /// divergence in a fraction of a second. Using the *same* constant, rather
+    /// than a private one, is what keeps the kernels' failure timing
+    /// comparable.
+    fn reject(&self, h_next: f64, t: f64) -> StepOutcome {
+        if h_next.is_finite() && h_next > 0.0 && h_next >= STEP_FLOOR_REL * (1.0 + t.abs()) {
             StepOutcome::Rejected { h_next }
         } else {
             StepOutcome::Failed
@@ -761,6 +773,32 @@ mod tests {
         assert!(c.needs_jacobian);
         assert!(c.supports(ProblemKind::Ode));
         assert!(!c.supports(ProblemKind::Sde));
+    }
+
+    /// The relative step floor this kernel used to be missing.
+    ///
+    /// Without it a finite-time blow-up could shrink `h` indefinitely and only
+    /// ever return `Rejected`, so the engine ground to its 1e8-step cap — tens
+    /// of seconds — where every other implicit kernel reported the divergence
+    /// in a fraction of a second. A retry step under `STEP_FLOOR_REL·(1 + |t|)`
+    /// must now be `Failed`, and the floor must scale with `t`.
+    #[test]
+    fn a_collapsed_retry_step_fails_instead_of_rejecting_forever() {
+        let s = Bdf::new();
+        // Comfortably above the floor at t = 0: an ordinary rejection.
+        assert!(matches!(
+            s.reject(1e-9, 0.0),
+            StepOutcome::Rejected { h_next } if h_next == 1e-9
+        ));
+        // Below it: a divergence, reported loudly.
+        assert_eq!(s.reject(1e-15, 0.0), StepOutcome::Failed);
+        assert_eq!(s.reject(0.0, 0.0), StepOutcome::Failed);
+        assert_eq!(s.reject(f64::NAN, 0.0), StepOutcome::Failed);
+        // The floor is *relative*: the same step that passes at t = 0 fails at
+        // a large t, where it can no longer resolve the time scale.
+        let h = 2e-13;
+        assert!(matches!(s.reject(h, 0.0), StepOutcome::Rejected { .. }));
+        assert_eq!(s.reject(h, 1e6), StepOutcome::Failed);
     }
 
     #[test]

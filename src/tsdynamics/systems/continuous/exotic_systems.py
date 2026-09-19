@@ -26,6 +26,7 @@ class NuclearQuadrupole(ContinuousSystem):
 
     params = {"a": 1.0, "b": 0.55, "d": 0.4}
     dim = 4
+    variables = ("q1", "q2", "p1", "p2")
     reference = "Baran & Raduta (1998), Int. J. Mod. Phys. E"
     doi = "10.1142/s0218301398000282"
 
@@ -63,6 +64,7 @@ class HyperCai(ContinuousSystem):
 
     params = {"a": 27.5, "b": 3, "c": 19.3, "d": 2.9, "e": 3.3}
     dim = 4
+    variables = ("x", "y", "z", "w")
     reference = "Cai & Huang (2007), Int. J. Nonlinear Sci."
 
     @staticmethod
@@ -98,16 +100,17 @@ class HyperBao(ContinuousSystem):
 
     params = {"a": 36, "b": 3, "c": 20, "d": 0.1, "e": 21}
     dim = 4
+    variables = ("x", "y", "z", "w")
     reference = "Bao & Liu (2008), Chin. Phys. Lett. 25, 2396-2399"
     doi = "10.1088/0256-307x/25/7/018"
     known_lyapunov = {
         "n_positive": 2,
         "kwargs": {
-            "n_exp": 2,
+            "k": 2,
             "dt": 0.05,
-            "burn_in": 50.0,
+            "transient": 50.0,
             "final_time": 200.0,
-            "method": "dop853",
+            "solver": "dop853",
             "rtol": 1e-6,
             "atol": 1e-8,
         },
@@ -146,6 +149,7 @@ class HyperJha(ContinuousSystem):
 
     params = {"a": 10, "b": 28, "c": 2.667, "d": 1.3}
     dim = 4
+    variables = ("x", "y", "z", "w")
     reference = "Meier (2003), Presentation of Attractors with Cinema"
 
     @staticmethod
@@ -186,6 +190,7 @@ class HyperQi(ContinuousSystem):
 
     params = {"a": 50, "b": 24, "c": 13, "d": 8, "e": 33, "f": 30}
     dim = 4
+    variables = ("x", "y", "z", "w")
     reference = "Qi, van Wyk, van Wyk & Chen (2008), Phys. Lett. A 372, 124"
     doi = "10.1016/j.physleta.2007.10.082"
     default_ic = [1.0, 2.0, 1.0, 1.0]  # random U[0,1)^4 escapes the basin
@@ -224,6 +229,7 @@ class HyperXu(ContinuousSystem):
 
     params = {"a": 10, "b": 40, "c": 2.5, "d": 2, "e": 16}
     dim = 4
+    variables = ("x", "y", "z", "w")
     reference = "Letellier & Rössler (2007), Scholarpedia 2(8), 1936"
     doi = "10.4249/scholarpedia.1936"
 
@@ -261,6 +267,7 @@ class HyperWang(ContinuousSystem):
 
     params = {"a": 10, "b": 40, "c": 2.5, "d": 10.6, "e": 4}
     dim = 4
+    variables = ("x", "y", "z", "w")
     reference = "Wang, Sun, van Wyk, Qi & van Wyk (2009), Braz. J. Phys. 39"
     doi = "10.1590/s0103-97332009000500007"
 
@@ -296,6 +303,7 @@ class HyperPang(ContinuousSystem):
 
     params = {"a": 36, "b": 3, "c": 20, "d": 2}
     dim = 4
+    variables = ("x", "y", "z", "w")
     reference = "Pang & Liu (2011), J. Comput. Appl. Math. 235, 2775"
     doi = "10.1016/j.cam.2010.11.029"
 
@@ -331,6 +339,7 @@ class HyperLu(ContinuousSystem):
 
     params = {"a": 36, "b": 3, "c": 20, "d": 1.3}
     dim = 4
+    variables = ("x", "y", "z", "w")
     reference = "Chen, Lu, Lü & Yu (2006), Physica A 364, 103"
     doi = "10.1016/j.physa.2005.09.039"
 
@@ -368,6 +377,7 @@ class LorenzStenflo(ContinuousSystem):
 
     params = {"a": 2, "b": 0.7, "c": 26, "d": 1.5}
     dim = 4
+    variables = ("x", "y", "z", "w")
     reference = "Stenflo (1996), Phys. Scr. 53, 83-84"
     doi = "10.1088/0031-8949/53/1/015"
 
@@ -401,6 +411,7 @@ class Qi(ContinuousSystem):
 
     params = {"a": 45, "b": 10, "c": 1, "d": 10}
     dim = 4
+    variables = ("x", "y", "z", "w")
     reference = "Qi, van Wyk, van Wyk & Chen (2008), Phys. Lett. A 372, 124"
     doi = "10.1016/j.physleta.2007.10.082"
 
@@ -435,6 +446,7 @@ class ArnoldWeb(ContinuousSystem):
 
     params = {"mu": 0.01, "w": 1}
     dim = 5
+    variables = ("p1", "p2", "x1", "x2", "z")
     reference = "Froeschlé, Guzzo & Lega (2000), Science 289, 2108"
     doi = "10.1126/science.289.5487.2108"
 
@@ -469,6 +481,7 @@ class NewtonLiepnik(ContinuousSystem):
 
     params = {"a": 0.4, "b": 0.175}
     dim = 3
+    variables = ("x", "y", "z")
     reference = "Leipnik & Newton (1981), Phys. Lett. A 86, 63"
     doi = "10.1016/0375-9601(81)90165-1"
 
@@ -515,6 +528,7 @@ class Robinson(ContinuousSystem):
     params = {"a": -0.42, "b": -1.1, "c": 0.5, "d": 0.3, "v": -1.0}
 
     dim = 3
+    variables = ("x", "y", "z")
 
     @staticmethod
     def _equations(Y, t, *, a, b, c, d, v):
@@ -542,6 +556,7 @@ class CellularNeuralNetwork(ContinuousSystem):
 
     params = {"a": 4.4, "b": 3.21, "c": 1.1, "d": 1.24}
     dim = 3
+    variables = ("x", "y", "z")
     reference = "Arena, Caponetto, Fortuna & Porto (1998), Int. J. Bifurc. Chaos 8, 1527"
     doi = "10.1142/s0218127498001170"
 
@@ -635,3 +650,34 @@ class Hopfield(ContinuousSystem):
             s = sum(k[i][j] * Y(j) for j in range(6))
             out.append(-Y(i) / tau + (1 + tanh(eps * s)) / 2 - beta)
         return tuple(out)
+
+
+__all__ = [
+    "ArnoldWeb",
+    "BeerRNN",
+    "CellularNeuralNetwork",
+    "Hopfield",
+    "HyperBao",
+    "HyperCai",
+    "HyperJha",
+    "HyperLu",
+    "HyperPang",
+    "HyperQi",
+    "HyperWang",
+    "HyperXu",
+    "LorenzStenflo",
+    "NewtonLiepnik",
+    "NuclearQuadrupole",
+    "Qi",
+    "Robinson",
+]
+
+
+def __dir__() -> list[str]:
+    """Expose only the catalogue classes (``__all__``) to ``dir()`` / autocomplete.
+
+    ``__all__`` governs ``import *`` and nothing else, so without this the module
+    also offers every helper it imported — SymEngine's ``sin``/``cos``/``exp``,
+    ``numpy`` — as though they were part of this library's surface.
+    """
+    return sorted(__all__)

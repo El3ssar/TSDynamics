@@ -30,6 +30,7 @@ class VallisElNino(ContinuousSystem):
     doi = "10.1029/jc093ic11p13979"
     params = {"b": 102.0, "c": 3.0, "p": 0.0}
     dim = 3
+    variables = ("x", "y", "z")
 
     @staticmethod
     def _equations(Y, t, *, b, c, p):
@@ -68,6 +69,7 @@ class RayleighBenard(ContinuousSystem):
     doi = "10.1016/0167-2789(94)00233-g"
     params = {"a": 30, "b": 5, "r": 18}
     dim = 3
+    variables = ("x", "y", "z")
 
     @staticmethod
     def _equations(Y, t, *, a, b, r):
@@ -126,6 +128,7 @@ class Hadley(ContinuousSystem):
     doi = "10.1111/j.1600-0870.1984.tb00230.x"
     params = {"a": 0.2, "b": 4.0, "f": 9.0, "g": 1.0}
     dim = 3
+    variables = ("x", "y", "z")
 
     @staticmethod
     def _equations(Y, t, *, a, b, f, g):
@@ -172,6 +175,7 @@ class DoubleGyre(ContinuousSystem):
     doi = "10.1016/j.physd.2005.10.007"
     params = {"alpha": 0.1, "eps": 0.1, "omega": 0.62832}
     dim = 3
+    variables = ("x", "y", "z")
 
     @staticmethod
     def _equations(Y, t, *, alpha, eps, omega):
@@ -290,6 +294,7 @@ class OscillatingFlow(ContinuousSystem):
     doi = "10.1103/physreva.38.6280"
     params = {"b": 0.48, "k": 1.0, "omega": 0.49, "u": 0.72}
     dim = 3
+    variables = ("x", "y", "z")
 
     @staticmethod
     def _equations(Y, t, *, b, k, omega, u):
@@ -324,6 +329,7 @@ class ArnoldBeltramiChildress(ContinuousSystem):
     doi = "10.1016/0021-8928(66)90070-0"
     params = {"a": 1.73205, "b": 1.41421, "c": 1}
     dim = 3
+    variables = ("x", "y", "z")
 
     @staticmethod
     def _equations(Y, t, *, a, b, c):
@@ -371,6 +377,7 @@ class AtmosphericRegime(ContinuousSystem):
         "sigma": 1.1,
     }
     dim = 3
+    variables = ("x", "y", "z")
 
     @staticmethod
     def _equations(Y, t, *, alpha, beta, mu1, mu2, omega, sigma):
@@ -427,6 +434,7 @@ class SaltonSea(ContinuousSystem):
         "th": 10.0,
     }
     dim = 3
+    variables = ("x", "y", "z")
 
     @staticmethod
     def _equations(Y, t, *, a, d, k, lam, m, mu, r, th):
@@ -611,3 +619,30 @@ class InteriorSquirmer(ContinuousSystem):
             dr = dr + (gn * cn + an * sn) * (n * rn * (r**2 - 1)) / r
             vth = vth + (an * cn - gn * sn) * (2 * r + (r**2 - 1) * n / r) * rn
         return dr, vth / r, 1
+
+
+__all__ = [
+    "ArnoldBeltramiChildress",
+    "AtmosphericRegime",
+    "BickleyJet",
+    "BlinkingRotlet",
+    "BlinkingVortex",
+    "DoubleGyre",
+    "Hadley",
+    "InteriorSquirmer",
+    "LidDrivenCavityFlow",
+    "OscillatingFlow",
+    "RayleighBenard",
+    "SaltonSea",
+    "VallisElNino",
+]
+
+
+def __dir__() -> list[str]:
+    """Expose only the catalogue classes (``__all__``) to ``dir()`` / autocomplete.
+
+    ``__all__`` governs ``import *`` and nothing else, so without this the module
+    also offers every helper it imported — SymEngine's ``sin``/``cos``/``exp``,
+    ``numpy`` — as though they were part of this library's surface.
+    """
+    return sorted(__all__)

@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 
 import tsdynamics as ts
-from tsdynamics.engine.symbols import state_time_symbols
+from tsdynamics._engine.symbols import state_time_symbols
 
 # The engine-native symbolic state/time accessors (`y(i)` / `t`), byte-identical
 # to the callables a system's `_equations` is written against.
@@ -64,6 +64,14 @@ def test_map_missing_param_raises() -> None:
 
 
 def test_map_correct_signature_accepted() -> None:
+    """A map declaring both kernels in ``params`` order instantiates.
+
+    ``_step`` **and** ``_jacobian`` are both required: ``DiscreteMap`` is an
+    ``abc.ABC`` like every other family base, so a subclass that omits either
+    cannot be instantiated (it used to be the one non-ABC family base, which
+    let a missing kernel surface far downstream as a ``TapeCompileError``).
+    """
+
     class _Fine(ts.DiscreteMap):
         params = {"a": 1.0, "b": 2.0}
         dim = 1
@@ -72,15 +80,20 @@ def test_map_correct_signature_accepted() -> None:
         def _step(X, a, b):
             return (a * X[0] + b,)
 
+        @staticmethod
+        def _jacobian(X, a, b):
+            return ((a,),)
+
     m = _Fine()
     assert m.dim == 1
+    assert np.allclose(m._step(np.array([1.0]), 1.0, 2.0), [3.0])
 
 
 def test_map_inherited_step_with_reordered_params_raises() -> None:
     """Subclassing with a reordered params dict must also be caught."""
     with pytest.raises(TypeError, match="ORDER must match"):
 
-        class _Reordered(ts.Henon):
+        class _Reordered(ts.systems.Henon):
             params = {"b": 0.3, "a": 1.4}  # Henon._step is (X, a, b)
 
 
@@ -111,3 +124,44 @@ def test_map_step_executes_with_declared_params(map_entry) -> None:
     x0 = sys.resolve_ic(None)
     nxt = np.asarray(type(sys)._step(x0, *sys.params.as_tuple()), dtype=float).ravel()
     assert nxt.shape == (sys.dim,)
+
+
+# ---------------------------------------------------------------------------
+# SystemBase import-time checker: a parameter may not shadow a constructor keyword
+# ---------------------------------------------------------------------------
+
+
+def test_parameter_named_like_a_constructor_keyword_is_refused() -> None:
+    """Since every parameter is a constructor keyword, the two namespaces meet.
+
+    ``Sys(dim=3)`` must keep meaning "state-space dimension".  A class declaring
+    a parameter called ``dim`` could therefore never have it set by keyword — so
+    the class is refused at definition time rather than silently shadowing it.
+    """
+    for reserved in ("params", "ic", "dim", "field_shape", "seed"):
+        with pytest.raises(TypeError, match="collide"):
+
+            class _Shadow(ts.families.ContinuousSystem):
+                params = {reserved: 1.0}
+                dim = 1
+
+                @staticmethod
+                def _equations(y, t, **p):
+                    return [-y(0)]
+
+
+def test_the_reserved_set_is_derived_from_the_real_signature() -> None:
+    """The guard's name list cannot drift from the constructor it describes."""
+    import inspect
+
+    from tsdynamics.families.base import _RESERVED_INIT_KEYWORDS, SystemBase
+
+    sig = inspect.signature(SystemBase.__init__)
+    expected = {
+        name
+        for name, p in sig.parameters.items()
+        if name != "self" and p.kind is not inspect.Parameter.VAR_KEYWORD
+    }
+    assert expected == _RESERVED_INIT_KEYWORDS
+    # ... and the constructor really does take free parameter keywords.
+    assert any(p.kind is inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())

@@ -8,10 +8,10 @@ base flow ``dx/dt = f(x, t)``.
 This module is the engine path for ODE Lyapunov: it constructs the **extended**
 ODE — base state stacked with ``k`` tangent vectors — symbolically and lowers it
 to an engine :class:`Tape` through the public
-:func:`tsdynamics.engine.compile.lower_expressions`.  That tape runs on any
-evaluator behind the frozen ``Evaluator`` seam (the zero-warmup interpreter, the
-Cranelift JIT, or the pure-Python reference oracle), so the Rust engine is the
-variational integrator.
+:func:`tsdynamics._engine.compile.lower_expressions`.  That tape runs on any
+evaluator behind the frozen ``Evaluator`` seam (the Cranelift JIT — the default
+since v6 — the SSA-tape interpreter, or the pure-Python reference oracle), so the
+Rust engine is the variational integrator.
 
 The renormalisation loop that consumes the extended flow (QR every step,
 accumulate ``log|diag R|``) lives in :class:`~tsdynamics.derived.tangent.TangentSystem`,
@@ -29,13 +29,18 @@ from typing import Any
 
 import numpy as np
 
-__all__ = ["build_variational_tape", "embed_extended", "split_extended"]
+__all__ = [
+    "build_variational_tape",
+    "build_variational_tape_cached",
+    "embed_extended",
+    "split_extended",
+]
 
 
 def build_variational_tape(system: Any, k: int) -> Any:
     """Lower the extended variational ODE of ``system`` with ``k`` tangents to a Tape.
 
-    Mirrors :func:`tsdynamics.engine.compile.lower_ode` for the base flow, then
+    Mirrors :func:`tsdynamics._engine.compile.lower_ode` for the base flow, then
     appends ``k`` blocks of ``dim`` tangent equations ``dw_i/dt = J · w_i`` whose
     Jacobian entries reuse the same a.e.-resolved symbolic derivatives the stiff
     solver path uses (``abs``/``sign`` resolved a.e. via
@@ -64,8 +69,8 @@ def build_variational_tape(system: Any, k: int) -> Any:
     """
     import symengine
 
-    from tsdynamics.engine.compile import lower_expressions
-    from tsdynamics.engine.symbols import state_time_symbols
+    from tsdynamics._engine.compile import lower_expressions
+    from tsdynamics._engine.symbols import state_time_symbols
     from tsdynamics.families.continuous import _resolve_derivative_nodes
 
     y, t_sym = state_time_symbols()
@@ -128,6 +133,55 @@ def build_variational_tape(system: Any, k: int) -> Any:
         jacobian=True,
         control_names=control_names,
     )
+
+
+def build_variational_tape_cached(system: Any, k: int) -> Any:
+    """Return a memoised :func:`build_variational_tape` tape (the ODE Lyapunov tape).
+
+    The variational lowering is by far the most expensive symbolic step in the
+    library — it differentiates the RHS ``dim`` times and then materialises
+    ``dim·k`` symbolic dot products, so its cost grows like ``O(dim² · k)`` in the
+    number of expressions *and* is lowered ``with_jacobian=True`` on top.  Measured
+    on ``KuramotoSivashinsky`` (``dim=32``, ``k=32``) a single build is ~17 s, and
+    every ``lyapunov_spectrum`` call built a fresh one because
+    :class:`~tsdynamics.derived.tangent.TangentSystem` is constructed per call.
+
+    Lowering is a pure function of the *math*, so this routes through the same
+    bounded-LRU store the other ``lower_*_cached`` helpers use
+    (:mod:`tsdynamics._engine.compile`) — sharing its size bound, its thread lock,
+    its ``clear_tape_cache()`` / ``tape_cache_stats()`` surface, and the
+    ``TSDYNAMICS_NO_TAPE_CACHE`` bypass.
+
+    Key parts
+    ---------
+    The system **class**, its ``dim``, the number of deviation vectors ``k`` (a
+    different ``k`` is a structurally different tape, with ``k`` extra blocks of
+    ``dim`` equations), the **structural** parameters (folded into the tape as
+    constants), and the ``_equations`` kernel **object** (so a monkeypatched or
+    redefined kernel is a deliberate miss — never a stale tape).
+
+    **Control-parameter values are deliberately absent**: they become ``Param``
+    inputs read live from the system, exactly as in :func:`lower_ode_cached`, so a
+    control-parameter sweep (a Lyapunov sweep, a continuation) reuses one tape.
+    The tape's ``control_names`` layout needs no key part of its own — it is a pure
+    function of the class, so the class captures it transitively (the same
+    invariant :func:`lower_ode_cached` documents).
+    """
+    from tsdynamics._engine.compile import (
+        _cache_get_or_build,
+        _kernel_identity,
+        _structural_key,
+    )
+
+    key = (
+        "variational",
+        type(system),
+        int(system.dim),
+        int(k),
+        _structural_key(system),
+        _kernel_identity(type(system), "_equations"),
+    )
+    return _cache_get_or_build(key, lambda: build_variational_tape(system, k))
 
 
 def embed_extended(x: Any, w: np.ndarray) -> np.ndarray:

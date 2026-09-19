@@ -31,6 +31,29 @@ already-excellent ``method=`` / ``backend=`` / ``set_state`` messages establishe
 :func:`invalid_value` builds exactly that message so the standard is applied
 uniformly rather than re-spelled at every raise site.
 
+The runnable-line standard
+--------------------------
+Naming the mistake is necessary and *not sufficient*.  When a call fails because
+the user typed the wrong shape of call — not merely a wrong number — the message
+must end with **the line they should type instead**, indented and complete enough
+to paste::
+
+    orbit_diagram needs a discrete-time view ...          # describes the mistake
+    wrap the flow in a section first:                     # ... and shows the fix
+        ts.analysis.orbit_diagram(system.poincare("z", 27.0), "rho", values)
+
+:func:`remedy` formats that block, so every site spells it the same way and the
+polish gate (``tests/test_polish_standards.py``) can *decide* whether a message
+carries a runnable line by parsing its indented lines as Python.  Two rules make
+the block worth pasting:
+
+- **name the call the user actually made**, not the internal function it
+  delegates to (a user who typed ``ts.basins`` must not be answered about
+  ``basins_of_attraction``); and
+- **fill in their own values** — the system's real dimension, its declared
+  component names, the length their array actually had — so the line runs as-is
+  rather than needing to be decoded first.
+
 The hierarchy at a glance
 -------------------------
 ============================ =================== ===========================
@@ -40,25 +63,21 @@ Class                        Stdlib base         Raised for
 :class:`InvalidParameterError` :class:`ValueError` a bad *value* (range/choice)
 :class:`InvalidInputError`   :class:`TypeError`  a bad argument *type*/*shape*
 :class:`ConvergenceError`    :class:`RuntimeError` divergence / non-convergence
+:class:`StepBudgetError`     :class:`ConvergenceError` a *stalled* run (finite state)
 :class:`BackendError`        :class:`RuntimeError` a compute-backend failure
+:class:`MovedInV6`           :class:`ImportError` a name that moved or left in v6
 ============================ =================== ===========================
+
+:class:`MovedInV6` is the odd one out and deliberately so: it is the only class
+here that inherits :class:`ImportError` rather than the stdlib type its *raise
+site* would otherwise use.  See its docstring for the measurement behind that.
 
 One concrete leaf lives outside this module to keep it import-light (it must load
 while the package is still initialising):
-:class:`tsdynamics.engine.run.EngineNotAvailableError` subclasses
+:class:`tsdynamics._engine.run.EngineNotAvailableError` subclasses
 :class:`BackendError` and is raised when the compiled ``tsdynamics._rust``
 extension is absent — ``except BackendError`` (or ``except RuntimeError``) catches
 it.
-
-Known gap (tracked WS-ERRORS xfail)
------------------------------------
-A wrong-length **initial condition** is still reshaped by NumPy in the family
-``resolve_ic`` path, so it currently surfaces as a raw NumPy ``ValueError``
-(``cannot reshape array …``) rather than a typed :class:`InvalidInputError`.  That
-raise site lives in :mod:`tsdynamics.families`, not here; wrapping it cleanly is
-deferred so this module stays a leaf with no family-side imports.  ``except
-ValueError`` still catches the leak, so the failure mode is correct in kind if not
-yet in framing.
 
 Examples
 --------
@@ -84,8 +103,12 @@ __all__ = [
     "ConvergenceError",
     "InvalidInputError",
     "InvalidParameterError",
+    "MovedInV6",
+    "StepBudgetError",
     "TSDynamicsError",
     "invalid_value",
+    "remedy",
+    "taught",
 ]
 
 
@@ -130,17 +153,179 @@ class ConvergenceError(TSDynamicsError, RuntimeError):
     """
 
 
+class StepBudgetError(ConvergenceError):
+    """An integration ran out of solver steps while its state stayed finite.
+
+    The *stalled*, not *diverged*, half of "the run did not reach the final
+    time".  The engine caps the number of solver steps it will spend on one
+    output segment; hitting that cap with a perfectly finite state means the
+    model is fine and the **solver settings** are not — an explicit method on a
+    stiff problem, or a tolerance tighter than the dynamics can meet.  The
+    remedy is a looser ``rtol``/``atol``, an implicit ``method="bdf"``, or a
+    shorter span; it is *not* to go hunting for a blow-up.
+
+    Subclasses :class:`ConvergenceError` (and so :class:`RuntimeError`), so
+    every handler that already catches engine divergence keeps catching this —
+    the split is additive, for callers that want to tell the two apart.
+    """
+
+
 class BackendError(TSDynamicsError, RuntimeError):
     """A compute backend (the Rust engine, a solver kernel) failed or is absent.
 
     A base for backend-side failures — an engine that is not built, a kernel that
     refused a problem, or an FFI-boundary failure surfaced with domain framing
     rather than a raw extension traceback.  Its concrete leaf
-    :class:`tsdynamics.engine.run.EngineNotAvailableError` is raised when the
+    :class:`tsdynamics._engine.run.EngineNotAvailableError` is raised when the
     compiled ``tsdynamics._rust`` extension is missing, so
     ``isinstance(err, BackendError)`` catches it.  Subclasses
     :class:`RuntimeError`, so legacy ``except RuntimeError`` handlers still apply.
     """
+
+
+class MovedInV6(TSDynamicsError, ImportError):  # noqa: N818 - see the docstring
+    """A public name that v6 moved to another address, renamed, or removed.
+
+    Raised by a package ``__getattr__`` on an **exact hit** in one of the v6
+    redirect tables (:mod:`tsdynamics._redirects`) or in a public submodule's
+    ``__all__``.  The message carries the line to type instead — it *is* the
+    migration guide.
+
+    Why this is an ``ImportError`` and not an ``AttributeError``
+    -----------------------------------------------------------
+    Because the failing spelling that matters is ``from tsdynamics import X``,
+    and CPython **discards** a module ``__getattr__``'s message for that spelling
+    whenever the exception matches ``AttributeError``.  Measured on CPython
+    3.14.2 against a two-line probe package:
+
+    .. code-block:: text
+
+        __getattr__ raises AttributeError  ->  ImportError: cannot import name
+                                               'attr_case' from 'pkg'   (TEXT LOST)
+        __getattr__ raises ImportError     ->  ImportError: <custom text>
+                                                                        (TEXT KEPT)
+
+    A class inheriting *both* is impossible — ``class M(AttributeError,
+    ImportError)`` raises ``TypeError: multiple bases have instance lay-out
+    conflict`` — so the two spellings cannot be served by one type, and the
+    import spelling wins.
+
+    The cost, stated
+    ----------------
+    ``hasattr(ts, name)`` **raises** instead of returning ``False`` for a name in
+    a redirect table, because :func:`hasattr` only swallows ``AttributeError``.
+    That is confined to the enumerated dead names and is the point: a v5 script
+    probing ``hasattr(ts, "permutation_entropy")`` should not silently take the
+    "not installed" branch when the honest answer is "that moved out of this
+    library".  A *guess* (``ts.random_typo``) stays an ``AttributeError``, so
+    ``hasattr`` keeps working for every other name in the universe.
+
+    Subclasses :class:`ImportError`, so ``except ImportError`` — the handler a
+    caller already wraps an optional dependency in — catches it.
+
+    Examples
+    --------
+    >>> from tsdynamics.errors import MovedInV6
+    >>> issubclass(MovedInV6, ImportError)
+    True
+    >>> issubclass(MovedInV6, TSDynamicsError)
+    True
+    >>> issubclass(MovedInV6, AttributeError)
+    False
+    """
+
+
+def remedy(*lines: str, lead: str | None = None) -> str:
+    """Format the *runnable* fix block that closes an error message.
+
+    The formatter behind the runnable-line standard documented at the top of this
+    module: a short lead-in sentence, then one indented line per statement the
+    user should type.  Keeping it in one helper means every site spells the fix
+    the same way, and lets the polish gate decide mechanically whether a message
+    carries a line that actually parses as Python.
+
+    Parameters
+    ----------
+    *lines : str
+        The source lines to show, in the order they should be typed.  Each must
+        be a complete statement (a call, or an assignment whose value is a call)
+        — a fragment the user still has to finish is not a remedy.
+    lead : str, optional
+        A sentence introducing the block (e.g. ``"wrap the flow in a section
+        first:"``).  Rendered on its own line above the code.
+
+    Returns
+    -------
+    str
+        The block, opening with a newline so it appends directly to a message.
+
+    Examples
+    --------
+    >>> print("orbit_diagram needs a discrete-time view." + remedy(
+    ...     'ts.analysis.orbit_diagram(sys.poincare("z", 27.0), "rho", values)',
+    ...     lead="Wrap the flow in a section first:",
+    ... ))
+    orbit_diagram needs a discrete-time view.
+    Wrap the flow in a section first:
+        ts.analysis.orbit_diagram(sys.poincare("z", 27.0), "rho", values)
+    """
+    body = "\n".join(f"    {line}" for line in lines)
+    return f"\n{lead}\n{body}" if lead else f"\n{body}"
+
+
+class _NoSuggestions:
+    """A stand-in ``obj`` for a taught ``AttributeError``, advertising no names.
+
+    CPython computes *"Did you mean: …?"* from ``dir(exc.obj)`` when it prints an
+    ``AttributeError``.  Handing it this object means the suggester finds nothing
+    to offer, which is the point: our message already **is** the answer.
+    """
+
+    __slots__ = ()
+
+    def __dir__(self) -> list[str]:
+        """Advertise nothing, so no suggestion can be computed."""
+        return []
+
+
+_NO_SUGGESTIONS = _NoSuggestions()
+
+
+def taught(err: AttributeError, name: str) -> AttributeError:
+    """Stop CPython appending its own guess to an ``AttributeError`` we wrote.
+
+    Since 3.10 CPython augments an ``AttributeError`` that escapes a
+    ``__getattr__`` with ``name`` and ``obj``, then prints
+    *"Did you mean: 'x'?"* from ``dir(obj)`` — and it does that only when **both**
+    are still unset, so setting them here suppresses it.
+
+    This is not cosmetic.  Measured on this branch, the suggester contradicted
+    four of the library's most carefully written migration messages by offering
+    the caller a **private** name it had just been told not to use::
+
+        ts.analysis.find(system)   # all 20 that take a flow.
+        Did you mean: '_lyapunov_spectrum'?
+
+    and it told a reader looking for the ``System`` protocol to try ``systems``,
+    the catalogue.  A message whose last word is a wrong answer is worse than no
+    last word.
+
+    Parameters
+    ----------
+    err : AttributeError
+        The error we built.  Returned unchanged apart from ``name`` / ``obj``.
+    name : str
+        The attribute that was asked for, preserved so ``except AttributeError as
+        e: e.name`` still reads correctly.
+
+    Returns
+    -------
+    AttributeError
+        *err*, sealed.
+    """
+    err.name = name
+    err.obj = _NO_SUGGESTIONS
+    return err
 
 
 def invalid_value(
@@ -197,6 +382,65 @@ def invalid_value(
     if hint:
         msg = f"{msg}. {hint}"
     return InvalidParameterError(msg)
+
+
+def _nearest(typed: str, candidates: Iterable[str], *, n: int = 3) -> list[str]:
+    """Rank *candidates* as "did you mean" suggestions for what the user *typed*.
+
+    A suggestion that does not resolve is worse than no suggestion, so this
+    applies **two** floors rather than :func:`difflib.get_close_matches`' single
+    similarity cutoff.  Both numbers below were measured against the live solver
+    registry, not chosen by taste:
+
+    * ``difflib`` at its usual ``cutoff=0.5`` answered ``solver="LSODA"`` on a
+      delay system with *"Did you mean: 'ralston'?"* — ratio exactly 0.500, the
+      only suggestion in the sweep under 0.6, and a word sharing no syllable
+      with what was typed.
+    * Raising the cutoff to 0.6 alone then dropped the two *most* useful
+      suggestions in the table, because ``difflib``'s ratio is symmetric in
+      length: ``"euler"`` → ``"euler_maruyama"`` scores 0.526 and ``"mil"`` →
+      ``"milstein"`` 0.545, though each is an exact **prefix** of the name
+      meant.
+
+    So a candidate is offered when it is similar enough (ratio >= 0.6) *or* when
+    one of the two strings is a prefix of the other — an abbreviation or an
+    unfinished name, which is a different kind of near-miss from a typo and is
+    invisible to a symmetric ratio.  Order follows similarity, best first.
+
+    Parameters
+    ----------
+    typed : str
+        What the user actually wrote (compared case-insensitively).
+    candidates : iterable of str
+        The legal names, already scoped to the family that is asking.
+    n : int, default 3
+        Maximum number of suggestions to return.
+
+    Returns
+    -------
+    list of str
+        Up to *n* candidates, best first; empty when nothing is close enough.
+
+    Examples
+    --------
+    >>> _nearest("milstien", ["euler_maruyama", "milstein"])
+    ['milstein']
+    >>> _nearest("mil", ["euler_maruyama", "milstein"])
+    ['milstein']
+    >>> _nearest("LSODA", ["ralston", "rk4", "rk45"])
+    []
+    """
+    import difflib
+
+    low = typed.lower()
+    scored: list[tuple[float, str]] = []
+    for cand in candidates:
+        ratio = difflib.SequenceMatcher(None, low, cand.lower()).ratio()
+        prefix = low.startswith(cand.lower()) or cand.lower().startswith(low)
+        if ratio >= 0.6 or prefix:
+            scored.append((ratio, cand))
+    scored.sort(key=lambda pair: (-pair[0], pair[1]))
+    return [cand for _, cand in scored[:n]]
 
 
 def __dir__() -> list[str]:

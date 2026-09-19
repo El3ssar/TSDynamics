@@ -52,11 +52,13 @@ from .chaotic_attractors import (
 )
 from .chem_bio_systems import (
     BelousovZhabotinsky,
+    Brusselator,
     CaTwoPlus,
     CaTwoPlusQuasiperiodic,
     CellCycle,
     CircadianRhythm,
     ExcitableCell,
+    FitzHughNagumo,
     ForcedBrusselator,
     ForcedFitzHughNagumo,
     ForcedVanDerPol,
@@ -66,7 +68,9 @@ from .chem_bio_systems import (
     IsothermalChemical,
     ItikBanksTumor,
     Oregonator,
+    Selkov,
     TurchinHanski,
+    VanDerPol,
 )
 from .climate_geophysics import (
     ArnoldBeltramiChildress,
@@ -138,6 +142,7 @@ from .oscillatory_systems import (
     MooreSpiegel,
     ShimizuMorioka,
     StickSlipOscillator,
+    StuartLandau,
     Torus,
 )
 from .physical_systems import (
@@ -154,6 +159,7 @@ from .population_dynamics import (
     CoevolvingPredatorPrey,
     Finance,
     KawczynskiStrizhak,
+    LotkaVolterra,
     MacArthur,
 )
 from .spatial_fields import GrayScott, SwiftHohenberg
@@ -219,8 +225,10 @@ __all__ += [
 # chem_bio_systems
 __all__ += [
     "GlycolyticOscillation",
+    "Selkov",
     "Oregonator",
     "IsothermalChemical",
+    "Brusselator",
     "ForcedBrusselator",
     "CircadianRhythm",
     "CaTwoPlus",
@@ -229,7 +237,9 @@ __all__ += [
     "ExcitableCell",
     "CellCycle",
     "HindmarshRose",
+    "VanDerPol",
     "ForcedVanDerPol",
+    "FitzHughNagumo",
     "ForcedFitzHughNagumo",
     "TurchinHanski",
     "HastingsPowell",
@@ -313,6 +323,7 @@ __all__ += [
 
 # oscillatory_systems
 __all__ += [
+    "StuartLandau",
     "ShimizuMorioka",
     "MooreSpiegel",
     "AnishchenkoAstakhov",
@@ -338,7 +349,13 @@ __all__ += [
 
 
 # population_dynamics
-__all__ += ["CoevolvingPredatorPrey", "KawczynskiStrizhak", "Finance", "MacArthur"]
+__all__ += [
+    "LotkaVolterra",
+    "CoevolvingPredatorPrey",
+    "KawczynskiStrizhak",
+    "Finance",
+    "MacArthur",
+]
 
 # spatial_fields (2-D method-of-lines PDEs — spatial-field movies)
 __all__ += ["GrayScott", "SwiftHohenberg"]

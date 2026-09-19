@@ -3,8 +3,10 @@ Build-time figure rendering for the per-system documentation pages.
 
 Strategy
 --------
-- **ODE** figures integrate with the **shipped Rust engine** (the same
-  ``integrate(backend="interp")`` path the library exposes) for every
+- **ODE** figures integrate with the **shipped Rust engine**, pinned to
+  ``integrate(backend="interp")``.  The interpreter is bit-for-bit identical to
+  the library's default ``"jit"`` backend, and pinning it keeps the cached figure
+  goldens stable independently of which evaluator is the default, for every
   non-stiff, non-discontinuous system — so the docs picture is rendered by the
   code that ships, not an out-of-band SciPy reimplementation.  The handful of
   **stiff** systems (those declaring a ``_default_method``, e.g. ``"bdf"``) and
@@ -150,36 +152,33 @@ FIG_OVERRIDES: dict[str, dict] = {
 #: curated initial condition / parameter override / view angle to look right:
 #:
 #: - ``ensemble``: iterate this many short orbits (``ensemble_steps`` each) from
-#:   random ICs and pool the points — the honest way to fill a mixing map (Baker)
-#:   whose single orbit collapses to a fixed point under binary-doubling round-off.
+#:   random ICs and pool the points — the honest way to show the whole phase
+#:   portrait of a *conservative* map (Chirikov, Gingerbreadman), where a single
+#:   orbit only ever traces one invariant set.
 #: - ``ic`` / ``params``: a curated on-attractor start / parameter set for a map
 #:   whose registry default collapses to a point (GumowskiMira).
 #: - ``steps`` / ``burn``: iterate count + burn-in.
 #: - ``view``: ``(elev, azim)`` for a 3-D map whose thin dimension needs an angle
 #:   to reveal its structure (FoldedTowel).
 #: - ``bifurcation``: ``(param, lo, hi)`` — a 1-D map also gets a library-generated
-#:   bifurcation diagram (``ts.orbit_diagram``) beside its return map.
+#:   bifurcation diagram (``ts.analysis.orbit_diagram``) beside its return map.
 MAP_OVERRIDES: dict[str, dict] = {
-    # Baker's map: 2·x mod 1 exhausts the mantissa and any single orbit collapses
-    # to (0,0) after ~52 iterations.  Pool many short independent orbits so the
-    # points fill the unit square (the true attractor) without the collapse.
-    "Baker": {"ensemble": 500, "ensemble_steps": 40, "burn": 0},
-    # GumowskiMira's registry defaults collapse to a tiny region; a curated
-    # (a, b, ic) gives its signature spread ornamental attractor.
+    # GumowskiMira at the shipped defaults (a=-0.35, b=1.0) is AREA-PRESERVING —
+    # its spectrum sums to zero (+0.097, -0.097), so like Chirikov and
+    # Gingerbreadman a single orbit only ever traces one invariant set.  Pool many
+    # short orbits to show the whole ornamental phase portrait.  (The pre-v6
+    # curated b=0.93 override was a *decaying* chaotic transient: λ₁ falls
+    # +0.186 → +0.069 between 5k and 50k iterates, so it is not a real attractor.)
     "GumowskiMira": {
-        "params": {"a": -0.48, "b": 0.93},
-        "ic": [0.1, 4.0],
-        "steps": 40000,
-        "burn": 100,
+        "ensemble": 120,
+        "ensemble_steps": 1500,
+        "ensemble_span": (-10.0, 10.0),
+        "point_size": 0.05,
+        "burn": 0,
     },
-    # Zaslavskii: the registry defaults (eps=5, nu=0.2, r=2) collapse to a period-2
-    # orbit (the "only ~2 points visible" defect), and the milder (eps=9, nu=0.2,
-    # r=3) folds to a single thin loop.  The classic dissipative-standard-map
-    # parameters (eps=9, nu=0.3, r=2) stretch-and-fold the web onto its signature
-    # multi-band fractal strange attractor; a long orbit fills the bands.
+    # Zaslavskii: a long orbit is needed to fill the bands of the strange
+    # attractor (the catalogue defaults already sit in the chaotic regime).
     "Zaslavskii": {
-        "params": {"eps": 9.0, "nu": 0.3, "r": 2.0},
-        "ic": [0.1, 0.1],
         "steps": 200000,
         "burn": 1000,
         "point_size": 0.12,
@@ -199,10 +198,10 @@ MAP_OVERRIDES: dict[str, dict] = {
         "point_size": 0.06,
         "burn": 0,
     },
-    # Gingerbreadman: a random U[0,1)² start can land on a periodic island (the
-    # figure showed only a handful of points).  Seed the known chaotic sea explicitly
-    # and pool a spray of extra orbits so both the signature "gingerbread man" body
-    # and its surrounding period-6 islands fill in.
+    # Gingerbreadman: the map is conservative, so a single orbit only ever traces
+    # ONE invariant set.  The class default_ic already picks the chaotic sea; pool
+    # a spray of extra orbits on top so the surrounding period-6 islands fill in
+    # too and the full "gingerbread man" phase portrait is visible.
     "Gingerbreadman": {
         "ensemble": 120,
         "ensemble_steps": 1500,
@@ -287,14 +286,27 @@ def cache_key(entry) -> str:
 
 
 def _resolve_ic(sys_obj, override):
+    """Resolve the IC a figure is drawn from: an override, the class's, or random.
+
+    The declared IC is read through :func:`tsdynamics.registry._classvar`, the
+    one reader that knows both spellings.  v6 moved the catalogue ClassVars
+    behind an underscore (``default_ic`` → ``_default_ic``) and this site still
+    named the public one, so every figure of a system that *declares* an IC was
+    drawn from the wrong start — and here it did not even fail quietly: reading
+    it off the class raised ``AttributeError: type object 'Lorenz' has no
+    attribute 'default_ic'``, which took the whole golden-figure gate with it.
+    """
+    from tsdynamics.registry import _classvar
+
     if override == "0.1*ones":
         return 0.1 * np.ones(sys_obj.dim)
     if override is not None:
         return np.asarray(override, dtype=float)
-    if type(sys_obj).default_ic is not None:
+    declared = _classvar(type(sys_obj), "default_ic")
+    if declared is not None:
         # Honor a class-level basin IC (single source of truth) before
         # falling back to random; the retry loop still re-rolls on failure.
-        return np.asarray(type(sys_obj).default_ic, dtype=float).reshape(sys_obj.dim)
+        return np.asarray(declared, dtype=float).reshape(sys_obj.dim)
     return None  # family default resolution (random U[0,1)^dim, with retries)
 
 
@@ -320,7 +332,7 @@ def _use_engine_for_ode(entry, opts) -> bool:
     # Jacobian — robust to any implicit name (bdf / rosenbrock / trbdf2).
     method = getattr(entry.cls, "_default_method", "RK45")
     try:
-        from tsdynamics.solvers import resolve
+        from tsdynamics._solvers import resolve
 
         if resolve(method).spec.caps.needs_jacobian:
             return False
@@ -399,12 +411,12 @@ def _ode_trajectory_engine(entry, opts) -> tuple[np.ndarray, np.ndarray]:
         if ic is None or attempt > 0:
             ic = sys_obj.resolve_ic(rng.uniform(0.0, 1.0, sys_obj.dim))
         try:
-            traj = sys_obj.integrate(
+            traj = sys_obj.run(
                 final_time=final_time,
                 dt=fine_dt,
                 ic=np.asarray(ic, dtype=float),
                 backend="interp",
-                method=method,
+                solver=method,
             )
         except (RuntimeError, ValueError):  # divergence / off-basin start
             ic = None
@@ -487,8 +499,9 @@ def _ode_trajectory(entry, opts) -> tuple[np.ndarray, np.ndarray]:
     """Render-time ODE trajectory: shipped engine for the common case, else SciPy.
 
     Non-stiff, non-discontinuous systems integrate through the shipped Rust
-    engine (``integrate(backend="interp")``) so the docs figure is produced by
-    the code that ships.  Stiff / discontinuous systems use the commented
+    engine, pinned to ``integrate(backend="interp")`` — bit-for-bit identical to
+    the default ``"jit"`` backend, so the docs figure is still produced by the
+    code that ships.  Stiff / discontinuous systems use the commented
     SciPy ``solve_ivp`` fallback (:func:`_ode_trajectory_scipy`).
 
     An explicit ``engine_method`` override (a stiff system that wants the engine's
@@ -520,7 +533,7 @@ def _field_trajectory(entry, opts) -> tuple[np.ndarray, np.ndarray]:
     kwargs = {"final_time": final_time, "dt": dt, "backend": "interp"}
     if ic is not None:
         kwargs["ic"] = np.asarray(ic, dtype=float)
-    traj = sys_obj.integrate(**kwargs)
+    traj = sys_obj.run(**kwargs)
     return traj.t, traj.y
 
 
@@ -685,9 +698,10 @@ def _sde_sample_path(entry, opts) -> tuple[np.ndarray, np.ndarray]:
     """Integrate one **seeded** sample path of a (scalar) SDE for the figure.
 
     Runs the shipped SDE integrator with a fixed ``seed`` so the rendered path is
-    reproducible (hence cacheable).  The default ``reference`` backend (pure
-    Python) needs no compiled wheel and reproduces the engine to float tolerance —
-    the right choice for a deterministic, portable docs figure.  Honours a
+    reproducible (hence cacheable).  This path pins ``backend="reference"`` (pure
+    Python; *not* the family default, which is ``"jit"``): it needs no compiled
+    wheel and reproduces the engine to float tolerance — the right choice for a
+    deterministic, portable docs figure.  Honours a
     per-system ``final_time`` / ``dt`` override (the switching double well wants a
     longer window than a mean-reverting OU path).
     """
@@ -695,7 +709,7 @@ def _sde_sample_path(entry, opts) -> tuple[np.ndarray, np.ndarray]:
     dt = opts.get("dt", 0.01)
     seed = int(opts.get("seed", 0))
     sys_obj = entry.cls()
-    traj = sys_obj.integrate(final_time=final_time, dt=dt, seed=seed, backend="reference")
+    traj = sys_obj.run(final_time=final_time, dt=dt, seed=seed, backend="reference")
     return traj.t, traj.y
 
 
@@ -733,7 +747,7 @@ def _render_dde(entry, plt, opts):
     def history(s):
         return [center + amp * np.sin(0.2 * s)] * sys_obj.dim
 
-    traj = sys_obj.integrate(final_time=final_time, dt=dt, history=history)
+    traj = sys_obj.run(final_time=final_time, dt=dt, history=history)
     x = traj.y[:, 0]
     tau = float(sys_obj._delays()[0])
     lag = max(1, int(round(tau / dt)))
@@ -756,8 +770,8 @@ def _map_cloud(entry, mcfg) -> np.ndarray:
     """Iterate a map into a drawable point cloud, honouring :data:`MAP_OVERRIDES`.
 
     Handles the special cases the plain single-orbit iterate cannot:
-    - ``ensemble`` — pool many short independent orbits (Baker, whose single orbit
-      collapses to a fixed point under binary-doubling round-off);
+    - ``ensemble`` — pool many short independent orbits, the only way to show the
+      whole phase portrait of a conservative map (Chirikov, Gingerbreadman);
     - ``params`` / ``ic`` — a curated on-attractor start / parameters for a map
       whose registry default collapses (GumowskiMira);
     - ``steps`` / ``burn`` — iterate count + burn-in.
@@ -773,11 +787,11 @@ def _map_cloud(entry, mcfg) -> np.ndarray:
         lo, hi = mcfg.get("ensemble_span", (0.001, 0.999))
         rng = np.random.default_rng(0)
         pieces = []
-        # Explicit chaotic-sea seeds first (a map whose default random start can land
-        # on a periodic island — Gingerbreadman — pins its signature orbit here).
+        # Explicit seeds first, so a specific invariant set (Gingerbreadman's
+        # chaotic sea) is always represented and not left to the random spray.
         for seed_ic in mcfg.get("seeds", ()):
             try:
-                tr = sys_obj.iterate(
+                tr = sys_obj.run(
                     steps=int(mcfg.get("seed_steps", per)),
                     ic=np.asarray(seed_ic, dtype=float),
                 )
@@ -789,7 +803,7 @@ def _map_cloud(entry, mcfg) -> np.ndarray:
         for _ in range(n_orbits):
             ic = rng.uniform(lo, hi, sys_obj.dim)
             try:
-                tr = sys_obj.iterate(steps=per, ic=ic)
+                tr = sys_obj.run(steps=per, ic=ic)
             except (RuntimeError, ValueError):
                 continue
             yy = tr.y
@@ -813,12 +827,12 @@ def _map_cloud(entry, mcfg) -> np.ndarray:
     if ic is not None:
         kwargs["ic"] = ic
         kwargs.pop("max_retries")  # a curated IC must be honoured, not re-rolled
-    tr = sys_obj.iterate(**kwargs)
+    tr = sys_obj.run(**kwargs)
     return tr.y[burn:]
 
 
 def _render_bifurcation(entry, plt, mcfg, ax):
-    """Draw a library-generated bifurcation diagram (``ts.orbit_diagram``) on ``ax``.
+    """Draw a library-generated bifurcation diagram (``ts.analysis.orbit_diagram``) on ``ax``.
 
     For a 1-D map, the parameter sweep + asymptotic-orbit scatter is the picture
     people recognise (the logistic period-doubling cascade).  Sweeps the editorial
@@ -828,8 +842,8 @@ def _render_bifurcation(entry, plt, mcfg, ax):
 
     param, lo, hi = mcfg["bifurcation"]
     sys_obj = entry.cls()
-    od = ts.orbit_diagram(
-        sys_obj, param, np.linspace(lo, hi, 700), component=0, transient=400, n=180
+    od = ts.analysis.orbit_diagram(
+        sys_obj, param, np.linspace(lo, hi, 700), components=0, transient=400, points_per_value=180
     )
     xr, yr = od.flat()
     xr = np.asarray(xr, dtype=float)
@@ -848,7 +862,7 @@ def _render_map(entry, plt, opts):
     """Render a **static** map figure (a scatter — reads better than an animation).
 
     - **1-D maps** → the first-return map ``x_n`` vs ``x_{n+1}`` *and* a
-      recognizable **bifurcation diagram** (``ts.orbit_diagram``) side by side.
+      recognizable **bifurcation diagram** (``ts.analysis.orbit_diagram``) side by side.
       These stay a **static PNG** on the page (no interactive viewer).
     - **2-D maps** → the iterate cloud (a curated IC / ensemble for the maps whose
       default orbit collapses).  Also a **static PNG** on the page.

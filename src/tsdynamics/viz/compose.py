@@ -1,16 +1,16 @@
 """Compose specs into one figure — the ``tsdynamics.viz.plot`` front door.
 
-This is the *composition* seam.  Where :meth:`tsdynamics.data.Trajectory.to_plot_spec`
+This is the *composition* seam.  Where :meth:`tsdynamics.data.Trajectory.__plot_spec__`
 describes **one panel**, :func:`plot` arranges one or more things into a figure:
 
 - :func:`plot` takes any mix of plottables (a :class:`~tsdynamics.data.Trajectory`,
   a system, an analysis result) and already-built
-  :class:`~tsdynamics.viz.spec.PlotSpec` objects,
+  :class:`~tsdynamics.viz.spec.Plot` objects,
   converts each to a spec, and returns a **spec** — a single-panel spec for
   ``layout="overlay"`` (everything drawn on one set of axes) or a
   :data:`~tsdynamics.viz.spec.PlotKind.COMPOSITE` spec for ``layout="stack"`` /
   ``"row"`` / ``"grid"`` (one panel each).
-- Because the input type and the return type are **the same** (a ``PlotSpec``), a
+- Because the input type and the return type are **the same** (a ``Plot``), a
   ``plot(...)`` result feeds straight back into ``plot(...)``: build each panel
   with one flat call, then arrange the panels with another::
 
@@ -18,8 +18,33 @@ describes **one panel**, :func:`plot` arranges one or more things into a figure:
       py = ts.viz.plot(lor1, lor2, components="y")
       ts.viz.plot(px, py, layout="stack")            # two stacked panels
 
+- The operator spelling of the same thing — ``|`` beside, ``/`` below, ``+``
+  overlaid — is an **algebra that nests**: a sub-expression grouped with the
+  other operator is kept whole, as one nested panel, so the parentheses a user
+  types are the layout they get::
+
+      (plot(a) | plot(b)) / plot(c)                 # a row of two; c spans below
+      (plot(a) | plot(b)) / (plot(c) | plot(d))     # a real 2x2
+      (plot(a) / plot(b)) | plot(c)                 # a column of two beside one
+
+  A chain of the *same* operator stays flat (``a | b | c`` is one row of three,
+  and associates either way), which is :func:`_absorbs`.
+
+**What may share one set of axes (v6).**  Overlay legality is *frame*
+compatibility — the same coordinate space, the same dimension, the same axes
+(:class:`tsdynamics.viz._frames.Frame`) — replacing the hard-coded three-kind
+whitelist that used to decide it.  So::
+
+      ts.viz.plot(basins, attractors, traj, fixed_points)   # one plane, one axes
+      ts.viz.plot(traj_xy, fixed_points_xz)                 # raises: different planes
+
+and the draw order is fixed **by role** (fields under curves under markers), not
+by argument order, so the call is order-free.  Pass ``force=True`` to overlay a
+deliberate mismatch with a warning.  Grow a figure incrementally with
+:meth:`~tsdynamics.viz.spec.Plot.add`, which goes through the same merge.
+
 The returned spec renders itself (notebook display, ``.plot()``, ``.save(...)``,
-``.render(...)``); see :class:`tsdynamics.viz.spec.PlotSpec`.
+``.render(...)``); see :class:`tsdynamics.viz.spec.Plot`.
 
 This module imports **no plotting library** — it only builds the backend-agnostic
 IR — so ``import tsdynamics`` stays plot-free (``tsdynamics.viz`` itself is lazy).
@@ -27,29 +52,54 @@ IR — so ``import tsdynamics`` stays plot-free (``tsdynamics.viz`` itself is la
 
 from __future__ import annotations
 
+import re
+from collections.abc import Mapping, Sequence
 from typing import Any
 
-from .spec import Animation, Layer, Layout, Legend, PlotKind, PlotSpec
+from ._frames import check_overlay, force_requested, role_of
+from ._visibility import listing_dir
+from .spec import (
+    Animation,
+    Annotation,
+    Layer,
+    Layout,
+    Legend,
+    Plot,
+    PlotKind,
+    PlotSpec,
+    apply_figure_keywords,
+    reject_on_keyword,
+    split_figure_keywords,
+)
 
 __all__ = ["plot"]
 
-#: The semantic kinds that can share **one** set of axes (an overlay).  Image /
-#: section / composite kinds each need their own axes + colorbar, so they are
-#: arranged into panels (``layout="stack"`` / …) rather than overlaid.
-_OVERLAYABLE: frozenset[PlotKind] = frozenset(
-    {PlotKind.TIME_SERIES, PlotKind.PHASE_PORTRAIT_2D, PlotKind.PHASE_PORTRAIT_3D}
-)
+__dir__ = listing_dir(__all__)
 
 #: Panel arrangements (``layout=``) that build a :data:`PlotKind.COMPOSITE`.
-_COMPOSITE_MODES: frozenset[str] = frozenset({"stack", "row", "grid"})
+_COMPOSITE_MODES: frozenset[str] = frozenset({"stack", "row", "grid", "frames"})
+
+#: The composite mode whose panels are consecutive in TIME, not in space: the
+#: panels are the frames of a movie, so the renderer plays them one after another
+#: instead of tiling them.  It implies an animation — a ``"frames"`` composite
+#: with no ``Animation`` would be silently tiled, which is a different picture.
+_FRAMES_MODE = "frames"
 
 
 def plot(
     *things: Any,
     layout: str = "overlay",
     animate: bool | dict[str, Any] | Animation = False,
+    fps: float | None = None,
+    force: bool = False,
+    rows: int | None = None,
+    cols: int | None = None,
+    share_x: bool | None = None,
+    share_y: bool | None = None,
+    share_color: bool | None = None,
+    labels: Sequence[str | None] | str | None = None,
     **build_kw: Any,
-) -> PlotSpec:
+) -> Plot:
     """Compose one or more things into a single (possibly multi-panel) spec.
 
     Parameters
@@ -57,28 +107,80 @@ def plot(
     *things
         The things to plot — any mix of plottables (a
         :class:`~tsdynamics.data.Trajectory`, a system, an analysis result) and
-        already-built :class:`~tsdynamics.viz.spec.PlotSpec` objects (including
+        already-built :class:`~tsdynamics.viz.spec.Plot` objects (including
         specs returned by an earlier ``plot`` call).  A single list/tuple argument is
         unwrapped, so ``plot([a, b])`` and ``plot(a, b)`` are equivalent.
-    layout : {"overlay", "stack", "row", "grid"}, optional
+    layout : {"overlay", "stack", "row", "grid", "frames"}, optional
         ``"overlay"`` (default) draws everything on one set of axes (a single
         panel); ``"stack"`` / ``"row"`` / ``"grid"`` give each thing its own panel
         in a :data:`~tsdynamics.viz.spec.PlotKind.COMPOSITE` figure.
+
+        ``"frames"`` is the parameter-sweep movie: the panels are consecutive in
+        **time** rather than in space, so they are played one after another
+        instead of tiled.  It implies an animation (``fps=`` is enough)::
+
+            ts.plot(*[ts.plot(sys.with_params(r=r), "cobweb") for r in rs],
+                    layout="frames", fps=15).save("cascade.mp4")
+
+        An overlay is legal when every thing draws in a **compatible frame** —
+        the same coordinate space, the same dimension, the same axes (see
+        :class:`tsdynamics.viz._frames.Frame`).  That is what lets a basin image,
+        its attractors, a trajectory and the equilibria share one axes, and what
+        refuses an ``(x, y)`` portrait under an ``(x, z)`` overlay.
+    force : bool, default False
+        Overlay a deliberate frame mismatch anyway, warning once
+        (:class:`~tsdynamics.viz.render.caps.VisualizationDegraded`) instead of
+        raising.  Only meaningful for ``layout="overlay"``.
+
+        .. versionchanged:: 6.0
+            Was ``on="force"``, whose whole domain was one string and whose name
+            read as *"on which panel"*.  ``on=`` raises now, naming ``force=``.
     animate : bool or dict or Animation, optional
         Animate the **whole figure**.  A composite plays every panel in lockstep on
         one shared clock (each panel keeps its own per-kind head default); an
         overlay animates the merged panel.  ``True`` uses defaults, a dict / an
         :class:`~tsdynamics.viz.spec.Animation` configures it.  Tweak further with
         the chainable ``.animate()`` / ``.trail()`` / … methods on the result.
+    rows, cols : int, optional
+        Explicit grid shape for ``layout="grid"``.  ``None`` (both) derives a
+        near-square grid.  Ignored by ``"overlay"`` (one panel) and by
+        ``"stack"`` / ``"row"`` (whose shape is fixed by the mode).
+
+        .. versionadded:: 6.0
+            :class:`~tsdynamics.viz.spec.Layout` always had these fields, but
+            ``plot()`` had no way to set them, so a 4-panel grid was stuck on the
+            auto-derived 2x2 and a 2x3 could not be asked for at all.
+    share_x, share_y : bool, optional
+        Force shared x / y axes across the panels.  ``None`` keeps the
+        conservative auto-default (a *stack* of time-series panels naming the
+        same x axis shares x; nothing else does).
+    share_color : bool, optional
+        Draw **one** figure-level colorbar rather than one per panel — the right
+        presentation for a row of basin images across a parameter, where the
+        per-panel colorbars repeat the same scale.  Default ``False``.
+    labels : sequence of str, optional
+        **Name the curves.**  One entry per thing, in argument order
+        (``None`` leaves that one's automatic label alone)::
+
+            ts.plot(a, b, labels=["mu = 1", "mu = 3"])
+
+        Comparing two parameter values is the commonest figure in dynamics and
+        it had **no spelling**: ``label=`` / ``labels=`` / ``legend_labels=``
+        were all refused (two of them suggesting ``zlabel=``, an axis name), and
+        the only route that worked was mutating ``p.layers[i].label`` — reaching
+        into the IR.  A named thing is exempt from the automatic ``(1)`` / ``(2)``
+        disambiguation, because you already said what it is.
+
+        .. versionadded:: 6.0
     **build_kw
-        Forwarded to each non-spec thing's ``to_plot_spec`` (``components`` /
+        Forwarded to each non-spec thing's ``__plot_spec__`` (``components`` /
         ``kind`` / the per-kind options), so ``plot(a, b, components="x")``
         composes the same view of each.  Cannot be combined with an already-built
-        ``PlotSpec`` argument.
+        ``Plot`` argument.
 
     Returns
     -------
-    PlotSpec
+    Plot
         A single-panel spec (overlay) or a ``COMPOSITE`` spec (panelled).  The
         result renders itself — ``.plot()`` / ``.save(...)`` / ``.render(...)``.
 
@@ -88,7 +190,7 @@ def plot(
     ``"row"`` / ``"grid"``): renderers resolve the theme per panel as
     ``panel.theme or composite.theme or get_theme(None)`` — the panel's own theme
     wins, then the composite-level theme (set via
-    :meth:`~tsdynamics.viz.spec.PlotSpec.theme` on the returned spec), then
+    :meth:`~tsdynamics.viz.spec.Plot.theme` on the returned spec), then
     the active global default.  An overlay (single panel) uses
     ``spec.theme or get_theme(None)`` directly.  To give every panel the same
     theme, call ``result.theme("dark")`` on the composite result; to style
@@ -97,30 +199,275 @@ def plot(
     """
     from tsdynamics.errors import InvalidParameterError
 
-    items = (
-        list(things[0])
-        if len(things) == 1 and isinstance(things[0], (list, tuple))
-        else list(things)
-    )
+    reject_on_keyword(build_kw, "viz.plot()", "ts.plot(a, b, force=True)")
+    reject_kind_keyword(build_kw, "ts.plot()")
+    items = unwrap_container(things)
     if not items:
         raise InvalidParameterError("plot() needs at least one thing to plot.")
 
-    specs = [_to_spec(item, build_kw) for item in items]
+    style, figure = split_presentation(build_kw)
+    specs = [to_spec(item, build_kw) for item in items]
+    layout_kw = {
+        "rows": rows,
+        "cols": cols,
+        "share_x": share_x,
+        "share_y": share_y,
+        "share_color": share_color,
+    }
 
-    if layout == "overlay":
-        result = _overlay(specs)
-    elif layout in _COMPOSITE_MODES:
-        result = _composite(specs, layout)
+    if len(specs) == 1 and isinstance(items[0], PlotSpec):
+        # ``ts.plot(p)`` used to return *p itself*, so the documented "closure"
+        # property was an aliasing trap: ``q = ts.plot(p).relabel(title="…")``
+        # renamed ``p``, because every tweak mutates and returns self.  ``a + b``
+        # already composed "onto a COPY of a"; the two composition doors now
+        # agree.  Only the sole-subject case copies — ``ts.viz.grid(a, b).panels``
+        # genuinely *are* ``a`` and ``b``, which is what makes a grid inspectable.
+        specs = [_fresh_copy(specs[0])]
+
+    if labels is not None:
+        apply_labels(specs, labels)
+
+    mode = layout.mode if isinstance(layout, Layout) else layout
+    if isinstance(layout, Layout):
+        layout_kw = {
+            key: getattr(layout, key) if layout_kw[key] is None else layout_kw[key]
+            for key in layout_kw
+        }
+    if mode == "overlay":
+        _reject_layout_kw_for_overlay(layout_kw)
+        result = _overlay(specs, force=force)
+    elif mode in _COMPOSITE_MODES:
+        if force:
+            raise InvalidParameterError(
+                "force=True applies to layout='overlay' (one set of axes); panelled "
+                "layouts draw each thing in its own frame, so there is nothing to force."
+            )
+        result = _composite(specs, mode, layout_kw)
     else:
         raise InvalidParameterError(
-            f"unknown layout {layout!r}; use 'overlay', 'stack', 'row', or 'grid'."
+            f"unknown layout {mode!r}; use 'overlay', 'stack', 'row', 'grid', "
+            "or 'frames' (each panel is one frame of a movie)."
         )
-    if animate is not False and animate is not None:
-        _apply_figure_animation(result, animate)
+    if mode == _FRAMES_MODE and (animate is False or animate is None):
+        # The panels ARE the frames, so a "frames" composite is animated by
+        # construction; §6.6's own example passes only ``fps=``.
+        animate = True
+    if (animate is not False and animate is not None) or fps is not None:
+        _apply_figure_animation(result, animate if animate is not False else True, fps)
+    apply_presentation(result, style, figure)
     return result
 
 
-def _apply_figure_animation(result: PlotSpec, animate: bool | dict[str, Any] | Animation) -> None:
+def _fresh_copy(spec: PlotSpec) -> PlotSpec:
+    """Deep-copy a plot and drop its rendered-figure state.
+
+    The same copy :meth:`Plot._compose` (the ``a + b`` operator) takes, hoisted
+    so the operator door and the call door cannot drift.
+    """
+    import copy as _copy
+
+    fresh = _copy.deepcopy(spec)
+    fresh._figure_cache = None
+    fresh._figure_handed_out = False
+    return fresh
+
+
+#: The pre-v6 private spelling of :func:`to_spec`.  ``Plot.add`` imports it by
+#: this name (``viz/spec.py``, another slot's file), so the rename keeps the old
+#: binding rather than reaching across to edit the caller.
+def _to_spec(thing: Any, build_kw: dict[str, Any]) -> PlotSpec:
+    """Alias of :func:`to_spec` (the name ``Plot.add`` imports)."""
+    return to_spec(thing, build_kw)
+
+
+#: ``kind=`` values that name a picture the transform registry spells
+#: differently — the ones a lookup by name could not resolve on its own.  The
+#: three recipes (``"delay"`` / ``"field"``) and the two dimension-suffixed
+#: portraits are the whole of it; everything else in the old vocabulary either
+#: *is* a registered transform name or one of its aliases.
+_KIND_SPELLINGS: dict[str, str] = {
+    "delay": "delay_embedding",
+    "field": "spatial_field",
+    "phase_portrait_2d": "phase_portrait",
+    "phase_portrait_3d": "phase_portrait",
+}
+
+
+def transform_for_kind(value: Any) -> str | None:
+    """Return the transform name that draws what ``kind=value`` used to ask for."""
+    from .transforms import names as transform_names
+
+    word = str(getattr(value, "value", value))
+    if word in _KIND_SPELLINGS:
+        return _KIND_SPELLINGS[word]
+    known = set(transform_names())
+    if word in known:
+        return word
+    try:  # an alias (``"recurrence_plot"`` → ``recurrence``) resolves through get()
+        from .transforms import get as get_transform
+
+        return str(get_transform(word).name)
+    except Exception:
+        return None
+
+
+def reject_kind_keyword(kw: dict[str, Any], door: str, spelling: str | None = None) -> None:
+    """Refuse ``kind=`` at a plotting door, naming the **positional** spelling.
+
+    There were two vocabularies for "which picture", and they disagreed:
+    measured at v6 round 7, ``ts.plot(tr, kind="time_series")`` and
+    ``ts.plot(tr, "time_series")`` both worked, neither warned, and
+    ``a.to_dict() != b.to_dict()`` — the ``kind=`` route built a spec with **no
+    frame** (so it could not be frame-checked for an overlay) and a y axis
+    labelled with the *first* component of a three-component plot.  Two grammars
+    for one argument is the silent-wrong-answer defect, not flexibility
+    (CONTRACT corollary C3), so there is one now: **a picture is named
+    positionally, by its transform.**
+
+    Everything ``kind=`` uniquely served survives under that one spelling —
+    including the two recipes that were never :class:`PlotKind` members
+    (``kind="delay"`` → ``"delay_embedding"``, ``kind="field"`` →
+    ``"spatial_field"``) and their per-kind options (``delay=`` / ``delay_time=``
+    / ``color_by=`` / ``transpose=``), which the transforms accept by the same
+    names.
+
+    Parameters
+    ----------
+    kw : dict
+        The door's leftover keywords.  ``kind`` is popped before raising.
+    door : str
+        How the caller spells this door, ``"ts.plot()"``-style — it opens the
+        message.
+    spelling : str, optional
+        A ``str.format`` template taking ``name``, for the line the message hands
+        back.  Defaults to the front door's ``<door>(subject, 'name')``; an
+        *object* door passes its own (``"traj.plot.{name}()"``), because a method
+        has no positional slot to put a transform in.
+    """
+    if "kind" not in kw:
+        return
+    from tsdynamics.errors import InvalidParameterError, remedy
+
+    value = kw.pop("kind")
+    name = transform_for_kind(value)
+    if name is None:
+        from .transforms import names as transform_names
+
+        tail = (
+            f"{door} names a picture positionally, by its transform — and {value!r} is "
+            f"not one. ts.viz.transforms.names() lists all {len(transform_names())}."
+        )
+        raise InvalidParameterError(f"{door} has no kind= keyword. {tail}")
+    template = spelling if spelling is not None else f"{door[:-2]}(subject, {{name!r}})"
+    raise InvalidParameterError(
+        f"{door} has no kind= keyword (you passed kind={value!r}); a picture is named "
+        f"POSITIONALLY, by its transform — one vocabulary, not two."
+        + remedy(template.format(name=name))
+        + "\nts.viz.transforms.names() lists them all; ts.viz.compatibility() shows how "
+        "each one can be drawn."
+    )
+
+
+def _plot_spec_of(thing: Any) -> Any:
+    """Return ``thing``'s spec builder — its ``__plot_spec__``, or ``None``.
+
+    ``__plot_spec__`` is **the** seam (a dunder, because it is a protocol and not
+    a verb a user types), so *this one predicate* is how ``ts.plot`` recognises a
+    subject: a system, a trajectory, all 32 analysis results and any out-of-tree
+    plottable answer to it and to nothing else.
+
+    .. versionchanged:: 6.0
+        Also consulted ``to_plot_spec``, which was the public spelling of the same
+        thing.  One room, one door: ``ts.plot(x)`` hands back the
+        :class:`~tsdynamics.viz.spec.Plot` without drawing it, which is the whole
+        reason the readable name existed.
+    """
+    return getattr(thing, "__plot_spec__", None)
+
+
+def unwrap_container(things: tuple[Any, ...]) -> list[Any]:
+    """Unwrap a single list/tuple **of plottables** into its items.
+
+    ``plot([a, b])`` and ``plot(a, b)`` mean the same thing — but a list of
+    *numbers* is one subject, not a batch of them, or ``plot([0.1, 0.2, 0.3])``
+    would report that it "cannot plot a float".  A container that reads cleanly
+    as a numeric array is therefore left whole and coerced later.
+    """
+    import numpy as np
+
+    if len(things) != 1 or not isinstance(things[0], (list, tuple)):
+        return list(things)
+    only = things[0]
+    # A container holding something the library can plot in its own right — a
+    # trajectory, a system, a result, a spec — or a transform name, is a batch.
+    if any(isinstance(x, str) or _plot_spec_of(x) is not None for x in only):
+        return list(only)
+    try:
+        arr = np.asarray(only, dtype=float)
+    except (TypeError, ValueError):
+        return list(only)
+    return [only] if arr.ndim >= 1 else list(only)
+
+
+def split_presentation(kw: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Peel the style and figure keywords out of ``kw`` **in place**.
+
+    Returns ``(style, figure)``; ``kw`` keeps only the keywords that describe
+    *what to compute*.  Style names are the canonical
+    :data:`~tsdynamics.viz.style.STYLE_KEYS` vocabulary and its aliases, so
+    ``lw=`` and ``linewidth=`` are both recognised; figure names are the **17**
+    of :data:`~tsdynamics.viz.spec.FIGURE_KEYS`.
+
+    .. versionchanged:: 6.0
+        This module carried its own five-name copy of the figure vocabulary, so
+        ``ts.plot(traj, xlim=(0, 1))`` answered ``kind='phase_portrait_3d' does
+        not accept keyword(s) ['xlim']`` while ``traj.plot(xlim=(0, 1))`` worked
+        — **12 of the 17 failed at one door and none at the other**.  There is now
+        one definition, in ``viz/spec.py``, and every door imports it.
+    """
+    from .style import style_names
+
+    names = style_names()
+    style = {k: kw.pop(k) for k in list(kw) if k in names}
+    return style, split_figure_keywords(kw)
+
+
+def apply_presentation(spec: PlotSpec, style: dict[str, Any], figure: dict[str, Any]) -> None:
+    """Apply peeled style / figure keywords to a finished spec.
+
+    On a composite these apply to **every** panel — that is what the underlying
+    :meth:`~tsdynamics.viz.spec.Plot.style` /
+    :meth:`~tsdynamics.viz.spec.Plot.relabel` tweaks already do (``title``
+    stays figure-level).  An undocumented "first panel only" would be exactly the
+    two-meanings-for-one-spelling defect this pass exists to end.
+    """
+    if style:
+        spec.style(**style)
+    if figure:
+        apply_figure_keywords(spec, figure)
+
+
+def _reject_layout_kw_for_overlay(layout_kw: dict[str, Any]) -> None:
+    """Raise if a panel-arrangement keyword was passed to ``layout="overlay"``.
+
+    An overlay is *one* set of axes, so a grid shape or a shared axis has no
+    meaning there.  Accepting it silently would be the same class of defect this
+    phase is closing everywhere else: the caller sees a plot and believes the
+    keyword landed.
+    """
+    from tsdynamics.errors import InvalidParameterError
+
+    given = sorted(k for k, v in layout_kw.items() if v is not None)
+    if given:
+        raise InvalidParameterError(
+            f"{given} apply to a panelled figure, not to layout='overlay' (one set "
+            "of axes); pass layout='stack' / 'row' / 'grid'."
+        )
+
+
+def _apply_figure_animation(
+    result: PlotSpec, animate: bool | dict[str, Any] | Animation, fps: float | None = None
+) -> None:
     """Stamp a figure-level animation: lockstep master on a composite, else the panel.
 
     A composite gets the master clock on itself and a per-panel animation (the
@@ -130,6 +477,20 @@ def _apply_figure_animation(result: PlotSpec, animate: bool | dict[str, Any] | A
     """
     from dataclasses import replace
 
+    if not isinstance(animate, bool | dict | Animation):
+        # ``animate="yes"`` / ``animate="reveal"`` used to be read as a bare truthy
+        # flag: the string was discarded in silence and the caller got the plain
+        # defaults, so ``animate="frames"`` produced a *reveal* movie.
+        from tsdynamics.errors import InvalidParameterError
+
+        raise InvalidParameterError(
+            f"animate={animate!r} is not an animation. The three spellings:\n"
+            "    animate=True                       # the defaults\n"
+            '    animate={"fps": 60, "mode": "frames"}   # the knobs you want\n'
+            "    animate=ts.viz.spec.Animation(fps=60)   # a directive you built\n"
+            "Then tune it with .animate() / .trail() / .head() on the result."
+        )
+
     def _make(kind: PlotKind) -> Animation:
         head_default = kind != PlotKind.TIME_SERIES
         if isinstance(animate, Animation):
@@ -137,9 +498,12 @@ def _apply_figure_animation(result: PlotSpec, animate: bool | dict[str, Any] | A
             # other knob the user set) is honored verbatim; the per-kind head
             # default applies only to the bare-``True`` / dict spellings below.
             return animate
+        knobs: dict[str, Any] = {"head": head_default}
         if isinstance(animate, dict):
-            return Animation(**{"head": head_default, **animate})
-        return Animation(head=head_default)
+            knobs.update(animate)
+        if fps is not None:
+            knobs["fps"] = fps
+        return Animation(**knobs)
 
     if result.is_composite:
         master = _make(PlotKind.COMPOSITE)
@@ -151,8 +515,15 @@ def _apply_figure_animation(result: PlotSpec, animate: bool | dict[str, Any] | A
         result.animation = _make(result.kind)
 
 
-def _to_spec(thing: Any, build_kw: dict[str, Any]) -> PlotSpec:
-    """Convert one ``thing`` to a :class:`PlotSpec` (forwarding ``build_kw``)."""
+def to_spec(thing: Any, build_kw: dict[str, Any]) -> Plot:
+    """Convert one ``thing`` to a :class:`Plot` (forwarding ``build_kw``).
+
+    The single coercion every composition door goes through: a finished ``Plot``
+    passes through untouched (closure), anything carrying ``__plot_spec__``
+    is asked for its default view, and plain numbers are read
+    as an index-time trajectory at the door — a user holding an array should not
+    have to construct a library type to look at it.
+    """
     from tsdynamics.errors import InvalidInputError, InvalidParameterError
 
     if isinstance(thing, PlotSpec):
@@ -162,16 +533,26 @@ def _to_spec(thing: Any, build_kw: dict[str, Any]) -> PlotSpec:
                 "already-built PlotSpec; pass them when you first build it."
             )
         return thing
-    to_plot_spec = getattr(thing, "to_plot_spec", None)
-    if not callable(to_plot_spec):
-        raise InvalidInputError(
-            f"cannot plot a {type(thing).__name__}: it is not a Trajectory / system / "
-            f"result / PlotSpec (no to_plot_spec())."
-        )
-    spec = to_plot_spec(**build_kw)
+    kw = dict(build_kw)
+    plot_spec = _plot_spec_of(thing)
+    if not callable(plot_spec):
+        # Measured data — a plain array, a list of numbers, a dataframe column.
+        # It comes in through the same door as everything else: a user holding
+        # numbers should not have to construct a Trajectory to look at them.
+        from tsdynamics.data.trajectory import as_trajectory
+
+        try:
+            coerced = as_trajectory(thing, dt=kw.pop("dt", None))
+        except InvalidInputError as err:
+            raise InvalidInputError(
+                f"cannot plot a {type(thing).__name__}: it is not a Trajectory / system / "
+                f"result / PlotSpec, nor data this can read ({err})."
+            ) from None
+        plot_spec = _plot_spec_of(coerced)
+    spec = plot_spec(**kw)
     if not isinstance(spec, PlotSpec):  # pragma: no cover - defensive
         raise InvalidInputError(
-            f"{type(thing).__name__}.to_plot_spec() returned {type(spec).__name__}, not a PlotSpec."
+            f"{type(thing).__name__}.__plot_spec__() returned {type(spec).__name__}, not a PlotSpec."
         )
     return spec
 
@@ -181,30 +562,70 @@ def _to_spec(thing: Any, build_kw: dict[str, Any]) -> PlotSpec:
 # ---------------------------------------------------------------------------
 
 
-def _overlay(specs: list[PlotSpec]) -> PlotSpec:
-    """Merge overlay-compatible specs into one single-panel spec."""
-    from dataclasses import replace
+def _overlay(specs: list[PlotSpec], *, force: bool | str | None = False) -> PlotSpec:
+    """Merge frame-compatible specs into one single-panel spec.
 
-    from tsdynamics.errors import InvalidParameterError
+    Two policy decisions live here, and they are the whole of the v6 composability
+    work:
+
+    **Legality is frame identity, not kind identity.**  The old rule was a
+    hard-coded three-member whitelist of :class:`PlotKind` values, which refused
+    the flagship overlay (a basin image + its attractors + a trajectory + the
+    equilibria are four *kinds* of one *plane*) while happily accepting an
+    ``(x, y)`` portrait under an ``(x, z)`` fixed-point overlay — markers in the
+    wrong place with nothing to say so.  Both are decided correctly by comparing
+    :attr:`~tsdynamics.viz.spec.PlotSpec.resolved_frame`.
+
+    **Z-order is by role, not by argument order.**  A field (image / quiver)
+    draws under a curve, which draws under markers, because that is what those
+    things *are* — so ``plot(basins, traj)`` and ``plot(traj, basins)`` produce
+    the same picture.  The sort is stable, so specs of equal role keep their
+    argument order (and an overlay of same-kind specs, the only kind that was
+    legal before v6, is byte-identical to what it produced then).
+
+    The **axis base** (axes, aspect, colorbar, clim, semantic kind) is the
+    first spec in *role* order — the field owns the frame it is a picture of, so
+    a basin image keeps its categorical colorbar and its ``basins_image`` kind
+    when a trajectory is drawn over it.  The **figure context** (theme,
+    animation) comes from the first spec in *argument* order: presentation is the
+    caller's, z-order is the data's.
+    """
+    from dataclasses import replace
 
     if len(specs) == 1:
         return specs[0]
 
-    kinds = {s.kind for s in specs}
-    if not kinds <= _OVERLAYABLE or len(kinds) != 1:
-        raise InvalidParameterError(
-            f"cannot overlay specs of kinds {sorted(k.value for k in kinds)} on one "
-            "set of axes; use layout='stack' (or 'row' / 'grid') to give each its "
-            "own panel."
-        )
+    frame = check_overlay(specs, force=force_requested(force))
 
-    base = specs[0]
+    # Stable sort by role: field (0) < base (1) < overlay (2).
+    order = sorted(range(len(specs)), key=lambda i: (int(role_of(specs[i])), i))
+    base = specs[order[0]]
+    context = specs[0]
+
     tags = _source_tags(specs)
     multi = len(specs) > 1
     layers: list[Layer] = []
-    for tag, spec in zip(tags, specs, strict=True):
-        for layer in spec.layers:
-            layers.append(_relabel_for_overlay(layer, tag, multi=multi))
+    annotations: list[Annotation] = []
+    composed: list[str] = []
+    for i in order:
+        # A spec that is *itself* an overlay already carries per-source labels
+        # (and its own source list).  Re-tagging them would double-prefix every
+        # legend entry, which is what made an incremental ``.add()`` chain
+        # disagree with the equivalent one-shot ``plot(...)`` call.  A spec the
+        # caller *named* (``labels=``) is exempt for the same reason: they said
+        # what it is, so the source tag has nothing left to add.
+        done = list(specs[i].meta.get("composed", ()))
+        named = LABEL_META_KEY in specs[i].meta
+        for layer in specs[i].layers:
+            layers.append(
+                _copy_layer(layer)
+                if (done or named)
+                else _relabel_for_overlay(layer, tags[i], multi=multi)
+            )
+        annotations.extend(replace(a) for a in specs[i].annotations)
+        composed.extend(done or [tags[i]])
+    _disambiguate_labels(layers)
+    _warn_on_stacked_images(layers)
 
     # Deep-copy the carried-over presentation objects (Axis / Colorbar / Legend
     # are mutable dataclasses, and PlotSpec's in-place tweaks — relabel / rescale /
@@ -223,8 +644,47 @@ def _overlay(specs: list[PlotSpec]) -> PlotSpec:
         legend=Legend() if len(layers) > 1 else _copy_legend(base.legend),
         title=_common_title(specs),
         layers=layers,
-        meta={**dict(base.meta), "composed": list(tags)},
+        annotations=annotations,
+        meta={**dict(base.meta), "composed": composed},
+        animation=context.animation,
+        _theme=context._theme,
+        frame=frame,
     )
+
+
+#: The :class:`PlotSpec` fields :func:`_merge_into` copies from a freshly merged
+#: overlay onto an existing spec.  Deliberately **not** ``animation`` / ``_theme``
+#: (the target already owns the figure context — it is the first argument of its
+#: own ``add`` call) and not ``panels`` / ``layout`` (an overlay has neither).
+_MERGE_FIELDS: tuple[str, ...] = (
+    "kind",
+    "layers",
+    "x",
+    "y",
+    "z",
+    "clim",
+    "colorbar",
+    "legend",
+    "title",
+    "ndim",
+    "aspect",
+    "annotations",
+    "meta",
+    "frame",
+)
+
+
+def _merge_into(target: PlotSpec, merged: PlotSpec) -> PlotSpec:
+    """Write a merged overlay's fields back onto ``target`` in place.
+
+    The engine behind :meth:`tsdynamics.viz.spec.PlotSpec.add`: ``add`` must
+    mutate-and-return-``self`` like every other tweak (so it chains and so a
+    reference held elsewhere sees the addition), while the merge itself is a
+    pure function that builds a fresh spec.  This is the one place the two meet.
+    """
+    for name in _MERGE_FIELDS:
+        setattr(target, name, getattr(merged, name))
+    return target
 
 
 def _copy_legend(legend: Legend | None) -> Legend | None:
@@ -234,21 +694,251 @@ def _copy_legend(legend: Legend | None) -> Legend | None:
     return replace(legend) if legend is not None else None
 
 
+def _copy_layer(layer: Layer, *, label: str | None = None) -> Layer:
+    """Shallow-copy a layer (channel arrays are shared, the containers are not).
+
+    A merged spec must never alias an input's mutable ``Layer``: a later
+    ``.style()`` / ``.recolor()`` on the composition would otherwise reach back
+    and rewrite the spec the caller passed in.
+    """
+    return Layer(
+        layer.kind,
+        dict(layer.data),
+        label=layer.label if label is None else label,
+        style=dict(layer.style),
+        transform=layer.transform,
+    )
+
+
+def label_count_message(wanted: int, given: int) -> str:
+    """Build the one message both plotting doors give for a mismatched ``labels=``.
+
+    ``ts.plot`` counts SUBJECTS (a subject can draw several specs, so the spec
+    count is not a number a caller can predict) and ``viz.plot`` counts things;
+    they are the same number for the same call, and one concept gets one
+    sentence.
+    """
+    return (
+        f"labels= names one curve per thing plotted: {wanted} were plotted and "
+        f"{given} label(s) were given. Pass one per thing (None to leave one automatic), "
+        "e.g. ts.plot(a, b, labels=['reference', 'perturbed'])."
+    )
+
+
+#: Written onto a spec's ``meta`` by :func:`apply_labels`.  Two readers depend on
+#: it: :func:`_source_tags` (so the legend prefix *is* the caller's word) and
+#: :func:`_overlay` (so the layers are not re-tagged on top of it).
+LABEL_META_KEY = "label"
+
+
+def apply_labels(specs: list[PlotSpec], labels: Any) -> None:
+    r"""Name each spec's curves from ``labels``, positionally, **in place**.
+
+    One entry per spec, in argument order; ``None`` leaves that spec's automatic
+    label alone.  A spec contributing several curves (a multi-component time
+    series) gets the name as a **prefix**, so ``labels=["run A"]`` legends
+    ``run A: x`` / ``run A: y`` rather than naming two different curves the same
+    thing.
+
+    Raises
+    ------
+    tsdynamics.errors.InvalidParameterError
+        If the count does not match — with both counts named, because a silently
+        short sequence would label the wrong curves.
+    """
+    from tsdynamics.errors import InvalidParameterError
+
+    from .spec import Legend
+
+    names: list[Any] = [labels] if isinstance(labels, str) else list(labels)
+    if len(names) != len(specs):
+        raise InvalidParameterError(label_count_message(len(specs), len(names)))
+    for spec, name in zip(specs, names, strict=True):
+        if name is None:
+            continue
+        text = str(name)
+        spec.meta[LABEL_META_KEY] = text
+        if len(spec.layers) == 1:
+            spec.layers[0].label = text
+        else:
+            for layer in spec.layers:
+                layer.label = f"{text}: {layer.label}" if layer.label else text
+        if spec.layers and spec.legend is None:
+            spec.legend = Legend()
+
+
 def _relabel_for_overlay(layer: Layer, tag: str, *, multi: bool) -> Layer:
-    """Copy ``layer``, disambiguating its legend label by source ``tag``."""
+    """Copy ``layer``, disambiguating its legend label by source ``tag``.
+
+    A label that already *is* the tag is left alone — prefixing it would produce
+    ``"streamlines: streamlines"``, which disambiguates nothing.  Neither is a
+    **positional** tag prefixed onto a label the caller wrote: ``"series 2: y =
+    0"`` names the argument slot, not the curve, and
+    :func:`_disambiguate_labels` is what guarantees uniqueness in the end anyway.
+    """
     if not multi:
         return layer
-    label = f"{tag}: {layer.label}" if layer.label else tag
-    return Layer(layer.kind, dict(layer.data), label=label, style=dict(layer.style))
+    if not layer.label:
+        return _copy_layer(layer, label=tag)
+    if layer.label == tag or _POSITIONAL_TAG.fullmatch(tag):
+        return _copy_layer(layer)
+    return _copy_layer(layer, label=f"{tag}: {layer.label}")
+
+
+#: The suffix :func:`_disambiguate_labels` writes, so a second pass can strip it
+#: and re-derive rather than stack another one on top.
+_AUTO_SUFFIX = re.compile(r" \(\d+\)$")
+
+
+def _base_label(label: str | None) -> str | None:
+    """Return ``label`` without a previously auto-applied ``" (N)"`` suffix."""
+    return _AUTO_SUFFIX.sub("", label) if label else label
+
+
+def _disambiguate_labels(layers: list[Layer]) -> None:
+    """Give every legend entry in the merged overlay its own name, **in place**.
+
+    Run over the **final** layer set rather than per ``add``, because the two
+    paths disagreed exactly where it mattered: measured before v6,
+    ``ts.plot(t1, t2, t3)`` legended ``(1)`` / ``(2)`` / ``(3)`` while
+    ``ts.plot(t1).add(t2).add(t3)`` legended ``(1)`` / ``(2)`` / ``(2)`` — a
+    duplicate — and over a transform-produced base it named three different
+    orbits ``VanDerPol`` three times with no suffix at all.  **A legend that
+    names two different orbits identically is a wrong answer**, not a cosmetic
+    one: it is the figure telling you these are the same curve.
+
+    Only genuine duplicates are touched, so a figure whose labels were already
+    unique is byte-identical to what it was.
+
+    It is also **idempotent**, which is what makes running it per ``add`` safe:
+    a label already carrying an auto suffix is counted under its base, so
+    ``ts.plot(t1).add(t2).add(t3)`` legends ``Lorenz (1) / (2) / (3)`` instead of
+    the measured ``Lorenz (1) / Lorenz (2) (1) / Lorenz (2) (2)``.
+    """
+    bases = [_base_label(layer.label) for layer in layers]
+    counts: dict[str, int] = {}
+    for base in bases:
+        if base:
+            counts[base] = counts.get(base, 0) + 1
+    seen: dict[str, int] = {}
+    for layer, base in zip(layers, bases, strict=True):
+        if not base or counts[base] < 2:
+            continue
+        seen[base] = seen.get(base, 0) + 1
+        layer.label = f"{base} ({seen[base]})"
+
+
+def warn_on_offscreen_layers(spec: PlotSpec) -> None:
+    """Warn when a **legended** curve lies entirely outside the axes it is drawn in.
+
+    A legend entry is a claim that the curve is in this picture.  When the axes
+    were framed by something else — a field's evaluation window, an explicit
+    ``xlim=``, a panel sharing limits — a curve can fall off the canvas
+    completely and still be named in the key: the figure then asserts that a
+    curve is somewhere it is not, which is a wrong answer rather than a cosmetic
+    one.  The auto-window now unions over every subject (see
+    ``_frontdoor._window_over_data``), so this is the backstop for the windows
+    the caller chose.
+    """
+    import warnings
+
+    import numpy as np
+
+    from .render.caps import VisualizationDegraded
+
+    if spec.kind is PlotKind.COMPOSITE:
+        for panel in spec.panels:
+            warn_on_offscreen_layers(panel)
+        return
+    bounds = {"x": spec.x.limits if spec.x else None, "y": spec.y.limits if spec.y else None}
+    if not any(bounds.values()):
+        return
+    missing: list[str] = []
+    for layer in spec.layers:
+        if not layer.label:
+            continue
+        for channel, limits in bounds.items():
+            values = layer.data.get(channel)
+            if limits is None or values is None:
+                continue
+            finite = np.asarray(values, dtype=float).ravel()
+            finite = finite[np.isfinite(finite)]
+            lo, hi = float(limits[0]), float(limits[1])
+            # A layer that is CONSTANT on this channel is a datum — a reference
+            # line a transform drew to be measured against (``λ = 0`` on a
+            # convergence plot) — and a datum sitting outside the data's own
+            # scale is the scale choice, not a lost curve.  Only a curve that
+            # actually goes somewhere can be *missing* from the picture.
+            if finite.size < 2 or finite.min() == finite.max():
+                continue
+            if finite.max() < lo or finite.min() > hi:
+                missing.append(
+                    f"{layer.label!r} ({channel} in [{finite.min():.3g}, {finite.max():.3g}])"
+                )
+                break
+    if not missing:
+        return
+    warnings.warn(
+        f"{', '.join(missing)} {'is' if len(missing) == 1 else 'are'} entirely outside the "
+        f"axes (x={bounds['x']}, y={bounds['y']}) but still in the legend — the figure is "
+        "naming a curve you cannot see. Widen the limits, or drop the subject.",
+        VisualizationDegraded,
+        stacklevel=3,
+    )
+
+
+#: Layer marks that paint every pixel of their extent.  Two of them on one axes
+#: means the second hides the first.
+_OPAQUE_MARKS: frozenset[str] = frozenset({"image"})
+
+
+def _warn_on_stacked_images(layers: list[Layer]) -> None:
+    """Warn once when an overlay stacks two opaque images (the second hides the first).
+
+    Not an error: it is a real thing to want, with ``alpha=`` — which is exactly
+    why it needs saying rather than refusing.
+    """
+    import warnings
+
+    from .render.caps import VisualizationDegraded
+
+    opaque = [
+        layer
+        for layer in layers
+        if str(layer.kind) in _OPAQUE_MARKS and float(layer.style.get("alpha", 1.0) or 1.0) >= 1.0
+    ]
+    if len(opaque) < 2:
+        return
+    names = [layer.transform or str(layer.kind) for layer in opaque]
+    warnings.warn(
+        f"this overlay stacks {len(opaque)} opaque images ({', '.join(names)}); the last one "
+        "drawn hides the ones under it. Give the top one alpha=, or use "
+        "layout='row' / 'grid' to put them side by side.",
+        VisualizationDegraded,
+        stacklevel=4,
+    )
 
 
 def _source_tags(specs: list[PlotSpec]) -> list[str]:
-    """Return a unique, human-readable tag per source spec (title, made unique)."""
-    titles = [s.title or f"series {i + 1}" for i, s in enumerate(specs)]
+    """Return a unique, human-readable tag per source spec.
+
+    Preference order: the caller's own ``labels=`` word, then the spec's title,
+    then — for a spec built by one plot transform — that transform's name, then a
+    positional fallback.  The middle rung matters: overlaying a direction field,
+    its nullclines and an orbit used to legend the nullclines as ``"series 2:
+    v' = 0"``, where ``"nullclines: v' = 0"`` says the same thing and is true.
+    """
+    titles = [
+        str(s.meta.get(LABEL_META_KEY) or "") or s.title or _transform_tag(s) or f"series {i + 1}"
+        for i, s in enumerate(specs)
+    ]
+    settings = _parameter_tags(specs, titles)
     counts: dict[str, int] = {}
     tags: list[str] = []
-    for title in titles:
-        if titles.count(title) > 1:
+    for i, title in enumerate(titles):
+        if settings.get(i):
+            tags.append(settings[i])
+        elif titles.count(title) > 1:
             counts[title] = counts.get(title, 0) + 1
             tags.append(f"{title} ({counts[title]})")
         else:
@@ -256,9 +946,89 @@ def _source_tags(specs: list[PlotSpec]) -> list[str]:
     return tags
 
 
+def _parameter_tags(specs: list[PlotSpec], titles: list[str]) -> dict[int, str]:
+    """Name colliding curves by **the parameter that differs**, not by ``(1)`` / ``(2)``.
+
+    Overlaying one system at two parameter values is the commonest figure in this
+    field, and the legend read ``VanDerPol (1)`` / ``VanDerPol (2)`` — argument
+    slots, which say nothing about the dynamics and are the wrong way round as
+    soon as you reorder the call.  The values were in ``traj.meta["params"]`` the
+    whole time, so the legend now reads ``mu = 1`` / ``mu = 3``, and the system's
+    name (which every curve shares) stays where it belongs: the title.
+
+    Applied only when it is unambiguous — every colliding spec names the same
+    system, every one records its parameters, and the differing keys give a
+    **distinct** value to each.  Anything else falls back to ``(N)``, because a
+    legend that names two curves the same thing is the defect this exists to fix.
+    """
+    groups: dict[str, list[int]] = {}
+    for i, title in enumerate(titles):
+        groups.setdefault(title, []).append(i)
+    out: dict[int, str] = {}
+    for members in groups.values():
+        if len(members) < 2:
+            continue
+        metas = [specs[i].meta for i in members]
+        systems = {str(m.get("system") or "") for m in metas}
+        params = [m.get("params") for m in metas]
+        if len(systems) != 1 or "" in systems or not all(isinstance(p, Mapping) for p in params):
+            continue
+        keys = sorted(set().union(*(set(p) for p in params)))  # type: ignore[arg-type]
+        differing = [
+            k
+            for k in keys
+            if len({_fmt_param(p.get(k)) for p in params}) > 1  # type: ignore[union-attr]
+        ]
+        if not 1 <= len(differing) <= 2:
+            continue
+        named = {
+            i: ", ".join(f"{k} = {_fmt_param(p.get(k))}" for k in differing)  # type: ignore[union-attr]
+            for i, p in zip(members, params, strict=True)
+        }
+        if len(set(named.values())) == len(members):
+            out.update(named)
+    return out
+
+
+def _fmt_param(value: Any) -> str:
+    """Render a parameter value the way a caption would — ``1`` not ``1.0``."""
+    try:
+        return format(float(value), ".6g")
+    except (TypeError, ValueError):
+        return str(value)
+
+
+#: The provenance stamp ``ts.viz.draw`` puts on hand-built arrays.  It is real
+#: provenance (``p.style("(arrays)", …)`` selects those layers) but it is not a
+#: *source name*, so it never becomes a legend prefix: ``"(arrays): y = 0"``
+#: names the escape hatch rather than the curve.
+_HAND_BUILT_STAMP = "(arrays)"
+
+#: The last-resort source tag: ``series 3`` / ``series 3 (2)``.  It names the
+#: argument slot, so it is used only when a layer has no label of its own.
+_POSITIONAL_TAG = re.compile(r"series \d+( \(\d+\))?")
+
+
+def _transform_tag(spec: PlotSpec) -> str:
+    """Return the producing transform's name, when every layer of ``spec`` agrees on one."""
+    names = {layer.transform for layer in spec.layers if layer.transform}
+    tag = names.pop() if len(names) == 1 else ""
+    return "" if tag == _HAND_BUILT_STAMP else tag
+
+
 def _common_title(specs: list[PlotSpec]) -> str:
-    """Return the shared title if every source agrees, else empty."""
-    titles = {s.title for s in specs if s.title}
+    """Return the shared title if every source agrees, else empty.
+
+    An untitled source is skipped — *unless* its empty title is the considered
+    result of this same rule rather than an absence, which is true of an overlay
+    (``meta["composed"]``) **and of a nested composite**.  Counting the overlay
+    keeps an incremental ``.add()`` chain titled exactly like the one-shot
+    ``plot(...)`` call; counting the nested composite is what stops
+    ``(a|b) / c`` hoisting *c*'s title to the whole figure — measured, a
+    ``(portrait | series) / psd`` figure was suptitled "psd", so the page was
+    labelled with the name of one of its three panels.
+    """
+    titles = {s.title for s in specs if s.title or s.meta.get("composed") or s.is_composite}
     return next(iter(titles)) if len(titles) == 1 else ""
 
 
@@ -267,12 +1037,159 @@ def _common_title(specs: list[PlotSpec]) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _composite(specs: list[PlotSpec], mode: str) -> PlotSpec:
-    """Arrange specs into a ``COMPOSITE`` figure (one panel each; composites flattened)."""
+def _unify_colour(panels: list[PlotSpec]) -> None:
+    """Make ``share_color=True`` mean something: one scale, one bar, or a refusal.
+
+    Measured before v6 it was a **complete no-op** — three ``flow_speed`` panels
+    rendered three colorbars with ``share_color`` ``True`` *or* ``False``, at
+    clims ``(5.8e-05, 16.74)``, ``(5.2e-04, 35.69)`` and ``(1.4e-03, 96.86)``:
+    three incomparable colour scales presented as a comparison figure.  It was
+    plumbed through :class:`~tsdynamics.viz.spec.Layout`, documented, and honored
+    by zero renderers.
+
+    Three obligations, all discharged here in the IR — so every backend inherits
+    them without a renderer edit:
+
+    1. **Unify the range.**  Every colorbar-bearing panel gets the union of the
+       panels' ``clim``.  *This is the half that makes the figure mean
+       something.*
+    2. **Draw one bar.**  The colorbar is kept on the first such panel and
+       dropped from the rest, which is what "one figure-level colorbar" looks
+       like to a renderer that draws per panel.
+    3. **Refuse a figure that cannot have one scale.**  Panels whose colorbars
+       label *different quantities* are not comparable, and silently unifying
+       them would be a worse wrong answer than the one being fixed.
+
+    Raises
+    ------
+    tsdynamics.errors.InvalidParameterError
+        If the panels' colorbars label different quantities.
+    """
+    from tsdynamics.errors import InvalidParameterError
+
+    coloured = [p for p in panels if p.colorbar is not None]
+    if len(coloured) < 2:
+        return
+    labels = {(p.colorbar.label if p.colorbar is not None else ""): i for i, p in enumerate(panels)}
+    named = {lab: i for lab, i in labels.items() if lab}
+    if len(named) > 1:
+        (first, i), (second, j) = sorted(named.items(), key=lambda kv: kv[1])[:2]
+        raise InvalidParameterError(
+            f"share_color=True needs one colour meaning; panel {i} colours {first!r} and "
+            f"panel {j} colours {second!r}. Drop share_color, or give them their own panels."
+        )
+
+    ranges = [p.clim for p in coloured if p.clim is not None]
+    if ranges:
+        union = (min(lo for lo, _ in ranges), max(hi for _, hi in ranges))
+        _warn_if_unified_range_flattens(coloured, union)
+        for panel in coloured:
+            panel.clim = union
+    for panel in coloured[1:]:
+        panel.colorbar = None
+
+
+#: How many decades a unified LINEAR colour range may span before the panels at
+#: the low end of it stop being readable.  Two is generous: at 100x, the quietest
+#: panel's whole dynamic range is the bottom 1% of the bar.
+_UNIFY_DECADES = 2.0
+
+
+def _warn_if_unified_range_flattens(coloured: list[PlotSpec], union: tuple[float, float]) -> None:
+    """Warn when ``share_color=True`` would flatten most panels into one colour.
+
+    Honest and hazardous at once: unifying a **linear** ``|f|`` scale across a
+    100x spread is *correct* — and it made three of four panels of a measured
+    comparison figure solid black, i.e. the unification destroyed the very
+    comparison it was asked for.  A log norm is the fix and the caller has to
+    choose it, so this says so rather than choosing for them.
+    """
+    import warnings
+
+    from .render.caps import VisualizationDegraded
+
+    lo, hi = union
+    if lo <= 0.0 or hi <= 0.0 or hi / lo < 10.0**_UNIFY_DECADES:
+        return
+    if any(p.colorbar is not None and p.colorbar.norm in ("log", "symlog") for p in coloured):
+        return
+    import math
+
+    warnings.warn(
+        f"share_color=True put {len(coloured)} panels on one LINEAR colour scale spanning "
+        f"{math.log10(hi / lo):.1f} decades ({lo:.3g} to {hi:.3g}), so the quiet panels will "
+        "read as one flat colour. Put the colour on a log scale to keep them comparable: "
+        "p.colorize(norm='log')  (or give each transform log=True where it offers it).",
+        VisualizationDegraded,
+        stacklevel=4,
+    )
+
+
+#: The composite modes that NEST — an arrangement a renderer can place inside one
+#: cell of an enclosing arrangement.  ``"frames"`` is deliberately absent: its
+#: panels are consecutive in *time*, not in space, so it has no spatial extent to
+#: give a cell and is always absorbed (as it always was).
+_NESTABLE_MODES: frozenset[str] = frozenset({"stack", "row", "grid"})
+
+
+def _absorbs(child: PlotSpec, mode: str) -> bool:
+    """Whether a composite ``child`` is flattened into a parent arranged ``mode``.
+
+    The rule that makes the layout algebra associative *within* an operator and
+    nested *across* operators — the property the owner asked for:
+
+    - **Same operator** (``a | b | c``, ``ts.viz.grid(g, p)``): the child's
+      arrangement is the parent's, so absorbing it is what keeps ``(a|b)|c`` and
+      ``a|(b|c)`` the *same one row of three* rather than a row containing a row.
+    - **Different operator** (``(a|b) / c``): the child's arrangement is the
+      information the parentheses carried.  It is kept as a nested panel.
+    - ``"frames"`` on either side is absorbed as before (see
+      :data:`_NESTABLE_MODES`).
+    """
+    child_mode = child.layout.mode if child.layout is not None else "stack"
+    if mode not in _NESTABLE_MODES or child_mode not in _NESTABLE_MODES:
+        return True
+    return child_mode == mode
+
+
+def _leaf_panels(panels: list[PlotSpec]) -> list[PlotSpec]:
+    """Return every drawable (non-composite) panel of a possibly nested tree."""
+    out: list[PlotSpec] = []
+    for panel in panels:
+        out.extend(_leaf_panels(panel.panels) if panel.is_composite else [panel])
+    return out
+
+
+def _composite(specs: list[PlotSpec], mode: str, layout_kw: dict[str, Any]) -> PlotSpec:
+    """Arrange specs into a ``COMPOSITE`` figure, **nesting** across arrangements.
+
+    A child composite arranged the *same* way as the parent is flattened (so
+    ``a | b | c`` stays one row of three — see :func:`_absorbs`); a child arranged
+    *differently* is kept as a nested panel, which is what makes the parentheses
+    a user types the layout they get::
+
+        (plot(a) | plot(b)) / plot(c)     # a row of two, then c spanning below
+
+    Flattening used to **discard** the child's ``_theme`` and ``animation``; an
+    absorbed child's context is pushed down onto its own panels first (via
+    :meth:`~tsdynamics.viz.spec.PlotSpec.resolved_panels`, the same inheritance
+    the renderers apply), and the arrangement that genuinely cannot survive
+    absorption is recorded in ``meta["flattened_layouts"]`` instead of vanishing.
+
+    .. versionchanged:: 6.0
+        Nested composition. Before, *every* child was flattened, so
+        ``(a|b)/c`` drew three stacked rows — silently losing the grouping the
+        parentheses expressed.
+    """
     panels: list[PlotSpec] = []
+    dropped_layouts: list[str] = []
     for spec in specs:
-        if spec.is_composite:
-            panels.extend(spec.panels)  # flatten one level
+        if spec.is_composite and _absorbs(spec, mode):
+            # Push the child's figure-level context (theme / animation) onto its
+            # panels before they are absorbed, then note the arrangement we lose.
+            panels.extend(spec.resolved_panels())
+            if spec.layout is not None and spec.layout.mode != mode:
+                dropped_layouts.append(spec.layout.mode)
         else:
             panels.append(spec)
     if not panels:  # pragma: no cover - defensive (every spec had empty panels)
@@ -282,19 +1199,57 @@ def _composite(specs: list[PlotSpec], mode: str) -> PlotSpec:
 
     # Auto-share the x axis only for a *stack* of time-series panels that name the
     # same x axis (the canonical "x1 & x2 over t, then y1 & y2 over t" case) — a
-    # conservative default; arbitrary kinds / a row / grid keep independent axes
-    # (build a Layout by hand to override).
-    share_x = (
+    # conservative default; arbitrary kinds / a row / grid keep independent axes.
+    # An explicit ``share_x=`` / ``share_y=`` / ``share_color=`` overrides it.
+    auto_share_x = (
         mode == "stack"
         and all(p.kind == PlotKind.TIME_SERIES for p in panels)
         and len({p.x.label for p in panels}) == 1
     )
-    layout = Layout(mode=mode, share_x=share_x)  # type: ignore[arg-type]
-    return PlotSpec(
+    share_x = layout_kw["share_x"] if layout_kw["share_x"] is not None else auto_share_x
+    if layout_kw["share_color"]:
+        # Colour unification is about the DRAWN panels, so it reads the leaves of a
+        # nested tree — a nested composite carries no colorbar of its own and would
+        # otherwise hide its children's from the union.
+        _unify_colour(_leaf_panels(panels))
+    layout = Layout(
+        mode=mode,  # type: ignore[arg-type]
+        rows=layout_kw["rows"],
+        cols=layout_kw["cols"],
+        share_x=bool(share_x),
+        share_y=bool(layout_kw["share_y"]),
+        share_color=bool(layout_kw["share_color"]),
+    )
+    meta: dict[str, Any] = {"n_panels": len(panels), "panel_grid": layout.grid(len(panels))}
+    if dropped_layouts:
+        meta["flattened_layouts"] = dropped_layouts
+    result = PlotSpec(
         kind=PlotKind.COMPOSITE,
         ndim=2,
         title=_common_title(panels),
         panels=panels,
         layout=layout,
-        meta={"n_panels": len(panels)},
+        meta=meta,
     )
+    _lift_panel_animation(result, panels)
+    return result
+
+
+def _lift_panel_animation(result: PlotSpec, panels: list[PlotSpec]) -> None:
+    """Give a composite a master clock when its PANELS are animated.
+
+    ``ts.plot(ts.plot(a, animate=True), ts.plot(b, animate=True), layout="row")``
+    used to produce a composite whose own ``animation`` was ``None``, so
+    ``.save("x.gif")`` wrote **one frame** with no warning and ``.save("x.html")``
+    a static page — while the other spelling (``animate=True`` at the composite
+    door) worked.  The panels already carry the timeline; the composite only
+    needs the master clock, and lockstep is the documented composite semantics.
+    """
+    if result.animation is not None:
+        return
+    animated = [p.animation for p in panels if p.animation is not None]
+    if not animated:
+        return
+    import dataclasses
+
+    result.animation = dataclasses.replace(animated[0])

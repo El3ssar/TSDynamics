@@ -1,243 +1,320 @@
 ---
-description: The flagship overview of the TSDynamics visualization layer — a backend-agnostic PlotSpec intermediate representation rendered by matplotlib, plotly, three.js and JSON, built for research figures and paper-ready output.
+description: The TSDynamics plotting grammar — one verb, ts.plot, that draws everything you hand it on one figure; a positional string says how to draw, everything else says what to draw, and a Plot handed back in is just another thing to draw.
 ---
 
 <span class="ts-kicker">Visualization</span>
 
 # Visualization
 
-Every plot TSDynamics produces is described **once**, as a backend-agnostic
-`PlotSpec` — a semantic, JSON-serializable *intermediate representation* of a
-figure — and rendered on demand by any of four pluggable backends. Describe the
-Lorenz attractor once and the same object becomes a vector PDF for a paper, an
-interactive rotatable page for a talk, a WebGL viewer for a website, or a data
-payload for a custom pipeline. Nothing about the description changes; only the
-renderer does.
+There is **one plotting verb**, and it has one rule:
 
-This is the module people reach for when a result has to leave the notebook —
-into a manuscript, a slide, a poster, a supplementary web page. It is built for
-that: the same spec renders identically across backends, the styling vocabulary
-is validated up front (a typo warns, it does not silently vanish), and every
-figure the [system catalogue](../systems/index.md) ships was produced through
-exactly this path.
+> **`ts.plot` draws everything you hand it on one figure and gives you back a
+> `Plot`: a positional *string* says **how** to draw, everything else says
+> **what** to draw — and a `Plot` handed back in is just another thing to draw.**
+
+That last clause is *closure*, and it is why there is no separate API for grids,
+for movies, or for dropping down to matplotlib and coming back. They all follow
+from it.
+
+```python
+import numpy as np
+import tsdynamics as ts
+
+traj = ts.systems.Lorenz().run(final_time=100.0, dt=0.01, ic=[1.0, 1.0, 1.0])
+
+ts.plot(traj)                                     # the default view
+ts.plot(traj, color="crimson", title="Lorenz")    # ...styled at the door
+ts.plot(traj, "psd", xscale="log", yscale="log")  # a named transform
+ts.plot(np.sin(np.linspace(0, 40, 2000)))         # bare arrays plot too
+```
 
 <figure markdown>
 ![The Lorenz butterfly rendered as a clean 3-D phase portrait, axes hidden, drawn on a transparent background with the two indigo wings of the attractor](../assets/figures/viz/kind-phase-3d.svg){ loading=lazy }
-<figcaption>One <code>PlotSpec</code>, one line: <code>ts.systems.Lorenz(ic=[1,1,1]).plot(kind="phase_portrait_3d")</code>. The axes are hidden with <code>.style(axes=False)</code> and the camera framed with <code>.camera(elev=22, azim=-60)</code> for the attractor "floating in space".</figcaption>
+<figcaption>One call: <code>ts.plot(traj)</code>. Three components means a 3-D phase portrait; the axes are hidden with <code>.style(axes=False)</code> and the camera framed with <code>.camera(elev=22, azim=-60)</code> for the attractor "floating in space".</figcaption>
 </figure>
 
-…and the *same* spec becomes a movie by attaching one directive — a reveal comet,
-a spinning attractor, or a field replaying over time:
-
-<div class="grid" markdown style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem;">
-
-<figure markdown>
-![The Lorenz attractor drawing itself in as a looping reveal comet — an amber head and a fading indigo tail on a dark stage](../assets/figures/viz/animation-lorenz-reveal.gif){ loading=lazy }
-<figcaption>A <strong>reveal comet</strong> — <code>animate=True</code> + a fading trail.</figcaption>
-</figure>
-
-<figure markdown>
-![A Gray-Scott reaction-diffusion field evolving into a maze-like Turing pattern in viridis on a dark stage](../assets/figures/viz/animation-grayscott-field.gif){ loading=lazy }
-<figcaption>A <strong>field movie</strong> — <code>kind="field", animate=True</code>.</figcaption>
-</figure>
-
-</div>
-
-<figcaption style="text-align:center;color:var(--md-default-fg-color--light);font-size:.8rem">
-Both loops are built through the same <code>to_plot_spec</code> front door — see <a href="animation.md">Animation</a>. The Lorenz 3-D attractor is also a <a href="backends.md#live-demo">live, orbitable WebGL viewer</a>.
-</figcaption>
-
-## Why an intermediate representation?
-
-Most plotting APIs bind you to one library the moment you call them: a
-matplotlib figure cannot become an interactive page, a plotly figure cannot be
-diffed or cached as data. TSDynamics splits the two concerns that libraries
-conflate.
-
-- **What to draw** — a semantic description: *this is a 3-D phase portrait, with
-  one line layer, coloured by elapsed time, on equal axes*. That is the
-  `PlotSpec`. It holds NumPy arrays and typed presentation metadata, and imports
-  **no** plotting library.
-- **How to draw it** — a *renderer* consumes the spec. matplotlib for
-  paper-ready raster/vector output, plotly for interactive HTML, three.js for
-  WebGL viewers, JSON for a raw data export.
-
-Three properties fall straight out of the split, and all three matter for
-research work:
-
-1. **Backend independence.** A tweak like `.rescale(x="log")` or
-   `.recolor("#11857A")` touches the *spec*, not a renderer, so it renders
-   identically on every backend. Compose your figure once; export it four ways.
-2. **Serialisation.** `spec.to_dict()` round-trips the whole figure — arrays,
-   axes, colorbar, annotations — to plain JSON and back via
-   `PlotSpec.from_dict(...)`. A computed spec can be cached, version-controlled,
-   shipped to a web frontend, or replotted months later **without rerunning the
-   analysis**.
-3. **Zero import cost.** A plain `import tsdynamics` pulls in **no** plotting
-   library. `ts.viz` is bound lazily and each renderer's import is deferred to
-   its first render, so the core library stays light on a headless cluster.
+## Everything `ts.plot` accepts
 
 ```python
-import tsdynamics as ts
-
-# Build the spec once (no plotting library imported yet)…
-spec = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]).to_plot_spec()
-
-spec.save("lorenz.pdf")     # → matplotlib: a vector figure for a manuscript
-spec.save("lorenz.html")    # → plotly: a self-contained interactive page
-spec.save("lorenz.json")    # → the raw data payload
-
-blob = spec.to_dict()                 # plain JSON — cache it, ship it, diff it
-same = ts.viz.PlotSpec.from_dict(blob)  # rebuilt, no recomputation
+# skip-doctest — the signature, for reference
+plot(*things,
+     layout="overlay", rows=None, cols=None,
+     share_x=None, share_y=None, share_color=None,
+     primitive=None, on=None, animate=False, fps=None, ax=None,
+     **options) -> Plot
 ```
 
-## The architecture
+A positional argument is classified by **what it is**:
 
-```
-        your system / trajectory / analysis result
-                          │
-                 to_plot_spec(...)        ← the front door (one panel)
-                          │
-                          ▼
-    ┌───────────────────────────────────────────────┐
-    │                  PlotSpec (IR)                  │
-    │  kind · layers · axes · colorbar · legend ·     │
-    │  theme · annotations · animation · meta         │
-    └───────────────────────────────────────────────┘
-        │            │            │            │
-   matplotlib      plotly      three.js       json
-   (raster/       (interactive  (WebGL       (data
-    vector)         HTML)       viewer)      export)
+| You pass | It means | Example |
+| -------- | -------- | ------- |
+| a `str` | a **transform** — how to draw | `ts.plot(traj, "psd")` |
+| `"name.primitive"` | ...and which drawing to use | `ts.plot(traj, "phase_portrait.density")` |
+| `("name", {...})` | a transform with its own options | `ts.plot(vdp, ("streamlines", {"color": "w"}))` |
+| `T("name", **opts)` | the same thing, typed (`ts.viz.spec.T`) | `ts.plot(vdp, T("flow_speed", log=True))` |
+| a **`Plot`** | a **subject** — closure | `ts.plot(p1, p2, layout="row")` |
+| a system / `Trajectory` / result | a subject | `ts.plot(lorenz)` |
+| an array | a subject (coerced to an index-time trajectory) | `ts.plot(signal)` |
+| a list of any of those | unwrapped to several subjects | `ts.plot([a, b])` |
+
+**Subjects and transforms are matched by what each transform declares it needs**,
+not by a blind cross product. A transform applies to every subject it admits; a
+subject no named transform admits draws its own default view. That is what makes
+the flagship two-dimensional-dynamics figure a single call:
+
+```python
+vdp = ts.systems.VanDerPol()
+a = vdp.run(final_time=30.0, dt=0.01, ic=[0.5, 0.0])
+b = vdp.run(final_time=30.0, dt=0.01, ic=[2.5, 0.0])
+
+ts.plot(vdp, a, b, "flow_speed", "nullclines")
 ```
 
-- **`PlotSpec`** — the top-level object. It carries a semantic `PlotKind` (what
-  the plot *means*), a list of drawable `Layer`s (each a *mark* plus its channel
-  arrays), typed `x`/`y`/`z` `Axis` objects, an optional `Colorbar` and
-  `Legend`, a `Theme`, `Annotation`s (reference lines the result carries — a
-  logistic period-doubling onset, a fit region), and an optional `Animation`.
-- **`PlotKind`** — a *closed, reviewed* vocabulary of plot kinds
-  (`TIME_SERIES`, `PHASE_PORTRAIT_2D`/`_3D`, `SPACETIME`, `SPATIAL_FIELD`,
-  `BIFURCATION`, `RECURRENCE_PLOT`, …) and layer marks (`LINE`, `SCATTER`,
-  `IMAGE`, `SURFACE3D`, …). Adding a renderer never needs a new kind; adding a
-  kind is a deliberate contract change.
-- **Renderers** — `matplotlib` is the universal reference backend (it draws
-  every kind and is the default), `plotly` adds interactive 2-D/3-D and HTML
-  animation, `threejs` exports a WebGL attractor viewer, and `json` serialises.
-  Dispatch selects a backend by name or by capability, and **falls back to
-  matplotlib** with a `VisualizationDegraded` warning when a partial backend
-  declines a kind — so a figure never silently fails to render.
+`flow_speed` and `nullclines` need the *equations*, so they consume `vdp`; the
+two trajectories have no named transform that admits them, so they draw their
+default view — two orbits over the field. Order does not matter: layers are drawn
+by role, fields behind orbits behind overlays.
+
+## Four keyword vocabularies, peeled in order
+
+Keywords are routed, not guessed, and an unroutable one raises naming the
+nearest match across **all** the vocabularies.
+
+1. **Composition** — `layout`, `rows`, `cols`, `share_x`, `share_y`,
+   `share_color`, `primitive`, `animate`, `fps`, `ax`. They are on the signature,
+   so `help(ts.plot)` shows them.
+2. **Figure** — `title`, `xlabel`/`ylabel`/`zlabel`, `xlim`/`ylim`/`zlim`,
+   `xscale`/`yscale`/`zscale`, `xticks`/`yticks`/`zticks`, `clim`, `colorbar`,
+   `legend`, `theme`. All seventeen work at **every** plotting door.
+3. **Style** — `color`, `linewidth`, `linestyle`, `marker`, `markersize`,
+   `alpha`, `cmap`, `fill`, `fillalpha`, `zorder` (plus the usual aliases: `lw`,
+   `c`, `ms`, `"--"`, `"o"`).
+4. **Run** — `final_time`, `steps`, `dt`, `t0`, `ic`, `transient`, `solver`,
+   `rtol`, `atol`, `max_step`, `seed`, `backend`, `history`, `events`. Only
+   meaningful when the subject is a *system*, which `ts.plot` runs for you.
+
+Anything left over is a **transform option**, routed to the transforms whose
+signature accepts it.
+
+```python
+ts.plot(ts.systems.Rossler(), final_time=200.0, dt=0.02,   # (4) run it like this
+        color="#11857A", linewidth=0.8,                    # (3) draw it like this
+        title="Rössler", theme="dark")                     # (2) label it like this
+```
+
+Because style is peeled *before* the leftovers reach `run()`, an integration typo
+is still reported as an integration typo — never as "`color` is not a valid
+`run()` keyword".
+
+## What comes back: a `Plot`
+
+`ts.plot` always returns a `Plot`, and a `Plot` is the whole story — the
+description *and* the thing you render. There is nothing to unwrap and no second
+type to learn when you want more control.
+
+```python
+p = ts.plot(traj, "phase_portrait", color="#4B3F9E")
+
+p.save("lorenz.png")         # write it: .png .pdf .svg .html .json .mp4 .gif
+p.relabel(title="Lorenz").gridlines().limits(x=(-20, 20))   # fluent, chainable
+p[0]                         # select a panel  (p["psd"] works too)
+p.style("phase_portrait", alpha=0.6)                # select layers by name
+p.to_json()                  # the full figure as JSON — cache it, ship it, diff it
+```
+
+`p.show()` displays it in a notebook or a GUI session.
+
+### The escape hatch, and the way back
+
+When the library does not have the knob you want, take the matplotlib objects:
+
+```python
+# skip-doctest — needs the optional tsdynamics[viz] backend
+p = ts.plot(traj, "phase_portrait")
+p.fig                        # the matplotlib Figure — rendered once, then cached
+p.ax                         # the Axes  (.axes for a grid, in panel order)
+p.axes[0].set_yscale("symlog")
+```
+
+…and the way *in* is the `ax=` keyword, so a TSDynamics plot can be one panel of
+a figure you are building by hand:
+
+```python
+# skip-doctest — needs the optional tsdynamics[viz] backend
+import matplotlib.pyplot as plt
+
+fig, axs = plt.subplots(1, 2, figsize=(9, 4))
+ts.plot(traj, "phase_portrait", ax=axs[0])
+ts.plot(traj, "psd", ax=axs[1])
+```
+
+!!! warning "Library tweaks first, matplotlib last"
+    A `Plot` caches its figure, and every mutating method drops that cache. If
+    you have already taken `.fig`/`.ax` and hand-edited it, a later `.style(...)`
+    re-renders and your hand edits are gone — so the library warns, once, rather
+    than silently losing your work. Do the library tweaks first, then take the
+    figure.
+
+## Composing: closure does the work
+
+Because a `Plot` is a legal subject, composition needs no new API.
+
+=== "Overlay (the default)"
+
+    ```python
+    a = ts.systems.Lorenz().run(final_time=40.0, dt=0.01, ic=[1.0, 1.0, 1.0])
+    b = ts.systems.Lorenz().run(final_time=40.0, dt=0.01, ic=[1.0001, 1.0, 1.0])
+
+    ts.plot(a, b, "phase_portrait")        # two orbits, one set of axes
+    ```
+
+    Overlay is legal by **frame identity** — the same coordinate space, the same
+    dimension, the same axis names — and every orbit gets its own legend entry.
+    Mixing incompatible frames raises and names the panelled layout instead.
+
+=== "A grid of different plots"
+
+    ```python
+    ts.plot(
+        ts.plot(traj, "phase_portrait", title="orbit"),
+        ts.plot(traj, "time_series", components="x", title="x(t)"),
+        ts.plot(traj, "psd", xscale="log", yscale="log", title="spectrum"),
+        layout="grid", rows=1, cols=3, theme="publication",
+    )
+    ```
+
+    `ts.viz.grid(*plots, rows=, cols=)` is the same thing under a shorter name.
+    Panels hold the *same* objects you passed in, so `p.panels[0].style(...)`
+    after the fact still lands in the render.
+
+=== "Straight from arrays"
+
+    ```python
+    r = np.logspace(-1, 1, 40)
+    c = r**2.06
+
+    ts.viz.draw({"x": r, "y": c}, "line", labels=("log r", "log C(r)"))
+    ```
+
+    No transform, no registration, no library type — a mapping of channels and
+    the name of a primitive. And because `draw` returns a `Plot`, it composes
+    with everything else.
 
 ## A map of this section
 
 <div class="grid cards" markdown>
 
-- **[Plotting — the front door](plotting.md)**
+- **[Transforms & primitives](plotting.md)**
 
     ---
 
-    `traj.to_plot_spec` / `.plot`: the auto-dispatch on component count, the
-    `PlotKind` vocabulary (time series · 2-D & 3-D phase portraits · spacetime ·
-    delay embeddings · spatial fields), `components=` selection, and per-kind
-    options — every kind with a runnable, IC-pinned example.
+    *What* can be drawn and *how*: the 38 transforms, the 16 primitives, the
+    declared compatibility matrix, `ts.viz.geometry` for the arrays alone, and
+    the one-decorator recipe for adding your own.
+
+- **[Composition](composition.md)**
+
+    ---
+
+    Overlay by frame identity, `layout="stack"/"row"/"grid"`, `share_x` /
+    `share_y` / `share_color`, per-panel selection and styling, and the closure
+    rule that makes a figure of figures just another figure.
+
+- **[Styling & themes](styling.md)**
+
+    ---
+
+    The canonical style vocabulary, the fluent chainable tweaks, the four
+    built-in themes, registering your own house style, and the per-backend
+    *honoring* contract that makes an unsupported key warn rather than vanish.
+
+- **[Animation](animation.md)**
+
+    ---
+
+    Animation as an orthogonal modifier — `animate=True` plus `.trail` /
+    `.head` / `.camera` / `.clock` — the reveal comet, the spatial-field movie,
+    and export to `.mp4` / `.gif` or a live interactive `.html`.
+
+- **[Backends & export](backends.md)**
+
+    ---
+
+    The four renderers (matplotlib · plotly · json · three.js), how dispatch and
+    fallback work, `p.save(path)` by extension, and the self-contained WebGL
+    export that ships on the 3-D catalogue pages.
+
+- **[The gallery](gallery.md)**
+
+    ---
+
+    Every registered transform, drawn with every primitive it declares, with the
+    code that produced each picture printed beside it — generated from the
+    registry at docs-build time, so the code and the picture cannot drift.
 
 - **[Figure conventions](conventions.md)**
 
     ---
 
     The rules the catalogue figures follow — viridis for sequential fields,
-    twilight for cyclic ones, the teal/indigo brand accents, one figure per
-    concept, colorbars and legends — so your figures come out paper-ready.
-
-- **[Styling & themes](styling.md)**
-
-    ---
-
-    The canonical per-layer style vocabulary (`STYLE_KEYS` + `normalize_style`),
-    the fluent chainable tweaks (`.style` / `.recolor` / `.theme` / `.grid` /
-    `.background` / …), the four built-in themes, and the per-backend *honoring*
-    contract.
-
-- **[Animation](animation.md)**
-
-    ---
-
-    Animation as an orthogonal modifier — `.animate` / `.trail` / `.head` /
-    `.camera` / `.clock`, the `reveal` comet vs the `frames` spatial-field movie,
-    and export to `.mp4` / `.gif` (matplotlib) or a live `.html` comet (plotly).
-
-- **[Composition](composition.md)**
-
-    ---
-
-    `ts.viz.plot(...)`: overlay compatible panels on one set of axes, or tile
-    them with `layout="stack"/"row"/"grid"` — a spec-in / spec-out figure-level
-    front door that composes recursively.
-
-- **[Backends & export](backends.md)**
-
-    ---
-
-    The four renderers (matplotlib · plotly · json · three.js), how dispatch
-    and fallback work, `spec.save(path)` by extension, and the self-contained
-    interactive WebGL [three.js export](backends.md#threejs-export) that ships on
-    the 3-D catalogue pages.
+    twilight for cyclic ones, one figure per concept, colorbars and legends — so
+    your figures come out paper-ready.
 
 </div>
 
-## Three ways in
+## Under the hood: one description, four renderers
 
-There is a single conceptual pipeline, but three surfaces onto it depending on
-how much you want to say.
+A `Plot` is a **backend-agnostic, JSON-serializable description** of a figure. It
+holds NumPy arrays and typed presentation metadata and imports no plotting
+library; a *renderer* consumes it.
 
-=== "One-liner"
+```text
+   your system / trajectory / array / analysis result
+                        │
+                   transform            ← turns a subject into Geometry
+                        │
+                   primitive            ← chooses how that geometry is drawn
+                        │
+                        ▼
+   ┌────────────────────────────────────────────────┐
+   │                      Plot                       │
+   │   kind · layers · axes · colorbar · legend ·    │
+   │   theme · annotations · animation · panels      │
+   └────────────────────────────────────────────────┘
+        │            │            │            │
+   matplotlib      plotly      three.js       json
+   (raster/      (interactive   (WebGL       (data
+    vector)         HTML)       viewer)      export)
+```
 
-    `.plot()` on any system, `Trajectory`, or analysis result builds the spec
-    and renders it in one call:
+Three properties fall out of the split, and all three matter for research work:
 
-    ```python
-    import tsdynamics as ts
+1. **Backend independence.** A tweak like `.rescale(x="log")` or
+   `.recolor("#11857A")` touches the description, not a renderer, so it renders
+   identically everywhere. Compose once; export four ways.
+2. **Serialisation.** `p.to_json()` round-trips the whole figure — arrays, axes,
+   colorbar, annotations — to plain JSON, and `ts.viz.load(...)` reads a path
+   *or* a JSON document back. A computed figure can be cached, version
+   controlled, or replotted months later **without rerunning the analysis**.
+3. **Zero import cost.** A plain `import tsdynamics` pulls in **no** plotting
+   library. `ts.viz` is bound lazily and each renderer's import is deferred to
+   its first render, so the core stays light on a headless cluster.
 
-    ts.systems.Rossler(ic=[1.0, 1.0, 1.0]).plot()   # auto-dispatched view
-    ```
+```python
+p = ts.plot(traj, "phase_portrait")
+blob = p.to_json()                 # plain JSON — cache it, ship it, diff it
+same = ts.viz.load(blob)           # rebuilt, no recomputation
+```
 
-    A system's `.plot()` integrates with sensible defaults first; a
-    `Trajectory`'s plots the data you already have.
-
-=== "Build, tweak, render"
-
-    Keep the spec, chain fluent tweaks, then render or save. Every tweak mutates
-    the spec and returns it, so they compose:
-
-    ```python
-    import tsdynamics as ts
-
-    traj = ts.systems.Rossler(ic=[1.0, 1.0, 1.0]).integrate(final_time=200, dt=0.05)
-    (
-        traj.to_plot_spec(components=["x", "y"], color_by="time")
-            .relabel(title="Rössler")
-            .grid()
-            .save("rossler.pdf")
-    )
-    ```
-
-=== "Compose panels"
-
-    `ts.viz.plot(*things, layout=...)` arranges multiple things into one figure
-    — overlaid on shared axes, or tiled into panels — and returns a spec that
-    itself renders:
-
-    ```python
-    import tsdynamics as ts
-
-    a = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]).integrate(final_time=100, dt=0.01)
-    b = ts.systems.Rossler(ic=[1.0, 1.0, 1.0]).integrate(final_time=200, dt=0.05)
-    ts.viz.plot(a, b, layout="grid").save("two-attractors.pdf")
-    ```
+`PlotKind` — the semantic vocabulary a renderer dispatches on (`TIME_SERIES`,
+`PHASE_PORTRAIT_2D`/`_3D`, `SPACETIME`, `SPATIAL_FIELD`, `RECURRENCE_PLOT`, …) —
+is a **closed, reviewed contract**. Adding a transform never needs a new kind;
+adding a primitive never needs a new kind. That is the invariant that lets the
+drawing vocabulary grow without touching a single renderer.
 
 ## Installing a backend
 
-The IR ships with the core library; a backend is an optional extra you install
-when you want to render:
+The description ships with the core library; a backend is an optional extra:
 
 | Extra | Backend | Draws |
 | --- | --- | --- |
@@ -245,12 +322,12 @@ when you want to render:
 | `tsdynamics[interactive]` | plotly | interactive 2-D/3-D HTML, real-time animated `.html` |
 | *(bundled)* | json, three.js | data export — no plotting dependency |
 
-With no backend installed, `spec.to_dict()` still works — you can render the
-payload yourself. Once matplotlib is present it becomes the default for
-everything, and `.save(path)` picks the right backend from the file extension.
+With no backend installed, `p.to_json()` still works — you can render the payload
+yourself. Once matplotlib is present it is the deterministic default, and
+`p.save(path)` picks the backend from the file extension.
 
 ## See also
 
-- [Plotting — the front door](plotting.md) — start here to make your first figure.
+- [Transforms & primitives](plotting.md) — start here to draw something other than the default view.
+- [The gallery](gallery.md) — every transform, every primitive, with its code.
 - [Tutorials](../tutorials/index.md) — end-to-end journeys that dogfood this module.
-- [`PlotSpec` reference](../reference/top-level.md) — the full IR surface.

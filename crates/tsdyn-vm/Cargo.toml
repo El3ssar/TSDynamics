@@ -17,3 +17,8 @@ tsdyn-ir.workspace = true
 # production build (resolver "2" keeps dev-dep features out of `cargo build`),
 # so the interpreter stays the sole evaluation path in the shipped crate.
 tsdyn-ir = { workspace = true, features = ["reference"] }
+criterion.workspace = true
+
+[[bench]]
+name = "interp"
+harness = false

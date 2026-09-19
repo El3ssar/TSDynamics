@@ -3,11 +3,11 @@
 Covers three audit findings, each of which crashed (or silently mis-lowered) on
 the pre-fix logic:
 
-- **P2-1** — ``ContinuousSystem.reinit(method="auto")`` resolved the stepper kernel
+- **P2-1** — ``ContinuousSystem.reinit(solver="auto")`` resolved the stepper kernel
   with ``solvers.resolve("auto")``, which raised ``unknown solver method 'auto'``.
   Auto-stiffness must reach the stepping protocol identically to
   ``integrate``/``ensemble``.
-- **P3-1** — ``run(events=[...], method="auto")`` reached
+- **P3-1** — ``run(events=[...], solver="auto")`` reached
   ``integrate_events`` → ``solvers.resolve("auto")`` and crashed, so the advertised
   ``"auto"`` value failed the moment ``events=`` was supplied.
 - **P1-1** — a system whose RHS uses ``Min``/``Max`` lowered its RHS fine but raised
@@ -22,31 +22,31 @@ import pytest
 import symengine
 
 import tsdynamics as ts
-from tsdynamics.engine.compile import eval_tape_jac, lower_ode
+from tsdynamics._engine.compile import eval_tape_jac, lower_ode
 
 pytest.importorskip("tsdynamics._rust")
 
 
 # ---------------------------------------------------------------------------
-# P2-1 — method="auto" through the stepping protocol (reinit/step)
+# P2-1 — solver="auto" through the stepping protocol (reinit/step)
 # ---------------------------------------------------------------------------
 
 
 def test_reinit_method_auto_resolves_like_integrate() -> None:
-    """``reinit(method="auto")`` resolves the kernel instead of crashing (P2-1).
+    """``reinit(solver="auto")`` resolves the kernel instead of crashing (P2-1).
 
     Pre-fix ``reinit`` called ``solvers.resolve("auto")`` directly and raised
     ``ValueError("unknown solver method 'auto'")``; ``integrate(method="auto")``
     already worked.  After the fix the stepping path probes auto-stiffness and
     resolves to the same explicit kernel ``integrate`` records.
     """
-    lor = ts.Lorenz()
+    lor = ts.systems.Lorenz()
     # Did not raise (the pre-fix crash) and selected a concrete kernel.
-    lor.reinit([1.0, 1.0, 1.0], method="auto")
+    lor.reinit([1.0, 1.0, 1.0], solver="auto")
     assert lor._step_method_canonical == "rk45"
 
     # The resolved kernel matches the integrate/ensemble contract for the same IC.
-    traj = ts.Lorenz().integrate(final_time=1.0, dt=0.01, ic=[1.0, 1.0, 1.0], method="auto")
+    traj = ts.systems.Lorenz().run(final_time=1.0, dt=0.01, ic=[1.0, 1.0, 1.0], solver="auto")
     assert traj.meta["method"] == lor._step_method_canonical
 
     # And a step actually advances (the protocol is reachable end-to-end).
@@ -56,18 +56,20 @@ def test_reinit_method_auto_resolves_like_integrate() -> None:
 
 
 # ---------------------------------------------------------------------------
-# P3-1 — method="auto" through the events= seam
+# P3-1 — solver="auto" through the events= seam
 # ---------------------------------------------------------------------------
 
 
 def test_run_events_method_auto_resolves_like_integrate() -> None:
-    """``run(events=…, method="auto")`` honours auto identically to integrate (P3-1).
+    """``run(events=…, solver="auto")`` honours auto identically to integrate (P3-1).
 
     Pre-fix this crashed in ``integrate_events`` (``solvers.resolve("auto")`` →
     ``ValueError``).  After the fix the events path resolves through the shared
     contract, detects crossings, and records the canonical kernel name.
     """
-    sol = ts.Lorenz().run(final_time=20.0, dt=0.01, method="auto", events=[("z", 27.0, "up")])
+    sol = ts.systems.Lorenz().run(
+        final_time=20.0, dt=0.01, solver="auto", events=[("z", 27.0, "up")]
+    )
     # Canonical name in provenance (not the raw "auto" alias), matching integrate.
     assert sol.meta["method"] == "rk45"
     # The event seam actually fired (Lorenz crosses z=27 upward many times).
@@ -81,7 +83,7 @@ def test_events_path_still_rejects_unknown_method() -> None:
     name (``"LSODA"``) still raises a ``ValueError`` subclass.
     """
     with pytest.raises(ValueError):
-        ts.Lorenz().run(final_time=5.0, dt=0.01, method="LSODA", events=[("z", 27.0, "up")])
+        ts.systems.Lorenz().run(final_time=5.0, dt=0.01, solver="LSODA", events=[("z", 27.0, "up")])
 
 
 # ---------------------------------------------------------------------------
@@ -146,6 +148,6 @@ def test_minmax_jacobian_interp_equals_jit_bit_for_bit() -> None:
             ]
 
     s = _StiffMax()
-    ti = s.integrate(final_time=5.0, dt=0.05, ic=[0.3, 0.7], backend="interp", method="bdf")
-    tj = s.integrate(final_time=5.0, dt=0.05, ic=[0.3, 0.7], backend="jit", method="bdf")
+    ti = s.run(final_time=5.0, dt=0.05, ic=[0.3, 0.7], backend="interp", solver="bdf")
+    tj = s.run(final_time=5.0, dt=0.05, ic=[0.3, 0.7], backend="jit", solver="bdf")
     assert np.array_equal(ti.y, tj.y)

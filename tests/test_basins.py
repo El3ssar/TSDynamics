@@ -18,16 +18,24 @@ Two layers:
 
 from __future__ import annotations
 
+import importlib
+
 import numpy as np
 import pytest
 
 import tsdynamics as ts
 from tsdynamics import registry
-from tsdynamics.analysis import basins as bas
 from tsdynamics.analysis.basins.attractors import Attractor, AttractorSet
 from tsdynamics.analysis.basins.basins import BasinsResult
 from tsdynamics.analysis.basins.continuation import ContinuationResult
 from tsdynamics.data import Ball, Box, Grid
+
+# ``ts.analysis.basins`` is the ANALYSIS (CONTRACT §5.4: the function wins the
+# name over the implementation package), so ``import tsdynamics.analysis.basins
+# as bas`` would bind the FUNCTION — ``import a.b.c as d`` resolves by getattr on
+# the parent.  Reach the package through sys.modules, which the shadow cannot
+# touch.
+bas = importlib.import_module("tsdynamics.analysis.basins")
 
 LN2 = float(np.log(2.0))
 
@@ -89,6 +97,81 @@ class DuffingTwoWell(ts.ContinuousSystem):
         return (y, x - x**3 - delta * y)
 
 
+class NestedLimitCycles(ts.ContinuousSystem):
+    r"""Two **concentric** attracting limit cycles: the textbook coincident-centroid case.
+
+    In polar form :math:`\dot r = -r(r-1)(r-2)(r-3)`, :math:`\dot\theta = 1`, so
+    :math:`r = 1` and :math:`r = 3` are attracting cycles and :math:`r = 2` is the
+    repelling separatrix between their basins.  Ground truth: **2** attractors,
+    verified by integration (``r0 = 0.5, 1.5 -> 1.0``; ``r0 = 2.5, 3.5 -> 3.0``).
+
+    Both rings are centred on the origin, so their point clouds have the *same*
+    centroid — which is why a centroid-only proximity merge cannot tell them
+    apart (see :meth:`_AttractorMapper.merge_map`).
+    """
+
+    params: dict[str, float] = {}
+    dim = 2
+    variables = ("x", "y")
+
+    @staticmethod
+    def _equations(Y, t):
+        import symengine as se
+
+        x, y = Y(0), Y(1)
+        r = se.sqrt(x * x + y * y + 1e-30)
+        g = -(r - 1) * (r - 2) * (r - 3) / r
+        return (x * g - y, y * g + x)
+
+
+class SaddleNodeGhost(ts.ContinuousSystem):
+    r"""``x' = mu + x**2`` with ``mu > 0`` — a system with provably NO attractor.
+
+    Past the saddle-node bifurcation the right-hand side is strictly positive
+    (``mu + x**2 >= mu > 0``), so every orbit increases monotonically and escapes
+    to ``+inf``: the ground truth is *zero* attractors and every initial
+    condition diverged.  What makes it the sharp test for the recurrence machine
+    is the **bottleneck** near ``x = 0``, where ``x' = mu`` is tiny: an orbit
+    crawls there for many steps without leaving its cell, which the raw
+    "consecutive steps into an already-visited cell" predicate cannot tell from
+    convergence.
+    """
+
+    name = "SaddleNodeGhost"
+    dim = 1
+    params = {"mu": 0.01}
+    default_ic = [-0.9]
+
+    @staticmethod
+    def _equations(Y, t, mu):
+        return (mu + Y(0) ** 2,)
+
+
+class SaddleNodePair(ts.ContinuousSystem):
+    r"""``x' = -0.01 + x**2`` — ONE attractor and one repellor, in closed form.
+
+    Before the saddle-node bifurcation the right-hand side has two roots,
+    :math:`x = \pm 0.1`, with :math:`f'(x) = 2x`:
+
+    * :math:`x = -0.1` is **stable** (:math:`f' = -0.2 < 0`) — the single
+      attractor, whose basin is :math:`(-\infty, +0.1)`;
+    * :math:`x = +0.1` is **unstable** (:math:`f' = +0.2 > 0`) — a repellor.
+      Everything above it escapes to :math:`+\infty`.
+
+    Ground truth: **1** attractor.  Both roots are *invariant*, though, and on a
+    grid whose lattice contains them a seed lands on each exactly and sits still,
+    so an audit that tests only invariance certifies both.
+    """
+
+    dim = 1
+    params = {"mu": -0.01}
+    default_ic = [-0.5]
+
+    @staticmethod
+    def _equations(Y, t, mu):
+        return (mu + Y(0) ** 2,)
+
+
 _MAGNETS = ((1.0, 0.0), (-0.5, 0.8660254037844386), (-0.5, -0.8660254037844386))
 
 
@@ -116,8 +199,8 @@ class MagneticPendulum(ts.ContinuousSystem):
 # ===========================================================================
 
 _PUBLIC_FUNCS = [
-    "find_attractors",
-    "basins_of_attraction",
+    "attractors",
+    "basins",
     "basin_fractions",
     "continuation",
     "tipping_points",
@@ -140,18 +223,22 @@ _PUBLIC_CLASSES = [
 
 @pytest.mark.parametrize("name", _PUBLIC_FUNCS + _PUBLIC_CLASSES)
 def test_public_api_reexported(name):
-    assert getattr(ts, name) is getattr(bas, name)
-    assert name in ts.analysis.__all__
+    assert getattr(ts.analysis, name) is getattr(bas, name)
+    # C2 — a type you only ever get *back* is reachable but off the tab surface.
+    if name[:1].isupper():
+        assert name in ts.analysis.results.__all__
+    else:
+        assert name in ts.analysis.__all__
     # v4 (WS-NAMESPACE): the curated top-level ``__all__`` carries only headline
     # names; demoted analysis names stay reachable as flat re-exports.
-    assert hasattr(ts, name)
+    assert hasattr(ts.analysis, name)
 
 
 @pytest.mark.parametrize("name", _PUBLIC_FUNCS)
 def test_functions_self_register(name):
     assert name in registry.analyses
     assert registry.analyses.get(name) is getattr(bas, name)
-    assert registry.analyses.entry(name).metadata["family"] == "basins"
+    assert registry.analyses.entry(name).metadata["area"] == "basins"
 
 
 # ===========================================================================
@@ -340,7 +427,7 @@ def test_continuation_min_fraction_mass_folds_into_diverged():
         "shift",
         [0.0, 0.1],
         Box([-1.0], [1.0]),
-        n=200,
+        n_seeds=200,
         resolution=100,
         seed=0,
         min_fraction=0.05,
@@ -391,7 +478,12 @@ def test_tipping_points_detects_appear_and_disappear():
 
 def test_continuation_result_tipping_method_matches_function():
     cont = _toy_continuation()
-    assert cont.tipping_points() == bas.tipping_points(cont)
+    # v6 round 7: the method is gone — an analysis is a free function whose first
+    # argument is its subject (ruling A2), and this one had two spellings against
+    # the library's own stated rule.  The guess is answered by name.
+    with pytest.raises(AttributeError, match=r"ts\.analysis\.tipping_points\(result\)"):
+        cont.tipping_points()
+    assert bas.tipping_points(cont)
     assert cont.ids == [1, 2, 3]
 
 
@@ -416,14 +508,132 @@ def test_attractor_set_match_picks_nearest():
 
 
 def test_find_attractors_rejects_unsupported_system():
-    mg = ts.MackeyGlass()  # a DDE
+    mg = ts.systems.MackeyGlass()  # a DDE
     with pytest.raises(TypeError):
-        bas.find_attractors(mg, Box([0.0], [2.0]))
+        bas.attractors(mg, Box([0.0], [2.0]))
 
 
 # ===========================================================================
 # Slow tier — literature-validated end-to-end runs
 # ===========================================================================
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("dt", [0.05, 0.02])
+def test_slow_transient_is_not_reported_as_an_attractor(dt):
+    r"""A bottleneck crawl is not an attractor, however slowly it is sampled.
+
+    On ``x' = mu + x**2`` (``mu = 0.01``) no attractor exists, yet the raw
+    recurrence predicate declared **2** at ``dt = 0.05`` and **4** at
+    ``dt = 0.02`` — and ``basin_fractions`` handed 45 % of the region to them.
+    Refining ``dt`` made it worse, because the crawl then covers even less of a
+    cell per step.  The invariance audit re-marches from each located set: the
+    crawl leaves the region and never comes back, so it is discarded (loudly) and
+    its initial conditions are reported as diverged, which is the truth.
+    """
+    with pytest.warns(UserWarning, match="invariance check"):
+        ats = bas.attractors(
+            SaddleNodeGhost(), Box([-1.0], [1.0]), n_seeds=200, resolution=100, dt=dt, seed=0
+        )
+    assert len(ats) == 0
+    assert ats.diverged == ats.seeds == 200
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("resolution", [401, 201])
+def test_unstable_equilibrium_is_not_reported_as_an_attractor(resolution):
+    r"""``x' = -0.01 + x**2`` has ONE attractor; the repellor must not be counted.
+
+    Closed form: roots at :math:`\pm 0.1` with :math:`f'(x) = 2x`, so
+    :math:`-0.1` is stable and :math:`+0.1` is unstable.  The grids used here put
+    a lattice point on :math:`+0.1` exactly (``2 / 400 = 0.005`` and
+    ``2 / 200 = 0.01`` both divide ``0.1``), that seed sits still, and the
+    recurrence predicate calls it an attractor.  Invariance cannot separate the
+    two — both roots are invariant — so this is exactly the case the *attraction*
+    half of the audit exists for: one cell either side of :math:`+0.1` escapes
+    upward and falls to :math:`-0.1` downward, so neither neighbour comes back.
+    """
+    with pytest.warns(UserWarning) as caught:
+        res = bas.basins(SaddleNodePair(), Grid([-1.0], [1.0], (resolution,)), dt=0.05)
+    # the repellor is rejected by the ATTRACTION check specifically (the crawl
+    # just above it is separately rejected by the invariance check)
+    assert any("attraction check" in str(w.message) for w in caught)
+    assert res.n_attractors == 1
+    (only,) = res.attractors.details
+    assert float(only.points.mean()) == pytest.approx(-0.1, abs=1e-3)
+
+
+@pytest.mark.slow
+def test_stable_equilibrium_of_the_same_system_survives_the_audit():
+    """The attraction check keeps the *stable* root, and its whole basin.
+
+    The counterpart of the test above: the basin of :math:`x = -0.1` is
+    :math:`(-\\infty, +0.1)`, i.e. 55 % of ``[-1, 1]``, and every one of those
+    cells must still be labelled after the audit — a guard that the fix rejects
+    repellors without also eating attractors.
+    """
+    with pytest.warns(UserWarning) as caught:
+        res = bas.basins(SaddleNodePair(), Grid([-1.0], [1.0], (401,)), dt=0.05)
+    assert any("attraction check" in str(w.message) for w in caught)
+    (att_id,) = res.attractors.ids
+    captured = float(np.mean(res.labels == att_id))
+    # analytic basin share of [-1, 1]: (0.1 - (-1)) / 2 = 0.55
+    assert captured == pytest.approx(0.55, abs=0.02)
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("dt", [1.0, 0.1, 0.05, 0.01])
+def test_lorenz_attractor_is_not_fragmented_by_the_recurrence_machine(dt):
+    """The Lorenz attractor is ONE attractor at every sampling step.
+
+    The orbit crawls past the unstable ``C+`` spiral, which the raw predicate
+    reported as a *second* attractor (centre ``~[8.5, 8.6, 27.1]``, i.e.
+    ``sqrt(beta(rho-1)) = 8.485``) at ``dt <= 0.1`` — 2 attractors at
+    ``dt = 0.1 / 0.05`` and 4 at ``dt = 0.01``, with ``basin_fractions``
+    splitting the region between them.  The fragments are mutually reachable (an
+    orbit on one enters the other's cells), which the centroid-proximity merge
+    cannot see but the audit's reachability grouping does.
+    """
+    ats = bas.attractors(
+        ts.systems.Lorenz(),
+        Box([-25.0, -30.0, 0.0], [25.0, 30.0, 55.0]),
+        n_seeds=200,
+        resolution=30,
+        dt=dt,
+        max_steps=3000,
+        seed=0,
+    )
+    assert len(ats) == 1
+    assert ats.diverged == 0
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("resolution", [30, 60, 120])
+def test_concentric_attractors_are_not_merged_by_a_shared_centroid(resolution):
+    """Two nested limit cycles are TWO attractors, at every resolution.
+
+    The proximity dedup used to compare *centroids* only.  Concentric attractors
+    share one exactly — both rings of :class:`NestedLimitCycles` centre on the
+    origin — so at ``resolution = 30`` and ``60`` (where two cell diagonals
+    exceed nothing at all, the centroid distance being ~0) the two cycles were
+    merged into a single reported attractor whose pooled cloud sits at mean
+    radius **2.0**: the midpoint of a ring at 1 and a ring at 3, a state the
+    system never visits.  Requiring the clouds to *touch* as well separates them;
+    for fixed-point attractors the two distances coincide, so nothing that
+    merged before stops.
+    """
+    ats = bas.attractors(
+        NestedLimitCycles(),
+        Box([-4.0, -4.0], [4.0, 4.0]),
+        n_seeds=200,
+        resolution=resolution,
+        dt=0.5,
+        max_steps=4000,
+        seed=0,
+    )
+    assert len(ats) == 2
+    radii = sorted(float(np.mean(np.linalg.norm(a.points, axis=1))) for a in ats.details)
+    np.testing.assert_allclose(radii, [1.0, 3.0], atol=1e-3)
 
 
 @pytest.mark.slow
@@ -433,7 +643,7 @@ def test_newton_map_thirds_basin_fractions():
     bf = bas.basin_fractions(
         nm,
         Ball([0.0, 0.0], 1.3),
-        n=30000,
+        n_seeds=30000,
         resolution=300,
         seed=0,
         consecutive_recurrences=8,
@@ -455,7 +665,7 @@ def test_newton_map_thirds_basin_fractions():
 @pytest.mark.slow
 def test_newton_basin_image_is_wada_and_fractal():
     nm = NewtonMap()
-    res = bas.basins_of_attraction(
+    res = bas.basins(
         nm,
         Grid([-1.0, -1.0], [1.0, 1.0], (120, 120)),
         consecutive_recurrences=8,
@@ -482,7 +692,7 @@ def test_newton_basin_image_is_wada_and_fractal():
 def test_duffing_two_well_half_basins():
     """Damped two-well Duffing: two basins, 1/2 each by reflection symmetry."""
     d = DuffingTwoWell()
-    res = bas.basins_of_attraction(
+    res = bas.basins(
         d,
         Grid([-2.0, -2.0], [2.0, 2.0], (60, 60)),
         dt=0.4,
@@ -503,9 +713,7 @@ def test_duffing_two_well_half_basins():
 @pytest.mark.slow
 def test_duffing_resilience_to_boundary():
     d = DuffingTwoWell()
-    res = bas.basins_of_attraction(
-        d, Grid([-2.0, -2.0], [2.0, 2.0], (60, 60)), dt=0.4, max_steps=400
-    )
+    res = bas.basins(d, Grid([-2.0, -2.0], [2.0, 2.0], (60, 60)), dt=0.4, max_steps=400)
     # the saddle separating the wells sits at x=0; an attractor near x=±1 is ~1
     # away from the boundary.
     att_id = res.attractors.ids[0]
@@ -515,8 +723,8 @@ def test_duffing_resilience_to_boundary():
 @pytest.mark.slow
 def test_henon_escape_basin():
     """Hénon: one bounded strange attractor and an escape basin."""
-    h = ts.Henon()
-    res = bas.basins_of_attraction(h, Grid([-2.0, -2.0], [2.0, 2.0], (80, 80)), max_steps=3000)
+    h = ts.systems.Henon()
+    res = bas.basins(h, Grid([-2.0, -2.0], [2.0, 2.0], (80, 80)), max_steps=3000)
     assert res.n_attractors >= 1
     # a sizeable fraction escapes the square and a sizeable fraction is captured.
     assert 0.2 < res.diverged_fraction < 0.8
@@ -526,7 +734,7 @@ def test_henon_escape_basin():
 def test_magnetic_pendulum_three_attractors():
     """Magnetic pendulum: three magnet attractors with fractal basins."""
     mp = MagneticPendulum()
-    ats = bas.find_attractors(
+    ats = bas.attractors(
         mp,
         Box([-1.3, -1.3, -2.5, -2.5], [1.3, 1.3, 2.5, 2.5]),
         resolution=(60, 60, 40, 40),
@@ -547,21 +755,35 @@ def test_magnetic_pendulum_three_attractors():
 
 @pytest.mark.slow
 def test_magnetic_pendulum_fractal_basin_image():
+    r"""Exactly the three magnets, with the on-axis saddle rejected by the audit.
+
+    The ``y = v_y = 0`` plane is invariant under the pendulum's reflection
+    symmetry, and it carries an unstable equilibrium between the magnet at
+    :math:`(1, 0)` and the other two (measured here at :math:`x \approx -0.126`).
+    Five seeds of the 35x35 slice land on it and sit still, so the recurrence
+    predicate declares it an attractor; it is invariant but does not attract, and
+    the attraction audit discards it — which is why this call warns.
+    """
     mp = MagneticPendulum()
     slice_grid = Grid([-1.3, -1.3, 0.0, 0.0], [1.3, 1.3, 0.0, 0.0], (35, 35, 1, 1))
     rbox = Box([-1.6, -1.6, -3.0, -3.0], [1.6, 1.6, 3.0, 3.0])
-    res = bas.basins_of_attraction(
-        mp,
-        slice_grid,
-        recurrence=rbox,
-        recurrence_resolution=(64, 64, 48, 48),
-        dt=0.5,
-        max_steps=1000,
-        consecutive_recurrences=20,
-        attractor_locate_steps=12,
-    )
-    assert res.n_attractors >= 3
-    # the three magnet basins dominate the slice.
+    with pytest.warns(UserWarning, match="attraction check"):
+        res = bas.basins(
+            mp,
+            slice_grid,
+            recurrence=rbox,
+            recurrence_resolution=(64, 64, 48, 48),
+            dt=0.5,
+            max_steps=1000,
+            consecutive_recurrences=20,
+            attractor_locate_steps=12,
+        )
+    assert res.n_attractors == 3
+    # the three surviving attractors ARE the three magnets ...
+    centers = np.array([a.points.mean(axis=0)[:2] for a in res.attractors.details])
+    for mag in _MAGNETS:
+        assert np.linalg.norm(centers - np.array(mag), axis=1).min() < 0.1
+    # ... and their basins dominate the slice.
     top3 = sum(sorted((v for k, v in res.fractions.items() if k >= 1), reverse=True)[:3])
     assert top3 > 0.95
     be = bas.basin_entropy(res, box_size=4)
@@ -576,7 +798,7 @@ def test_continuation_tracks_two_basins():
         "a",
         [1.3, 1.4, 1.5, 1.6, 1.7],
         Box([-2.0], [2.0]),
-        n=1500,
+        n_seeds=1500,
         resolution=300,
         seed=0,
         min_fraction=0.05,  # drop tiny spurious sets near the unstable origin
@@ -591,3 +813,146 @@ def test_continuation_tracks_two_basins():
         assert np.all(cont.fractions[gid] > 0.2)
     # no attractor disappears over this range.
     assert bas.tipping_points(cont) == []
+
+
+# ===========================================================================
+# v6 round 6 — an answer carries its grid, and a name means a place
+# ===========================================================================
+
+
+class TestAGridQuantisedAnswerCarriesItsGrid:
+    """``resilience`` is a distance read off cells, so it must say so.
+
+    Measured before the fix on a 40x40 two-well image, it printed
+    ``0.615385`` — six significant figures — where the truth is 0.5709 and the
+    honest answer is "6 cells, +-1 cell, biased high".  An engineer reads that
+    number as a safety margin.
+    """
+
+    def test_it_prints_the_cells_not_six_figures(self):
+        d = DuffingTwoWell()
+        res = bas.basins(d, [(-2.0, 2.0, 40), (-2.0, 2.0, 40)])
+        margin = bas.resilience(res, attractor_id=1)
+        text = repr(margin)
+        assert "±" in text, "a quantised answer must carry its quantum"
+        assert "cells on a 40 × 40 grid" in text
+        assert "upper bound" in text, "and say which way it is biased"
+        assert "0.615385" not in text
+
+    def test_the_quantum_shrinks_with_the_grid(self):
+        d = DuffingTwoWell()
+        coarse = bas.resilience(bas.basins(d, [(-2.0, 2.0, 40), (-2.0, 2.0, 40)]), attractor_id=1)
+        fine = bas.resilience(bas.basins(d, [(-2.0, 2.0, 80), (-2.0, 2.0, 80)]), attractor_id=1)
+        assert coarse.meta["quantization"] > fine.meta["quantization"]
+
+
+class TestABoundaryVerdictDoesNotFlipWithTheGrid:
+    """ "Fractal boundary" means *your safety margin is meaningless* to an engineer.
+
+    The same two-well system read ``final-state sensitive (fractal boundary)`` at
+    40x40 and ``smooth boundary`` at 60x60, with nothing saying it had changed
+    its mind.  The verdict is now withheld while the fitted slope is still
+    drifting with the resolution, and the repr names the grid to try.
+    """
+
+    def test_an_unconverged_exponent_is_inconclusive_and_names_the_refinement(self):
+        d = DuffingTwoWell()
+        res = bas.basins(d, [(-2.0, 2.0, 40), (-2.0, 2.0, 40)])
+        alpha = bas.uncertainty_exponent(res)
+        assert alpha.resolved is False
+        assert alpha.final_state_sensitive is None, "no verdict while it is still moving"
+        text = repr(alpha)
+        assert "inconclusive at this resolution" in text
+        assert "80 × 80" in text, "it must name the resolution to try"
+
+    def test_it_says_so_when_basin_entropy_disagrees_on_the_same_image(self):
+        """Two tests, one picture, opposite answers — the reader must be told.
+
+        Daza's ``Sbb > ln 2`` is *sufficient* for a fractal boundary, so it
+        firing while this fit reads ``alpha ~ 1`` is a genuine contradiction and
+        not merely a weaker test staying silent.
+        """
+        labels = np.zeros((60, 60), dtype=int)
+        rng = np.random.default_rng(0)
+        # A deliberately shredded boundary: high Sbb, while the uncertain
+        # fraction saturates so fast that the fitted alpha reads near 1.
+        labels[:, :30] = 1
+        labels[:, 30:] = 2
+        strip = slice(24, 36)
+        labels[:, strip] = rng.integers(1, 3, size=labels[:, strip].shape)
+        entropy = bas.basin_entropy(labels)
+        alpha = bas.uncertainty_exponent(labels)
+        if entropy.fractal_boundary and alpha.final_state_sensitive is False:
+            assert alpha.contradicted_by_basin_entropy is True
+            assert "DISPUTED" in repr(alpha)
+            assert "basin_entropy" in repr(alpha)
+        else:  # pragma: no cover - the two agree on this image; nothing to dispute
+            assert alpha.contradicted_by_basin_entropy is False
+
+
+class TestAnAttractorIsNamedByWhereItIs:
+    """Ids assigned in discovery order paint one physical state two colours.
+
+    Measured before the fix on the magnetic pendulum: the magnet at
+    ``(+0.97, 0.00)`` came back as ``#1`` from ``seed=0`` and ``#3`` from
+    ``seed=3`` — same system, same call, same attractor, two numbers, so a
+    two-panel figure coloured one state twice.
+    """
+
+    def test_the_relabel_orders_by_location_not_by_discovery(self):
+        """The renumbering itself, on a hand-built set: no integration involved."""
+        from tsdynamics.analysis.basins.attractors import Attractor, AttractorSet, canonical_relabel
+
+        found = AttractorSet(
+            attractors={
+                1: Attractor(id=1, points=np.array([[1.0, 0.0]]), cells=4),
+                2: Attractor(id=2, points=np.array([[-1.0, 0.0]]), cells=4),
+            },
+            diverged=0,
+            seeds=100,
+        )
+        relabelled, composed = canonical_relabel(found, {1: 1, 2: 2})
+        assert relabelled.attractors[1].center[0] == pytest.approx(-1.0)
+        assert relabelled.attractors[2].center[0] == pytest.approx(1.0)
+        # the SAME permutation is handed back for the label image
+        assert composed == {1: 2, 2: 1}
+
+    def test_a_basin_images_ids_ascend_with_position(self):
+        d = DuffingTwoWell()
+        res = bas.basins(d, [(-2.0, 2.0, 40), (-2.0, 2.0, 40)])
+        centers = res.attractors.centers
+        order = np.lexsort(tuple(centers[:, i] for i in reversed(range(centers.shape[1]))))
+        assert list(order) == sorted(order), "ids must ascend lexicographically by centre"
+
+    def test_the_location_is_in_the_repr_and_in_the_table(self):
+        # pandas is not a dependency; `to_frame()` names it when absent.
+        pytest.importorskip("pandas")
+        d = DuffingTwoWell()
+        found = bas.attractors(d, [(-2.0, 2.0, 30), (-2.0, 2.0, 30)], n_seeds=60, seed=0)
+        assert "at [" in repr(found), "the printout must say WHERE, not only #n"
+        table = found.to_dict(full=True)
+        assert table["centers"]["1"][0] == pytest.approx(found.attractors[1].center[0])
+        assert "center0" in found.attractors[1].to_frame().columns
+
+    @pytest.mark.slow
+    def test_the_same_magnet_keeps_its_number_across_seeds(self):
+        mp = MagneticPendulum()
+        box = Box([-1.3, -1.3, -2.5, -2.5], [1.3, 1.3, 2.5, 2.5])
+        numbers = []
+        for seed in (0, 3):
+            found = bas.attractors(
+                mp,
+                box,
+                resolution=(60, 60, 40, 40),
+                n_seeds=120,
+                seed=seed,
+                dt=0.5,
+                max_steps=800,
+                consecutive_recurrences=25,
+                attractor_locate_steps=15,
+            )
+            # the magnet on the positive x axis, whichever id it was given
+            ids = [found.attractors[k].id for k in found.ids if found.attractors[k].center[0] > 0.5]
+            assert len(ids) == 1, "the (+1, 0) magnet must be found exactly once"
+            numbers.append(ids[0])
+        assert numbers[0] == numbers[1], f"one physical state, two numbers: {numbers}"

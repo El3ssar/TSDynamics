@@ -5,7 +5,10 @@ Where :mod:`figures` renders a *static* PNG of each attractor, this module emits
 self-contained, **live** WebGL viewer: a ``PlotSpec`` of the attractor is lowered
 through the in-tree ``threejs`` data-export backend to a BufferGeometry payload, the
 payload is inlined into a tiny HTML document that boots the canonical reference
-loader (:file:`docs/_static/tsdyn-threejs-loader.js`), and the system page embeds
+loader (shipped in the package at
+:file:`src/tsdynamics/viz/render/threejs/_assets/tsdyn-threejs-loader.js` and
+published to the site as ``_static/tsdyn-threejs-loader.js`` by
+:func:`loader_asset`), and the system page embeds
 that document in an ``<iframe>``.  The result is the "animated attractor you can
 orbit while it plays" — a reveal comet over a faint full-curve backdrop, with
 ``OrbitControls`` running in its own loop so the mouse can rotate the scene *while
@@ -51,7 +54,7 @@ Smoothness: **arc-length resampling**, not a uniform-in-time stride
 ------------------------------------------------------------------
 Every flow / DDE viewer curve is integrated at the fine step ``FINE_PILOT_DT``
 (0.001 for ODEs), the transient dropped, projected to the drawn 2-/3-D view, and
-then **resampled to be equally spaced in arc length** (:func:`_smooth_arclength`)
+then **resampled to be equally spaced in arc length** (:func:`_smooth`)
 — constant chord length everywhere along the curve.  This replaced a
 uniform-in-*time* stride at a single sagitta ``dt`` chosen from the 95th-percentile
 segment: because that one stride is uniform in time, the fastest / sharpest turns
@@ -68,11 +71,13 @@ at the :data:`_MIN_DRAW_SAMPLES` floor and stays light, while a fast, tightly-cu
 one spends up to the cap.  So the point budget is spent where the curvature demands
 it, not uniformly.
 
-:data:`MAX_POINTS` (40 000) is the resample ceiling; the payload downsampler in
-:func:`_build_payload` is a no-op after the resample (the cloud already ≤ the cap).
-The inlined JSON stays ≲ 200 KB for a slow attractor and up to ~2 MB for the
-single hardest one (DequanLi, which spends the full cap), positions rounded to
-:data:`_POS_DECIMALS` — the smoothness of the sharpest turns is worth the bytes.
+:data:`MAX_POINTS` (40 000) is the resample ceiling.  Since v6 the *exporter* owns
+the cap too (``lower_spec(max_points=...)``, arc-length, the same criterion), so
+this module no longer post-strides the cloud: the resample above already lands at
+or below the budget and the exporter is a second, identical belt.  The inlined
+JSON stays ≲ 200 KB for a slow attractor and about 1 MB for the hardest ones that
+spend the full cap, positions rounded to :data:`_POS_DECIMALS` — the smoothness of
+the sharpest turns is worth the bytes.
 
 Two views for a high-dim flow
 -----------------------------
@@ -103,23 +108,30 @@ import figures  # docs/_tooling sibling — reuse its robust IC / trajectory acq
 import numpy as np
 import plot_dt as _plot_dt  # the ONE sagitta-dt selector both renderers call
 
+# The arc-length resampling primitives are now LIBRARY code
+# (:mod:`tsdynamics.viz._resample`) rather than a docs-tooling copy: the threejs
+# exporter needs exactly the same criterion for its vertex cap, and two
+# implementations of "how do we thin a curve without wrecking it" would drift.
+from tsdynamics.viz._resample import smooth_arclength
+
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 CACHE_DIR = ROOT / ".cache" / "docs-threejs"
 
-#: Canonical reference loader (source of truth) + the site URI the viewer iframes
-#: import it from.
-LOADER_SRC = ROOT / "docs" / "_static" / "tsdyn-threejs-loader.js"
+#: The site URI the viewer iframes import the shared loader from.  The loader
+#: **source** is the copy shipped inside the installed package
+#: (``tsdynamics.viz.render.threejs.loader_source``) — see :func:`loader_asset` —
+#: so the docs site and the wheel can never serve different loaders.
 LOADER_URI = "_static/tsdyn-threejs-loader.js"
 
 #: Bump when the emitted HTML or payload shaping materially changes (cache buster).
-VIEWER_VERSION = "8"
+VIEWER_VERSION = "9"
 
 #: CDN three.js build (pinned) — matches docs/visualization/threejs-export.md.
 _THREE_VERSION = "0.160.0"
 _THREE_CDN = f"https://cdn.jsdelivr.net/npm/three@{_THREE_VERSION}"
 
 #: Cap the *drawn* vertex count — the ceiling on the **arc-length resample**
-#: (:func:`_resample_arclength`).  The viewer curve is resampled to be equally
+#: (:func:`tsdynamics.viz._resample.resample_arclength`).  The viewer curve is resampled to be equally
 #: spaced *in space* (constant chord length everywhere), so the point count needed
 #: to hold the worst-case sagitta below :data:`_SAGITTA_TARGET` is set by the
 #: sharpest turn, not by a uniform-in-time stride.  On the fastest catalogue
@@ -154,7 +166,7 @@ _DDE_FINAL_TIME = 320.0
 _DT = 0.01
 _DDE_DT = 0.2
 #: The **fine** integration step for the viewer march — the step we integrate at
-#: before arc-length resampling (:func:`_smooth_arclength`).  It mirrors
+#: before arc-length resampling (:func:`_smooth`).  It mirrors
 #: :data:`plot_dt.FINE_PILOT_DT` (0.001 for ODEs) so a fast attractor is traced at a
 #: step fine enough to represent its tight curvature; the space-uniform resample then
 #: redistributes those dense samples so every turn is equally resolved.
@@ -326,83 +338,16 @@ def _wrap_components(y: np.ndarray, wrap: list[int] | None) -> np.ndarray:
     return y
 
 
-def _resample_arclength(y: np.ndarray, n: int) -> np.ndarray:
-    """Resample a polyline ``y`` ``(m, k)`` to ``n`` points evenly spaced in arc length.
+def _smooth(y: np.ndarray) -> np.ndarray:
+    """Arc-length-resample ``y`` at this generator's sagitta target / vertex budget.
 
-    This is the space-uniform analogue of a uniform-in-time stride: it places the
-    ``n`` output vertices at equal cumulative-chord-length intervals along the curve,
-    so every drawn segment has (approximately) the same spatial length everywhere —
-    the fast, tightly-curved turns get proportionally as many points as the slow arcs
-    instead of being under-resolved.  Mirrors ``make_hero.py::_resample``.
-
-    Degenerate input (a zero-length curve) is returned unchanged.
+    A thin binding of the library's :func:`tsdynamics.viz._resample.smooth_arclength`
+    to this module's knobs (:data:`_SAGITTA_TARGET`, :data:`_MIN_DRAW_SAMPLES`,
+    :data:`MAX_POINTS`).  The algorithm itself — and the reason it is arc length and
+    not a stride — lives in the library so the threejs exporter's vertex cap and this
+    generator cannot drift apart.
     """
-    seg = np.linalg.norm(np.diff(y, axis=0), axis=1)
-    s = np.concatenate([[0.0], np.cumsum(seg)])
-    total = float(s[-1])
-    if total <= 0.0 or n < 2:
-        return y
-    u = np.linspace(0.0, total, n)
-    return np.stack([np.interp(u, s, y[:, j]) for j in range(y.shape[1])], axis=1)
-
-
-def _max_sagitta_ratio(y: np.ndarray) -> float:
-    """Worst-case sagitta / bounding-box diagonal over the triples of a polyline.
-
-    The sagitta of a triple ``(p0, p1, p2)`` is the perpendicular distance of the
-    middle point ``p1`` from the chord ``p0→p2`` — the *bow* of the curve off its
-    local chord.  Returned as a fraction of the cloud's bounding-box diagonal, so the
-    criterion is scale-free (this is the same metric the maintainer's audit reports).
-    Works for 2-D (delay embeddings) and 3-D (flows) alike.
-    """
-    if len(y) < 3:
-        return 0.0
-    p0, p1, p2 = y[:-2], y[1:-1], y[2:]
-    chord = p2 - p0
-    clen = np.linalg.norm(chord, axis=1)
-    v = p1 - p0
-    # Perpendicular component |v x chord| / |chord|.  Compute the cross product by
-    # hand (2-D → scalar magnitude, 3-D → vector norm) rather than via ``np.cross``,
-    # whose 2-D-vector form is deprecated in NumPy 2.0 (and errors under the test
-    # suite's ``filterwarnings=error``).
-    if y.shape[1] == 2:
-        cross_norm = np.abs(v[:, 0] * chord[:, 1] - v[:, 1] * chord[:, 0])
-    else:
-        cross_norm = np.linalg.norm(np.cross(v, chord), axis=1)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        sag = np.where(clen > 0, cross_norm / clen, 0.0)
-    diag = float(np.linalg.norm(y.max(axis=0) - y.min(axis=0)))
-    if diag <= 0.0:
-        return 0.0
-    return float(np.nanmax(sag)) / diag
-
-
-def _smooth_arclength(
-    y: np.ndarray,
-    *,
-    target: float = _SAGITTA_TARGET,
-    nmin: int = _MIN_DRAW_SAMPLES,
-    nmax: int = MAX_POINTS,
-) -> np.ndarray:
-    """Arc-length-resample ``y`` to the fewest points whose worst-case sagitta < ``target``.
-
-    Because the resample is uniform in space, the sagitta of a locally circular arc
-    of constant chord ``h`` scales as ``h²`` — i.e. as ``1/n²`` — so growing the point
-    count geometrically converges quickly.  Starts at ``nmin`` (the comet floor) and
-    grows by 1.5× until the measured worst-case sagitta/diag drops below ``target`` or
-    the ``nmax`` vertex cap is hit.  A slow attractor stops at ``nmin`` (staying light);
-    only a fast, tightly-curved one spends up to ``nmax``.  Never coarser than the
-    fine curve it is fed (if the input already has fewer than ``nmin`` points it is
-    resampled up to ``nmin`` so the comet still reads as a swept line).
-    """
-    if len(y) < 3:
-        return y
-    n = max(2, int(nmin))
-    best = _resample_arclength(y, min(n, nmax))
-    while _max_sagitta_ratio(best) >= target and n < nmax:
-        n = min(nmax, int(n * 1.5) + 1)
-        best = _resample_arclength(y, n)
-    return best
+    return smooth_arclength(y, target=_SAGITTA_TARGET, nmin=_MIN_DRAW_SAMPLES, nmax=MAX_POINTS)
 
 
 def _ode_cloud(entry, *, second: bool) -> np.ndarray | None:
@@ -411,7 +356,7 @@ def _ode_cloud(entry, *, second: bool) -> np.ndarray | None:
     Honours (in priority order) the ``viewer`` editorial block, then an editorial
     ``projection`` / ``projection2``, then the raw state.
 
-    Smoothness comes from **arc-length resampling** (:func:`_smooth_arclength`), not
+    Smoothness comes from **arc-length resampling** (:func:`_smooth`), not
     a uniform-in-time stride.  The trajectory is integrated at the fine step
     :data:`_FINE_DT` (``0.001``), the transient dropped, projected to the drawn
     2-/3-D view, then resampled to be equally spaced *in space* at the density whose
@@ -445,12 +390,12 @@ def _ode_cloud(entry, *, second: bool) -> np.ndarray | None:
         if ic is None or attempt > 0:
             ic = sys_obj.resolve_ic(rng.uniform(0.0, 1.0, sys_obj.dim))
         try:
-            traj = sys_obj.integrate(
+            traj = sys_obj.run(
                 final_time=final_time,
                 dt=fine_dt,
                 ic=np.asarray(ic, dtype=float),
                 backend="interp",
-                method=method,
+                solver=method,
             )
         except (RuntimeError, ValueError):  # divergence / off-basin start
             ic = None
@@ -468,7 +413,7 @@ def _ode_cloud(entry, *, second: bool) -> np.ndarray | None:
             # spaced in space, at the density that holds the worst-case sagitta below
             # the target.  Slow attractors stay at the floor; fast ones spend up to
             # the cap.
-            return _smooth_arclength(np.ascontiguousarray(view, dtype=float))
+            return _smooth(np.ascontiguousarray(view, dtype=float))
         ic = None
     return None
 
@@ -522,7 +467,7 @@ def _dde_delay_embedding(entry) -> np.ndarray | None:
     Smoothness is enforced by arc-length resampling of the embedding (the same
     space-uniform criterion as the ODE path), not a uniform-in-time stride: the
     embedding is integrated at the fine DDE step :data:`_DDE_FINE_DT`, then
-    :func:`_smooth_arclength` redistributes vertices to equal spatial spacing at the
+    :func:`_smooth` redistributes vertices to equal spatial spacing at the
     density that holds the worst-case sagitta below :data:`_SAGITTA_TARGET`.
     """
     sys_obj = entry.cls()
@@ -534,7 +479,7 @@ def _dde_delay_embedding(entry) -> np.ndarray | None:
         return [0.8 + 0.2 * np.sin(0.2 * s)] * sys_obj.dim
 
     try:
-        traj = sys_obj.integrate(final_time=final_time, dt=fine_dt, history=history)
+        traj = sys_obj.run(final_time=final_time, dt=fine_dt, history=history)
     except (RuntimeError, ValueError):
         return None
     x = np.asarray(traj.y[:, 0], dtype=float)
@@ -548,7 +493,7 @@ def _dde_delay_embedding(entry) -> np.ndarray | None:
     emb = np.column_stack([x[lag:], x[:-lag]])[drop:]
     if len(emb) < 3:
         return None
-    return _smooth_arclength(np.ascontiguousarray(emb, dtype=float))
+    return _smooth(np.ascontiguousarray(emb, dtype=float))
 
 
 def _map_cloud(entry) -> np.ndarray | None:
@@ -629,10 +574,10 @@ def _build_payload(entry, *, second: bool) -> dict | None:
     if pts.shape[1] < 2:
         return None
 
-    # Downsample to MAX_POINTS (ceil-division stride so the kept count never
-    # exceeds the cap; the inlined JSON must stay light).
-    dstride = max(1, -(-len(pts) // MAX_POINTS))
-    pts = pts[::dstride]
+    # No stride here.  A flow / DDE curve was already arc-length resampled to at
+    # most MAX_POINTS by ``_smooth``, and a map cloud is capped by the exporter's
+    # own (seeded, uniform) thinning — a ceil-division stride at this point would
+    # be the one uniform-in-time decimation the whole design avoids.
     if len(pts) < 8:
         return None
     color = np.linspace(0.0, 1.0, len(pts))
@@ -691,13 +636,24 @@ def _build_payload(entry, *, second: bool) -> dict | None:
         spec.trail(("steps", _TRAIL_SAMPLES))
         spec.head(True, size=8.0, color="#8C85F2")
     try:
-        payload = spec.render("threejs", raw=True)
+        # The exporter owns the vertex cap and the float rounding now (arc length
+        # for a curve, a seeded uniform draw for a map cloud), so this generator
+        # states its budget and stops post-processing the payload itself.  The
+        # curve was already resampled below the cap, so the warning cannot fire —
+        # suppressed anyway so a docs build can never be broken by a warning.
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            payload = spec.render(
+                "threejs", raw=True, max_points=MAX_POINTS, decimals=_POS_DECIMALS
+            )
     except Exception:  # noqa: BLE001 — renderer unavailable / declined
         return None
 
     if not is_map:
         payload = _ensure_head_color(payload)
-    return _round_payload(payload)
+    return payload
 
 
 def _selected_comps(entry, dim: int, *, second: bool) -> tuple[int, ...] | None:
@@ -718,16 +674,6 @@ def _ensure_head_color(payload: dict) -> dict:
         and meta["animation"].get("head_color") is None
     ):
         meta["animation"]["head_color"] = list(_INDIGO_HEAD)
-    return payload
-
-
-def _round_payload(payload: dict) -> dict:
-    """Round the bulky float buffers in place to shrink the inlined JSON."""
-    for geom in payload.get("geometries", []):
-        if "positions" in geom:
-            geom["positions"] = [round(float(v), _POS_DECIMALS) for v in geom["positions"]]
-        if "colors" in geom:
-            geom["colors"] = [round(float(v), _COL_DECIMALS) for v in geom["colors"]]
     return payload
 
 
@@ -836,10 +782,20 @@ def _html(entry, payload: dict, *, second: bool) -> str:
 
 
 def loader_asset() -> tuple[str, str] | None:
-    """Return ``(site_uri, source)`` for the shared three.js loader, or ``None``."""
+    """Return ``(site_uri, source)`` for the shared three.js loader, or ``None``.
+
+    The source is read from the **installed package**
+    (:func:`tsdynamics.viz.render.threejs.loader_source`), not from
+    ``docs/_static/``: the loader is library code that ships in the wheel, and the
+    ``docs/_static`` file is a mirror kept byte-identical by
+    ``tests/test_viz_threejs.py``.  Reading the package copy means the docs site can
+    never publish a loader that differs from the one users get with ``pip install``.
+    """
     try:
-        return LOADER_URI, LOADER_SRC.read_text(encoding="utf-8")
-    except OSError:
+        from tsdynamics.viz.render.threejs import loader_source
+
+        return LOADER_URI, loader_source()
+    except (OSError, ImportError):
         return None
 
 

@@ -3,7 +3,7 @@
 ``ScalingResult`` is the *one* schema the whole scaling-curve family (every
 fractal dimension, Lyapunov-from-data, expansion entropy, Cao / FNN) reparents
 onto later — ``estimate``/``stderr``/``abscissa``/``ordinate``/``fit_region``/
-``intercept`` — so a single generic ``.plot.scaling()`` renders any of them.
+``intercept`` — so a single generic ``.plot()`` renders any of them.
 These tests pin that schema, ``float() == estimate``, the ``local_slopes`` /
 ``scaling_window`` diagnostics, the round-trip, and the deferred plot seam.
 """
@@ -162,24 +162,38 @@ def test_scaling_window_returns_plain_floats():
 
 
 # ---------------------------------------------------------------------------
-# repr / summary inherit the AnalysisResult machinery
+# The repr inherits the AnalysisResult machinery — and IS the readout (v6)
 # ---------------------------------------------------------------------------
 
 
-def test_repr_shows_scalar_summary_fields_not_arrays():
+def test_repr_is_the_readout_not_a_constructor_call():
+    """v6: the repr became what ``summary()`` printed (contract §4.2 rule 3).
+
+    The fallback quantity label is ``value``, not ``estimate``: they are the same
+    number, but ``value`` is the spelling rule R2 left on the listing, and a repr
+    must print a name its reader can tab-complete (contract §11).  Every shipped
+    subclass overrides ``_quantity`` with its own symbol, so this label is only
+    ever seen on a bare ``ScalingResult``.
+    """
     text = repr(_scaling())
-    assert text.startswith("ScalingResult(")
-    assert "estimate=2" in text
-    assert "stderr=0.05" in text
-    assert "abscissa" not in text  # array field, repr=False
+    head = text.splitlines()[0]
+    assert head.startswith("ScalingResult  value = 2")
+    assert "± 0.05" in head
+    assert "(Lorenz)" in head  # the subject, read off meta
+    assert "abscissa" not in text  # the curve arrays are never dumped
     assert "ordinate" not in text
 
 
-def test_summary_carries_interpretation_line():
-    out = _scaling().summary()
-    assert out.splitlines()[0] == "ScalingResult  (Lorenz)"
-    assert "→" in out
-    assert "fit over 8 points" in out
+def test_repr_carries_the_fit_diagnostics():
+    """The supporting line says whether the slope is a reading of a straight region."""
+    detail = repr(_scaling()).splitlines()[1]
+    assert "8 fit pts" in detail
+    assert "R²" in detail
+
+
+def test_summary_is_deleted():
+    """Everything ``summary()`` printed is in ``__repr__`` now, so it is gone."""
+    assert not hasattr(_scaling(), "summary")
 
 
 # ---------------------------------------------------------------------------
@@ -255,7 +269,7 @@ def test_different_estimate_compares_unequal():
 
 
 # ---------------------------------------------------------------------------
-# The .plot.scaling() seam — raises when no backend is registered
+# The .plot() seam — raises when no backend is registered
 # ---------------------------------------------------------------------------
 
 
@@ -283,8 +297,9 @@ def _no_backend(monkeypatch):
 
 
 def test_plot_scaling_raises_without_backend(_no_backend):
+    """The wheel-free refusal, reached through the transform the door now offers."""
     with pytest.raises(VisualizationNotInstalled):
-        _scaling().plot.scaling()
+        _scaling().plot()
 
 
 def test_plot_call_raises_without_backend(_no_backend):
@@ -293,10 +308,11 @@ def test_plot_call_raises_without_backend(_no_backend):
 
 
 def test_plot_scaling_renders_when_a_backend_registers(monkeypatch):
-    """Forward-compat: once a renderer registers, ``.plot.scaling()`` renders.
+    """Forward-compat: once a renderer registers, the scaling view renders.
 
-    The typed ``.scaling()`` method routes ``kind="scaling_fit"`` into
-    ``to_plot_spec`` and the spec's ``render`` does the drawing.
+    A ``ScalingResult``'s own view already IS the scaling fit, so ``.plot()``
+    carries ``kind="scaling_fit"`` without anything forcing it — which is why the
+    typed ``.scaling()`` method was only ever a no-op here.
     """
     import tsdynamics.registry as reg
 
@@ -314,22 +330,23 @@ def test_plot_scaling_renders_when_a_backend_registers(monkeypatch):
 
     monkeypatch.setattr(PlotSpec, "render", fake_render, raising=True)
 
-    out = _scaling().plot.scaling(backend="mpl")
-    assert out == "FIGURE"
+    out = _scaling().plot(backend="mpl")
+    # ``plot`` builds — it hands back the spec, having rendered it (v6).
+    assert isinstance(out, PlotSpec)
     assert rendered["backend"] == "mpl"
     # The semantic kind that reached the spec is SCALING_FIT.
     assert str(rendered["kind"]) == "scaling_fit"
 
 
 # ---------------------------------------------------------------------------
-# to_plot_spec — the SCALING_FIT description (no plot library pulled)
+# __plot_spec__ — the SCALING_FIT description (no plot library pulled)
 # ---------------------------------------------------------------------------
 
 
-def test_to_plot_spec_builds_a_scaling_fit_spec():
+def test_plot_spec_builds_a_scaling_fit_spec():
     from tsdynamics.viz.spec import PlotKind
 
-    spec = _scaling().to_plot_spec()
+    spec = _scaling().__plot_spec__()
     assert spec.kind == PlotKind.SCALING_FIT
     assert spec.ndim == 2
     # Three layers: the full curve, the highlighted fit region, the fit line.
@@ -338,9 +355,9 @@ def test_to_plot_spec_builds_a_scaling_fit_spec():
     assert kinds == [PlotKind.SCATTER, PlotKind.MARKERS, PlotKind.LINE]
 
 
-def test_to_plot_spec_fit_line_matches_intercept_and_slope():
+def test_plot_spec_fit_line_matches_intercept_and_slope():
     r = _scaling()
-    spec = r.to_plot_spec()
+    spec = r.__plot_spec__()
     line = spec.layers[2]  # the LINE layer
     lo, hi = r.fit_region
     expected_x = np.array([r.abscissa[lo], r.abscissa[hi]])
@@ -348,27 +365,27 @@ def test_to_plot_spec_fit_line_matches_intercept_and_slope():
     np.testing.assert_allclose(line.data["y"], r.intercept + r.estimate * expected_x)
 
 
-def test_to_plot_spec_round_trips_through_dict():
+def test_plot_spec_round_trips_through_dict():
     from tsdynamics.viz.spec import PlotSpec
 
-    spec = _scaling().to_plot_spec()
+    spec = _scaling().__plot_spec__()
     rebuilt = PlotSpec.from_dict(spec.to_dict())
     assert rebuilt.kind == spec.kind
     assert len(rebuilt.layers) == len(spec.layers)
 
 
-def test_to_plot_spec_empty_curve_has_only_the_scatter_layer():
+def test_plot_spec_empty_curve_has_only_the_scatter_layer():
     from tsdynamics.viz.spec import PlotKind
 
-    spec = ScalingResult(estimate=1.0).to_plot_spec()  # empty arrays
+    spec = ScalingResult(estimate=1.0).__plot_spec__()  # empty arrays
     assert len(spec.layers) == 1  # no fit-region / fit-line layers to draw
     assert spec.layers[0].kind == PlotKind.SCATTER
 
 
-def test_to_plot_spec_honours_kind_override():
+def test_plot_spec_honours_kind_override():
     from tsdynamics.viz.spec import PlotKind
 
-    spec = _scaling().to_plot_spec(kind="diagnostic_curve")
+    spec = _scaling().__plot_spec__(kind="diagnostic_curve")
     assert spec.kind == PlotKind.DIAGNOSTIC_CURVE
 
 
@@ -389,5 +406,8 @@ def test_domain_subclass_can_alias_estimate():
     assert float(r) == 1.886
     assert r.scaling_window == (0.0, 4.0)
     # The inherited repr survives the @dataclass redecoration (the WS-RESULT gotcha).
-    assert repr(r).startswith("_Dim(")
-    assert "estimate=1.886" in repr(r)
+    assert repr(r).startswith("_Dim  ")
+    # ``value`` is the inherited fallback label (see the repr test above); this
+    # subclass adds ``dimension`` without overriding ``_quantity``, so it prints
+    # the base spelling — which is the one a reader can tab-complete.
+    assert "value = 1.886" in repr(r)

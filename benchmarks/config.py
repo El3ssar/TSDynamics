@@ -99,18 +99,21 @@ NEWTON_GRID_RES: int = 200  # NEWTON_GRID_RES**2 initial conditions
 NEWTON_MAX_STEPS: int = 200
 
 # --------------------------------------------------------------------------- #
-# Complexity / from-data analysis (the expanded task set: entropy, DFA/Hurst,
-# RQA, embedding-dimension, surrogates). Every library that supports a task gets
-# the SAME input + parameters.
+# From-data phase-space analysis (RQA, embedding dimension). Every library that
+# supports a task gets the SAME input + parameters.
+#
+# The generic-series estimators (entropy, DFA, Hurst, surrogates) were dropped
+# with the v6 scope narrowing: TSDynamics no longer ships them, so those rows had
+# no TSDynamics column left to compare against.
 # --------------------------------------------------------------------------- #
 
-ENTROPY_N: int = 3000  # Lorenz x samples for sample/permutation/multiscale entropy
-ENTROPY_M: int = 2  # entropy embedding dimension (m); permutation order is M+1
+# Length of the shared Lorenz x(t) window fed to the from-data estimators.
+ENTROPY_N: int = 3000
+ENTROPY_M: int = 2  # embedding dimension (m) of the from-data estimators
 RQA_N: int = 1200  # RQA is O(N²) — a shorter window every library can finish
 RQA_EMBED_DIM: int = 3
 RQA_EMBED_DELAY: int = 5
 RQA_RECURRENCE_RATE: float = 0.05
-DFA_N: int = 8000  # white-noise length for DFA/Hurst (more = steadier α)
 EMBED_TARGET_DELAY: int = 8  # delay (samples) for the FNN/Cao embedding-dim task
 EMBED_MAX_DIM: int = 10
 
@@ -205,7 +208,6 @@ def as_dict() -> dict[str, Any]:
             "rqa_embed_dim": RQA_EMBED_DIM,
             "rqa_embed_delay": RQA_EMBED_DELAY,
             "rqa_recurrence_rate": RQA_RECURRENCE_RATE,
-            "dfa_n": DFA_N,
             "embed_target_delay": EMBED_TARGET_DELAY,
             "embed_max_dim": EMBED_MAX_DIM,
         },
@@ -223,10 +225,6 @@ def as_dict() -> dict[str, Any]:
             # x-coordinate of the Hénon saddle fixed point on the attractor
             # (positive root of a x² + (1-b) x − 1 = 0).
             "henon_fp_x": henon_fixed_points(HENON_PARAMS["a"], HENON_PARAMS["b"])[-1][0],
-            # White noise has DFA exponent α = 0.5 and Hurst H = 0.5 (no long-range
-            # correlation) — the ground truth for the DFA / Hurst tasks.
-            "dfa_alpha": 0.5,
-            "hurst_exp": 0.5,
             # Lorenz attractor's embedding dimension ≈ 3 (it lives in 3-D); the FNN/
             # Cao estimate is method-dependent (3–6), so this is a loose anchor.
             "lorenz_embed_dim": 3.0,

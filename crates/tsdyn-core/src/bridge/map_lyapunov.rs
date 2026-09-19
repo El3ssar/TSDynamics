@@ -30,6 +30,7 @@ fn to_engine_err(e: MapLyapunovError) -> EngineError {
                 .to_string(),
         ),
         MapLyapunovError::Diverged(m) => EngineError::Diverged(m),
+        MapLyapunovError::Interrupted { .. } => EngineError::Interrupted,
     }
 }
 

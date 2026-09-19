@@ -19,8 +19,9 @@ from pathlib import Path
 
 import pytest
 
-from tsdynamics import plugins, solvers
-from tsdynamics.solvers import SolverCaps, SolverSpec
+from tsdynamics import _solvers as solvers
+from tsdynamics import plugins
+from tsdynamics._solvers import SolverCaps, SolverSpec
 
 
 @pytest.fixture
@@ -42,10 +43,15 @@ def test_import_is_clean():
     assert isinstance(solvers.available(), list)
     assert plugins.ALL_GROUPS == (
         "tsdynamics.systems",
-        "tsdynamics.solvers",
+        "tsdynamics._solvers",
         "tsdynamics.analyses",
-        "tsdynamics.transforms",
         "tsdynamics.renderers",
+        # v6: out-of-tree plot transforms (see tsdynamics.viz.transforms).
+        # Deliberately not "tsdynamics.viz.transforms" — that word belongs to the
+        # generic time-series layer the scope surgery removed.
+        "tsdynamics.plot_transforms",
+        # v6: out-of-tree primitives (how geometry is drawn) — see §6.9.
+        "tsdynamics.plot_primitives",
     )
 
 
@@ -166,7 +172,7 @@ def test_out_of_tree_plugin_is_discovered(tmp_path, monkeypatch, clean_registry)
         ep_name="toy",
         target="toy_solver_pkg:TOY",
         body=(
-            "from tsdynamics.solvers import SolverSpec, SolverCaps\n"
+            "from tsdynamics._solvers import SolverSpec, SolverCaps\n"
             "TOY = SolverSpec(name='toy',\n"
             "                 caps=SolverCaps(kind='explicit', supports={'ode'}),\n"
             "                 description='out-of-tree toy', origin='plugin')\n"

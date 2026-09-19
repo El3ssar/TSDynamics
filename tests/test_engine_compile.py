@@ -1,4 +1,4 @@
-"""Coverage for the symbolic→IR compiler (:mod:`tsdynamics.engine.compile`).
+"""Coverage for the symbolic→IR compiler (:mod:`tsdynamics._engine.compile`).
 
 Runs without the compiled Rust engine: lowering needs only SymEngine + the
 engine-native symbols (``engine.symbols.state_time_symbols``), and the reference
@@ -11,13 +11,15 @@ lowering paths and the tape-validation invariants that mirror ``tsdyn-ir``.
 
 from __future__ import annotations
 
+import os
+
 import numpy as np
 import pytest
 
 import tsdynamics as ts
 from tsdynamics import registry
-from tsdynamics.engine import compile as compile_ir
-from tsdynamics.engine.compile import (
+from tsdynamics._engine import compile as compile_ir
+from tsdynamics._engine.compile import (
     DelaySlot,
     Tape,
     TapeCompileError,
@@ -226,7 +228,7 @@ def test_powi_uses_square_and_multiply() -> None:
     not NumPy's exp·log ``pow`` — the integer-power path of the reference oracle.
     Cross-language bit-exactness is asserted by the I-XVAL gate; here we check the
     reduction is mathematically correct across signs and the edge exponents."""
-    from tsdynamics.engine.compile import _powi
+    from tsdynamics._engine.compile import _powi
 
     for base, exp in [(0.9, 50), (1.1, 13), (2.0, 10), (0.5, -4), (7.0, 1)]:
         assert float(_powi(np.float64(base), exp)) == pytest.approx(base**exp, rel=1e-12)
@@ -360,7 +362,7 @@ def test_validation_rejects_bad_jacobian_shape() -> None:
 
 def test_to_arrays_round_trips_shapes_and_dtypes() -> None:
     """``to_arrays`` yields the contiguous wire tuple the Rust FFI ingests."""
-    tape = lower_ode(ts.Lorenz(), with_jacobian=True)
+    tape = lower_ode(ts.systems.Lorenz(), with_jacobian=True)
     ops, a, b, imm, outputs, jac, n_state, n_param = tape.to_arrays()
     assert ops.dtype == np.int32 and imm.dtype == np.float64
     assert ops.size == a.size == b.size == imm.size == tape.n_reg
@@ -398,7 +400,7 @@ def test_baker_branchless_step_lowers() -> None:
     comparison-blend, so the formerly-unrepresentable map is now a straight-line
     tape — with a Jacobian that survives the floor/Piecewise derivative.
     """
-    tape = lower_map(ts.Baker(), with_jacobian=True)
+    tape = lower_map(ts.systems.Baker(), with_jacobian=True)
     assert tape.dim == 2
     assert tape.has_jacobian
 
@@ -548,7 +550,7 @@ def test_every_dde_lowers_with_delay_slots(dde_entry) -> None:
 
 def test_dde_rhs_matches_manual_mackey_glass() -> None:
     """MackeyGlass lowers to the right RHS over (current, delayed) inputs."""
-    mg = ts.MackeyGlass()
+    mg = ts.systems.MackeyGlass()
     tape, slots = lower_dde(mg)
     assert len(slots) == 1 and slots[0].component == 0
     assert slots[0].delay == pytest.approx(float(mg.tau))
@@ -634,3 +636,260 @@ def test_sde_multiplicative_noise_jacobian() -> None:
     p = np.array([0.1, 0.4])
     _, jac = eval_tape_jac(lowered.diffusion, [2.0], p)
     assert jac[0, 0] == pytest.approx(0.4)  # ∂(sigma*u)/∂u
+
+
+# ---------------------------------------------------------------------------
+# SymEngine-native lowering (the SymPy-free path) — stream sympy-free-lowering
+# ---------------------------------------------------------------------------
+#
+# The emitted tape is a *byte* contract (``tests/_equation_reference_golden.txt``
+# pins its hash for all 171 catalogue systems), and the register layout is the
+# emission order — so the native path has to reproduce SymPy's canonical form,
+# not merely the mathematics.  These tests pin the three things that could drift
+# out from under it: SymPy's class-ordering table, the ``Float`` ordering key,
+# and native == SymPy on a battery of shapes plus the whole ODE catalogue.
+
+
+def _lower_both(system: object, *, with_jacobian: bool = False) -> tuple[Tape, Tape]:
+    """Lower ``system`` on the native path and on the forced-SymPy path."""
+    import os
+
+    compile_ir.clear_tape_cache()
+    os.environ.pop(compile_ir._NATIVE_LOWERING_ENV, None)
+    native = lower_ode(system, with_jacobian=with_jacobian)
+    compile_ir.clear_tape_cache()
+    os.environ[compile_ir._NATIVE_LOWERING_ENV] = "1"
+    try:
+        fallback = lower_ode(system, with_jacobian=with_jacobian)
+    finally:
+        os.environ.pop(compile_ir._NATIVE_LOWERING_ENV, None)
+        compile_ir.clear_tape_cache()
+    return native, fallback
+
+
+def test_vendored_class_ordering_matches_installed_sympy() -> None:
+    """``_ORDERING_OF_CLASSES`` is SymPy's own table, vendored to avoid the import.
+
+    It is what ``Basic.compare`` consults, so a SymPy release that reorders it
+    would silently move every lowered tape.  Fail here instead.
+    """
+    from sympy.core.basic import ordering_of_classes
+
+    assert tuple(ordering_of_classes) == compile_ir._ORDERING_OF_CLASSES
+
+
+def test_mpf_tuple_reproduces_sympy_float_hashable_content() -> None:
+    """``Float`` ordering compares mpmath's ``(sign, man, exp, bc)``, not the value."""
+    import sympy
+
+    for value in (0.0, 1.0, -1.0, 2.5, -0.1, 3.0, 4.0, 1e-9, 1e300, 0.30000000000000004):
+        assert compile_ir._mpf_tuple(value) == sympy.Float(value)._mpf_, value
+
+
+def test_native_and_sympy_emitters_agree_on_expression_shapes() -> None:
+    """A battery of shapes lowers byte-identically on both emitters."""
+    import symengine as se
+
+    kernels = {
+        "sum_and_product": lambda y, t, a, b: [a * y(1) - b * y(0), y(0) * y(1) - 3 * y(2), y(2)],
+        "number_times_sum": lambda y, t, a, b: [2 * (y(0) + y(1)), 0.5 * (y(1) - y(2)), a * y(0)],
+        "nested_distribution": lambda y, t, a, b: [
+            3 * (y(0) + a * (y(1) + y(2))),
+            y(0) + 2 * (y(1) + y(2)),
+            b * y(2),
+        ],
+        "powers": lambda y, t, a, b: [
+            y(0) ** 3 + y(1) ** -1,
+            se.sqrt(y(1)) + y(2) ** -0.5,
+            y(2) ** a,
+        ],
+        "exp_and_log": lambda y, t, a, b: [
+            se.exp(a * y(0)),
+            se.log(y(1) + b),
+            se.exp(y(2) * y(0)) * y(1),
+        ],
+        "trig_unambiguous": lambda y, t, a, b: [
+            se.sin(a * y(0)) + se.cos(y(1) * y(2)),
+            se.tanh(-y(1)),
+            se.atan(y(2)),
+        ],
+        "time_dependent": lambda y, t, a, b: [se.sin(a * t) * y(0), y(1) * t, b * y(2)],
+        "rational_coefficients": lambda y, t, a, b: [
+            y(0) / 3 + y(1) / 7,
+            y(1) * se.Rational(5, 4),
+            -y(2),
+        ],
+        "deep_sharing": lambda y, t, a, b: [
+            (y(0) + y(1)) * (y(0) + y(1)) + a,
+            (y(0) + y(1)) / (b + y(2)),
+            (y(0) + y(1)) ** 2,
+        ],
+    }
+    for name, kernel in kernels.items():
+        cls = type(
+            f"Native_{name}",
+            (ts.ContinuousSystem,),
+            {
+                "params": {"a": 1.5, "b": 0.25},
+                "dim": 3,
+                "_equations": staticmethod(kernel),
+            },
+        )
+        for with_jacobian in (False, True):
+            native, fallback = _lower_both(cls(), with_jacobian=with_jacobian)
+            assert native == fallback, f"{name} (jacobian={with_jacobian})"
+
+
+@pytest.mark.parametrize(
+    "kernel",
+    [
+        pytest.param(lambda y, t, a, b: [abs(y(0) - 1), y(1), y(2)], id="abs"),
+        pytest.param(
+            lambda y, t, a, b: [__import__("symengine").sign(y(0)), y(1), y(2)], id="sign"
+        ),
+        pytest.param(
+            lambda y, t, a, b: [__import__("symengine").Max(0, y(0)), y(1), y(2)], id="max"
+        ),
+        pytest.param(
+            lambda y, t, a, b: [__import__("symengine").sin(y(0) - y(1)), y(1), y(2)],
+            id="sign-ambiguous-sin",
+        ),
+        pytest.param(
+            lambda y, t, a, b: [__import__("symengine").exp(y(0) + 4.108), y(1), y(2)],
+            id="exp-of-sum-with-constant",
+        ),
+        pytest.param(
+            lambda y, t, a, b: [__import__("symengine").pi / 12 * y(0), y(1), y(2)],
+            id="compound-constant",
+        ),
+        # ``Pow.eval`` redistributes these exponents; SymEngine does not.  Found
+        # by differential fuzzing of the two emitters — before the gate, each
+        # lowered to a *different* tape (the ``pi`` cases differing in value at
+        # the last bit, because SymPy folds ``sqrt(pi)`` to a ``Float``).
+        pytest.param(
+            lambda y, t, a, b: [__import__("symengine").sqrt(y(0)) ** -0.5, y(1), y(2)],
+            id="nested-power-rational",
+        ),
+        pytest.param(
+            lambda y, t, a, b: [
+                __import__("symengine").sqrt(y(0)) ** (0.5 + y(2)),
+                y(1),
+                y(2),
+            ],
+            id="nested-power-symbolic",
+        ),
+        pytest.param(
+            lambda y, t, a, b: [
+                (__import__("symengine").pi * y(1)) ** __import__("symengine").Rational(-1, 2),
+                y(1),
+                y(2),
+            ],
+            id="pi-inside-a-power-base",
+        ),
+        pytest.param(
+            lambda y, t, a, b: [
+                (__import__("symengine").E * y(1)) ** __import__("symengine").Rational(-1, 2),
+                y(1),
+                y(2),
+            ],
+            id="e-inside-a-power-base",
+        ),
+    ],
+)
+def test_gated_node_kinds_fall_back_to_sympy_and_agree(kernel) -> None:
+    """Each gated construct takes the whole-tape SymPy fallback — and still agrees.
+
+    The gates exist because SymPy's ``eval`` rewrites these nodes in ways
+    SymEngine does not mirror (``signsimp``, ``default_sort_key`` ordering, the
+    ``exp(Add)`` split, ``evalf`` constant folding).  The fallback is per-tape,
+    so the result is the pre-existing SymPy tape, byte for byte.
+    """
+    cls = type(
+        "GatedSystem",
+        (ts.ContinuousSystem,),
+        {"params": {"a": 1.5, "b": 0.25}, "dim": 3, "_equations": staticmethod(kernel)},
+    )
+    native, fallback = _lower_both(cls())
+    assert native == fallback
+
+
+@pytest.mark.parametrize(
+    "kernel,id_",
+    [
+        (lambda y, t, a, b: [__import__("symengine").I * y(0), y(1), y(2)], "imaginary-unit"),
+        (
+            lambda y, t, a, b: [
+                __import__("symengine").sqrt(__import__("symengine").Integer(-1)) * y(0),
+                y(1),
+                y(2),
+            ],
+            "complex-from-sqrt",
+        ),
+        (
+            lambda y, t, a, b: [
+                y(0) + __import__("symengine").Integer(3) * __import__("symengine").I,
+                y(1),
+                y(2),
+            ],
+            "complex-inside-a-sum",
+        ),
+    ],
+)
+def test_non_real_number_nodes_decline_instead_of_leaking(kernel, id_) -> None:
+    """A complex node must fail the way it always has, not with an ``AttributeError``.
+
+    SymEngine reports ``is_Number`` for several classes that carry no ``.p``/``.q``
+    (``ImaginaryUnit`` / ``Complex`` / ``ComplexDouble`` / ``Infinity`` / ``NaN``),
+    so the ordering key has to test the *class*, not ``is_Number``.  Reading
+    ``.p`` off one leaked an ``AttributeError`` out of the emitter where the
+    pre-existing SymPy path raised ``TypeError: Cannot convert complex to float``.
+    Both paths must agree on the exception type.
+    """
+    cls = type(
+        "ComplexSystem",
+        (ts.ContinuousSystem,),
+        {"params": {"a": 1.5, "b": 0.25}, "dim": 3, "_equations": staticmethod(kernel)},
+    )
+    raised = {}
+    for label, native in (("native", True), ("fallback", False)):
+        if native:
+            os.environ.pop(compile_ir._NATIVE_LOWERING_ENV, None)
+        else:
+            os.environ[compile_ir._NATIVE_LOWERING_ENV] = "1"
+        compile_ir.clear_tape_cache()
+        try:
+            lower_ode(cls())
+            raised[label] = None
+        except Exception as exc:  # noqa: BLE001 - the type is what is under test
+            raised[label] = type(exc)
+        finally:
+            os.environ.pop(compile_ir._NATIVE_LOWERING_ENV, None)
+            compile_ir.clear_tape_cache()
+
+    assert raised["native"] is raised["fallback"], raised
+    assert raised["native"] is not AttributeError, "emitter internals leaked out"
+
+
+def test_native_lowering_matches_sympy_across_the_ode_catalogue(ode_entry) -> None:
+    """Every catalogue ODE lowers identically with and without the native path."""
+    native, fallback = _lower_both(ode_entry.cls())
+    assert native == fallback
+
+
+def test_common_ode_lowering_never_imports_sympy() -> None:
+    """The headline path is SymPy-free: lowering Lorenz loads no ``sympy`` module.
+
+    Run in a subprocess because the test session itself imports SymPy.
+    """
+    import subprocess
+    import sys
+
+    code = (
+        "import sys, tsdynamics as ts\n"
+        "from tsdynamics._engine.compile import lower_ode\n"
+        "lower_ode(ts.systems.Lorenz())\n"
+        "lower_ode(ts.systems.GrayScott())\n"
+        "print(sum(1 for m in sys.modules if m.split('.')[0] == 'sympy'))\n"
+    )
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+    assert out.stdout.strip() == "0", out.stdout

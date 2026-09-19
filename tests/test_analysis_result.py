@@ -18,6 +18,7 @@ from tsdynamics.analysis._result import (
     ScalarResult,
     VisualizationNotInstalled,
 )
+from tsdynamics.errors import InvalidParameterError
 
 # ---------------------------------------------------------------------------
 # Test result subclasses
@@ -75,22 +76,23 @@ def _spectrum() -> _Spectrum:
 
 
 def test_repr_honours_repr_fields_and_survives_dataclass():
+    """§4.3 — the repr IS the answer: ``<Name>  <fields>``, not a constructor."""
     r = _spectrum()
     text = repr(r)
-    assert text.startswith("_Spectrum(")
-    assert "exponents=" in text  # listed in _repr_fields despite field(repr=False)
-    assert "kaplan_yorke=2.06" in text
+    assert text.startswith("_Spectrum ")
+    assert "exponents = " in text  # listed in _repr_fields despite field(repr=False)
+    assert "kaplan_yorke = 2.06" in text
 
 
 def test_repr_introspects_fields_when_no_repr_fields():
     text = repr(_Auto(scalar=5.0))
-    assert "scalar=5" in text
+    assert "scalar = 5" in text
     assert "curve" not in text  # field(repr=False) excluded
     assert "meta" not in text  # meta never shown in repr
 
 
 def test_repr_formats_floats_compactly():
-    assert "kaplan_yorke=2.06" in repr(_spectrum())
+    assert "kaplan_yorke = 2.06" in repr(_spectrum())
 
 
 def test_custom_repr_is_respected():
@@ -110,7 +112,7 @@ def test_grandchild_inherits_repr_fields_repr():
         b: float = 0.0
 
     text = repr(_Grand(a=1.0, b=2.0))
-    assert "a=1" in text and "b=2" in text
+    assert "a = 1" in text and "b = 2" in text
 
 
 # ---------------------------------------------------------------------------
@@ -118,17 +120,20 @@ def test_grandchild_inherits_repr_fields_repr():
 # ---------------------------------------------------------------------------
 
 
-def test_summary_has_header_fields_and_interpretation():
-    out = _spectrum().summary()
-    assert out.splitlines()[0] == "_Spectrum  (Lorenz)"  # header + system label
+def test_the_repr_carries_what_summary_used_to_print():
+    """§4.3 — ``summary()`` is DELETED and ``__repr__`` became what it printed."""
+    out = repr(_spectrum())
+    assert out.startswith("_Spectrum ")
+    assert "(Lorenz)" in out  # the subject, as the trailing parenthetical
     assert "kaplan_yorke = 2.06" in out
-    assert "→ chaotic: 1 positive exponent(s)" in out
+    assert "chaotic: 1 positive exponent(s)" in out
+    assert not hasattr(_spectrum(), "summary")
 
 
-def test_summary_omits_interpretation_when_none():
-    out = _Auto(scalar=1.0).summary()
+def test_repr_omits_interpretation_when_none():
+    out = repr(_Auto(scalar=1.0))
     assert "→" not in out
-    assert out.splitlines()[0] == "_Auto"  # no system label in meta
+    assert out.startswith("_Auto")  # no system label in meta
 
 
 # ---------------------------------------------------------------------------
@@ -176,8 +181,16 @@ def test_to_frame_missing_pandas_gives_install_hint(monkeypatch):
         return real_import(name, *args, **kw)
 
     monkeypatch.setattr(builtins, "__import__", _fail)
-    with pytest.raises(ImportError, match=r"tsdynamics\[frame\]"):
+    # The hint must name an install that actually exists: `tsdynamics[frame]`
+    # was never a declared extra (Provides-Extra is viz / interactive / plot),
+    # so following the old message failed with "no matching distribution".
+    with pytest.raises(ImportError, match=r"pip install pandas"):
         _spectrum().to_frame()
+    with pytest.raises(ImportError) as excinfo:
+        _spectrum().to_frame()
+    assert "tsdynamics[" not in str(excinfo.value), (
+        "the hint must not name a tsdynamics extra unless it is declared in pyproject.toml"
+    )
 
 
 def test_to_frame_with_pandas_builds_scalar_row():
@@ -237,20 +250,36 @@ def test_plot_call_raises_without_backend(_no_backend):
         "image",
         "bifurcation",
         "return_map",
+        "section",
         "histogram",
         "spectrum",
-        "section",
     ],
 )
-def test_plot_typed_methods_raise_without_backend(method, _no_backend):
-    accessor = _spectrum().plot
-    assert hasattr(accessor, method)
+def test_removed_typed_plot_methods_are_gone(method):
+    """All ten kind-forcing methods were removed; none may come back.
+
+    ``.histogram()`` / ``.spectrum()`` went first, when their data producers left
+    with the generic time-series layer.  The other eight went for the same
+    reason, measured: ``_render(kind=...)`` only **relabelled** the result's own
+    spec, so across the 30 result fixtures not one of them changed a byte of
+    layer data — they drew the result's ordinary layers under another kind's
+    name.  A picture named wrongly is worse than a method that is absent.
+    ``tests/test_plot_accessor_kinds.py`` holds the full contract.
+    """
+    assert not hasattr(_spectrum().plot, method)
+
+
+def test_plot_call_without_a_backend_still_raises(_no_backend):
+    """The verb itself keeps the wheel-free refusal the typed methods used to carry."""
     with pytest.raises(VisualizationNotInstalled):
-        getattr(accessor, method)()
+        _spectrum().plot()
 
 
 def test_plot_accessor_repr():
-    assert "plot accessor" in repr(_spectrum().plot)
+    """The repr says what this draws and what to type next."""
+    text = repr(_spectrum().plot)
+    assert "plot namespace" in text
+    assert "result.plot()" in text
 
 
 def test_plot_works_as_first_viz_action_in_fresh_process():
@@ -282,7 +311,7 @@ def test_plot_works_as_first_viz_action_in_fresh_process():
 def test_plot_renders_when_a_renderer_is_registered(monkeypatch):
     """Forward-compat: once a backend registers, the seam renders the spec.
 
-    Pins the documented PlotSpec contract — ``to_plot_spec(kind=...)`` carries the
+    Pins the documented PlotSpec contract — ``__plot_spec__(kind=...)`` carries the
     semantic kind and ``render(backend, **backend_kw)`` does the drawing (``kind``
     is never forwarded to ``render``).
     """
@@ -291,15 +320,17 @@ def test_plot_renders_when_a_renderer_is_registered(monkeypatch):
     class _FakeSpec:
         def __init__(self, kind):
             self.kind = kind
+            self.rendered = None
 
         def render(self, backend="matplotlib", **backend_kw):
-            return {"backend": backend, "kind": self.kind, "backend_kw": backend_kw}
+            self.rendered = {"backend": backend, "kind": self.kind, "backend_kw": backend_kw}
+            return self.rendered
 
     @dataclass(frozen=True)
     class _Plottable(AnalysisResult):
         value: float = 0.0
 
-        def to_plot_spec(self, kind=None):
+        def __plot_spec__(self, kind=None):
             return _FakeSpec(kind)
 
     # Inject a non-empty renderer registry (registry.renderers does not exist yet).
@@ -308,13 +339,23 @@ def test_plot_renders_when_a_renderer_is_registered(monkeypatch):
     monkeypatch.setattr(reg, "renderers", ["matplotlib-stub"], raising=False)
 
     r = _Plottable(value=1.0)
+    # ``plot`` BUILDS: it returns the spec (v6), and renders as a side effect when
+    # a backend / renderer keyword is named.  ``.render()`` is what hands back a
+    # figure — the same contract ``traj.plot()`` and ``system.plot()`` follow.
     out = r.plot(backend="plotly")
-    assert out == {"backend": "plotly", "kind": None, "backend_kw": {}}
-    # A typed method routes its kind into to_plot_spec; backend kwargs reach render.
-    out2 = r.plot.scaling(backend="mpl", ax="axes-handle")
-    assert out2["kind"] == "scaling_fit"
-    assert out2["backend"] == "mpl"
-    assert out2["backend_kw"] == {"ax": "axes-handle"}
+    assert isinstance(out, _FakeSpec)
+    assert out.kind is None
+    assert out.rendered == {"backend": "plotly", "kind": None, "backend_kw": {}}
+    # Backend kwargs reach render.  ``figsize`` is a real backend keyword; ``ax``
+    # used to ride through here too, but no shipped backend accepts it —
+    # ``.plot()`` now rejects a keyword none of the four vocabularies declares,
+    # instead of silently dropping it into a ``**_kw`` catch-all.
+    out2 = r.plot(backend="mpl", figsize=(4.0, 3.0))
+    assert out2.kind is None  # the result's own kind; nothing is forced
+    assert out2.rendered["backend"] == "mpl"
+    assert out2.rendered["backend_kw"] == {"figsize": (4.0, 3.0)}
+    with pytest.raises(InvalidParameterError):
+        r.plot(backend="mpl", not_a_real_keyword="x")
 
 
 def test_empty_renderer_registry_still_raises(monkeypatch):
@@ -331,11 +372,12 @@ def test_empty_renderer_registry_still_raises(monkeypatch):
 
 
 def test_repr_html_has_caption_and_fields():
+    """§4.3 — ``_repr_html_`` is the repr in a ``<pre>``, so the two cannot drift."""
     html_out = _spectrum()._repr_html_()
-    assert "<table>" in html_out and "</table>" in html_out
-    assert "_Spectrum (Lorenz)" in html_out
+    assert "<pre" in html_out and "</pre>" in html_out
+    assert "_Spectrum" in html_out and "(Lorenz)" in html_out
     assert "kaplan_yorke" in html_out
-    assert "chaotic" in html_out  # interpretation footer
+    assert "chaotic" in html_out  # the verdict
 
 
 def test_repr_html_escapes_markup():
@@ -390,11 +432,13 @@ def test_meta_is_keyword_only_and_defaults_empty():
         _Spectrum(np.array([1.0]), 1.0, {"system": "X"})  # meta cannot be positional
 
 
-def test_base_result_alone_has_clean_repr_and_summary():
+def test_base_result_alone_has_a_clean_repr():
     b = AnalysisResult(meta={"system": "X"})
-    assert repr(b) == "AnalysisResult()"
-    assert b.summary().splitlines()[0] == "AnalysisResult  (X)"
-    assert b.to_dict() == {"meta": {"system": "X"}}
+    assert repr(b).splitlines()[0] == "AnalysisResult   (X)"
+    # ``verdict`` is always emitted now: it is the ANSWER, and a reader who saw
+    # it in the repr and typed ``to_dict()["verdict"]`` used to get a KeyError
+    # for a word the library had just printed at them.
+    assert b.to_dict() == {"meta": {"system": "X"}, "verdict": None}
 
 
 # ---------------------------------------------------------------------------
@@ -446,8 +490,8 @@ def test_fmt_numpy_bool_renders_as_plain_bool():
     class _R(AnalysisResult):
         flag: object = None
 
-    assert "flag=True" in repr(_R(flag=np.bool_(True)))
-    assert "flag=False" in repr(_R(flag=np.bool_(False)))
+    assert "flag = True" in repr(_R(flag=np.bool_(True)))
+    assert "flag = False" in repr(_R(flag=np.bool_(False)))
 
 
 def test_grandchild_inherits_a_parents_custom_repr():
@@ -473,10 +517,9 @@ def test_repr_summary_html_skip_undeclared_repr_fields():
         real: float = 1.0
 
     r = _Ghost(real=2.0)
-    for text in (repr(r), r.summary(), r._repr_html_()):
+    for text in (repr(r), r._repr_html_()):
         assert "ghost" not in text  # undeclared attribute silently skipped
-    assert "real=2" in repr(r)
-    assert "real = 2" in r.summary()
+    assert "real = 2" in repr(r)
     assert "real" in r._repr_html_()
 
 
@@ -538,12 +581,19 @@ def _pandas_stub() -> types.ModuleType:
     return mod
 
 
-def test_to_frame_builds_scalar_row_with_stub(monkeypatch):
+def test_to_frame_builds_a_content_row_with_stub(monkeypatch):
     # Always-on coverage of the frame-building body (no real pandas needed).
+    #
+    # v6 (contract §4.2 rule 8): the row is the result's CONTENT, so a short
+    # numeric vector is spread into ``name0 name1 …`` columns instead of being
+    # dropped.  It used to keep only the ``_display_fields`` scalars, which is
+    # how ``to_frame()`` came to drop THE ANSWER on 10 of the 32 result classes
+    # — measured, ``FixedPoint.to_frame()`` returned ``['stable', 'continuous']``
+    # and lost the coordinates, while its own set spread them properly.
     monkeypatch.setitem(sys.modules, "pandas", _pandas_stub())
     frame = _spectrum().to_frame()
-    assert list(frame.columns) == ["kaplan_yorke"]
-    assert "exponents" not in frame.columns  # arrays excluded
+    assert list(frame.columns) == ["exponents0", "exponents1", "exponents2", "kaplan_yorke"]
+    assert "exponents" not in frame.columns  # the vector is spread, not parked
     assert len(frame) == 1
     assert frame.attrs["meta"]["system"] == "Lorenz"
 

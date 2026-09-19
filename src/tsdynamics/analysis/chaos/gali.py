@@ -34,14 +34,35 @@ from typing import Any, ClassVar
 
 import numpy as np
 
-from tsdynamics.errors import ConvergenceError, InvalidInputError, InvalidParameterError
+from tsdynamics.errors import (
+    ConvergenceError,
+    InvalidInputError,
+    InvalidParameterError,
+    remedy,
+)
 from tsdynamics.families import ContinuousSystem, DiscreteMap
 
-from .._result import AnalysisResult
+from .._common import reject_data
+from .._result import AnalysisResult, _build_meta
+from .._result_json import _sig
 from .._tangent import flow_fns, map_fns, rk4_state, rk4_variational
 from . import _common as _c
 
 __all__ = ["GALIResult", "gali"]
+
+#: Final GALI_k at or below which the repr names the orbit chaotic.  GALI_k
+#: separates the two regimes by orders of magnitude (it collapses exponentially
+#: on a chaotic orbit and stays O(1) on a regular one), so a coarse threshold
+#: with a wide silent band between the two is the honest reading.
+_CHAOTIC_GALI = 1e-6
+
+#: Final GALI_k at or above which the repr names the orbit regular.
+_REGULAR_GALI = 1e-2
+
+#: Fewest samples of the GALI curve a verdict may be read from.  A verdict is a
+#: reading of where the curve *went*; below this it is a reading of its starting
+#: point, which is ``1`` by construction for every orbit, regular or not.
+_MIN_GALI_SAMPLES = 8
 
 
 @dataclass(frozen=True)
@@ -49,7 +70,7 @@ class GALIResult(AnalysisResult):
     r"""A GALI\ :sub:`k` time series with the tools to read order vs chaos off it.
 
     An :class:`~tsdynamics.analysis._result.AnalysisResult`, so it carries
-    ``.meta`` / ``.summary()`` / ``.to_dict()`` / the ``.plot`` seam.
+    ``.meta`` / the readout ``repr`` / ``.to_dict()`` / the ``.plot`` seam.
     ``float(result)`` is the final value — :math:`\approx 1` for a regular orbit,
     :math:`\to 0` for a chaotic one — so the result drops straight into a
     threshold test.
@@ -121,11 +142,90 @@ class GALIResult(AnalysisResult):
         slope, _, _ = _c._linfit(t[mask], np.log(v[mask]))
         return float(-slope)
 
+    @property
+    def applicable(self) -> bool:
+        r"""Whether enough of the GALI\ :sub:`k` curve was recorded to read a verdict off.
+
+        A verdict is a reading of *where the curve went*, so it needs a curve:
+        a single sample reported ``GALI_2 = 1 at the end   regular (GALI
+        bounded)`` from one point, which is the initial condition, not a
+        measurement.
+
+        Returns
+        -------
+        bool
+        """
+        return int(np.asarray(self.values).size) >= _MIN_GALI_SAMPLES
+
+    @property
+    def chaotic(self) -> bool | None:
+        r"""Whether the orbit is chaotic, at the shipped collapse threshold.
+
+        The one adjective-named spelling of the verdict (contract §4.2 rule 10);
+        :meth:`is_chaotic` is the same test with a tunable threshold.  ``None`` —
+        never ``False`` — when the curve is not :attr:`applicable` or ends in the
+        undecided band between the two thresholds.
+
+        Returns
+        -------
+        bool or None
+        """
+        if not self.applicable:
+            return None
+        final = self.final
+        if not np.isfinite(final):
+            return None
+        if final <= _CHAOTIC_GALI:
+            return True
+        if final >= _REGULAR_GALI:
+            return False
+        return None
+
     def is_chaotic(self, *, threshold: float = 1e-6) -> bool:
-        """Whether the final GALI value collapsed below ``threshold`` (chaotic)."""
+        r"""Whether GALI\ :sub:`k` collapsed below **your** threshold by the end.
+
+        **This is the one thing :attr:`chaotic` cannot do, and the reason a
+        second spelling of one verdict is allowed to exist here.**  Everywhere
+        else in the library a classification has exactly one name (contract §4.2
+        rule 10) and that name answers with the library's own judgement.  But
+        GALI\ :sub:`k` is a *decay* test, and how far the index must fall before
+        you call an orbit chaotic depends on how long you integrated and how
+        cleanly the system separates — so the threshold is genuinely the
+        caller's to set, and a closed-vocabulary property has nowhere to put it.
+
+        Prefer :attr:`chaotic` (which knows about :attr:`applicable` and hedges
+        with ``None`` in the undecided band) and reach for this only when you
+        are sweeping the threshold or reproducing a published cut::
+
+            gali = ts.analysis.gali(system, k=2, final_time=500)
+            gali.chaotic                      # the library's verdict, or None
+            gali.is_chaotic(threshold=1e-8)   # yours, on the same curve
+
+        Unlike :attr:`chaotic` this always returns a plain ``bool``: you asked a
+        sharp question, so it gives a sharp answer and does not consult
+        :attr:`applicable`.  On a curve that never resolved, that answer is
+        ``False`` because nothing collapsed — check :attr:`applicable` first if
+        that distinction matters.
+
+        Parameters
+        ----------
+        threshold : float, default 1e-6
+            Collapse level for :attr:`final`.  Keyword-only, so the call always
+            reads as ``is_chaotic(threshold=...)``.
+
+        Returns
+        -------
+        bool
+            ``True`` when ``final < threshold``.
+
+        See Also
+        --------
+        chaotic : the verdict at the shipped thresholds, hedging when undecided.
+        decay_rate : the fitted exponential rate the collapse happened at.
+        """
         return self.final < threshold
 
-    def to_plot_spec(self, kind: str | None = None) -> Any:
+    def __plot_spec__(self, kind: str | None = None) -> Any:
         r"""Describe the GALI\ :sub:`k` curve as a backend-agnostic :class:`PlotSpec`.
 
         Builds a ``DIAGNOSTIC_CURVE`` of GALI\ :sub:`k` against time (or iteration
@@ -160,9 +260,49 @@ class GALIResult(AnalysisResult):
             title=f"GALI$_{self.k}$",
         )
 
-    def __repr__(self) -> str:  # noqa: D105
+    def _answer(self) -> str:
+        r"""Return the final GALI\ :sub:`k` value."""
+        if self.values.size == 0:
+            return f"GALI_{self.k} — no samples"
+        return f"GALI_{self.k} = {_sig(self.final, 4)} at the end"
+
+    def _interpretation(self) -> str | None:
+        r"""Name the orbit from where GALI\ :sub:`k` ended up.
+
+        GALI\ :sub:`k` stays :math:`O(1)` on a regular orbit and collapses
+        exponentially on a chaotic one (Skokos et al. 2007), so the verdict is a
+        reading of the final value against the noise floor — several orders of
+        magnitude apart, which is why a coarse threshold is honest here.
+
+        A curve too short to have gone anywhere says so instead of naming a
+        regime off its own initial condition.
+        """
+        n = int(np.asarray(self.values).size)
+        if not n:
+            return None
+        if not self.applicable:
+            return f"not applicable — {n} sample{'s' if n != 1 else ''} recorded"
+        verdict = self.chaotic
+        if verdict is None:
+            return None
+        return "chaotic (GALI collapsed)" if verdict else "regular (GALI bounded)"
+
+    def _context(self) -> str | None:
+        """Return the subject and the horizon the series was run to."""
         kind = "map" if self.is_discrete else "flow"
-        return f"GALIResult(k={self.k}, {kind}, final={self.final:.3g}, n={self.values.size})"
+        bits = [b for b in (self._system_label(), kind) if b]
+        if self.values.size:
+            horizon = "n" if self.is_discrete else "t"
+            bits.append(f"{self.values.size} samples to {horizon} = {_sig(self.times[-1], 4)}")
+        return ", ".join(bits) or None
+
+    def _derived(self) -> dict[str, Any]:
+        r"""Export the final GALI\ :sub:`k` value and the verdict the repr reports."""
+        return {
+            "final": self.final if self.values.size else None,
+            "applicable": self.applicable,
+            "chaotic": self.chaotic,
+        }
 
 
 def gali(
@@ -196,8 +336,9 @@ def gali(
     ic : array-like, optional
         Initial condition (defaults to the system's resolved IC).
     transient : float, optional
-        Burn-in discarded before tracking (iterations for maps, time for flows).
-        Defaults: 500 iterations / 20.0 time units.
+        Dynamics discarded before tracking, in the unit the family advances in:
+        **iterations** for a map, **time units** for a flow — the same rule
+        ``run(transient=)`` follows.  Defaults: 500 iterations / 20.0 time units.
     seed : int, optional
         Seed for the random orthonormal initial deviation frame.
     n_internal : int, default 10
@@ -209,9 +350,13 @@ def gali(
 
     Raises
     ------
-    NotImplementedError
-        If ``system`` is neither a discrete map nor a continuous flow.
     InvalidInputError
+        If ``system`` is measured data rather than a model, or is neither a
+        discrete map nor a continuous flow (a delay system, a derived wrapper).
+        A ``TypeError`` subclass, like every other wrong-subject refusal in the
+        analysis layer — it used to be a ``NotImplementedError``, so
+        ``except TypeError`` caught this mistake everywhere but here.
+
         If an **explicit** ``ic`` diverges to a non-finite state (it escapes the
         attractor's basin).  GALI characterises a *specific* orbit, so a pinned
         ``ic`` is never silently swapped for a random one — pass an ``ic`` from a
@@ -246,14 +391,25 @@ def gali(
     Hamiltonian systems: The Generalized Alignment Index (GALI) method",
     *Physica D* **231** (2007) 30--54.
     """
+    # Measured data first, and through the shared guard: GALI evolves the
+    # equations' *tangent* dynamics, so an array cannot be coerced into one — and
+    # a bare ``NotImplementedError`` (a ``RuntimeError``) meant ``except TypeError``
+    # caught this mistake at eighteen doors and missed it at this one.
+    reject_data(system, analysis="gali")
     if isinstance(system, DiscreteMap):
         mode = "map"
     elif isinstance(system, ContinuousSystem):
         mode = "flow"
     else:
-        raise NotImplementedError(
-            f"gali supports discrete maps and continuous flows, not "
-            f"{type(system).__name__} (its tangent space is not finite-dimensional here)."
+        raise InvalidInputError(
+            f"gali evolves the tangent dynamics of a map or a continuous flow, and "
+            f"{type(system).__name__} is neither (a delay system's tangent space is the "
+            f"infinite-dimensional history, and a derived wrapper has no equations of "
+            f"its own)."
+            + remedy(
+                "ts.analysis.gali(system, k=2)",
+                lead="Measure the alignment index on the underlying system:",
+            )
         )
 
     dim = int(system.dim)
@@ -305,7 +461,7 @@ def gali(
             times=times,
             values=values,
             is_discrete=discrete,
-            meta=AnalysisResult.build_meta(system, analysis="gali", k=k),
+            meta=_build_meta(system, analysis="gali", k=k),
         )
 
     # GALI characterises a *specific* orbit.  When the caller pins the initial
@@ -315,16 +471,23 @@ def gali(
     # result for an orbit the caller never asked about.  Raise instead, so the
     # caller learns their ``ic`` does not stay on the attractor.
     if ic is not None:
-        x = np.asarray(system.resolve_ic(ic), dtype=float).ravel()
-        result = _run(x)
-        if result is not None:
-            return _wrap(result)
-        raise InvalidInputError(
-            f"gali: the explicit ic {x.tolist()!r} diverges to a non-finite state for "
-            f"{type(system).__name__} (it escapes the attractor's basin), so GALI cannot "
-            "be measured for that orbit. Pass an `ic` from a known basin point, shorten "
-            "the burn-in via `transient`, or omit `ic` to roll a random one."
-        )
+        # ``resolve_ic`` commits the resolved IC to ``system.ic`` before the run, so
+        # a run that then fails would leave the bad IC latched and silently poison
+        # every later, unrelated analysis.  Same guard the family layer uses.
+        with system._ic_rollback():
+            x = np.asarray(system._resolve_ic(ic), dtype=float).ravel()
+            result = _run(x)
+            if result is not None:
+                return _wrap(result)
+            # Raise INSIDE the guard: ``_run`` signals divergence by returning
+            # None rather than raising, so leaving the raise outside would exit the
+            # block cleanly and latch the bad IC anyway.
+            raise InvalidInputError(
+                f"gali: the explicit ic {x.tolist()!r} diverges to a non-finite state for "
+                f"{type(system).__name__} (it escapes the attractor's basin), so GALI cannot "
+                "be measured for that orbit. Pass an `ic` from a known basin point, shorten "
+                "the burn-in via `transient`, or omit `ic` to roll a random one."
+            )
 
     # With ``ic=None`` the initial condition is the system's own resolution (its
     # ``self.ic`` / ``default_ic`` if any, else a random draw — many systems carry
@@ -334,12 +497,13 @@ def gali(
     # reproducible).  Only the off-basin *default-draw* case re-rolls.
     max_retries = 10
     for attempt in range(max_retries):
-        x = (
-            np.asarray(system.resolve_ic(None), dtype=float).ravel()
-            if attempt == 0
-            else rng.random(dim)
-        )
-        result = _run(x)
+        with system._ic_rollback():
+            x = (
+                np.asarray(system._resolve_ic(None), dtype=float).ravel()
+                if attempt == 0
+                else rng.random(dim)
+            )
+            result = _run(x)
         if result is not None:
             return _wrap(result)
 

@@ -48,12 +48,12 @@ defaults, and an orbit figure.
 ```python
 import tsdynamics as ts
 
-h = ts.Henon()
-traj = h.iterate(steps=10_000)     # Trajectory; traj.t is arange(steps)
+h = ts.systems.Henon()
+traj = h.run(steps=10_000)     # Trajectory; traj.t is arange(steps)
 ```
 
-The map iterates on the Rust engine with no warmup; parameters are control
-values of the lowered tape, so changing one is free. If an orbit diverges
+The map iterates on the Rust engine, with the lowered tape JIT-compiled once per
+system; parameters are control values of that tape, so changing one is free. If an orbit diverges
 (random ICs can land outside the attractor basin), `iterate` retries with
 fresh random ICs up to `max_retries` times. Maps whose basin is small declare
 a class-level `default_ic` so the first try lands inside.
@@ -61,7 +61,7 @@ a class-level `default_ic` so the first try lands inside.
 ## Lyapunov spectrum
 
 ```python
-h.lyapunov_spectrum(steps=5000)    # ≈ [0.42, -1.62]
+ts.analysis.lyapunov_spectrum(h, n=5000)    # ≈ [0.42, -1.62]
 ```
 
 Computed by QR decomposition of the running Jacobian product in a single

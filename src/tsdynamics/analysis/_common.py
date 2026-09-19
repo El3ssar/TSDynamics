@@ -1,0 +1,360 @@
+r"""The two input guards that keep the analysis layer's front doors honest.
+
+The analysis layer has two calling conventions (the frozen glossary §1): a
+**system-first** analysis takes a live ``System`` and integrates it, while a
+**data-first** analysis takes a *measured series* — a
+:class:`~tsdynamics.data.Trajectory`, an ``(N, dim)`` point set, or a 1-D
+signal.  Handing a ``System`` to a data-first analysis is the single most
+common front-door mistake, and until v6 it produced::
+
+    >>> ts.analysis.correlation_dimension(ts.systems.Lorenz())        # doctest: +SKIP
+    TypeError: float() argument must be a string or a real number, not 'Lorenz'
+
+— a NumPy message that names neither the mistake nor the fix.  :func:`reject_system`
+is the one guard every point-set / series coercion calls first, so all of them
+answer with the same actionable :class:`~tsdynamics.errors.InvalidInputError`.
+
+The **mirror-image** mistake is just as common and was just as badly served:
+handing measured data to a *system-first* analysis, which until v6 produced::
+
+    >>> ts.analysis.lyapunov_spectrum(traj["x"])              # doctest: +SKIP
+    AttributeError: 'numpy.ndarray' object has no attribute 'is_discrete'
+
+:func:`reject_data` is its counterpart.  Both guards obey the same rule: name
+what was passed, and end with the line to type instead — which for a
+system-first analysis is usually its *data-first sibling*
+(``lyapunov_spectrum`` → ``lyapunov_from_data``), because "you need a model" is a
+dead end for someone who only has a measurement.
+
+The ``System`` is **duck-typed** against the runtime protocol
+(:mod:`tsdynamics.families.protocol`) rather than imported, because
+:mod:`tsdynamics.analysis` must not import :mod:`tsdynamics.families` at module
+scope — that is the deliberate families -> analysis layering seam.  (It used to
+be named after ``families/_accessors.py``, the module that held the four topical
+accessors; owner ruling A2 deleted that module, and the seam it needed outlived
+it.)
+"""
+
+from __future__ import annotations
+
+import warnings
+from typing import Any
+
+import numpy as np
+
+__all__: list[str] = []
+
+#: The ``System`` runtime protocol's method set (``families/protocol.py``).  An
+#: object that implements *all* of these is a system, not a measured series.
+_SYSTEM_METHODS = ("step", "state", "reinit", "run")
+
+#: The meta key an estimator stamps when the data it measured had escaped.  Read
+#: by :meth:`~tsdynamics.analysis.results.ScalingResult.runaway`, which is ANDed
+#: into every ``trusted`` flag downstream of it.
+RUNAWAY_KEY = "unbounded"
+
+
+class RunawayOrbitWarning(UserWarning):
+    """The measured data is a **runaway orbit**, so there is no attractor in it.
+
+    A run that blows up without reaching the engine's hard ``1e150`` guard comes
+    back finite and entirely meaningless — measured, ``Chua().run(ic=[500, 0,
+    0])`` peaks at ``1.6e9`` with no exception — and every quantity taken from it
+    then looks exactly like an honest one.  ``Trajectory.unbounded`` has detected
+    this since v6 and the repr printed it in red; what it did **not** do was
+    reach the estimators, so ``correlation_dimension`` answered ``D = 0.48954``
+    with ``R² = 0.9976`` and ``trusted = True``, and ``lyapunov_from_data``
+    called a monotone blow-up ``chaotic (λ > 0)`` to four significant figures.
+
+    The check lives here — in the analysis layer's shared guard module, beside
+    :func:`reject_system` — and it reads the **coerced data**, not the
+    ``Trajectory`` flag, so ``lyapunov_from_data(traj["x"][::10])`` is caught
+    too: indexing a runaway trajectory hands back a bare array, and an escape
+    that a slice can launder is an escape that gets through.
+    """
+
+
+def runaway_meta(points: Any, *, analysis: str) -> dict[str, str]:
+    """Return the escape stamp for ``points``, warning once, or ``{}``.
+
+    The one check every data-first estimator makes on its already-coerced input.
+    Merged into the result's ``meta``, it is what
+    :meth:`~tsdynamics.analysis.results.ScalingResult.runaway` reads, which in
+    turn forces ``trusted`` to ``False`` and puts the escape line in the repr's
+    warning slot — the same shape as the single-coordinate guard next door.
+
+    Parameters
+    ----------
+    points : array-like
+        The coerced point set (``(N, dim)``) or series the estimator will
+        measure.  A 1-D series is read as one column.
+    analysis : str
+        The public function's name, used to open the warning.
+
+    Returns
+    -------
+    dict
+        ``{"unbounded": <the escape line>}`` when the data left the building,
+        else an empty dict (which merges into a meta dict harmlessly).
+    """
+    from tsdynamics._utils.escape import detect_unbounded
+
+    block = np.asarray(points, dtype=float)
+    if block.ndim == 1:
+        block = block[:, None]
+    escape = detect_unbounded(block)
+    if escape is None:
+        return {}
+    line = str(escape)
+    warnings.warn(
+        f"{analysis} was given a RUNAWAY orbit. {line}\n"
+        "    Every quantity read off an escaping orbit describes the escape, not a "
+        "system: the result is returned but marked untrusted.\n"
+        "    Start from a state that stays bounded — the system's own default is "
+        "one — or cut the run before it leaves:\n"
+        "        traj = system.run(final_time=100.0, dt=0.01)   # the declared IC\n"
+        "        traj.unbounded is None                         # check before measuring",
+        RunawayOrbitWarning,
+        stacklevel=3,
+    )
+    return {RUNAWAY_KEY: line}
+
+
+def is_system(obj: Any) -> bool:
+    """Return whether ``obj`` implements the ``System`` runtime protocol.
+
+    Duck-typed, so it recognises a built-in family instance, a
+    :class:`~tsdynamics.derived.DerivedSystem` wrapper and a user
+    :class:`~tsdynamics.families.WrappedSystem` alike, without importing
+    :mod:`tsdynamics.families`.
+
+    Arrays and :class:`~tsdynamics.data.Trajectory` objects are excluded up
+    front: a ``Trajectory`` carries a ``.system`` reference and could otherwise
+    be confused for one by an over-eager ``getattr`` walk.
+
+    Parameters
+    ----------
+    obj : Any
+        The object to classify.
+
+    Returns
+    -------
+    bool
+        ``True`` if ``obj`` is a system (and therefore *not* measured data).
+    """
+    if isinstance(obj, np.ndarray) or obj is None:
+        return False
+    # A Trajectory is data: it carries both a time base and a state array.
+    if hasattr(obj, "t") and hasattr(obj, "y"):
+        return False
+    return all(callable(getattr(obj, name, None)) for name in _SYSTEM_METHODS)
+
+
+def _holds_map(system: Any) -> bool:
+    """Whether the system advances by iterations (its horizon word is ``steps``).
+
+    ``family`` is the v6 public flag; the private ``_is_discrete`` is the
+    fallback because a ``PoincareMap`` reports ``family == "ode"`` while being a
+    discrete view of one.  One predicate, so the horizon word this module prints
+    and the one the message builder prints cannot disagree.
+    """
+    return bool(getattr(system, "family", None) == "map" or getattr(system, "_is_discrete", False))
+
+
+def front_door(system: Any) -> str:
+    """Return the run-me call this particular system actually has, as source text.
+
+    Since v6 there is one verb — ``run`` — so what varies is the **horizon word**:
+    a flow is run to a ``final_time``, a map for a count of ``steps``, and a
+    derived discrete view (a ``PoincareMap``) for a count of crossings.
+    """
+    return "run(steps=10000)" if _holds_map(system) else "run(final_time=100.0, dt=0.01)"
+
+
+def _teachable(analysis: str) -> bool:
+    """Whether ``analysis`` is a registered name the message builder can read."""
+    from tsdynamics import registry
+
+    return analysis in registry.analyses.names()
+
+
+def reject_system(data: Any, *, analysis: str | None = None, hint: str | None = None) -> None:
+    """Raise if ``data`` is a ``System`` where already-computed data is wanted.
+
+    The guard every data-first analysis (and every shared coercion —
+    ``_as_points`` / ``_coerce_signal`` / ``_as_label_array`` / …) calls
+    **first**, so the whole data-first surface answers this mistake with one
+    message that names the system and shows the fix.
+
+    Parameters
+    ----------
+    data : Any
+        The first positional argument the analysis received.
+    analysis : str, optional
+        The public function's name, used to open the message.  Callers that sit
+        in a shared coercion helper may omit it.
+    hint : str, optional
+        Replaces the default remedy block for an analysis whose input is *not* a
+        trajectory.  The basin metrics, for instance, read a label image, so
+        "run the system and pass its trajectory" would send the caller the wrong
+        way; they pass the ``basins_of_attraction`` recipe instead.  ``{run}`` in
+        the text is substituted with the system's own front-door call.
+
+    Raises
+    ------
+    InvalidInputError
+        If ``data`` implements the ``System`` protocol.  ``InvalidInputError``
+        subclasses :class:`TypeError`, so an existing ``except TypeError``
+        keeps catching it.
+
+    Examples
+    --------
+    >>> import tsdynamics as ts
+    >>> from tsdynamics.analysis._common import reject_system
+    >>> from tsdynamics.errors import InvalidInputError
+    >>> try:
+    ...     reject_system(ts.systems.Lorenz(), analysis="correlation_dimension")
+    ... except InvalidInputError as err:
+    ...     print(str(err))
+    correlation_dimension() needs data, and got a system (Lorenz): it
+    measures a point set, so it needs data. Run the system first:
+        traj = system.run(200.0, dt=0.02)
+        ts.analysis.correlation_dimension(traj)
+    >>> reject_system(np.zeros((10, 3)))          # measured data passes through
+    """
+    if not is_system(data):
+        return
+
+    from tsdynamics.errors import InvalidInputError
+
+    from ._discovery import wrong_subject
+
+    name = type(data).__name__
+    # The one text builder (CONTRACT §5.6): the object door and this one must
+    # answer with the same body, so neither can drift into saying something the
+    # other does not.  It needs a *registered* analysis to read the wanted
+    # subject off; the shared coercion helpers call in without a name, and a
+    # ``hint=`` caller's input is not a trajectory at all (a basin label image),
+    # so those two keep the generic wording below.
+    if analysis and hint is None and _teachable(analysis):
+        raise wrong_subject(analysis, name, "map" if _holds_map(data) else "flow")
+
+    who = f"{analysis}()" if analysis else "this analysis"
+    run = front_door(data)
+    call = f"{analysis}(" if analysis else "analysis("
+    remedy = (
+        hint.format(run=run)
+        if hint is not None
+        else (
+            "Run the system first and pass its trajectory:\n"
+            f"    traj = system.{run}\n"
+            f"    {call}traj)            # the full (N, dim) point set\n"
+            f"    {call}traj.y[:, 0])    # a single scalar component"
+        )
+    )
+    raise InvalidInputError(f"{who} expects measured data, not a System (got {name}). {remedy}")
+
+
+def is_data(obj: Any) -> bool:
+    """Return whether ``obj`` is a measured series rather than a live system.
+
+    True for an array-like (anything NumPy will turn into a numeric array) and
+    for a :class:`~tsdynamics.data.Trajectory` — the two things a user reaches
+    for when they have a measurement and no model.  Deliberately *narrow*: an
+    object that is neither a system nor obviously data (a string, a dict, a
+    ``None``) returns ``False`` so the caller's own signature error stands.
+    """
+    if is_system(obj) or obj is None or isinstance(obj, (str, bytes)):
+        return False
+    if hasattr(obj, "t") and hasattr(obj, "y"):  # a Trajectory (duck-typed)
+        return True
+    if isinstance(obj, np.ndarray):
+        return obj.dtype.kind in "fiub"
+    if isinstance(obj, (list, tuple)):
+        try:
+            return bool(np.asarray(obj, dtype=float).size)
+        except (TypeError, ValueError):
+            return False
+    return False
+
+
+def reject_data(system: Any, *, analysis: str, sibling: str | None = None) -> None:
+    """Raise if ``system`` is measured data where a live ``System`` is wanted.
+
+    The counterpart of :func:`reject_system`, called first by every
+    *system-first* analysis (the glossary's other calling convention): those
+    routines need the model's own equations — a Jacobian to factor, a right-hand
+    side to march, a parameter to sweep — so an array cannot be made to work by
+    coercion, and the only useful answer names the alternative.
+
+    Parameters
+    ----------
+    system : Any
+        The first positional argument the analysis received.
+    analysis : str
+        The public function's name, used to open the message.
+    sibling : str, optional
+        A *data-first* call that answers the same question from a measured
+        series, as a runnable line with a ``{data}`` placeholder for the input
+        (e.g. ``"ts.analysis.lyapunov_from_data({data})"``).  The placeholder is filled
+        with a variable name that matches what was actually passed — ``traj`` for
+        a :class:`~tsdynamics.data.Trajectory`, ``data`` for a bare array — so
+        the line reads like the caller's own code.  Omit ``sibling`` when the
+        quantity genuinely has no data-driven equivalent: the message then says
+        so, rather than sending the caller looking for one that does not exist.
+
+    Raises
+    ------
+    InvalidInputError
+        If ``system`` is measured data.  ``InvalidInputError`` subclasses
+        :class:`TypeError`, so an existing ``except TypeError`` keeps catching it.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from tsdynamics.analysis._common import reject_data
+    >>> from tsdynamics.errors import InvalidInputError
+    >>> try:
+    ...     reject_data(np.zeros(100), analysis="lyapunov_spectrum",
+    ...                 sibling="ts.analysis.lyapunov_from_data({data})")
+    ... except InvalidInputError as err:
+    ...     print(str(err))
+    lyapunov_spectrum() needs a system, and got measured data (ndarray): it is
+    a property of the equations, not of a point set.
+        ts.analysis.lyapunov_from_data(traj)
+        ts.analysis.find(traj)   # the 24 that take a trajectory
+    """
+    if not is_data(system):
+        return
+
+    from tsdynamics.errors import InvalidInputError, remedy
+
+    from ._discovery import wrong_subject
+
+    kind = type(system).__name__
+    held = "traj" if hasattr(system, "t") and hasattr(system, "y") else "data"
+    # One builder for both doors (CONTRACT §5.6).  ``has_system`` decides whether
+    # the message can send the caller to ``traj.system``: a bare array has no
+    # such attribute, and a Trajectory built by hand may carry ``system=None``.
+    if _teachable(analysis):
+        raise wrong_subject(
+            analysis, kind, "data", has_system=getattr(system, "system", None) is not None
+        )
+    if sibling is not None:
+        fix = remedy(sibling.format(data=held), lead="Estimate it from the series instead:")
+    else:
+        fix = remedy(
+            f"ts.{analysis}(system)",
+            lead=(
+                f"{analysis} is defined by the model's equations, so there is no "
+                "data-driven equivalent — pass the system itself:"
+            ),
+        )
+    raise InvalidInputError(
+        f"{analysis}() needs a model (a System), not measured data (got {kind}).{fix}"
+    )
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

@@ -18,8 +18,7 @@ surface — prove a single convention is achievable. This glossary makes it the 
 for everything else.
 
 **Scope.** The glossary and the gate cover the whole public callable surface —
-both `tsdynamics.analysis` (`registry.analyses`) **and** `tsdynamics.transforms`
-(`registry.transforms`). It is a v4 change: spellings are corrected outright (the
+`tsdynamics.analysis` (`registry.analyses`). It is a v4 change: spellings are corrected outright (the
 v3→v4 token map in §6 lists every rename; the `_migration` shim raises a precise
 "renamed to *X*" error for one release). **Every ban below targets a parameter
 *name* in a public signature** — never an attribute (`system.dim` is untouched), a
@@ -44,9 +43,9 @@ exactly one canonical name per kind:
 
 **Choosing `system` vs `data`.** A function whose job is to *integrate or iterate
 the dynamics itself* takes `system` (it produces its own trajectory internally —
-`gali`, `expansion_entropy`, `fixed_points`, `find_attractors`). A function whose
+`gali`, `expansion_entropy`, `fixed_points`, `attractors`). A function whose
 job is to *operate on an already-measured signal* takes `data` (`recurrence_matrix`,
-`correlation_dimension`, `permutation_entropy`, the transforms).
+`correlation_dimension`, `lyapunov_from_data`).
 
 **Dual-input functions take `system` as the first argument** and coerce / accept a
 measured series through internal handling or a `data=` overload — they never invent
@@ -67,7 +66,7 @@ a third name. The three current offenders are pinned:
 | `map_sys` | `system` | a map *is* a `System` |
 | `observable` (as 1st arg) | `system` / `data` | the *quantity observed* is the `component` keyword, not the input |
 | `source` | `system` / `data` | vague |
-| `x` | `data` | the entropy/transforms convention; unify on `data` |
+| `x` | `data` | the data-series convention; unify on `data` |
 | `series` | `data` | synonym |
 
 ---
@@ -93,13 +92,19 @@ pre-emptive, kept so the concept can never drift into them.
 | Theiler window | **`theiler`** | `int`, in samples | `theiler_window`, `w`† |
 | Nearest-neighbour count | **`n_neighbors`** | `int` | `min_neighbors`, `num_neighbors`† |
 | Spatial region | **`region`** | `Box` / `Ball` / `Grid`, or `region([(lo, hi, n), …])` | `grid`, `box`, `domain`†, `bounds`† |
-| Algorithm / kernel selector | **`method`** | `str` | `kind`, `mode`†, `estimator`†, `scheme`† |
+| Estimator / algorithm selector | **`method`** | `str` | `mode`†, `estimator`†, `scheme`† |
+| Numerical solver kernel | **`solver`** | `str` | `method` (v5), `integrator`† |
 
 `seed` and `ic` are already universal — they are listed so the gate treats them as
-locked, not because they need fixing. `method` is **always allowed** (it is the
-canonical variant/kernel selector — solver kernels on `integrate`/`lyapunov_spectrum`,
-algorithm variants on `fixed_points`/`optimal_delay`/`power_spectral_density`); it
-is never a banned token and needs no per-site whitelist.
+locked, not because they need fixing.
+
+**`solver=` and `method=` are two concepts, and v6 gives each one word.**
+`solver=` selects a *numerical kernel* and is a keyword of `run` / `reinit` /
+`ensemble` (`lor.run(solver="dop853")`); `method=` selects an *estimator
+algorithm* on an analysis (`optimal_delay(x, method="mi")`,
+`fixed_points(sys, method="interval")`). Passing `method=` to `run` raises and
+names `solver=`. Both are always-allowed tokens in their own half and need no
+per-site whitelist.
 
 ---
 
@@ -115,12 +120,12 @@ naming gate. (The gate-enforceable rules are in §7.)
   `final_time`): `lyapunov_spectrum(lorenz, final_time=300, transient=50)` discards
   the first 50 time units.
 - Paired with `n` (a map / discrete view) → `transient` is a count of **steps**:
-  `bifurcation_diagram(logistic, "r", vals, n=200, transient=500)` discards the
+  `orbit_diagram(logistic, "r", vals, points_per_value=200, transient=500)` discards the
   first 500 iterations.
 - A few flow estimators parametrise their run by a *count of rescaling cycles*
   (canonical `n`, replacing v3's `n_rescale`) rather than `final_time`; there
   `transient` is in **protocol steps**, following the count horizon (e.g.
-  `max_lyapunov`).
+  the Jacobian-free two-trajectory branch of `lyapunov_spectrum`).
 - `transient` **never** means "section crossings." A Poincaré / return view that
   wants to discard the first few section hits uses the dedicated `skip_crossings`
   keyword (§5), so the unit of `transient` stays unambiguous.
@@ -148,15 +153,19 @@ violators).
 
 ## 4. Verbs — one intent, one word
 
-| Intent | Canonical | Permanent aliases |
+| Intent | Canonical | Removed in v6 |
 |---|---|---|
 | Produce a trajectory (any family) | **`system.run(...)`** | `.integrate` (flows), `.iterate` (maps), `.trajectory` |
+| Ask what a system is | **`system.family`** | `.is_discrete` |
+| Derive a section or a strobe | **`system.poincare(...)`** | `.stroboscope(...)` |
+| Measure something | **`ts.analysis.<name>(subject)`** | every bound analysis method and the `.lyap`/`.chaos`/`.dims`/`.recurrence` accessors |
 
-`run` dispatches on `is_discrete`, so `Lorenz().run(final_time=100, dt=0.01)` and
-`Henon().run(n=5000)` are the one verb a newcomer learns. `.integrate` /
-`.iterate` / `.trajectory` survive permanently as thin aliases (no breakage); docs
-and examples standardise on `run`. The codemod rewrites only `.integrate` /
-`.iterate` → `.run` — `.trajectory` is kept as-is, not rewritten.
+**One verb, closed signatures.** `Lorenz().run(final_time=100, dt=0.01)` and
+`Henon().run(steps=5000)` are the one verb a newcomer learns, and each family
+binds exactly the keywords its mathematics admits — a map handed `final_time=`
+raises and says why. `integrate` / `iterate` / `trajectory` are **removed**, not
+aliased: `hasattr(sys, "integrate")` is `False`, and the `AttributeError` names
+`run`.
 
 ---
 
@@ -172,10 +181,8 @@ pairs; the same token used for a *banned* concept anywhere else still fails.
 | **`k`** | `lyapunov_spectrum.k` | number of **Lyapunov exponents** to compute (was `n_exp`; *may exceed `dim`* for DDEs — a function-space tangent) | a count of *exponents*, not neighbours |
 | **`k_max`** | `lyapunov_from_data.k_max` | length of the divergence / stretching curve `S(k)`, evolved over `k = 0 … k_max` | an *abscissa horizon* of the scaling curve, not a neighbour count |
 | **`step`** | `windowed_rqa.step` | window **stride** in samples | a stride between windows, not the integration time step `dt` |
-| **`horizon`** | `nonlinear_prediction_error.horizon` | prediction **lead-time** in samples | how far ahead to predict, not the run-length horizon (`n` / `final_time`) |
-| **`max_steps`** | `find_attractors`, `basins_of_attraction`, `continuation`, `basin_fractions` | integration **safety cap** — max steps before a trajectory is declared lost / non-recurrent | a divergence/abort bound, not the run length `n` |
+| **`max_steps`** | `attractors`, `basins`, `continuation`, `basin_fractions` | integration **safety cap** — max steps before a trajectory is declared lost / non-recurrent | a divergence/abort bound, not the run length `n` |
 | **`max_delay`** | `optimal_delay`, `mutual_information`, `estimate_period`, `autocorrelation` | the **search ceiling** for a delay scan (supersedes `max_lag`) | a bound on the delay search, distinct from a single embedding `delay`; the `lag`/`tau` tokens stay banned |
-| **`fs`** | the transforms / spectral functions (`power_spectral_density`, `spectral_entropy`, `spectral_centroid`, `dominant_frequency`, `butter_filter`, `extract_features`) | sampling **frequency** (Hz) — accepted *alongside* `dt` (`fs = 1/dt`, mutually exclusive) | a signal-processing convenience, not a competing spelling of the time step |
 
 **New tokens WS-CONV introduces** (not v3 renames — they do not exist yet, so a
 reviewer should not expect to find them in v3 code):
@@ -209,25 +216,33 @@ name raises a precise "renamed to *X* in v4.0" error for one release.
 
 | v3 | v4 | Scope |
 |---|---|---|
-| `sys`, `sys_or_traj`, `map_sys`, `source`, `observable` (1st arg) | `system` | `lyapunov_spectrum`, `max_lyapunov`, `orbit_diagram`, `periodic_orbits`, `poincare_section`, `return_map`, `zero_one_test` |
-| `x`, `series` (1st arg) | `data` | entropy family, transforms, `lyapunov_from_data` |
+| `sys`, `sys_or_traj`, `map_sys`, `source`, `observable` (1st arg) | `system` | `lyapunov_spectrum`, `orbit_diagram`, `periodic_orbits`, `poincare_section`, `return_map`, `zero_one_test` |
+| `x`, `series` (1st arg) | `data` | `lyapunov_from_data` |
 | `observable` (kwarg) | `component` | `return_map` |
 | `components` | `component` | `orbit_diagram` |
 | `burn_in` | `transient` | `periodic_orbit` |
-| `steps`, `n_rescale` | `n` *(or `final_time` for flows)* | `gali`, `expansion_entropy`, `max_lyapunov`, `poincare_section`, `return_map` |
-| `tau`, `lag` | `delay` | entropy family, `time_reversal_asymmetry`, `nonlinear_prediction_error` |
+| `steps`, `n_rescale` | `n` *(or `final_time` for flows)* | `gali`, `expansion_entropy`, `lyapunov_spectrum`, `poincare_section`, `return_map` |
+| `tau`, `lag` | `delay` | `embed`, `embedding_dimension`, `lyapunov_from_data` |
 | `max_lag` | `max_delay` | `optimal_delay`, `mutual_information`, `estimate_period`, `autocorrelation` |
-| `m`, `emb_dim` | `dimension` | entropy family, `lyapunov_from_data`, `nonlinear_prediction_error` |
+| `m`, `emb_dim` | `dimension` | `embed`, `lyapunov_from_data` |
 | `theiler_window` | `theiler` | dimensions / recurrence family |
 | `min_neighbors` | `n_neighbors` | `lyapunov_from_data` |
-| `kind` (variant selector) | `method` | `return_map` (`max`/`min`/`poincare`), `detrend` (`linear`/`constant`) |
-| `grid`, `box` (region arg) | `region` | `basins_of_attraction`, `fixed_points`, `periodic_orbits` |
+| `kind` (variant selector) | `method` | `return_map` (`max`/`min`/`poincare`) |
+| `grid`, `box` (region arg) | `region` | `basins`, `fixed_points`, `periodic_orbits` |
 | `n_exp` | `k` | `lyapunov_spectrum` |
 | `.integrate` / `.iterate` | `.run` | every family (`.trajectory` kept, not rewritten) |
-| `orbit_diagram` | `bifurcation_diagram` | top-level (alias kept) |
+| `bifurcation_diagram` | `orbit_diagram` | `ts.analysis` (alias **deleted** in v6 — one concept, one spelling; the old name redirects) |
 
 > `n_cut` (`zero_one_test`) is **not** in this table: it is a domain-owned lag
 > ceiling (§5), not a transient — it is neither renamed nor banned.
+
+> **v6 scope note.** The Scope column above names only functions that still
+> exist. The v6 scope surgery deleted the entropy, surrogate and transforms
+> families outright (see the scope boundary in `CLAUDE.md`), so the
+> `tau`/`lag` → `delay` and `m`/`emb_dim` → `dimension` renames are now carried
+> by the surviving *phase-space* users (the embedding family and
+> `lyapunov_from_data`); `detrend` left with the transforms package. The
+> renames themselves are unchanged — only their scope shrank.
 
 ---
 
@@ -245,7 +260,7 @@ name raises a precise "renamed to *X* in v4.0" error for one release.
    `n_internal`, `n_c`, `n_ref`, `n_ks`) are **not** `n` violations — they are
    distinct names, so a prefix check on bare `n` already passes them; they are
    listed here only so the gate author does not special-case them by mistake.
-4. The gate sweeps **both** `registry.analyses` and `registry.transforms`.
+4. The gate sweeps `registry.analyses`.
 
 **Documentation-only rules** (a signature gate cannot see units or semantics, so
 do **not** try to encode these — they are enforced in review, not CI): the

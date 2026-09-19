@@ -25,7 +25,7 @@ _FD_H = 1e-6
 
 def _on_attractor_points(sys, n: int) -> np.ndarray:
     """Iterate past the transient and return ``n`` orbit points."""
-    traj = sys.iterate(steps=60 + n, max_retries=15)
+    traj = sys.run(steps=60 + n, max_retries=15)
     return traj.y[60:]
 
 
@@ -91,7 +91,7 @@ def _call_handwritten_jacobian(cls, sys, y_sym, t_sym):
 def test_ode_handwritten_jacobian_matches_autogen(ode_entry, rng) -> None:
     import symengine
 
-    from tsdynamics.engine.symbols import state_time_symbols
+    from tsdynamics._engine.symbols import state_time_symbols
 
     y_sym, t_sym = state_time_symbols()
 
@@ -119,3 +119,186 @@ def test_ode_handwritten_jacobian_matches_autogen(ode_entry, rng) -> None:
                 f"matrix has a wrong entry."
             ),
         )
+
+
+# ---------------------------------------------------------------------------
+# 3. ``jacobian()`` is a cached Lambdify evaluation, not a source re-read
+#
+# ``_equations_hash`` (part of the ``_lambdified`` cache key) used to call
+# ``inspect.getsource`` on EVERY ``jacobian()`` call, so the key cost more than
+# the evaluation it was meant to save — 69 us of a 92 us call on Lorenz, a 2.9x
+# tax on every flow variational analysis.  The hash is now memoised on the
+# ``_equations`` function OBJECT (the same key discipline the lowered-tape cache
+# uses), which is cheap AND still misses on a monkeypatched / redefined kernel.
+# ---------------------------------------------------------------------------
+
+_DIVERSE_FLOWS = (
+    # plain smooth polynomial / trig flows
+    "Lorenz",
+    "Rossler",
+    "Thomas",
+    "Halvorsen",
+    "Aizawa",
+    "Duffing",
+    "HindmarshRose",
+    "ForcedBrusselator",
+    "Lorenz96",
+    # flows whose RHS carries a non-smooth node (abs / sign / min / max), whose
+    # derivatives are resolved a.e. by ``_resolve_derivative_nodes``
+    "Chua",
+    "MultiChua",
+    "SprottMore",
+    "CellularNeuralNetwork",
+    "AnishchenkoAstakhov",
+    "StickSlipOscillator",
+    "Colpitts",
+    "FluidTrampoline",
+    "WindmiReduced",
+    "MacArthur",
+)
+
+
+@pytest.mark.parametrize("name", _DIVERSE_FLOWS)
+def test_jacobian_matches_the_symbolic_jacobian(name: str) -> None:
+    """``jacobian(u, t)`` equals ``jacobian_sym()`` evaluated at the same point.
+
+    The memoised cache key must not change a single returned value.  Covers
+    smooth flows and every catalogue flow with an ``abs``/``sign``/``min``/``max``
+    node, plus a variable-dimension one (Lorenz96).
+    """
+    import symengine
+
+    from tsdynamics import registry
+    from tsdynamics._engine.symbols import state_time_symbols
+
+    entry = next((e for e in registry.all_systems() if e.name == name), None)
+    if entry is None:
+        pytest.skip(f"{name} is not in the catalogue")
+
+    sys = entry.cls()
+    dim = sys.dim
+    rng = np.random.default_rng(20260908)
+    u = rng.normal(size=dim) * 0.5 + 0.3
+    t = 0.7
+
+    y_sym, t_sym = state_time_symbols()
+    subs: dict = {y_sym(i): float(u[i]) for i in range(dim)}
+    subs[t_sym] = t
+    for k, v in sys._control_params().items():
+        subs[symengine.Symbol(k)] = float(v)
+    want = np.array(
+        [[float(symengine.sympify(e).subs(subs)) for e in row] for row in sys.jacobian_sym()],
+        dtype=float,
+    )
+    np.testing.assert_allclose(sys.jacobian(u, t), want, rtol=1e-12, atol=1e-12)
+
+
+def test_jacobian_does_not_reread_the_kernel_source_per_call(monkeypatch) -> None:
+    """A warm ``jacobian()`` calls ``inspect.getsource`` zero times.
+
+    Deterministic counting test (cannot flake): it pins the *absence* of the
+    source re-read on the hot path, which is what the memo buys.
+    """
+    import tsdynamics as ts
+
+    lor = ts.systems.Lorenz()
+    u = np.array([1.0, 1.0, 1.0])
+    lor.jacobian(u)  # warm the memo + the Lambdify cache
+
+    calls = {"n": 0}
+    real = inspect.getsource
+
+    def counting(obj):
+        calls["n"] += 1
+        return real(obj)
+
+    monkeypatch.setattr(inspect, "getsource", counting)
+    for _ in range(25):
+        lor.jacobian(u)
+    assert calls["n"] == 0, f"jacobian() re-read the kernel source {calls['n']}x"
+
+
+def test_monkeypatched_equations_invalidates_the_jacobian_cache() -> None:
+    """A replaced ``_equations`` must MISS the memo and rebuild the evaluator.
+
+    Identity of the function object is the invalidator: a monkeypatched kernel is
+    a different object, so the memo misses, the source is re-read, the content
+    hash changes and ``_cache_key`` (hence ``_lambdified``) misses too.
+    """
+    from tsdynamics.families.continuous import ContinuousSystem
+
+    class _Patchable(ContinuousSystem):
+        dim = 2
+        params = {"a": 1.0}  # noqa: RUF012
+        default_ic = [0.1, 0.2]  # noqa: RUF012
+
+        @staticmethod
+        def _equations(y, t, a):
+            return [a * y(0), a * y(1)]
+
+    sys = _Patchable()
+    key_before = sys._cache_key()
+    np.testing.assert_allclose(sys.jacobian([1.0, 1.0]), np.eye(2))
+
+    def _patched(y, t, a):
+        return [a * y(0) * y(0), 3.0 * a * y(1)]
+
+    _Patchable._equations = staticmethod(_patched)
+
+    assert sys._cache_key() != key_before, "the monkeypatched kernel reused the cache key"
+    # ... and the *same live instance* now evaluates the new Jacobian.
+    np.testing.assert_allclose(sys.jacobian([1.0, 1.0]), [[2.0, 0.0], [0.0, 3.0]])
+
+
+def test_two_kernels_with_the_same_class_name_do_not_collide() -> None:
+    """Redefining a class (same name, edited equations) yields a different key."""
+    from tsdynamics.families.continuous import ContinuousSystem
+
+    def _build(mult: float) -> type:
+        def _eq(y, t, a, _m=mult):
+            return [_m * a * y(0), a * y(1)]
+
+        return type(
+            "Redefined",
+            (ContinuousSystem,),
+            {
+                "dim": 2,
+                "params": {"a": 1.0},
+                "default_ic": [0.1, 0.2],
+                "_equations": staticmethod(_eq),
+            },
+        )
+
+    a, b = _build(2.0)(), _build(5.0)()
+    assert a._cache_key() != b._cache_key()
+    np.testing.assert_allclose(a.jacobian([1.0, 1.0]), [[2.0, 0.0], [0.0, 1.0]])
+    np.testing.assert_allclose(b.jacobian([1.0, 1.0]), [[5.0, 0.0], [0.0, 1.0]])
+
+
+def test_equations_hash_memo_is_weak() -> None:
+    """The memo holds no strong reference — throwaway kernels do not accumulate."""
+    import gc
+
+    from tsdynamics.families.continuous import _EQUATIONS_HASH_MEMO, ContinuousSystem
+
+    def _build(mult: float) -> type:
+        def _eq(y, t, a, _m=mult):
+            return [_m * a * y(0), a * y(1)]
+
+        return type(
+            "Throwaway",
+            (ContinuousSystem,),
+            {
+                "dim": 2,
+                "params": {"a": 1.0},
+                "default_ic": [0.1, 0.2],
+                "_equations": staticmethod(_eq),
+            },
+        )
+
+    gc.collect()
+    before = len(_EQUATIONS_HASH_MEMO)
+    for i in range(40):
+        _build(float(i))()._cache_key()
+    gc.collect()
+    assert len(_EQUATIONS_HASH_MEMO) - before <= 5

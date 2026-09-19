@@ -29,14 +29,36 @@ if TYPE_CHECKING:
 # ── state coercion ────────────────────────────────────────────────────────────
 
 
-def to_native(x: np.ndarray, dim: int) -> float | np.ndarray:
-    """Present the state to a compiled ``_step``/``_jacobian`` in its native form.
+def to_native(x: np.ndarray, dim: int) -> np.ndarray:
+    """Present the state to a compiled ``_step``/``_jacobian`` as a ``(dim,)`` vector.
 
-    One-dimensional maps are written for a scalar argument (``x = X``);
-    higher-dimensional maps unpack an array (``x, y = X[0], X[1]``).
+    A :class:`~tsdynamics.families.DiscreteMap` kernel **always** takes a plain
+    state vector — that is the family contract, and the one place the families
+    differ from an ODE's callable accessor.  So this is a shape coercion, not a
+    dispatch: every map, of every dimension, is handed the same thing.
+
+    Why this is a named function and not an inline ``ravel``
+    -------------------------------------------------------
+    Until v6 round 9 it special-cased ``dim == 1`` and passed a bare ``float``,
+    on the reasoning that a 1-D map "is written for a scalar argument".  That was
+    measured false in both directions:
+
+    * All seven built-in 1-D maps are written scalar-style (``r * x * (1 - x)``),
+      which under NumPy broadcasting accepts a ``(1,)`` array and returns a
+      ``(1,)`` array — identical values to the float call.
+    * A 1-D map written in the **documented** style (``u[0]``, the spelling every
+      other door requires and the one a user reaches for after writing a 2-D map)
+      raises ``TypeError: 'float' object is not subscriptable`` — *inside the
+      user's own kernel*, with no mention of this function.
+
+    So the vector is strictly more general: it serves both spellings, where the
+    float served only one.  The bug was invisible in-house precisely because the
+    catalogue's 1-D kernels are all of the tolerant kind.  It reached
+    :func:`~tsdynamics.analysis.periodic_orbits`,
+    :func:`~tsdynamics.analysis.fixed_points` (``newton``/``sd``/``dl``) and the
+    map tangent path — every A-FP and A-CHAOS door — for 1-D user maps only.
     """
-    a = np.asarray(x, dtype=float).ravel()
-    return float(a[0]) if dim == 1 else a
+    return np.asarray(x, dtype=float).ravel()
 
 
 # ── tangent dynamics: maps ───────────────────────────────────────────────────
@@ -55,8 +77,9 @@ def map_fns(
     """
     cls = type(system)
     dim = int(cast("int", system.dim))  # dim resolved at construction
-    # ``_step`` / ``_jacobian`` accept the native scalar-or-array form from
-    # ``to_native`` (1-D maps take a float); treat them as untyped callables.
+    # ``_step`` / ``_jacobian`` take the ``(dim,)`` state vector from
+    # ``to_native``; treat them as untyped callables (the math bodies take
+    # their parameters positionally, by ``params``-dict order).
     step_raw: Callable[..., Any] = cls._step
     jac_raw: Callable[..., Any] | None = getattr(cls, "_jacobian", None)
     params = tuple(cast("ParamSet", system.params).as_tuple())

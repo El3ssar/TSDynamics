@@ -54,12 +54,12 @@ automatically selected scaling region. On the Hénon attractor:
 ```python
 import tsdynamics as ts
 
-pts = ts.systems.Henon().iterate(steps=8000, ic=[0.1, 0.1]).y[500:]
+pts = ts.systems.Henon().run(steps=8000, ic=[0.1, 0.1]).y[500:]
 
-res = ts.correlation_dimension(pts, n_radii=32, min_window=8)
+res = ts.analysis.correlation_dimension(pts, n_radii=32, min_window=8)
 float(res)        # 1.171   (the fitted slope D2)
 res.stderr        # 0.002   (slope uncertainty over the window)
-res.fit_slice     # (3, 13) inclusive indices of the fitted region
+res.fit_region    # (3, 13) inclusive indices of the fitted region
 ```
 
 The `.y[500:]` slice drops the transient before the orbit lands on the
@@ -92,10 +92,10 @@ The raw curve is available on its own via `correlation_sum(pts)`, which returns
     import numpy as np
     t = np.linspace(0, 2 * np.pi, 4000, endpoint=False)
     circle = np.column_stack([np.cos(t), np.sin(t)])
-    float(ts.correlation_dimension(circle))        # 1.022
+    float(ts.analysis.correlation_dimension(circle))        # 1.022
 
     square = np.random.default_rng(0).random((5000, 2))
-    float(ts.correlation_dimension(square))        # 1.906
+    float(ts.analysis.correlation_dimension(square))        # 1.906
     ```
 
 ## The generalized spectrum
@@ -120,12 +120,12 @@ the spectrum is flat; a $D_q$ that *decreases* with $q$ is the signature of
 **multifractality** — the attractor's measure is spread unevenly.
 
 ```python
-pts = ts.systems.Henon().iterate(steps=8000, ic=[0.1, 0.1]).y[500:]
+pts = ts.systems.Henon().run(steps=8000, ic=[0.1, 0.1]).y[500:]
 
-ts.box_counting_dimension(pts)         # D0 = 1.279  (capacity)
-ts.information_dimension(pts)          # D1 = 1.230  (entropy)
-ts.generalized_dimension(pts, q=2.0)   # D2 = 1.167
-ts.generalized_dimension(pts, q=1.5)   # D_1.5 = 1.208  (any real q >= 0)
+ts.analysis.box_counting_dimension(pts)         # D0 = 1.279  (capacity)
+ts.analysis.information_dimension(pts)          # D1 = 1.230  (entropy)
+ts.analysis.generalized_dimension(pts, q=2.0)   # D2 = 1.167
+ts.analysis.generalized_dimension(pts, q=1.5)   # D_1.5 = 1.208  (any real q >= 0)
 ```
 
 `box_counting_dimension` and `information_dimension` are thin wrappers over
@@ -139,7 +139,7 @@ occupancies **once per scale** and reuses them across every $q$, so the full
 curve costs barely more than a single $D_q$:
 
 ```python
-spec = ts.dimension_spectrum(pts, qs=[0, 1, 2, 3, 4])
+spec = ts.analysis.dimension_spectrum(pts, qs=[0, 1, 2, 3, 4])
 {q: round(float(r), 3) for q, r in spec.items()}
 # {0.0: 1.279, 1.0: 1.230, 2.0: 1.167, 3.0: 1.099, 4.0: 1.141}
 ```
@@ -182,7 +182,7 @@ enclosing radius is a random order statistic, and the digamma correction removes
 the $O(1/k)$ bias $\log k$ carries at small $k$.)
 
 ```python
-ts.fixed_mass_dimension(pts)           # 1.266   (agrees with D2)
+ts.analysis.fixed_mass_dimension(pts)           # 1.266   (agrees with D2)
 ```
 
 Because it adapts the radius to the *local* density, the fixed-mass estimator
@@ -200,9 +200,9 @@ full curve and the chosen window, and two helpers in
 ```python
 from tsdynamics.analysis.dimensions import local_slopes, fit_scaling_region
 
-res = ts.correlation_dimension(pts, n_radii=32, min_window=8)
+res = ts.analysis.correlation_dimension(pts, n_radii=32, min_window=8)
 res.x, res.y            # log r , log C(r)  — the scaling curve
-res.fit_slice           # (lo, hi) indices the dimension was fit over
+res.fit_region          # (lo, hi) indices the dimension was fit over
 
 local_slopes(res.x, res.y)      # point-wise slope: a plateau ⇒ scaling
 fit = fit_scaling_region(res.x, res.y, min_window=6, tol=1.2)
@@ -216,6 +216,25 @@ contiguous window, keeps those whose straight-line residual is within `tol` of
 the best, and returns the *widest* one — a long clean stretch preferred over a
 short near-perfect one (Theiler 1990). Tighten `tol` or raise `min_window` when
 the automatic region drifts into a curved tail.
+
+### `trusted`: an unresolved estimate is flagged, not withheld
+
+Every `DimensionResult` carries a boolean **`trusted`**. When the estimator can
+see that its own scaling region did not resolve — no plateau, or a generalized
+spectrum whose $D_q$ *rises* with $q$, which it cannot physically do — it returns
+the number anyway and sets `trusted=False`, and the `repr` says `UNTRUSTED` with
+the reason:
+
+```python
+res = ts.analysis.box_counting_dimension(pts)
+res.trusted            # False when the scaling region did not resolve
+float(res)             # still gives you the number
+```
+
+This is deliberate: refusing to return would deny you the diagnostic curve that
+shows *why* it failed. Treat `trusted=False` as "look at `local_slopes` before
+quoting this", not as a crash — and never quote an untrusted value without
+saying so.
 
 !!! warning "Finite data limits the answer"
     A reliable $D$ wants roughly $10^{D}$ points and a clean plateau spanning at
@@ -248,8 +267,8 @@ the automatic region drifts into a curved tail.
   signal before measuring $D$ (and remember the Theiler window on the result)
 - [Lyapunov spectra](lyapunov.md) — the dynamical companion; the Kaplan–Yorke
   dimension is a fractal dimension read straight off the spectrum
-- [Entropy & complexity](entropy.md) — a complementary, scale-based view of the
-  same structure
+- [Recurrence & RQA](recurrence.md) — a complementary, geometry-based view of
+  the same structure
 
 ## References
 

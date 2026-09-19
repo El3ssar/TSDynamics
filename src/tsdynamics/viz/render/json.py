@@ -36,6 +36,7 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from .._visibility import listing_dir
 from .caps import RendererCapabilities, RenderResult
 
 if TYPE_CHECKING:
@@ -44,6 +45,8 @@ if TYPE_CHECKING:
     from ..spec import PlotSpec
 
 __all__ = ["register"]
+
+__dir__ = listing_dir(__all__)
 
 #: The registry name the json exporter registers under.
 _BACKEND_NAME = "json"
@@ -92,6 +95,12 @@ def register(registry: Registry) -> bool:
         supports_3d=True,
         web_export=False,
         data_export=True,
+        # Writes ``.json`` — but note that ``.json`` is *ambiguous* across
+        # backends: this one writes the **PlotSpec IR envelope** (the full spec,
+        # round-trippable through ``PlotSpec.from_dict``), while the three.js
+        # exporter writes a **BufferGeometry payload** under the same extension.
+        # They are not interchangeable; pass ``backend=`` to disambiguate.
+        writes=(".json",),
     )
 
     def _render(

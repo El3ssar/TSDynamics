@@ -116,25 +116,7 @@ def delay_embed(series: np.ndarray, *, dim: int, delay: int) -> np.ndarray:
     )
 
 
-@lru_cache(maxsize=1)
-def white_noise_series(n: int = 8000, seed: int = 0) -> np.ndarray:
-    """Return i.i.d. Gaussian white noise — the known-exponent DFA/Hurst input.
-
-    White noise has DFA scaling exponent α = 0.5 and rescaled-range Hurst H = 0.5
-    (no long-range correlation), so it is the textbook ground truth for the DFA
-    and Hurst tasks: every library should recover ≈0.5.
-
-    Parameters
-    ----------
-    n : int
-        Series length.
-    seed : int
-        RNG seed (fixed → identical input for every library).
-
-    Returns
-    -------
-    numpy.ndarray
-        1-D white-noise series, float64, contiguous.
-    """
-    rng = np.random.default_rng(seed)
-    return np.ascontiguousarray(rng.standard_normal(n), dtype=float)
+# NOTE: ``white_noise_series`` lived here as the known-exponent input for the DFA
+# and Hurst tasks.  Those tasks were removed with the v6 scope narrowing (they are
+# generic series statistics, not phase-space methods), leaving it with no callers,
+# so it was dropped too.

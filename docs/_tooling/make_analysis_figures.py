@@ -61,7 +61,7 @@ def fig_lyapunov(plt, out_path):
     import numpy as np
 
     import tsdynamics as ts
-    from tsdynamics import TangentSystem
+    from tsdynamics.derived import TangentSystem
 
     INDIGO = "#574FCF"
     TEAL = "#11857A"
@@ -72,7 +72,7 @@ def fig_lyapunov(plt, out_path):
 
     # Settle onto the Lorenz attractor, then track the running spectrum.
     lor = ts.systems.Lorenz()
-    settle = lor.integrate(final_time=40.0, dt=0.01)
+    settle = lor.run(final_time=40.0, dt=0.01)
     ic = settle.y[-1]
 
     tang = TangentSystem(lor, k=3)
@@ -135,13 +135,13 @@ def fig_orbit_diagram(plt, out_path):
     ROSE = "#D64562"
 
     rs = np.linspace(2.5, 4.0, 1400)
-    od = ts.orbit_diagram(
+    od = ts.analysis.orbit_diagram(
         ts.systems.Logistic(),
         "r",
         rs,
-        n=180,
+        points_per_value=180,
         transient=600,
-        component=0,
+        components=0,
     )
     x, y = od.flat()
 
@@ -185,12 +185,12 @@ def fig_recurrence(plt, out_path):
     rate = 0.06  # comparable density for both panels (scale-free)
 
     # Periodic: logistic at r=3.5 (a period-4 cycle) -> diagonal-line texture.
-    per = ts.Logistic(params={"r": 3.5}).iterate(steps=N + burn, ic=[0.31]).y[burn:, 0]
-    rm_per = ts.recurrence_matrix(per, recurrence_rate=rate, theiler=1)
+    per = ts.systems.Logistic(params={"r": 3.5}).run(steps=N + burn, ic=[0.31]).y[burn:, 0]
+    rm_per = ts.analysis.recurrence_matrix(per, recurrence_rate=rate, theiler=1)
 
     # Chaotic: logistic at r=4.0 -> broken-up, speckled structure.
-    cha = ts.Logistic(params={"r": 4.0}).iterate(steps=N + burn, ic=[0.4]).y[burn:, 0]
-    rm_cha = ts.recurrence_matrix(cha, recurrence_rate=rate, theiler=1)
+    cha = ts.systems.Logistic(params={"r": 4.0}).run(steps=N + burn, ic=[0.4]).y[burn:, 0]
+    rm_cha = ts.analysis.recurrence_matrix(cha, recurrence_rate=rate, theiler=1)
 
     # Binary colormap: transparent for 0, INDIGO for a recurrent point.
     cmap = ListedColormap([(0, 0, 0, 0), INDIGO])
@@ -232,12 +232,12 @@ def fig_dimensions(plt, out_path):
     ROSE = "#D64562"
 
     # Hénon attractor point cloud (already decorrelated -> no Theiler window needed)
-    traj = ts.Henon().trajectory(8000, transient=500, ic=[0.1, 0.1])
+    traj = ts.systems.Henon().run(8000, transient=500, ic=[0.1, 0.1])
 
     # D2 estimate + the log-log scaling curve it was read from
-    res = ts.correlation_dimension(traj, n_radii=32, min_window=8)
+    res = ts.analysis.correlation_dimension(traj, n_radii=32, min_window=8)
     x, y = res.x, res.y  # log r , log C(r)
-    lo, hi = res.fit_slice  # inclusive indices of the fitted region
+    lo, hi = res.fit_region  # inclusive indices of the fitted region
     D2 = float(res)
 
     fig, ax = plt.subplots(figsize=(6.0, 4.0))
@@ -294,18 +294,18 @@ def fig_embedding(plt, out_path):
     TEAL = "#11857A"
 
     # Integrate Rossler; we will keep ONLY x(t) for the reconstruction.
-    ros = ts.Rossler()
-    traj = ros.integrate(final_time=400.0, dt=0.05)
+    ros = ts.systems.Rossler()
+    traj = ros.run(final_time=400.0, dt=0.05)
     # drop transient
     n0 = int(traj.y.shape[0] * 0.15)
     xt = traj.y[n0:, 0]
     yt = traj.y[n0:, 1]
 
     # Pick a delay from x(t) ALONE via mutual information.
-    tau = ts.optimal_delay(xt, method="mi", max_delay=120)
+    tau = ts.analysis.optimal_delay(xt, method="mi", max_delay=120)
 
     # Takens embedding of the single observable into 3D.
-    emb = ts.embed(xt, dimension=3, delay=tau)
+    emb = ts.analysis.embed(xt, dimension=3, delay=tau)
     rx, ry = emb[:, 0], emb[:, 1]  # (x(t), x(t-tau))
 
     fig, (axL, axR) = plt.subplots(1, 2, figsize=(6.4, 3.4))
@@ -349,9 +349,9 @@ def fig_chaos(plt, out_path):
     AMBER = "#E8912D"
     ROSE = "#D64562"
 
-    lor = ts.Lorenz()
-    g2 = ts.gali(lor, 2, final_time=40.0, dt=0.05, seed=0)
-    g3 = ts.gali(lor, 3, final_time=40.0, dt=0.05, seed=0)
+    lor = ts.systems.Lorenz()
+    g2 = ts.analysis.gali(lor, 2, final_time=40.0, dt=0.05, seed=0)
+    g3 = ts.analysis.gali(lor, 3, final_time=40.0, dt=0.05, seed=0)
 
     # `times` carries the absolute clock (transient burn-in included). Re-zero to
     # elapsed-since-tracking so the decay fills the panel.
@@ -413,87 +413,14 @@ def fig_chaos(plt, out_path):
     plt.close(fig)
 
 
-def fig_surrogate(plt, out_path):
-    """IAAFT surrogate null distribution of a time-reversal statistic vs the Lorenz data."""
-    import numpy as np
-
-    import tsdynamics as ts
-
-    INDIGO = "#574FCF"
-    ROSE = "#D64562"
-
-    # Lorenz z-component — the discriminating observable for a time-reversal test.
-    lor = ts.Lorenz()
-    z = lor.trajectory(final_time=150.0, dt=0.05, transient=20.0)["z"]
-
-    # Surrogate hypothesis test: IAAFT null preserving distribution + spectrum.
-    res = ts.surrogate_test(z, statistic="time_reversal", method="iaaft", n=200, seed=0)
-    null = res.surrogate_statistics
-    data_stat = res.data_statistic
-    p = res.p_value
-    zscore = res.z_score
-
-    fig, ax = plt.subplots(figsize=(6.2, 3.8))
-
-    # Histogram of the surrogate (null) statistic.
-    lo = min(null.min(), 0.0)
-    hi = max(null.max(), data_stat)
-    pad = 0.06 * (hi - lo)
-    bins = np.linspace(null.min() - 0.01, null.max() + 0.01, 26)
-    ax.hist(
-        null,
-        bins=bins,
-        color=INDIGO,
-        alpha=0.32,
-        edgecolor=INDIGO,
-        linewidth=0.5,
-        label=f"null ({res.n_surrogates} IAAFT surrogates)",
-    )
-
-    # Reference line at the original-data statistic, well outside the null.
-    ax.axvline(data_stat, color=ROSE, lw=1.6, label="Lorenz z (data)")
-    ymax = ax.get_ylim()[1]
-    ax.annotate(
-        f"data: {data_stat:.2f}\n$z = {zscore:.0f}\\,\\sigma$",
-        xy=(data_stat, ymax * 0.62),
-        xytext=(data_stat - 0.30, ymax * 0.72),
-        color=ROSE,
-        fontsize=9,
-        ha="right",
-        va="center",
-        arrowprops=dict(arrowstyle="->", color=ROSE, lw=1.0),
-    )
-
-    # p-value verdict.
-    verdict = "reject" if res.rejected else "fail to reject"
-    ax.text(
-        0.03,
-        0.96,
-        f"$p = {p:.3f} \\leq \\alpha = {res.alpha:g}$\n→ {verdict} linear null",
-        transform=ax.transAxes,
-        ha="left",
-        va="top",
-        fontsize=9,
-        color="#555555",
-    )
-
-    ax.set_xlim(lo - pad, hi + pad)
-    ax.set_xlabel("time-reversal asymmetry statistic")
-    ax.set_ylabel("surrogate count")
-    ax.legend(loc="upper right", fontsize=8)
-
-    fig.savefig(out_path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-
-
 def fig_basins(plt, out_path):
     """Fractal (Wada) basins of the three roots of Newton's map for z**3 = 1."""
     import numpy as np
     from matplotlib.colors import ListedColormap
 
     import tsdynamics as ts
-    from tsdynamics import Grid
     from tsdynamics.analysis import basins as bas
+    from tsdynamics.data import Grid
 
     INDIGO = "#574FCF"
     TEAL = "#11857A"
@@ -524,7 +451,7 @@ def fig_basins(plt, out_path):
     # form the fractal Julia set.
     lo, hi, n = -1.0, 1.0, 200
     nm = NewtonMap()
-    res = bas.basins_of_attraction(
+    res = bas.basins(
         nm,
         Grid([lo, lo], [hi, hi], (n, n)),
         consecutive_recurrences=8,
@@ -610,7 +537,7 @@ def fig_fixed_points(plt, out_path):
     cyc = np.asarray(orb.points)
 
     # The unstable equilibrium at the origin (ROSE x) via multi-start Newton.
-    fps = ts.fixed_points(sys, region=([-3.0, -4.0], [3.0, 4.0]))
+    fps = ts.analysis.fixed_points(sys, region=[(-3.0, 3.0), (-4.0, 4.0)])
 
     # A few trajectories spiralling onto the cycle (thin INDIGO): from near the
     # unstable origin outward, and from far outside inward.
@@ -627,7 +554,7 @@ def fig_fixed_points(plt, out_path):
     fig, ax = plt.subplots(figsize=(6.0, 4.2))
 
     for s in seeds:
-        traj = sys.integrate(ic=s, final_time=22.0, dt=0.01)
+        traj = sys.run(ic=s, final_time=22.0, dt=0.01)
         ax.plot(traj["x"], traj["v"], color=INDIGO, lw=0.5, alpha=0.55, zorder=1)
 
     ax.plot(
@@ -684,15 +611,15 @@ def fig_poincare(plt, out_path):
     sys = ts.systems.Rossler()
 
     # Faint full attractor for context (x-z projection).
-    traj = sys.integrate(final_time=300.0, dt=0.02, ic=[1.0, 1.0, 0.0])
+    traj = sys.run(final_time=300.0, dt=0.02, ic=[1.0, 1.0, 0.0])
     bx = traj["x"]
     bz = traj["z"]
 
     # Poincare section: plane y = 0, ascending crossings -> one wing of the
     # attractor sampled stroboscopically; the crossings collapse onto a thin,
     # near-one-dimensional return set.
-    pmap = ts.PoincareMap(sys, plane=(1, 0.0), direction=+1, dt=0.01)
-    sec = pmap.trajectory(600, transient=50, ic=[1.0, 1.0, 0.0])
+    pmap = ts.derived.PoincareMap(sys, plane=(1, 0.0), direction=+1, dt=0.01)
+    sec = pmap.run(600, transient=50, ic=[1.0, 1.0, 0.0])
     sx = sec.y[:, 0]
     sz = sec.y[:, 2]
 
@@ -723,56 +650,6 @@ def fig_poincare(plt, out_path):
     plt.close(fig)
 
 
-def fig_entropy(plt, out_path):
-    """Multiscale sample-entropy curves separating chaos, white noise, and a periodic signal."""
-    import numpy as np
-
-    import tsdynamics as ts
-
-    INDIGO = "#574FCF"
-    TEAL = "#11857A"
-    AMBER = "#E8912D"
-
-    rng = np.random.default_rng(0)
-    n = 2500
-    scales = 20
-
-    # Chaotic: logistic map at r=4 (deterministic chaos)
-    log = ts.Logistic(params={"r": 4.0})
-    chaotic = log.trajectory(n, transient=500, ic=[0.1234]).y[:, 0]
-
-    # Periodic: smooth sine
-    t = np.linspace(0, 50 * np.pi, n)
-    periodic = np.sin(t)
-
-    # White noise, seeded
-    noise = rng.standard_normal(n)
-
-    mse_chaotic = ts.multiscale_entropy(chaotic, scales=scales)
-    mse_periodic = ts.multiscale_entropy(periodic, scales=scales)
-    mse_noise = ts.multiscale_entropy(noise, scales=scales)
-
-    xs = np.arange(1, scales + 1)
-
-    fig, ax = plt.subplots(figsize=(6.2, 3.9))
-    ax.plot(
-        xs, mse_chaotic, color=INDIGO, lw=1.5, marker="o", ms=3.5, label="logistic $r=4$ (chaotic)"
-    )
-    ax.plot(xs, mse_noise, color=AMBER, lw=1.5, marker="s", ms=3.0, label="white noise")
-    ax.plot(xs, mse_periodic, color=TEAL, lw=1.5, marker="^", ms=3.5, label="sine (periodic)")
-
-    ax.set_xlabel("scale factor  τ")
-    ax.set_ylabel("sample entropy")
-    ax.set_xlim(0.5, scales + 0.5)
-    ax.set_xticks([1, 5, 10, 15, 20])
-    lo = float(np.nanmin([mse_chaotic.min(), mse_periodic.min(), mse_noise.min()]))
-    ax.set_ylim(min(0.0, lo) - 0.05, None)
-    ax.legend(loc="upper right", fontsize=8)
-
-    fig.savefig(out_path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-
-
 def fig_integrate(plt, out_path):
     """Lorenz 3-D attractor beside its stacked x(t), y(t), z(t) component time series."""
     import contextlib
@@ -785,8 +662,8 @@ def fig_integrate(plt, out_path):
     TEAL = "#11857A"
     AMBER = "#E8912D"
 
-    lor = ts.Lorenz()
-    traj = lor.integrate(final_time=60.0, dt=0.005, ic=[1.0, 1.0, 1.0])
+    lor = ts.systems.Lorenz()
+    traj = lor.run(final_time=60.0, dt=0.005, ic=[1.0, 1.0, 1.0])
     traj = traj.after(5.0)  # drop the transient onto the attractor
 
     t = traj.t
@@ -854,11 +731,11 @@ def fig_solvers(plt, out_path):
     for method, color, marker in explicit:
         errs = []
         for rtol in tols:
-            tr = decay.integrate(
+            tr = decay.run(
                 final_time=T,
                 dt=T,
                 ic=[1.0],
-                method=method,
+                solver=method,
                 rtol=float(rtol),
                 atol=float(rtol) * 1e-3,
             )
@@ -889,11 +766,11 @@ def fig_solvers(plt, out_path):
         xend = None
         for _ in range(3):
             t0 = time.perf_counter()
-            tr = vdp.integrate(
+            tr = vdp.run(
                 final_time=Tv,
                 dt=Tv / 50,
                 ic=[2.0, 0.0],
-                method=method,
+                solver=method,
                 rtol=1e-6,
                 atol=1e-8,
             )
@@ -956,11 +833,9 @@ FIGURES = {
     "dimensions": fig_dimensions,
     "embedding": fig_embedding,
     "chaos": fig_chaos,
-    "surrogate": fig_surrogate,
     "basins": fig_basins,
     "fixed-points": fig_fixed_points,
     "poincare": fig_poincare,
-    "entropy": fig_entropy,
     "integrate": fig_integrate,
     "solvers": fig_solvers,
 }

@@ -1,0 +1,101 @@
+name: Perf (Rust engine)
+
+# Performance-regression gate for the Rust engine's hot path (v6 WP3-perf).
+#
+# The companion to perf-analysis.yml, which covers only the Python analysis
+# layer: before this job there was no timing coverage of integrate / iterate /
+# the solver kernels / the interpreter anywhere in CI, so a refactor could undo
+# any of the engine's documented optimisations with the whole suite green.
+#
+# ---------------------------------------------------------------------------
+# WHAT THIS JOB CATCHES, PLAINLY
+# ---------------------------------------------------------------------------
+# It runs the criterion benches in crates/*/benches/** and fails if a case is
+# slower than the ceiling committed in benchmarks/engine_bench_baseline.json.
+# Each ceiling is 10x the reference measurement, so:
+#
+#   IT CATCHES  order-of-magnitude regressions — a compiled-evaluator cache that
+#               stopped caching (a JIT hit reverting to a full Cranelift compile
+#               is ~1000x), an allocation introduced into a per-step loop, an
+#               accidental O(n^2), a dropped fast path. It also fails if a bench
+#               named in the baseline has disappeared, so coverage cannot be
+#               deleted silently.
+#
+#   IT MISSES   everything smaller. On the reference machine, losing FSAL stage
+#               reuse costs ~8-18% of an rk45 step; losing the interpreter's
+#               liveness mask ~25% of an RHS evaluation on a Jacobian-bearing
+#               tape; losing the SDIRK frozen-Jacobian reuse a few multiples at
+#               most. None of those trips a 10x ceiling, and none of them is
+#               meant to: they are pinned by
+#               deterministic *counting* tests in the Rust crates
+#               (fsal_reuse_saves_one_rhs_eval_per_continued_step,
+#               frozen_jacobian_is_reused_across_substages_sharing_a_shift,
+#               rhs_live_mask_is_the_shared_reachable_from_pass), which run in
+#               rust-workspace.yml and cannot flake.
+#
+# Why so generous? Criterion wall-clock on a shared GitHub runner varies by a
+# factor of 2-3 between runs and between runner generations. A tight threshold
+# would flake, and a flaky blocking gate gets ignored and then disabled. This one
+# is blocking precisely because it is loose enough that a failure is real.
+#
+# The full measured-vs-ceiling table is written to the step summary either way,
+# so the numbers are readable on every run, not only on a failure.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "crates/tsdyn-*/**"
+      - "crates/Cargo.toml"
+      - "crates/Cargo.lock"
+      - "benchmarks/engine_bench_baseline.json"
+      - "benchmarks/check_engine_bench.py"
+      - ".github/workflows/perf-engine.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: perf-engine-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  perf-engine:
+    name: Engine bench vs committed ceilings
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo build
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            crates/target
+          key: cargo-bench-${{ runner.os }}-${{ hashFiles('crates/Cargo.lock') }}
+
+      # The bench profile inherits [profile.release] from crates/Cargo.toml
+      # (lto = "thin", codegen-units = 1), so these are the same code-generation
+      # settings the shipped wheel uses.
+      - name: Run the criterion benches
+        working-directory: crates
+        run: cargo bench --workspace --locked
+
+      # Standard-library-only script, so this job needs no Python environment
+      # beyond the runner's interpreter.
+      - name: Compare with the committed ceilings
+        run: |
+          python3 benchmarks/check_engine_bench.py \
+            crates/target/criterion --summary "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload raw criterion output
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: engine-bench-criterion
+          path: crates/target/criterion/**/new/*.json
+          if-no-files-found: warn

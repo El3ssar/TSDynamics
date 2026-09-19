@@ -2,7 +2,7 @@
 
 The ``bdf`` kernel (``crates/tsdyn-solvers/src/implicit/bdf.rs``) is the engine's
 high-order stiff workhorse, added to close the warm-throughput gap to a
-variable-order BDF reference on stiff ODEs (``benches/REPORT.md``, issue #95).
+variable-order BDF reference on stiff ODEs (issue #95).
 These tests check it integrates the canonical stiff benchmarks **as accurately as
 SciPy's own stiff integrators** (``LSODA`` / ``BDF`` / ``Radau``), through the
 public engine seam.
@@ -28,7 +28,7 @@ _rust = pytest.importorskip("tsdynamics._rust")
 solve_ivp = pytest.importorskip("scipy.integrate").solve_ivp
 
 import tsdynamics as ts  # noqa: E402
-from tsdynamics.engine import run  # noqa: E402
+from tsdynamics._engine import run  # noqa: E402
 
 
 class _Robertson(ts.ContinuousSystem):
@@ -81,8 +81,8 @@ def _max_rel_diff(a, b):
 
 # (name, build, ic, final_time, dt, rtol, atol)
 _OSCILLATORY = [
-    ("Oregonator", ts.Oregonator, [1.0, 1.0, 1.0], 20.0, 0.01, 1e-7, 1e-9),
-    ("ForcedVanDerPol", ts.ForcedVanDerPol, [0.1, 0.1, 0.0], 60.0, 0.02, 1e-7, 1e-9),
+    ("Oregonator", ts.systems.Oregonator, [1.0, 1.0, 1.0], 20.0, 0.01, 1e-7, 1e-9),
+    ("ForcedVanDerPol", ts.systems.ForcedVanDerPol, [0.1, 0.1, 0.0], 60.0, 0.02, 1e-7, 1e-9),
 ]
 
 
@@ -149,7 +149,7 @@ def test_bdf_interp_equals_jit_bit_for_bit(name, build, ic, ft, dt, rtol, atol):
 
 def test_stiff_default_method_steps_without_jacobian_error():
     """``reinit()`` + ``step()`` on a ``_default_method="bdf"`` system must not raise."""
-    sys = ts.Oregonator()
+    sys = ts.systems.Oregonator()
     assert sys._default_method == "bdf"
     sys.reinit(sys.resolve_ic())
     for _ in range(5):
@@ -159,7 +159,7 @@ def test_stiff_default_method_steps_without_jacobian_error():
 
 def test_stiff_explicit_step_override_also_works():
     """Explicitly requesting an implicit method on a non-stiff system steps cleanly too."""
-    lor = ts.Lorenz()
-    lor.reinit([1.0, 1.0, 1.0], method="bdf")
+    lor = ts.systems.Lorenz()
+    lor.reinit([1.0, 1.0, 1.0], solver="bdf")
     u = lor.step(0.01)
     assert np.all(np.isfinite(u))

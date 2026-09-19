@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import itertools
+import math
+import weakref
 from abc import ABC, abstractmethod
 from collections import OrderedDict
 from collections.abc import Callable, Sequence
@@ -9,9 +12,106 @@ from typing import Any, ClassVar, cast
 
 import numpy as np
 
+from tsdynamics._utils.tolerances import DEFAULT_ATOL, DEFAULT_RTOL
 from tsdynamics.errors import InvalidParameterError
 
-from .base import SystemBase, Trajectory
+from ._kwargs import reject_unknown_run_keywords
+from .base import SystemBase, Trajectory, as_lyapunov_result, orbit_peak, resolve_transient
+
+#: What this module *defines*.  Without it, ``dir(tsdynamics.families.continuous)``
+#: offered 23 names of which 15 were re-exported imports — ``np``, ``math``,
+#: ``itertools``, ``weakref``, ``OrderedDict``, ``abstractmethod`` … — noise that
+#: tells a reader nothing about the module and buries the one class that does
+#: (``CONTRACT.md`` §11, T4).  Explicit imports (``from ... import SystemBase``)
+#: are unaffected: ``__all__`` governs only ``import *``, and ``__dir__`` only
+#: ``dir()``.
+__all__ = ["ContinuousSystem"]
+
+#: ``ContinuousSystem.run``'s keywords, in signature order.  Printed verbatim by
+#: the unknown-keyword message, so the two can never drift apart.
+_ODE_RUN_KEYWORDS = (
+    "final_time",
+    "dt",
+    "t0",
+    "ic",
+    "transient",
+    "solver",
+    "rtol",
+    "atol",
+    "max_step",
+    "backend",
+    "seed",
+    "events",
+)
+
+#: Memo for :meth:`ContinuousSystem._equations_hash`, keyed by the ``_equations``
+#: kernel **function object itself** — the same key discipline the lowered-tape
+#: cache uses (``engine/compile.py``), and for the same reason: a kernel's source
+#: text cannot change without the function object being replaced, so identity is
+#: both cheap and exactly as invalidating as re-reading the source would be.
+#: A monkeypatched or redefined ``_equations`` is a *different* object, hence a
+#: miss, hence a fresh token and a fresh ``_cache_key`` — so the numeric-evaluator
+#: cache still rebuilds.  Weak keys mean the memo dies with the function (a
+#: notebook redefining a class in a loop cannot leak entries).
+_EQUATIONS_HASH_MEMO: weakref.WeakKeyDictionary[Any, str] = weakref.WeakKeyDictionary()
+
+#: Per-kernel-object serial, appended to the source hash so the token identifies
+#: the *function object*, not merely its source text.  Source alone is not
+#: injective: a factory that closes over a value (``def make(m): def _eq(y, t, a,
+#: _m=m): ...``) produces distinct kernels with byte-identical source, which
+#: previously collided on one ``_lambdified`` entry — so the second system
+#: silently evaluated the first one's RHS/Jacobian.  Identity is the correct
+#: discriminator and is what the lowered-tape cache already uses; the serial is
+#: how it is expressed inside a string cache key.
+_EQUATIONS_HASH_SERIAL = itertools.count()
+
+
+def _kernel_token(fn: Any) -> str:
+    """Return the source content hash of ``fn`` (the un-memoised core).
+
+    Eight hex digits of md5 over the kernel's source text, or — for a kernel
+    with no retrievable source — over its bytecode.
+    """
+    import hashlib
+    import inspect
+
+    try:
+        src = inspect.getsource(fn)
+    except (OSError, TypeError):  # dynamically defined without source
+        code = getattr(fn, "__code__", None)
+        src = repr(code.co_code) if code is not None else repr(fn)
+    return hashlib.md5(src.encode()).hexdigest()[:8]
+
+
+class _NumericRHS:
+    """A picklable ``f(u, t) -> ndarray`` over a SymEngine-lambdified RHS.
+
+    The numeric-RHS helper used to be a closure over ``rhs_fn`` / ``vals``
+    defined inside :meth:`ContinuousSystem._rhs_numeric`.  A local function
+    cannot be pickled, so every object that *cached* one became unpicklable —
+    most visibly :class:`~tsdynamics.derived.poincare.PoincareMap`, the wrapper
+    a user reaches for to parallelise a bifurcation sweep.  Hoisting the closure
+    into a module-level callable with the same behaviour fixes that without
+    changing a single number: the two ``__call__`` bodies are identical, and both
+    the lambdified callable and the captured parameter vector pickle natively.
+    """
+
+    __slots__ = ("_rhs_fn", "_vals")
+
+    def __init__(self, rhs_fn: Any, vals: np.ndarray) -> None:
+        self._rhs_fn = rhs_fn
+        self._vals = vals
+
+    def __call__(self, u: Any, t: float = 0.0) -> np.ndarray:
+        arg = np.concatenate([np.asarray(u, dtype=float).ravel(), [t], self._vals])
+        return np.asarray(self._rhs_fn(arg), dtype=float).ravel()
+
+    # ``__slots__`` classes get no ``__dict__``, so spell the pickle protocol out.
+    def __getstate__(self) -> tuple[Any, np.ndarray]:
+        return (self._rhs_fn, self._vals)
+
+    def __setstate__(self, state: tuple[Any, np.ndarray]) -> None:
+        self._rhs_fn, self._vals = state
 
 
 def _resolve_extremum_derivative(
@@ -154,6 +254,41 @@ def _resolve_derivative_nodes(expr: Any) -> Any:
 # ---------------------------------------------------------------------------
 
 
+#: Keywords ``lyapunov_spectrum`` forwards to the integrator.  Everything a
+#: caller may legitimately pass is bound to an explicit parameter, so anything
+#: else in ``**integrator_kwargs`` is a typo.
+_LYAPUNOV_FORWARDED: frozenset[str] = frozenset(
+    {"t0", "max_step", "max_steps", "first_step", "seed"}
+)
+
+
+def _reject_unknown_lyapunov_keywords(extra: dict[str, Any]) -> None:
+    """Raise on an unrecognised ``lyapunov_spectrum`` keyword instead of dropping it.
+
+    ``**integrator_kwargs`` silently swallowed anything it did not recognise, and
+    the keyword it swallowed most often was ``n_exp`` — this method's own
+    parameter until the v4 glossary renamed it to ``k``.  So
+    ``ts.analysis.lyapunov_spectrum(lorenz, k=1)`` returned THREE exponents: the caller
+    asked for one, the request went into the void, and the answer looked fine.
+    A wrong number returned confidently is the worst outcome available here, and
+    it is the same footgun ``integrate`` already closed.
+    """
+    unknown = sorted(set(extra) - _LYAPUNOV_FORWARDED)
+    if not unknown:
+        return
+    from tsdynamics.errors import invalid_value
+
+    bad = unknown[0]
+    hint = (
+        "did you mean k=? (the number of exponents was renamed n_exp -> k in v4)."
+        if bad in {"n_exp", "nexp", "n_exponents"}
+        else "valid keywords: final_time, dt, ic, k, transient, method, rtol, atol, backend."
+    )
+    raise invalid_value(
+        bad, extra[bad], rule="is not a valid lyapunov_spectrum() keyword", hint=hint
+    )
+
+
 class ContinuousSystem(SystemBase, ABC):
     """
     Base class for ODE-based dynamical systems, integrated on the engine.
@@ -162,14 +297,32 @@ class ContinuousSystem(SystemBase, ABC):
     -----------------
     1. Declare ``params = {...}`` and ``dim = N`` at class level.
     2. Implement ``_equations`` as a ``@staticmethod`` returning a
-       length-``dim`` sequence of SymEngine symbolic expressions.
+       length-``dim`` sequence of SymEngine symbolic expressions.  Its
+       signature is ``_equations(y, t, **params)``, and **``y`` is a state
+       ACCESSOR, not an array**: component ``i`` is ``y(i)`` — a *call*, which
+       is also what lets a :class:`~tsdynamics.families.delay.DelaySystem`
+       write a delayed access as ``y(i, t - tau)``.  So neither ``y[0]`` nor
+       ``x, y, z = y`` works here (a ``DiscreteMap``'s ``_step`` does take a
+       plain state vector — that is the one place the two families differ)::
+
+           class MyLorenz(ts.ContinuousSystem):
+               params = {"sigma": 10.0, "rho": 28.0, "beta": 8 / 3}
+               variables = ("x", "y", "z")
+               dim = 3
+
+               @staticmethod
+               def _equations(y, t, sigma, rho, beta):
+                   x, u, z = y(0), y(1), y(2)          # NOT `x, u, z = y`
+                   return [sigma * (u - x), x * (rho - z) - u, x * u - beta * z]
+
     3. Optionally mark integer or loop-structural parameters in
        ``_structural_params`` — these are baked into the lowered tape
        rather than exposed as runtime control parameters.
 
     Lowering
     --------
-    Each system is lowered once to an in-process IR tape with no warmup; the
+    Each system is lowered once to an in-process IR tape, then JIT-compiled on
+    first use (both memoised, so neither cost repeats); the
     engine reads non-structural parameters live from the system on every run,
     so a parameter change never triggers a re-lowering.
 
@@ -185,23 +338,32 @@ class ContinuousSystem(SystemBase, ABC):
             _structural_params = frozenset({"N"})
 
     _default_method : str
-        Default integrator name (default ``"RK45"``).
+        The numerical kernel this system integrates with when the caller names
+        none — the class-level counterpart of ``run(solver=...)``.  Default
+        ``"rk45"``; declare ``"bdf"`` on a reliably stiff system.  Spellings are
+        normalised, so ``"RK45"`` and ``"dopri5"`` resolve to the same kernel,
+        and ``system.info`` prints the resolved name.
 
     Examples
     --------
     >>> lor = Lorenz()
-    >>> traj = lor.integrate(final_time=100, dt=0.01)
-    >>> t, y = traj          # tuple-unpack
+    >>> traj = lor.run(final_time=100, dt=0.01)
+    >>> t, y = traj.unpack()   # the two columns
     >>> lor.sigma = 15.0     # change param — zero recompile cost
-    >>> traj2 = lor.integrate(final_time=100)
+    >>> traj2 = lor.run(final_time=100)
     """
 
-    _default_method: ClassVar[str] = "RK45"
+    #: The default numerical kernel, in the registry's own spelling.  It was
+    #: ``"RK45"``, which resolves to the same kernel but is a *fourth* spelling
+    #: of one concept next to ``solver=`` at the door, ``meta["solver"]`` in the
+    #: record and ``info`` printing ``solver=rk45``.
+    _default_method: ClassVar[str] = "rk45"
 
     #: The default runtime backend (see :attr:`SystemBase._default_backend`).
-    #: ``"interp"`` — the zero-warmup Rust engine interpreter (the sole engine
-    #: since the M3 migration retired the v2 backends).
-    _default_backend: ClassVar[str] = "interp"
+    #: ``"jit"`` — the Cranelift JIT, with the process-wide compiled-evaluator
+    #: cache paying the compile once per distinct system.  Was ``"interp"``
+    #: before v6, when every call recompiled the tape.
+    _default_backend: ClassVar[str] = "jit"
 
     #: Parameters whose values affect the symbolic *structure* of _equations
     #: (e.g. integer loop bounds). These are baked in at lowering time.
@@ -240,6 +402,9 @@ class ContinuousSystem(SystemBase, ABC):
     # loop reuses them rather than re-marshalling the tuple each call (WS-INVHOIST).
     _step_method_canonical: str | None = None
     _step_tape_arrays: Any = None
+    #: The per-step size ceiling ``reinit`` recorded (``None`` = no ceiling); every
+    #: subsequent ``step`` forwards it to the engine.
+    _step_max_step: float | None = None
 
     # The durable resumable engine stepper handle (stream WS-STEPPER): an opaque
     # ``tsdynamics._rust.OdeStepper`` that owns the built tape evaluator + solver
@@ -290,23 +455,47 @@ class ContinuousSystem(SystemBase, ABC):
 
     def _equations_hash(self) -> str:
         """
-        Content hash of the RHS definition, part of every compile-cache key.
+        Identity token for the RHS definition, part of every compile-cache key.
 
         Without it, two same-named classes (user shadowing a builtin, or a
         notebook cell redefining a class with edited equations) would silently
         reuse each other's compiled dynamics.
-        """
-        import hashlib
-        import inspect
 
+        The token is **memoised on the kernel function object**, and identifies
+        that object rather than only its source text.  Two properties follow:
+
+        * It is *cheap*.  Reading and hashing the source on every call defeated
+          the very cache this key serves — ``inspect.getsource`` dominated
+          :meth:`jacobian` (69 µs of a 92 µs Lorenz call, a 2.9x tax on every
+          flow variational analysis).  A warm call now costs one weak-dict
+          lookup.
+        * It is *at least as invalidating*.  A monkeypatched or redefined
+          ``_equations`` is a different object, so it misses the memo, re-reads
+          the source and gets a fresh token — and because the token carries a
+          per-object serial it is injective in the function object, where the
+          bare source hash was not (a factory closing over a value produces
+          distinct kernels with byte-identical source; those used to collide on
+          one :attr:`_lambdified` entry, so the second system silently evaluated
+          the first one's RHS and Jacobian).
+
+        This is the key discipline the lowered-tape cache already uses.
+        """
         fn = type(self)._equations
         fn = getattr(fn, "__func__", fn)
         try:
-            src = inspect.getsource(fn)
-        except (OSError, TypeError):  # dynamically defined without source
-            code = getattr(fn, "__code__", None)
-            src = repr(code.co_code) if code is not None else repr(fn)
-        return hashlib.md5(src.encode()).hexdigest()[:8]
+            memo = _EQUATIONS_HASH_MEMO.get(fn)
+        except TypeError:
+            # Neither hashable nor weak-referenceable (a builtin / C callable).
+            # It cannot be memoised, so it cannot carry a stable serial either —
+            # minting a fresh one per call would make *every* lookup a miss and
+            # rebuild the evaluator.  Fall back to the bare source hash, i.e.
+            # exactly the pre-memo behaviour for this (exotic) kernel shape.
+            return _kernel_token(fn)
+        if memo is not None:
+            return memo
+        token = f"{_kernel_token(fn)}{next(_EQUATIONS_HASH_SERIAL):x}"
+        _EQUATIONS_HASH_MEMO[fn] = token
+        return token
 
     def _control_params(self) -> dict[str, Any]:
         """Return the non-structural parameters (the engine's live control parameters)."""
@@ -336,8 +525,16 @@ class ContinuousSystem(SystemBase, ABC):
     # System protocol — incremental stepping
     # ------------------------------------------------------------------ #
 
+    #: The output sampling interval ``run`` uses when the caller gives no ``dt``.
+    #: It is *sampling only* — accuracy is ``rtol``/``atol`` — and it is printed
+    #: by ``system.info`` under ``defaults``.
+    _default_dt: ClassVar[float] = 0.02
+
+    #: The one-word family, read by :attr:`SystemBase.family`.
+    _family: ClassVar[str] = "ode"
+
     @property
-    def is_discrete(self) -> bool:
+    def _is_discrete(self) -> bool:
         """ODEs are continuous-time systems."""
         return False
 
@@ -347,13 +544,20 @@ class ContinuousSystem(SystemBase, ABC):
         *,
         t: float | None = None,
         params: dict[str, Any] | None = None,
-        method: str | None = None,
-        rtol: float = 1e-6,
-        atol: float = 1e-9,
+        solver: str | None = None,
+        rtol: float = DEFAULT_RTOL,
+        atol: float = DEFAULT_ATOL,
+        max_step: float | None = None,
         backend: str | None = None,
+        **unknown: Any,
     ) -> None:
         """
         (Re)start the incremental stepper from state ``u`` at time ``t``.
+
+        ``solver=`` is the numerical kernel, spelled the same way ``run`` spells
+        it (``method=`` selects an *estimator* in v6) — and it is refused here
+        with the same message ``run`` gives, because a keyword that teaches at
+        one door and raises a bare ``TypeError`` at the next has taught nothing.
 
         Parameters
         ----------
@@ -363,15 +567,56 @@ class ContinuousSystem(SystemBase, ABC):
             Start time (default 0.0).
         params : dict, optional
             Parameter overrides applied (in place) before restarting.
-        method, rtol, atol, backend
-            Stepper configuration, as in :meth:`integrate`.
+        solver, rtol, atol, max_step, backend
+            Stepper configuration, as in :meth:`run`.  ``max_step`` is
+            stored and applied to every subsequent :meth:`step`.
+
+        Notes
+        -----
+        A ``reinit`` that raises leaves the system exactly as it was — ``self.ic``
+        is rolled back rather than left holding the initial condition that failed.
         """
         if params:
             for k, v in params.items():
                 self.params[k] = v
+        # ``resolve_ic`` commits the resolved IC to ``self.ic`` before any of the
+        # work below happens, and plenty below can raise (an unknown backend, an
+        # unresolvable method, a tape that will not lower, an unavailable engine).
+        # Without the guard a failed ``reinit`` latched the offending IC onto the
+        # instance and every later, unrelated call silently started from it.
+        reject_unknown_run_keywords(
+            self,
+            unknown,
+            family="ode",
+            accepted=("t", "params", "solver", "rtol", "atol", "max_step", "backend"),
+            verb="reinit",
+        )
+        with self._ic_rollback():
+            self._reinit_resolved(
+                u,
+                t=t,
+                method=solver,
+                rtol=rtol,
+                atol=atol,
+                max_step=max_step,
+                backend=backend,
+            )
+
+    def _reinit_resolved(
+        self,
+        u: Any | None,
+        *,
+        t: float | None,
+        method: str | None,
+        rtol: float,
+        atol: float,
+        max_step: float | None,
+        backend: str | None,
+    ) -> None:
+        """Run :meth:`reinit`'s body (wrapped by its IC rollback guard)."""
         t0 = float(t) if t is not None else 0.0
-        ic_arr = self.resolve_ic(u)
-        from tsdynamics.engine.run import resolve_backend
+        ic_arr = self._resolve_ic(u)
+        from tsdynamics._engine.run import resolve_backend
 
         # Honour the requested backend through the stepping protocol: ``reference``
         # is the wheel-free pure-Python oracle and a real, supported stepping path
@@ -384,8 +629,8 @@ class ContinuousSystem(SystemBase, ABC):
             backend if backend is not None else self._default_backend
         )
 
-        from tsdynamics import solvers
-        from tsdynamics.engine.problem import ode_problem
+        from tsdynamics import _solvers as solvers
+        from tsdynamics._engine.problem import ode_problem
 
         # Lower the tape ONCE here and reuse it for every step() — a sweep reinits
         # thousands of times, so re-lowering per step would dominate the cost.
@@ -397,16 +642,27 @@ class ContinuousSystem(SystemBase, ABC):
         # ``integrate``/``ensemble`` honour (FIX-AUTOSTIFF): probe the Jacobian
         # spectrum at the start state and let the solver registry pick the implicit
         # ``bdf`` on a stiff RHS or the explicit ``rk45`` otherwise
-        # (:func:`tsdynamics.solvers.recommend`).  Without this branch the stepping
+        # (:func:`tsdynamics._solvers.recommend`).  Without this branch the stepping
         # path crashed with an opaque "unknown solver method 'auto'" — the one
         # entry point that rejected the advertised value (diagnosis P2-1), exactly
         # where auto-stiffness matters for a stiff system stepped incrementally
         # (Poincaré / basins / streaming).
+        #
+        # Resolve **within this family** (``family="ode"``), exactly as ``run``
+        # does.  Without the scope this door answered a different question from
+        # the one next to it: measured at HEAD, ``run(solver="milstein")``
+        # refused an SDE kernel on a deterministic flow while
+        # ``reinit(solver="milstein")`` *accepted* it and returned ``None`` —
+        # the failure surfaced one call later, out of ``step()``, as a raw
+        # ``ValueError`` carrying the engine's own unfiltered kernel dump.  A
+        # bad value must be refused where it is typed, by the family that was
+        # asked, and an unknown name's listing must never offer a kernel this
+        # family cannot drive.
         self._step_method = method or self._default_method
         if solvers.normalize(self._step_method) == "auto":
             resolution = solvers.recommend(self, family="ode", ic=ic_arr, t=t0)
         else:
-            resolution = solvers.resolve(self._step_method)
+            resolution = solvers.resolve(self._step_method, family="ode")
         # Cache the canonical kernel name (``"RK45"`` → ``"rk45"``) so the per-step
         # loop hits the engine core directly without re-resolving every call.
         self._step_method_canonical = resolution.name
@@ -422,6 +678,7 @@ class ContinuousSystem(SystemBase, ABC):
         self._step_tape_arrays = step_arrays
         self._step_rtol = float(rtol)
         self._step_atol = float(atol)
+        self._step_max_step = max_step
         self._state_now = ic_arr.copy()
         self._t_now = t0
         # Drop any prior durable stepper handle: the next ``step`` rebuilds it from
@@ -433,7 +690,12 @@ class ContinuousSystem(SystemBase, ABC):
 
     def step(self, n_or_dt: float | None = None) -> np.ndarray:
         """
-        Advance the system by ``dt`` (default 0.01) and return the new state.
+        Advance the system by ``n_or_dt`` and return the new state.
+
+        ``n_or_dt`` is a **time increment**, in the same unit as ``final_time``;
+        omitting it advances by ``_default_step_dt`` (``0.01``, the number every
+        continuous family uses).  A map counts **iterations** instead — that is
+        the only thing the word means differently anywhere.
 
         The first call performs an implicit :meth:`reinit`.  Parameter changes
         made after ``reinit`` take effect on the next ``reinit``, not on a
@@ -448,14 +710,14 @@ class ContinuousSystem(SystemBase, ABC):
         WS-STEPPER).  The amortisation is durable: the first ``step`` after a
         :meth:`reinit` builds an opaque resumable engine handle
         (:class:`tsdynamics._rust.OdeStepper`, via
-        :func:`~tsdynamics.engine.run.make_ode_stepper`) that owns the built tape
+        :func:`~tsdynamics._engine.run.make_ode_stepper`) that owns the built tape
         evaluator + solver once and carries the live ``(u, t)`` across calls; every
-        later ``step`` is one :func:`~tsdynamics.engine.run.step_advance` on that
+        later ``step`` is one :func:`~tsdynamics._engine.run.step_advance` on that
         handle — the tape is **never re-marshalled into the engine again**.  So a
         constant-``dt`` stepping loop (Poincaré refinement, basins over flows) skips
         not only the solver-registry resolve, the implicit-Jacobian decision, the
         output-grid build, provenance assembly and the :class:`Trajectory` wrap that
-        the full :meth:`integrate` entry point pays, but also the per-step tape
+        the full :meth:`run` entry point pays, but also the per-step tape
         re-marshalling and tape *rebuild* the pre-handle stepping core paid.  The
         control-parameter vector is still read live each step, so the live-stepper
         semantics are unchanged.
@@ -468,10 +730,10 @@ class ContinuousSystem(SystemBase, ABC):
         in one engine call was rejected (WS-STEPBUF): a chunked adaptive integration
         is *not* equal to N single-``dt`` integrations (the controller would carry
         its step/error state across output nodes), which silently corrupted
-        sensitive consumers such as ``max_lyapunov``.  The durable handle amortises
+        sensitive consumers such as ``lyapunov_spectrum``.  The durable handle amortises
         the *build/marshalling*, never the numerics.
         """
-        from tsdynamics.engine.run import make_ode_stepper, step_advance
+        from tsdynamics._engine.run import make_ode_stepper, step_advance
 
         if self._engine_problem is None:
             self.reinit()
@@ -501,14 +763,14 @@ class ContinuousSystem(SystemBase, ABC):
         # only the sub-``1e-9`` remainder defers to the helper for that identical
         # loud-footgun error (and the byte-identical degenerate-grid behaviour).
         if not tf - t0 > 1e-9:
-            from tsdynamics.utils.grids import make_output_grid
+            from tsdynamics._utils.grids import make_output_grid
 
             # Raises InvalidParameterError for dt <= 0 / a non-forward window; for a
             # valid-but-tiny span it returns the (possibly single-node) grid, which
             # the per-``dt`` engine core integrated identically — reproduce that here
             # via the same lean core to stay byte-identical for the rare small step.
             t_eval = make_output_grid(t0, tf, dt)
-            from tsdynamics.engine.run import _step_continuous
+            from tsdynamics._engine.run import _step_continuous
 
             y = _step_continuous(
                 self._step_tape_arrays,
@@ -518,6 +780,7 @@ class ContinuousSystem(SystemBase, ABC):
                 method=self._step_method_canonical,
                 rtol=self._step_rtol,
                 atol=self._step_atol,
+                max_step=math.inf if self._step_max_step is None else float(self._step_max_step),
                 jit=self._step_backend == "jit",
                 name=type(self).__name__,
             )
@@ -550,6 +813,7 @@ class ContinuousSystem(SystemBase, ABC):
             dt,
             self._engine_problem.params_vec(),
             name=type(self).__name__,
+            max_step=self._step_max_step,
         )
         # The state/time advance writes private framework attributes that always pass
         # straight through ``SystemBase.__setattr__`` (underscore-prefixed) — go direct
@@ -566,7 +830,7 @@ class ContinuousSystem(SystemBase, ABC):
 
         The ``backend="reference"`` stepping path: it integrates the cached
         (loop-invariant) tape from the live ``(state, t)`` over a one-segment grid
-        with the same :func:`tsdynamics.engine.run._run_continuous` the
+        with the same :func:`tsdynamics._engine.run._run_continuous` the
         ``integrate(backend="reference")`` entry point uses, so the wheel-free
         oracle is reachable through ``reinit``/``step``/``state`` exactly as it is
         through ``integrate`` (diagnosis #5).  Answer-identical to
@@ -575,12 +839,12 @@ class ContinuousSystem(SystemBase, ABC):
         A non-positive ``dt`` / non-forward window raises
         :class:`~tsdynamics.errors.InvalidParameterError` (a ``ValueError``), the
         same loud-footgun contract as the engine stepping path
-        (:func:`~tsdynamics.utils.grids.make_output_grid` enforces it).
+        (:func:`~tsdynamics._utils.grids.make_output_grid` enforces it).
         """
         import dataclasses
 
-        from tsdynamics.engine.run import _run_continuous
-        from tsdynamics.utils.grids import make_output_grid
+        from tsdynamics._engine.run import _run_continuous
+        from tsdynamics._utils.grids import make_output_grid
 
         assert self._state_now is not None
         assert self._step_method_canonical is not None
@@ -602,6 +866,7 @@ class ContinuousSystem(SystemBase, ABC):
             rtol=self._step_rtol,
             atol=self._step_atol,
             backend="reference",
+            max_step=math.inf if self._step_max_step is None else float(self._step_max_step),
         )
         state = np.asarray(y[-1], dtype=float)
         object.__setattr__(self, "_t_now", tf)
@@ -632,18 +897,6 @@ class ContinuousSystem(SystemBase, ABC):
         """Return the current stepper time."""
         return self._t_now
 
-    def trajectory(
-        self,
-        final_time: float = 100.0,
-        *,
-        dt: float = 0.02,
-        transient: float = 0.0,
-        **kwargs: Any,
-    ) -> Trajectory:
-        """Protocol-uniform trajectory: ``integrate`` plus optional transient drop."""
-        traj = self.integrate(final_time=transient + final_time, dt=dt, **kwargs)
-        return traj.after(transient) if transient > 0 else traj
-
     # ------------------------------------------------------------------ #
     # Symbolic Jacobian autogeneration + numeric RHS
     # ------------------------------------------------------------------ #
@@ -658,13 +911,33 @@ class ContinuousSystem(SystemBase, ABC):
         this autogenerated form is the single source of truth (the test suite
         cross-checks hand-written ones against it).
 
+        **This is the only route to the Jacobian as algebra**, which is why it
+        keeps a slot on a 19-name tab surface (``CONTRACT.md`` §11, T2).
+        :meth:`jacobian` evaluates ∂f/∂y to *numbers* at one state; this hands
+        back the expressions, with the control parameters still symbols — so you
+        can read the coupling structure off the matrix, take a further
+        derivative, substitute a parameter to see where a term vanishes, or
+        export the equations to another tool.  Nothing else in the library
+        exposes them: the engine consumes the lowered tape, and every analysis
+        consumes numbers.
+
         Returns
         -------
         list of ``dim`` rows, each a list of ``dim`` SymEngine expressions.
+
+        See Also
+        --------
+        jacobian : the same matrix evaluated numerically at ``(u, t)``.
+
+        Examples
+        --------
+        >>> J = Lorenz().jacobian_sym()          # doctest: +SKIP
+        >>> J[0]                                 # the row d(dx/dt)/dy
+        [-sigma, sigma, 0]
         """
         import symengine
 
-        from tsdynamics.engine.symbols import state_time_symbols
+        from tsdynamics._engine.symbols import state_time_symbols
 
         y, t_sym = state_time_symbols()
 
@@ -708,7 +981,7 @@ class ContinuousSystem(SystemBase, ABC):
 
         import symengine
 
-        from tsdynamics.engine.symbols import state_time_symbols
+        from tsdynamics._engine.symbols import state_time_symbols
 
         y, t_sym = state_time_symbols()
 
@@ -757,6 +1030,58 @@ class ContinuousSystem(SystemBase, ABC):
         arg = np.concatenate([np.asarray(u, dtype=float).ravel(), [t], vals])
         return np.asarray(jac_fn(arg), dtype=float).reshape(dim, dim)
 
+    def rhs(self, u: Any, t: float = 0.0) -> np.ndarray:
+        r"""Evaluate the right-hand side :math:`f(u, t)` — the vector field itself.
+
+        The function :meth:`jacobian` is the derivative *of*.  It had no public
+        door until v6: ``system.jacobian(u, t)`` was public while the field it
+        differentiates was reachable only as ``system._rhs_numeric()``, which is
+        a strange split — and a costly one, because three of the plotting
+        layer's transforms (``vector_field``, ``flow_speed``, ``streamlines``)
+        **are** this function, so a user had no sanctioned way to check the
+        picture against the maths.  Two independent readers and a blind tester
+        reached for the private name; that is the definition of a missing door.
+
+        Parameters
+        ----------
+        u : array-like, shape (dim,)
+            State at which to evaluate the field.
+        t : float, optional
+            Time (it matters only for a non-autonomous system).  Default ``0``.
+
+        Returns
+        -------
+        ndarray, shape (dim,)
+            :math:`du/dt` at ``(u, t)``, with the system's **current** parameter
+            values.
+
+        See Also
+        --------
+        jacobian : The matrix of this function's partial derivatives.
+
+        Examples
+        --------
+        >>> import numpy as np, tsdynamics as ts
+        >>> lor = ts.systems.Lorenz()
+        >>> np.round(lor.rhs([1.0, 1.0, 1.0]), 6)
+        array([  0.      ,  26.      , -1.666667])
+
+        The Jacobian is this field's derivative, and a finite difference of one
+        proves the other::
+
+        >>> u = np.array([1.0, 2.0, 3.0])
+        >>> h, col = 1e-6, 1
+        >>> step = np.zeros(3); step[col] = h
+        >>> numeric = (lor.rhs(u + step) - lor.rhs(u - step)) / (2 * h)
+        >>> bool(np.allclose(numeric, lor.jacobian(u)[:, col], atol=1e-6))
+        True
+        """
+        dim = cast(int, self.dim)
+        rhs_fn, _, control_names = self._build_lambdified()
+        vals = [float(self.params[k]) for k in control_names]
+        arg = np.concatenate([np.asarray(u, dtype=float).ravel(), [t], vals])
+        return np.asarray(rhs_fn(arg), dtype=float).reshape(dim)
+
     def _rhs_numeric(self) -> Callable[..., np.ndarray]:
         """
         Return a fast numeric RHS callable ``f(u, t) -> ndarray``.
@@ -765,80 +1090,20 @@ class ContinuousSystem(SystemBase, ABC):
         fresh callable after changing parameters.  Used by figure tooling,
         Poincaré crossing refinement, and backend cross-validation — the
         engine remains the integrator of record.
+
+        The returned object is a module-level :class:`_NumericRHS` instance, not
+        a closure, so it **pickles**: a wrapper holding one (notably
+        :class:`~tsdynamics.derived.poincare.PoincareMap`, which caches it for
+        Hermite refinement) can cross a ``multiprocessing`` / ``joblib`` boundary,
+        which is exactly what a parallel bifurcation sweep needs.
         """
         rhs_fn, _, control_names = self._build_lambdified()
         vals = np.array([float(self.params[k]) for k in control_names])
-
-        def rhs(u: Any, t: float = 0.0) -> np.ndarray:
-            arg = np.concatenate([np.asarray(u, dtype=float).ravel(), [t], vals])
-            return np.asarray(rhs_fn(arg), dtype=float).ravel()
-
-        return rhs
+        return _NumericRHS(rhs_fn, vals)
 
     # ------------------------------------------------------------------ #
     # Trajectory production — the canonical ``run`` verb
     # ------------------------------------------------------------------ #
-
-    def run(
-        self,
-        final_time: float = 100.0,
-        dt: float = 0.02,
-        *,
-        events: Any = None,
-        **kwargs: Any,
-    ) -> Trajectory:
-        """
-        Produce a trajectory — the one canonical verb for every family.
-
-        ``run`` is the unified trajectory producer: it answers the same call for
-        flows, maps, DDEs and SDEs, dispatching on :attr:`is_discrete`.  For a
-        continuous-time system (this family) it integrates the flow, so
-        ``run`` is a thin alias of :meth:`integrate` and forwards every keyword
-        to it unchanged.
-
-        Parameters
-        ----------
-        final_time : float
-            End of the integration window. Default 100.0.
-        dt : float
-            Output sampling interval. The internal stepper is adaptive.
-        events : sequence, optional
-            Detect events along the flow (a SciPy-shaped ``events=`` API).  Each
-            element is an :class:`~tsdynamics.engine.run.Event`, a bare
-            ``g(y, t)`` callable carrying ``.direction`` / ``.terminal``
-            attributes (the SciPy convention), or a plane tuple
-            (``("y", 0.0, "up")``).  A **terminal** event stops the integration at
-            its first crossing (arbitrary stopping).  The returned trajectory
-            carries each event's crossings in ``meta["t_events"]`` /
-            ``meta["y_events"]`` (one array per event, aligned with ``events``),
-            plus ``meta["terminated"]``.  This wires the same compiled event
-            engine :class:`~tsdynamics.derived.poincare.PoincareMap` uses;
-            ``PoincareMap.as_events()`` shows the section as one such event.
-        **kwargs
-            Forwarded verbatim to :meth:`integrate` (``t0``, ``ic``, ``method``,
-            ``rtol``, ``atol``, ``backend``, …).
-
-        Returns
-        -------
-        Trajectory
-            Identical to :meth:`integrate` when ``events`` is ``None`` — ``run``
-            adds no behaviour.  With ``events`` set, the dense trajectory
-            (truncated at the first terminal crossing) plus the per-event
-            crossings in ``meta``.
-
-        See Also
-        --------
-        integrate : The family-specific spelling (a permanent alias of ``run``).
-
-        Examples
-        --------
-        >>> traj = Lorenz().run(final_time=100, dt=0.01)
-        >>> Henon().run(n=5000)            # the same verb iterates a map
-        >>> sol = Lorenz().run(final_time=50, events=[("z", 27.0, "up")])
-        >>> sol.meta["t_events"][0].shape    # times z=27 was crossed upward
-        (... ,)
-        """
-        return self.integrate(final_time=final_time, dt=dt, events=events, **kwargs)
 
     def _run_events(
         self,
@@ -849,23 +1114,61 @@ class ContinuousSystem(SystemBase, ABC):
         t0: float = 0.0,
         ic: Any | None = None,
         method: str | None = None,
-        rtol: float = 1e-6,
-        atol: float = 1e-9,
+        rtol: float = DEFAULT_RTOL,
+        atol: float = DEFAULT_ATOL,
+        max_step: float | None = None,
         backend: str | None = None,
+        seed: int | None = None,
     ) -> Trajectory:
         """Integrate with event detection and wrap the result as a Trajectory.
 
         Builds the ODE problem, hands it to the engine event seam
-        (:func:`tsdynamics.engine.run.integrate_events`), and attaches the
+        (:func:`tsdynamics._engine.run.integrate_events`), and attaches the
         per-event crossings to ``meta`` (the SciPy-shaped ``t_events`` /
         ``y_events``).
         """
-        from tsdynamics.engine import run as engine_run
-        from tsdynamics.engine.problem import ode_problem
+        # ``resolve_ic`` commits the IC before the engine march runs, so an event
+        # run that diverges (or is interrupted) must not leave it latched — the
+        # same contract ``_dispatch`` gives plain ``integrate``.
+        with self._ic_rollback():
+            return self._run_events_resolved(
+                final_time=final_time,
+                dt=dt,
+                events=events,
+                t0=t0,
+                ic=ic,
+                method=method,
+                rtol=rtol,
+                atol=atol,
+                max_step=max_step,
+                backend=backend,
+                seed=seed,
+            )
+
+    def _run_events_resolved(
+        self,
+        *,
+        final_time: float,
+        dt: float,
+        events: Any,
+        t0: float,
+        ic: Any | None,
+        method: str | None,
+        rtol: float,
+        atol: float,
+        max_step: float | None,
+        backend: str | None,
+        seed: int | None,
+    ) -> Trajectory:
+        """Run :meth:`_run_events`' body (wrapped by its IC rollback guard)."""
+        from tsdynamics._engine import run as engine_run
+        from tsdynamics._engine.problem import ode_problem
 
         be = backend if backend is not None else self._default_backend
         meth = method or self._default_method
-        ic_arr = self.resolve_ic(ic)
+        # ``seed=`` is the initial-condition seed (inert unless a draw happens) —
+        # the same contract ``integrate``/``_dispatch`` honour.
+        ic_arr = self._resolve_ic(ic, seed=seed)
         prob = ode_problem(self, ic=ic_arr, t0=float(t0))
         # Resolve ``method=`` through the shared ``auto``-aware contract so the
         # events path honours ``method="auto"`` identically to integrate/ensemble
@@ -873,7 +1176,7 @@ class ContinuousSystem(SystemBase, ABC):
         # than the raw ``"auto"`` alias.  ``integrate_events`` re-resolves the
         # canonical name to itself (idempotent), so this is the single resolution
         # point that drives both the engine call and the provenance.
-        from tsdynamics.engine.run_methods import _resolve_method_for
+        from tsdynamics._engine.run_methods import _resolve_method_for
 
         meth = _resolve_method_for(meth, prob).name
         sol = engine_run.integrate_events(
@@ -885,6 +1188,7 @@ class ContinuousSystem(SystemBase, ABC):
             method=meth,
             rtol=rtol,
             atol=atol,
+            max_step=max_step,
             backend=be,
         )
         meta = self._provenance(
@@ -896,6 +1200,7 @@ class ContinuousSystem(SystemBase, ABC):
             t0=float(t0),
             rtol=rtol,
             atol=atol,
+            max_step=math.inf if max_step is None else float(max_step),
             ic=np.asarray(ic_arr, dtype=float).copy(),
             n_events=len(sol.events),
             terminated=sol.terminated,
@@ -912,83 +1217,170 @@ class ContinuousSystem(SystemBase, ABC):
     # Integration
     # ------------------------------------------------------------------ #
 
-    def integrate(
+    def run(
         self,
         final_time: float = 100.0,
-        dt: float = 0.02,
+        dt: float | None = None,
         *,
         t0: float = 0.0,
         ic: Any | None = None,
-        method: str | None = None,
-        rtol: float = 1e-6,
-        atol: float = 1e-9,
+        transient: float = 0.0,
+        solver: str | None = None,
+        rtol: float = DEFAULT_RTOL,
+        atol: float = DEFAULT_ATOL,
+        max_step: float | None = None,
         backend: str | None = None,
+        seed: int | None = None,
         events: Any = None,
-        **integrator_kwargs: Any,
+        **solver_options: Any,
     ) -> Trajectory:
         """
-        Integrate the ODE and return a :class:`~tsdynamics.families.Trajectory`.
+        Integrate the flow and return a :class:`~tsdynamics.families.Trajectory`.
+
+        ``run`` is **the** trajectory verb — one word on flows, maps, delay and
+        stochastic systems.  ``integrate`` and ``trajectory`` were two more names
+        for this method and are gone in v6.
 
         Parameters
         ----------
         final_time : float
-            End of integration window. Default 100.0.
-        dt : float
-            Output sampling interval. The internal stepper is adaptive.
+            End of the integration window, **in time units** — the horizon word
+            for a flow.  (A map counts iterations instead and takes ``steps``.)
+            Default 100.0.
+        dt : float, optional
+            Output sampling interval, **in time units** — the spacing of the
+            returned grid.  ``None`` (the default) means this family's
+            ``_default_dt``, which ``system.info`` prints under ``defaults``.  **It
+            does not set the integration accuracy:** the internal stepper is
+            adaptive and controlled by ``rtol``/``atol``; interior samples are
+            produced by the kernel's own continuous extension.  Use ``rtol`` /
+            ``atol`` to control accuracy and ``max_step`` to bound the internal
+            step.
+
+            .. versionchanged:: 6.0
+                Before v6 the stepper was forced to land on every output sample,
+                so a fine ``dt`` silently bought extra accuracy and a coarse one
+                silently lost it.  It no longer does.  Kernels without a native
+                continuous extension (everything but ``rk45`` / ``tsit5`` /
+                ``dop853``) still land on every sample.
         t0 : float
-            Start time. Default 0.0. Allows warm restarts from a non-zero
-            time (the IC is interpreted as the state at ``t0``).
+            Where the integration **starts**, in time units. Default 0.0.
+            Allows warm restarts from a non-zero time (the IC is interpreted as
+            the state at ``t0``).  Not to be confused with ``traj.after(t0)``,
+            which cuts an already-recorded axis.
         ic : array-like, optional
-            Initial state at ``t0``. Falls back to ``self.ic``, then
-            ``U[0, 1)^dim``.
-        method : str, optional
+            Initial state at ``t0`` — ``dim`` numbers, one per state component.
+            Falls back to ``self.ic``, then a ``U[0, 1)^dim`` draw.  **Passing
+            it here does not change ``self.ic``**: one call, one run.
+        solver : str, optional
             Solver name, resolved by the solver registry (default ``"RK45"``):
             explicit (``RK45`` / ``DOP853`` / ``tsit5`` / ``dop853``) or implicit
             / stiff (``bdf`` / ``rosenbrock`` / ``trbdf2``).  Pass ``"auto"`` to
             select a kernel by a-priori auto-stiffness — the Jacobian spectrum at
             the start state is probed and ``bdf`` chosen on a stiff RHS, ``rk45``
-            otherwise (:func:`tsdynamics.solvers.recommend`; a one-point heuristic,
+            otherwise (:func:`tsdynamics._solvers.recommend`; a one-point heuristic,
             so a reliably-stiff system should still declare ``_default_method``).
         rtol, atol : float
-            Solver tolerances (default 1e-6 / 1e-9).
-        backend : {"interp", "jit", "reference"}, optional
-            Where the ODE is integrated.  Defaults to ``_default_backend``
-            (``"interp"``).
+            Solver tolerances — the accuracy knob.  Default
+            :data:`~tsdynamics._utils.tolerances.DEFAULT_RTOL` /
+            :data:`~tsdynamics._utils.tolerances.DEFAULT_ATOL` (``1e-9`` /
+            ``1e-12``).
 
-            - ``"interp"`` / ``"jit"`` — the **Rust engine** (the zero-warmup
-              SSA-tape interpreter or the Cranelift JIT) via the shared engine
-              seam (:func:`tsdynamics.engine.run.integrate`).
-            - ``"reference"`` — the dependency-light pure-Python oracle (the
-              lowered tape integrated with SciPy); the engine's validation
-              backend, usable without the compiled wheel.
+            .. versionchanged:: 6.0
+                Tightened from ``1e-6`` / ``1e-9``.  ``dt`` is now purely an
+                output grid, so ``rtol`` is the *only* accuracy knob and the
+                default had to carry the accuracy the old forced landing supplied
+                for free.  Measured median 1459x more accurate for 1.74x the
+                cost; pass ``rtol=1e-6`` for the pre-v6 trade.
+        max_step : float, optional
+            Upper bound on any single internal solver step, in time units.
+            ``None`` (default) means no ceiling — the adaptive controller chooses
+            freely from ``rtol``/``atol``.  Use it to stop an adaptive kernel
+            stepping over a narrow feature (a thin resonance, a fast transient)
+            in an otherwise smooth region, or to bound the detection resolution
+            of an event march.  Note this is a step *size*; the engine's
+            ``max_steps`` is a step *count* and is not exposed here.  A
+            ``max_step`` far below the tolerance-driven natural step multiplies
+            cost with no accuracy benefit and can trip
+            :class:`~tsdynamics.errors.StepBudgetError`.
+        backend : {"jit", "interp", "reference"}, optional
+            Where the ODE is integrated.  Defaults to ``_default_backend``
+            (``"jit"``).  The first two go through the shared engine seam
+            (:func:`tsdynamics._engine.run.integrate`).
+
+            - ``"jit"`` (default) — the **Cranelift JIT**: the lowered tape
+              compiled to native code, with a process-wide compiled-evaluator
+              cache, so the compile is paid once per distinct system rather than
+              on every call.
+            - ``"interp"`` — the **SSA-tape interpreter**.  Same answers as the
+              JIT, bit-for-bit; marginally faster on very small tapes, and the
+              way to avoid the one-off compile.
+            - ``"reference"`` — the dependency-light pure-Python/SciPy oracle.
+              Not for production use: it is the independent cross-check the
+              engine is validated against, and the wheel-free fallback.
+
+            .. versionchanged:: 6.0
+                The default moved from ``"interp"`` to ``"jit"``.  Before v6 the
+                JIT recompiled the whole tape on every FFI call, which made it
+                slower than the interpreter for short runs; the v6
+                compiled-evaluator cache removed that per-call compile.
+        seed : int, optional
+            Seed for the **random initial-condition draw** — the same meaning it
+            has on :meth:`DiscreteMap.run`, on :meth:`DelaySystem.run` and on the
+            constructor, so ``seed=`` reads identically on every family.  (An SDE
+            has a second source of randomness, so there ``seed=`` seeds the noise
+            path as well as the draw.)  It only bites when a draw happens: an
+            explicit ``ic``, an ``ic`` already resolved onto the system, and a
+            class-level ``default_ic`` all take priority.  The resolved seed is
+            recorded on ``traj.meta["ic_seed"]``.
+
+            .. versionadded:: 6.0
         events : sequence, optional
             Detect events along the flow (the SciPy-shaped ``events=`` API; see
             :meth:`run`).  Each element is an
-            :class:`~tsdynamics.engine.run.Event`, a bare ``g(y, t)`` callable
+            :class:`~tsdynamics._engine.run.Event`, a bare ``g(y, t)`` callable
             carrying ``.direction`` / ``.terminal`` attributes, or a plane tuple
             (``("y", 0.0, "up")``).  A **terminal** event stops the integration at
             its first crossing; the returned trajectory carries each event's
             crossings in ``meta["t_events"]`` / ``meta["y_events"]`` (aligned with
             ``events``) plus ``meta["terminated"]``.
+        transient : float, optional
+            Leading stretch of the run to discard, in **time units** (the same
+            unit as ``final_time``).  The window is extended to
+            ``transient + final_time`` and everything before ``t0 + transient``
+            is dropped, so the returned trajectory still spans ``final_time``.
+            One word on every family, in that family's **own horizon unit**:
+            time here, **iterations** on a map (see :meth:`DiscreteMap.run`).
+
+            .. versionadded:: 6.0
+                Only the retired ``trajectory`` verb used to accept it, so a
+                user who found ``run`` could not discard a transient at all.
 
         Returns
         -------
         Trajectory
-            Supports tuple-unpacking: ``t, y = sys.integrate(...)``.
+            A container of samples: ``len(traj)`` time points, iterating
+            yields ``(t_i, y_i)`` pairs; ``traj.unpack()`` gives the two
+            column arrays ``(t, y)``.
         """
-        if integrator_kwargs:
-            # Anything left in **integrator_kwargs is an unrecognised keyword (every
-            # valid argument is bound to an explicit parameter above). Reject it
-            # instead of silently dropping a typo'd keyword (the WS-ERRADOPT footgun).
-            from tsdynamics.errors import invalid_value
-
-            bad = sorted(integrator_kwargs)[0]
-            raise invalid_value(
-                bad,
-                integrator_kwargs[bad],
-                rule="is not a valid integrate()/run() keyword",
-                hint="check the keyword spelling (e.g. final_time, dt, t0, ic, method, rtol, atol).",
+        reject_unknown_run_keywords(self, solver_options, family="ode", accepted=_ODE_RUN_KEYWORDS)
+        dt = self._default_dt if dt is None else dt
+        transient = resolve_transient(transient, discrete=False)
+        if transient > 0.0:
+            traj = self.run(
+                final_time=final_time + transient,
+                dt=dt,
+                t0=t0,
+                ic=ic,
+                solver=solver,
+                rtol=rtol,
+                atol=atol,
+                max_step=max_step,
+                backend=backend,
+                seed=seed,
+                events=events,
             )
+            return traj.after(t0 + transient)
         if events is not None:
             return self._run_events(
                 final_time=final_time,
@@ -996,41 +1388,45 @@ class ContinuousSystem(SystemBase, ABC):
                 events=events,
                 t0=t0,
                 ic=ic,
-                method=method,
+                method=solver,
                 rtol=rtol,
                 atol=atol,
+                max_step=max_step,
                 backend=backend,
+                seed=seed,
             )
         backend = backend if backend is not None else self._default_backend
         return self._dispatch(
             backend=backend,
+            seed=seed,
             final_time=final_time,
             dt=dt,
             t0=t0,
             ic=ic,
-            method=method or self._default_method,
+            method=solver or self._default_method,
             rtol=rtol,
             atol=atol,
+            max_step=max_step,
         )
 
     # ------------------------------------------------------------------ #
     # Lyapunov spectrum
     # ------------------------------------------------------------------ #
 
-    def lyapunov_spectrum(
+    def _lyapunov_spectrum(
         self,
         final_time: float = 200.0,
         dt: float = 0.1,
         *,
         ic: Any | None = None,
-        n_exp: int | None = None,
-        burn_in: float = 50.0,
+        k: int | None = None,
+        transient: float = 50.0,
         method: str | None = None,
-        rtol: float = 1e-6,
-        atol: float = 1e-9,
-        backend: str = "interp",
+        rtol: float = DEFAULT_RTOL,
+        atol: float = DEFAULT_ATOL,
+        backend: str = "jit",
         **integrator_kwargs: Any,
-    ) -> np.ndarray:
+    ) -> Any:
         """
         Estimate the Lyapunov spectrum of the flow.
 
@@ -1041,7 +1437,7 @@ class ContinuousSystem(SystemBase, ABC):
         Benettin time-averaging of the log-stretch rates follows the classical
         construction of Benettin et al. [1]_.
 
-        Results are stored in ``self.meta['lyapunov_spectrum']``.
+
 
         Parameters
         ----------
@@ -1051,30 +1447,41 @@ class ContinuousSystem(SystemBase, ABC):
             Sampling interval for local exponent accumulation. Default 0.1.
         ic : array-like, optional
             Initial state. Falls back to ``self.ic``, then random.
-        n_exp : int, optional
-            Number of exponents. Defaults to ``dim``.
-        burn_in : float
-            Discard this much time before averaging. Default 50.0.
-        method : str, optional
+        k : int, optional
+            Number of exponents to compute.  Defaults to ``dim``.
+            (Renamed from ``n_exp`` in v4; the old spelling was silently swallowed
+            by ``**integrator_kwargs`` on this method until v6.)
+        transient : float
+            Discard this much time before averaging, in **time units**. Default
+            50.0.  Spelled ``transient`` on every entry point in the library —
+            it was ``burn_in`` here until v6, the one place the concept had a
+            second name.
+        solver : str, optional
             Integrator (default ``"RK45"``).
         rtol, atol : float
             Tolerances.
-        backend : {"interp", "jit", "reference"}, optional
+        backend : {"jit", "interp", "reference"}, optional
             Backend on which the extended variational ODE is integrated.
-            Defaults to ``"interp"`` (the zero-warmup Rust engine interpreter).
-            ``"reference"`` is the dependency-light pure-Python oracle (usable
-            without the compiled wheel); ``"jit"`` is the Cranelift JIT.  Any
-            other name is rejected by :class:`~tsdynamics.derived.tangent.TangentSystem`.
+            Defaults to ``"jit"`` (the Cranelift JIT, served from the
+            compiled-evaluator cache).  ``"interp"`` is the SSA-tape interpreter
+            (bit-for-bit identical); ``"reference"`` is the dependency-light
+            pure-Python oracle, usable without the compiled wheel but not
+            intended for production.  Any other name is rejected by
+            :class:`~tsdynamics.derived.tangent.TangentSystem`.
+
+            .. versionchanged:: 6.0
+                Default moved from ``"interp"`` to ``"jit"`` (see
+                :meth:`run`).
 
         Returns
         -------
-        ndarray, shape (n_exp,)
+        ndarray, shape (k,)
             Lyapunov exponents ordered from largest to smallest.
 
         Raises
         ------
         InvalidParameterError
-            If ``n_exp`` is given and not a positive integer.
+            If ``k`` is given and not a positive integer.
 
         References
         ----------
@@ -1083,18 +1490,37 @@ class ContinuousSystem(SystemBase, ABC):
            for Hamiltonian systems; a method for computing all of them,"
            *Meccanica* 15, 9-30 (1980).
         """
-        if n_exp is not None and n_exp <= 0:
-            raise InvalidParameterError(f"n_exp must be a positive integer, got {n_exp!r}")
+        if k is not None and k <= 0:
+            raise InvalidParameterError(
+                f"k (number of exponents) must be a positive integer, got {k!r}"
+            )
         from tsdynamics.derived.tangent import TangentSystem
 
-        k = n_exp if n_exp is not None else self.dim
-        return TangentSystem(self, k=k, backend=backend).lyapunov_spectrum(
+        _reject_unknown_lyapunov_keywords(integrator_kwargs)
+        k = k if k is not None else self.dim
+        tangent = TangentSystem(self, k=k, backend=backend)
+        exponents = tangent._lyapunov_spectrum(
             final_time=final_time,
             dt=dt,
             ic=ic,
-            burn_in=burn_in,
+            transient=transient,
             method=method,
             rtol=rtol,
             atol=atol,
             **integrator_kwargs,
         )
+        return as_lyapunov_result(
+            self,
+            exponents,
+            final_time=final_time,
+            dt=dt,
+            transient=transient,
+            method=method,
+            backend=backend,
+            orbit_peak=orbit_peak(tangent),
+        )
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

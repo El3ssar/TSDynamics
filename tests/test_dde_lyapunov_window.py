@@ -42,20 +42,21 @@ pytest.importorskip("tsdynamics._rust")
 @functools.lru_cache(maxsize=1)
 def _mackeyglass_on_attractor_ic() -> tuple[float, ...]:
     """A deterministic on-attractor Mackey–Glass state (end of a seeded run)."""
-    traj = ts.MackeyGlass().integrate(
+    traj = ts.systems.MackeyGlass().run(
         final_time=500.0, dt=0.2, history=DDE_HISTORIES["MackeyGlass"]
     )
     return tuple(np.asarray(traj.y[-1], dtype=np.float64).ravel().tolist())
 
 
-def _lyap(burn_in: float, final_time: float) -> float:
+def _lyap(transient: float, final_time: float) -> float:
     """Leading Mackey–Glass DDE exponent from the seeded on-attractor state."""
     ic = np.asarray(_mackeyglass_on_attractor_ic(), dtype=np.float64)
-    spec = ts.MackeyGlass().lyapunov_spectrum(
+    spec = ts.analysis.lyapunov_spectrum(
+        ts.systems.MackeyGlass(),
         backend="interp",
-        n_exp=1,
+        k=1,
         dt=0.5,
-        burn_in=burn_in,
+        transient=transient,
         final_time=final_time,
         ic=ic,
         rtol=1e-4,
@@ -72,16 +73,16 @@ def test_estimate_is_invariant_to_burn_in_for_a_fixed_window() -> None:
     the extra ``burn_in`` only discards more transient.
 
     Failing-first (pre-fix, ``final_time`` = total length):
-        burn_in=50  -> +0.001889   (21 chunks averaged)
-        burn_in=400 -> +0.037988   (collapsed to a single FTLE)
+        transient=50  -> +0.001889   (21 chunks averaged)
+        transient=400 -> +0.037988   (collapsed to a single FTLE)
         |Δ| = 0.036  >> 3e-3   -> FAIL
     After the fix:
-        burn_in=50  -> +0.003715
-        burn_in=400 -> +0.004710
+        transient=50  -> +0.003715
+        transient=400 -> +0.004710
         |Δ| = 0.001  <  3e-3   -> PASS
     """
-    lam_small_burn = _lyap(burn_in=50.0, final_time=400.0)
-    lam_large_burn = _lyap(burn_in=400.0, final_time=400.0)
+    lam_small_burn = _lyap(transient=50.0, final_time=400.0)
+    lam_large_burn = _lyap(transient=400.0, final_time=400.0)
     assert lam_small_burn > 0.0, lam_small_burn
     assert lam_large_burn > 0.0, lam_large_burn
     assert abs(lam_large_burn - lam_small_burn) < 3e-3, (lam_small_burn, lam_large_burn)
@@ -94,20 +95,20 @@ def test_large_burn_in_converges_to_the_well_averaged_reference() -> None:
     order of magnitude off the converged value.
 
     Failing-first (pre-fix):
-        large burn  (burn_in=400, final_time=400) -> +0.037988
-        reference   (burn_in=100, final_time=1000) -> +0.003460
+        large burn  (transient=400, final_time=400) -> +0.037988
+        reference   (transient=100, final_time=1000) -> +0.003460
         |Δ| = 0.0345  >> 2.5e-3   -> FAIL
     After the fix:
         large burn  -> +0.004710 ; reference -> +0.003772 ; |Δ| = 0.0009 -> PASS
     """
-    lam_large_burn = _lyap(burn_in=400.0, final_time=400.0)
-    lam_reference = _lyap(burn_in=100.0, final_time=1000.0)
+    lam_large_burn = _lyap(transient=400.0, final_time=400.0)
+    lam_reference = _lyap(transient=100.0, final_time=1000.0)
     assert lam_large_burn > 0.0, lam_large_burn
     assert abs(lam_large_burn - lam_reference) < 2.5e-3, (lam_large_burn, lam_reference)
 
 
 def test_mackeyglass_positive_leading_exponent_with_large_burn_in() -> None:
-    """Acceptance guard: Mackey–Glass(burn_in=180, final_time=200) has λ₁ > 0.
+    """Acceptance guard: Mackey–Glass(transient=180, final_time=200) has λ₁ > 0.
 
     This is the literal acceptance criterion ("MackeyGlass(180,200) positive
     leading exponent, n_positive=1") — Mackey–Glass at ``tau = 17`` is chaotic, so
@@ -123,7 +124,7 @@ def test_mackeyglass_positive_leading_exponent_with_large_burn_in() -> None:
     ``converges_to_the_well_averaged_reference``); this one pins the documented
     chaotic-sign acceptance under the fixed window semantics.
     """
-    lam = _lyap(burn_in=180.0, final_time=200.0)
+    lam = _lyap(transient=180.0, final_time=200.0)
     assert lam > 0.0, f"chaotic Mackey-Glass leading exponent must be positive, got {lam}"
 
 
@@ -134,9 +135,9 @@ def test_interp_equals_jit_bit_for_bit_under_window_semantics() -> None:
     engines must still return an identical spectrum.
     """
     ic = np.asarray(_mackeyglass_on_attractor_ic(), dtype=np.float64)
-    kw = dict(n_exp=2, dt=0.5, burn_in=180.0, final_time=200.0, ic=ic, rtol=1e-4, atol=1e-4)
-    interp = ts.MackeyGlass().lyapunov_spectrum(backend="interp", **kw)
-    jit = ts.MackeyGlass().lyapunov_spectrum(backend="jit", **kw)
+    kw = dict(k=2, dt=0.5, transient=180.0, final_time=200.0, ic=ic, rtol=1e-4, atol=1e-4)
+    interp = ts.analysis.lyapunov_spectrum(ts.systems.MackeyGlass(), backend="interp", **kw)
+    jit = ts.analysis.lyapunov_spectrum(ts.systems.MackeyGlass(), backend="jit", **kw)
     np.testing.assert_array_equal(interp, jit)
 
 
@@ -144,7 +145,7 @@ def _mackeyglass_chunk() -> float:
     """The renormalisation chunk (= one delay window) the estimator uses."""
     from tsdynamics.families._dde_lyapunov import _build_extended_tape
 
-    _, slots, _ = _build_extended_tape(ts.MackeyGlass(), 1)
+    _, slots, _ = _build_extended_tape(ts.systems.MackeyGlass(), 1)
     return max(s.delay for s in slots)
 
 
@@ -168,11 +169,12 @@ def test_small_positive_burn_in_still_discards_one_window() -> None:
     assert round(5.0 / chunk) == 0, "test premise: 5.0 must round to zero windows"
 
     def run(burn_in: float) -> np.ndarray:
-        return ts.MackeyGlass().lyapunov_spectrum(
+        return ts.analysis.lyapunov_spectrum(
+            ts.systems.MackeyGlass(),
             backend="interp",
-            n_exp=1,
+            k=1,
             dt=0.5,
-            burn_in=burn_in,
+            transient=burn_in,
             final_time=200.0,
             ic=ic,
             rtol=1e-4,

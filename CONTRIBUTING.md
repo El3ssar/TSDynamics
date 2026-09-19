@@ -49,13 +49,30 @@ Use the [Conventional Commits](https://www.conventionalcommits.org/) prefix as y
 # Formatter + linter (auto-fix safe issues)
 uv run ruff check --fix src/ tests/
 uv run ruff format src/ tests/
+uv run mypy --strict src/tsdynamics
 
-# Fast tests — the engine lowers in-process, no compile step (≈ 2 s for the full fast suite)
-uv run pytest -m "not slow" --no-cov
-
-# Full suite — engine integration + Lyapunov spectra (≈ 35 s)
-uv run pytest --no-cov
+# The everyday loop: only the tests your diff can affect (see below)
+make test
 ```
+
+**Run `make test`, not the whole suite.** The suite is registry-driven — every
+per-system test is parametrized over all 171 built-in systems, so the full fast
+tier is ~5 400 items and takes a few minutes even in parallel. `make test` wraps
+`pytest --changed`, which diffs your working tree against `origin/main` and keeps
+only the tests that diff can affect (touch one system → that system's sweeps;
+touch one analysis area → that area's files; touch anything foundational — the
+engine/solver/family layers, the registry, a lockfile, any crate, any workflow —
+and it falls back to the full tier). It prints exactly what it kept and why.
+
+| Command | What it runs |
+|---|---|
+| `make test` | Change-scoped fast tier — the loop |
+| `make test-slow` | Change-scoped slow tier (long simulations) |
+| `make test-all` | Whole fast tier, every system — pre-push sanity |
+| `make test-full` | Fast + slow tiers over everything |
+
+The exhaustive nightly sweep is `uv run pytest -m full --no-cov`; you do not need
+to run it locally.
 
 The test suite is registry-driven: a new system is swept automatically — no test-file edits needed.  Only new DDEs need one extra line (a non-equilibrium history in `tests/_sampling.py::DDE_HISTORIES`; a guard test reminds you).
 
@@ -73,7 +90,7 @@ ci: pin ruff to 0.15
 
 ### 4. Open a PR
 
-GitHub Actions runs `ruff check`, `ruff format --check`, the full test matrix (Python 3.12 + 3.13 on Linux and macOS), and a docs build for every PR.  **The PR title must be a conventional commit** (enforced by the `pr-title.yml` check): PRs are squash-merged, so the title becomes the commit message that decides the next release.
+GitHub Actions runs `ruff check`, `ruff format --check`, `mypy --strict`, the test matrix (Python 3.12 / 3.13 / 3.14 on Linux and macOS) and a docs build for every PR.  The CI jobs are themselves change-scoped: a docs-only PR skips the Python jobs, and the ones that do run use `pytest --changed`.  Gate merges on the single **CI summary** check — it is green when every required job either passed or was skipped as out of scope.  **The PR title must be a conventional commit** (enforced by the `pr-title.yml` check): PRs are squash-merged, so the title becomes the commit message that decides the next release.
 
 ---
 
@@ -232,8 +249,8 @@ Open an issue with:
 ## PR checklist
 
 - [ ] Focused, minimal change.
-- [ ] Tests cover new behavior; both `pytest -m "not slow"` and `pytest` are green locally.
-- [ ] `ruff check` and `ruff format --check` are clean.
+- [ ] Tests cover new behavior; `make test` (and `make test-slow` if you touched anything heavy) is green locally.
+- [ ] `ruff check`, `ruff format --check` and `mypy --strict src/tsdynamics` are clean.
 - [ ] Public API changes documented in docstrings and `README.md`.
 - [ ] Conventional Commit messages.
 - [ ] If a new system is added: it's in the module/category `__all__` (the registry sweeps it automatically); a new DDE also has a history in `tests/_sampling.py::DDE_HISTORIES`.

@@ -32,6 +32,8 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from ..._visibility import listing_dir
+from ...producers import autostyle_enabled, autostyle_line
 from ...spec import PlotKind, PlotSpec
 from ...style import Theme, normalize_style
 
@@ -40,14 +42,20 @@ if TYPE_CHECKING:
 
 __all__ = ["MARK_DISPATCH_3D", "build_3d_traces", "is_three_d", "render_3d", "scene_layout"]
 
+__dir__ = listing_dir(__all__)
+
 
 def is_three_d(spec: PlotSpec) -> bool:
-    """Whether ``spec`` needs 3-D drawing (ndim 3 / a ``z`` axis / a 3-D mark)."""
-    if spec.ndim == 3 or spec.z is not None:
-        return True
-    return any(
-        PlotKind(layer.kind) in (PlotKind.LINE3D, PlotKind.SURFACE3D) for layer in spec.layers
-    )
+    """Whether ``spec`` needs 3-D drawing (ndim 3 / a ``z`` axis / a 3-D mark).
+
+    A thin alias for :attr:`~tsdynamics.viz.spec.PlotSpec.is_three_d`, the single
+    definition every backend and the capability check now share.  It used to be a
+    byte-identical copy of that predicate; the copies could drift, and a renderer
+    that disagreed with the dispatcher about what "3-D" means routes a spec to a
+    trace type it cannot draw.  The name is kept because it is this module's
+    public entry point (``_core`` / ``_composite`` / ``_anim`` ask it).
+    """
+    return spec.is_three_d
 
 
 def _resolve_theme(spec: PlotSpec) -> Theme:
@@ -124,18 +132,21 @@ def _build_line3d(layer: Any, spec: PlotSpec) -> list[go.BaseTraceType]:
     x, y, z = xyz
     style = _canon_style(layer)
     theme = _resolve_theme(spec)
+    n = int(x.size)
+    auto = autostyle_enabled(spec)
+    auto_lw, auto_alpha = autostyle_line(n, line_width=theme.line_width, enabled=auto)
     line: dict[str, Any] = {}
     if "color" in style:
         line["color"] = style["color"]
     width = style.get("linewidth")
-    if width is None and theme.line_width is not None:
-        width = theme.line_width
+    if width is None and auto_lw is not None:
+        width = auto_lw
     if width is not None:
         line["width"] = float(width)
     dash = _DASH_MAP.get(str(style.get("linestyle", "")))
     if dash is not None:
         line["dash"] = dash
-    opacity = float(style.get("alpha", 1.0))
+    opacity = float(style.get("alpha", auto_alpha if auto_alpha is not None else 1.0))
     c = layer.data.get("c")
     if c is not None and _f(c).size == z.size:
         marker: dict[str, Any] = {
@@ -160,18 +171,76 @@ def _build_line3d(layer: Any, spec: PlotSpec) -> list[go.BaseTraceType]:
                 opacity=opacity,
             )
         ]
+    # A ``marker`` / ``markersize`` on a 3-D line is honored here for the same
+    # reason the matplotlib twin honors it: ``STYLE_KEYS`` claims plotly
+    # unconditionally, so the request must draw or the claim is false.  Absent an
+    # explicit marker the trace is byte-identical to before (``mode="lines"``).
+    # Only when a marker is actually *named*: on a line, ``filled`` alone must not
+    # conjure markers into existence (matplotlib's twin does not, and the key means
+    # "how to draw the marker", not "draw one").
+    symbol = _symbol_3d(style) if style.get("marker") is not None else None
+    marker_only: dict[str, Any] = {}
+    if symbol is not None:
+        marker_only["symbol"] = symbol
+        ms = style.get("markersize")
+        if ms is not None:
+            marker_only["size"] = float(ms)
+        if "color" in style:
+            marker_only["color"] = style["color"]
     return [
         go.Scatter3d(
             x=x,
             y=y,
             z=z,
-            mode="lines",
+            mode="lines+markers" if symbol is not None else "lines",
             line=line,
             name=layer.label,
             showlegend=layer.label is not None,
             opacity=opacity,
+            **({"marker": marker_only} if marker_only else {}),
         )
     ]
+
+
+#: ``Scatter3d`` accepts a **much** smaller symbol vocabulary than ``Scatter``
+#: (no ``triangle-*``, no ``star``, and only these four ``-open`` variants).
+#: Canonical marker names that have no 3-D symbol collapse onto the nearest one
+#: plotly will draw rather than raising — the alternative is a hard error on a
+#: perfectly reasonable spec that renders fine in 2-D.
+_MARKER_3D: dict[str, str] = {
+    "circle": "circle",
+    "square": "square",
+    "diamond": "diamond",
+    "cross": "cross",
+    "x": "x",
+    "triangle": "diamond",
+    "star": "diamond",
+    "none": "circle",
+}
+
+#: The ``-open`` (hollow) variants ``Scatter3d`` actually supports.
+_OPEN_3D: frozenset[str] = frozenset({"circle", "square", "diamond"})
+
+
+def _symbol_3d(style: dict[str, Any]) -> str | None:
+    """Resolve a ``Scatter3d`` ``marker.symbol`` from a canonical style dict.
+
+    Honors the canonical ``filled`` key on the 3-D path.  It was honored only in
+    2-D, while ``STYLE_KEYS["filled"].honored_by`` claims plotly unconditionally
+    — so a 3-D scatter both ignored ``filled=False`` and (because the claim is
+    unconditional) produced no ``VisualizationDegraded`` warning saying so.
+
+    Returns ``None`` when the layer names no marker *and* wants the default fill,
+    so an ordinary 3-D scatter's trace is byte-identical to before.
+    """
+    marker = style.get("marker")
+    open_marker = style.get("filled") is False
+    if marker is None and not open_marker:
+        return None
+    symbol = _MARKER_3D.get(str(marker), "circle") if marker is not None else "circle"
+    if open_marker and symbol in _OPEN_3D:
+        symbol = f"{symbol}-open"
+    return symbol
 
 
 def _build_scatter3d(layer: Any, spec: PlotSpec) -> list[go.BaseTraceType]:
@@ -211,6 +280,9 @@ def _build_scatter3d(layer: Any, spec: PlotSpec) -> list[go.BaseTraceType]:
             marker["colorbar"] = cbar
     elif "color" in style:
         marker["color"] = style["color"]
+    symbol = _symbol_3d(style)
+    if symbol is not None:
+        marker["symbol"] = symbol
     return [
         go.Scatter3d(
             x=x,

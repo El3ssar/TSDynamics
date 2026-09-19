@@ -143,8 +143,8 @@ def test_lorenz_and_rossler_render_in_3d(mpl_backend):
     pytest.importorskip("tsdynamics._rust")
     import tsdynamics as ts
 
-    for system in (ts.Lorenz(), ts.Rossler()):
-        traj = system.trajectory(final_time=20.0, dt=0.02)
+    for system in (ts.systems.Lorenz(), ts.systems.Rossler()):
+        traj = system.run(final_time=20.0, dt=0.02)
         y = np.asarray(traj.y, dtype=float)
         spec = PlotSpec(
             kind=PlotKind.PHASE_PORTRAIT_3D,
@@ -163,7 +163,7 @@ def test_lorenz96_renders_a_non_first_three_triple(mpl_backend):
     import tsdynamics as ts
 
     sys = ts.systems.Lorenz96(N=8)
-    traj = sys.trajectory(final_time=20.0, dt=0.02)
+    traj = sys.run(final_time=20.0, dt=0.02)
     y = np.asarray(traj.y, dtype=float)
     triple = (3, 5, 7)  # a real, non-first-three component triple
     spec = PlotSpec(

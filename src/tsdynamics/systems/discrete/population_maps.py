@@ -23,6 +23,9 @@ class Logistic(DiscreteMap):
 
     params = {"r": 3.9}
     dim = 1
+    # 0.2, deliberately NOT 0.5: x=0.5 is the critical point, and at r=4 it maps
+    # 0.5 -> 1 -> 0 and the orbit dies on the fixed point.
+    default_ic = (0.2,)
     variables = ("x",)
     reference = "May (1976), Nature 261, 459-467"
     doi = "10.1038/261459a0"
@@ -64,6 +67,7 @@ class Ricker(DiscreteMap):
 
     params = {"a": 3.3}
     dim = 1
+    variables = ("x",)
     reference = "Ricker (1954), J. Fish. Res. Board Can. 11, 559-623"
     doi = "10.1139/f54-039"
 
@@ -102,6 +106,7 @@ class MaynardSmith(DiscreteMap):
 
     params = {"a": 0.87, "b": 0.75}
     dim = 2
+    variables = ("x", "y")
     reference = "Maynard Smith (1968), Mathematical Ideas in Biology (Cambridge University Press)"
     doi = "10.1017/cbo9780511565144"
 
@@ -118,3 +123,20 @@ class MaynardSmith(DiscreteMap):
         row1 = [0, 1]
         row2 = [-2 * x, a]
         return row1, row2
+
+
+__all__ = [
+    "Logistic",
+    "MaynardSmith",
+    "Ricker",
+]
+
+
+def __dir__() -> list[str]:
+    """Expose only the catalogue classes (``__all__``) to ``dir()`` / autocomplete.
+
+    ``__all__`` governs ``import *`` and nothing else, so without this the module
+    also offers every helper it imported — SymEngine's ``sin``/``cos``/``exp``,
+    ``numpy`` — as though they were part of this library's surface.
+    """
+    return sorted(__all__)

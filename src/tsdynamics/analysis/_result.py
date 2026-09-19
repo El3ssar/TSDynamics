@@ -10,7 +10,8 @@ The surface every result inherits
 ---------------------------------
 - ``meta`` — a provenance mapping (system, params, version, run settings),
   built from :meth:`tsdynamics.families.base.SystemBase._provenance` at the
-  call site via :meth:`AnalysisResult.build_meta`.
+  call site via :func:`tsdynamics.analysis._result_base._build_meta` (private:
+  an analysis builds it, a user never does).
 - ``__repr__`` — a compact, ``_repr_fields``-driven one-liner.
 - ``_repr_html_`` — a small table for Jupyter / IPython.
 - :meth:`summary` — a human-readable multi-line readout plus an optional
@@ -20,7 +21,7 @@ The surface every result inherits
   dependency, imported lazily, with an install hint if it is missing).
 - ``plot`` — the visualization seam: an accessor that is both callable
   (``result.plot()``) and a namespace of typed kind methods
-  (``result.plot.scaling()``).  The in-tree backends seed themselves on first
+  (``result.plot()``).  The in-tree backends seed themselves on first
   use, so it renders out of the box with a plotting library installed; with none
   the seam raises :class:`VisualizationNotInstalled`.
 
@@ -58,7 +59,7 @@ a measured time series, expansion entropy, and the Cao / false-nearest-neighbour
 embedding-dimension diagnostics.  :class:`ScalingResult` gives that whole family
 **one** canonical schema — ``estimate`` / ``stderr`` / ``abscissa`` /
 ``ordinate`` / ``fit_region`` / ``intercept`` (plus the ``local_slopes`` and
-``scaling_window`` diagnostics) — so a single ``result.plot.scaling()`` renders
+``scaling_window`` diagnostics) — so a single ``result.plot()`` renders
 any of them.  It is additive: existing results are *reparented* onto it by a
 later stream, not changed here.
 
@@ -79,9 +80,6 @@ shared pieces are de-duplicated:
 - :mod:`tsdynamics.analysis._result_json` — the ``to_dict`` / repr helpers
   (``_jsonify`` & co.).
 
-The shared "resolve the semantic plot kind" one-liner the transform results also
-open with lives once in :func:`tsdynamics._result_common.resolve_plot_kind`.
-
 Every public name (and the ``_jsonify`` / ``_PlotAccessor`` helpers some tests
 import directly) is re-exported here, so ``from tsdynamics.analysis._result
 import <X>`` keeps resolving exactly as before the split.
@@ -90,7 +88,9 @@ import <X>`` keeps resolving exactly as before the split.
 from __future__ import annotations
 
 from tsdynamics.analysis._result_array import ArrayResult
+from tsdynamics.analysis._result_array import _ArrayBacked as _ArrayBacked
 from tsdynamics.analysis._result_base import AnalysisResult
+from tsdynamics.analysis._result_base import _build_meta as _build_meta
 from tsdynamics.analysis._result_collection import CollectionResult
 
 # Private helpers re-exported (redundant ``as`` alias = intentional re-export) for

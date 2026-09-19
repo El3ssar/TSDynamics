@@ -32,8 +32,8 @@ import pytest
 
 import tsdynamics.families.stochastic as sde_mod
 from tsdynamics import StochasticSystem
+from tsdynamics._utils.grids import make_output_grid
 from tsdynamics.families.stochastic import _seed_for
-from tsdynamics.utils.grids import make_output_grid
 
 # A guarded import (not a module-level ``importorskip``): it auto-tags this module
 # ``engine`` for the engine CI job (see ``tests/_engine_marker.py``) yet lets the
@@ -120,17 +120,17 @@ def test_reference_integrate_matches_step_loop_bit_for_bit(method):
     ic = [1.0]
     seed = 20240614
 
-    ref = sys.integrate(
+    ref = sys.run(
         final_time=_ROUNDOFF_TF,
         dt=_ROUNDOFF_DT,
         ic=ic,
         seed=seed,
-        method=method,
+        solver=method,
         backend="reference",
     )
     grid = ref.t
 
-    sys.reinit(ic, t=0.0, seed=seed, dt=_ROUNDOFF_DT, method=method)
+    sys.reinit(ic, t=0.0, seed=seed, dt=_ROUNDOFF_DT, solver=method)
     by_hand = [sys.state()]
     for _ in range(1, grid.size):
         by_hand.append(sys.step(_ROUNDOFF_DT))
@@ -161,12 +161,12 @@ def test_no_spurious_wiener_substep_on_roundoff_grid(method, monkeypatch):
 
     monkeypatch.setattr(sde_mod, "_wiener", counting_wiener)
 
-    _ParityGBM().integrate(
+    _ParityGBM().run(
         final_time=_ROUNDOFF_TF,
         dt=_ROUNDOFF_DT,
         ic=[1.0],
         seed=1,
-        method=method,
+        solver=method,
         backend="reference",
     )
 
@@ -204,7 +204,7 @@ def test_tolerant_landing_preserves_a_genuine_short_final_step(monkeypatch):
         lambda rng, h, dim: (drawn_h.append(h), real_wiener(rng, h, dim))[1],
     )
 
-    _ParityGBM().integrate(
+    _ParityGBM().run(
         final_time=tf,
         dt=dt,
         ic=[1.0],
@@ -234,22 +234,25 @@ def test_reference_ensemble_row_equals_single_trajectory_with_index_seed(method)
     base_seed = 4242
     tf, dt = 0.5, 0.02
 
-    batch = sys.ensemble(
-        ics,
-        final_time=tf,
-        dt=dt,
-        method=method,
-        seed=base_seed,
-        backend="reference",
+    batch = (
+        sys.ensemble(ics)
+        .run(
+            final_time=tf,
+            dt=dt,
+            solver=method,
+            seed=base_seed,
+            backend="reference",
+        )
+        .final
     )
 
     for i, ic in enumerate(ics):
-        lone = sys.integrate(
+        lone = sys.run(
             final_time=tf,
             dt=dt,
             ic=ic,
             seed=_seed_for(base_seed, i),
-            method=method,
+            solver=method,
             backend="reference",
         )
         np.testing.assert_array_equal(batch[i], lone.y[-1])
@@ -259,8 +262,8 @@ def test_reference_same_seed_is_reproducible_and_index_decorrelates():
     """Same base seed ⇒ identical batch; distinct indices ⇒ distinct rows."""
     sys = _ParityOU()
     ics = np.full((8, 1), 0.5)
-    a = sys.ensemble(ics, final_time=1.0, dt=0.01, seed=123, backend="reference")
-    b = sys.ensemble(ics, final_time=1.0, dt=0.01, seed=123, backend="reference")
+    a = sys.ensemble(ics).run(final_time=1.0, dt=0.01, seed=123, backend="reference").final
+    b = sys.ensemble(ics).run(final_time=1.0, dt=0.01, seed=123, backend="reference").final
     np.testing.assert_array_equal(a, b)
     assert not np.array_equal(a[0], a[1]), "distinct indices gave identical draws"
 
@@ -281,9 +284,9 @@ def test_engine_interp_equals_jit_bit_for_bit_on_roundoff_grid(method):
     trajectories agree exactly, including on the roundoff-prone grid.
     """
     sys = _ParityGBM()
-    kw = dict(final_time=_ROUNDOFF_TF, dt=_ROUNDOFF_DT, ic=[1.0], seed=7, method=method)
-    interp = sys.integrate(backend="interp", **kw)
-    jit = sys.integrate(backend="jit", **kw)
+    kw = dict(final_time=_ROUNDOFF_TF, dt=_ROUNDOFF_DT, ic=[1.0], seed=7, solver=method)
+    interp = sys.run(backend="interp", **kw)
+    jit = sys.run(backend="jit", **kw)
     np.testing.assert_array_equal(interp.y, jit.y)
 
 
@@ -300,9 +303,9 @@ def test_engine_matches_reference_to_tolerance_on_roundoff_grid(method):
     *not* asserted bit-for-bit, because that ULP is platform/libm dependent.
     """
     sys = _ParityGBM()
-    kw = dict(final_time=_ROUNDOFF_TF, dt=_ROUNDOFF_DT, ic=[1.0], seed=20240614, method=method)
-    ref = sys.integrate(backend="reference", **kw)
-    eng = sys.integrate(backend="interp", **kw)
+    kw = dict(final_time=_ROUNDOFF_TF, dt=_ROUNDOFF_DT, ic=[1.0], seed=20240614, solver=method)
+    ref = sys.run(backend="reference", **kw)
+    eng = sys.run(backend="interp", **kw)
     assert eng.meta["engine"] == "rust"
     np.testing.assert_allclose(eng.y, ref.y, rtol=1e-9, atol=1e-11)
 
@@ -313,7 +316,7 @@ def test_engine_ensemble_interp_equals_jit_bit_for_bit(method):
     """Seeded SDE ensemble: interp == jit bit-for-bit (parallel == serial)."""
     sys = _ParityGBM()
     ics = np.linspace(0.8, 1.2, 8).reshape(-1, 1)
-    kw = dict(final_time=0.5, dt=_ROUNDOFF_DT, method=method, seed=3)
-    interp = sys.ensemble(ics, backend="interp", **kw)
-    jit = sys.ensemble(ics, backend="jit", **kw)
+    kw = dict(final_time=0.5, dt=_ROUNDOFF_DT, solver=method, seed=3)
+    interp = sys.ensemble(ics).run(backend="interp", **kw).final
+    jit = sys.ensemble(ics).run(backend="jit", **kw).final
     np.testing.assert_array_equal(interp, jit)

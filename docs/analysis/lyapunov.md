@@ -27,22 +27,24 @@ numbers.
 
 ## The uniform entry point
 
-`ts.lyapunov_spectrum(system, ...)` dispatches to the right family
+`ts.analysis.lyapunov_spectrum(system, ...)` dispatches to the right family
 implementation and translates one signature to each family's native keywords.
 The exponents come back largest first, in a `LyapunovSpectrum` result that is a
 drop-in for the bare exponent array — `np.asarray(result)`, indexing and
-iteration all defer to it — while also carrying `.meta`, `.summary()` and the
-`.kaplan_yorke` dimension.
+iteration all defer to it — while also carrying `.meta` and the `.kaplan_yorke`
+dimension. **The repr is the report**: print it and you get the numbers, the
+verdict and the subject on one line.
 
 ```python
 import numpy as np
 import tsdynamics as ts
 
-spec = ts.lyapunov_spectrum(ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]),
+spec = ts.analysis.lyapunov_spectrum(ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]),
                             final_time=300.0, dt=0.05, transient=40.0)
 np.asarray(spec)      # ≈ [ 0.903,  0.002, -14.572]
 spec.kaplan_yorke     # ≈ 2.06
-spec.summary()        # "…  → chaotic: 1 positive exponent"
+print(spec)
+# LyapunovSpectrum  λ = [0.9081, -0.001005, -14.57]   chaotic · D_KY = 2.062   (Lorenz)
 ```
 
 The keywords split cleanly by family: a **flow** (ODE or DDE) uses
@@ -55,15 +57,15 @@ raises rather than silently doing the wrong thing.
 ## Per family — what actually runs
 
 Under the one verb, each family has a genuinely different tangent-space
-computation. They are exposed as the `System.lyapunov_spectrum` method too, so
-you can call them directly with their native keywords.
+computation. The call is the same free function every time; only the keywords
+that make sense for that family change.
 
 === "ODE (flow)"
 
     ```python
     lor = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0])
-    lor.lyapunov_spectrum(final_time=300.0, dt=0.05, burn_in=40.0)
-    # ≈ [0.903, 0.002, -14.572]
+    ts.analysis.lyapunov_spectrum(lor, final_time=300.0, dt=0.05, transient=40.0)
+    # ≈ [0.908, -0.001, -14.57]
     ```
 
     The **extended variational system** — the state plus $k$ deviation
@@ -78,7 +80,7 @@ you can call them directly with their native keywords.
 === "Map"
 
     ```python
-    ts.systems.Henon(ic=[0.1, 0.1]).lyapunov_spectrum(steps=6000)
+    ts.analysis.lyapunov_spectrum(ts.systems.Henon(ic=[0.1, 0.1]), n=6000)
     # ≈ [0.42, -1.63]
     ```
 
@@ -94,9 +96,10 @@ you can call them directly with their native keywords.
     ```python
     mg = ts.systems.MackeyGlass()
     hist = lambda s: [1.0 + 0.1 * np.sin(0.2 * s)]
-    traj = mg.integrate(final_time=1000.0, dt=0.5, history=hist)   # settle first
-    mg.lyapunov_spectrum(n_exp=1, dt=0.5, ic=traj.y[-1],           # then measure
-                         burn_in=100.0, final_time=1000.0, rtol=1e-4, atol=1e-4)
+    traj = mg.run(final_time=1000.0, dt=0.5, history=hist)   # settle first
+    ts.analysis.lyapunov_spectrum(mg, k=1, dt=0.5, ic=traj.y[-1],   # then measure
+                                  transient=100.0, final_time=1000.0,
+                                  rtol=1e-4, atol=1e-4)
     # ≈ [0.0075]   (positive → chaotic at τ = 17)
     ```
 
@@ -106,18 +109,37 @@ you can call them directly with their native keywords.
     and Benettin-renormalises over the deviation *history segment*. Because it
     restarts from a **constant past**, the workflow is two calls: integrate to
     the attractor, then hand the end state to `lyapunov_spectrum`. A DDE may
-    request more exponents than `dim`; keep the loose `1e-3`-ish tolerances.
+    request more exponents than `dim`. The loose `1e-3`-ish tolerances are the
+    DDE default and are the right starting point — the method of steps lands on
+    every output sample, so `dt` bounds the internal step and tightening mostly
+    buys nothing (it is safe, just not usually worth it). See
+    [the tolerance table](integration-and-methods.md#the-default-tolerances).
 
-Every call records its result and settings in
-`sys.meta["lyapunov_spectrum"]`, with the full history available via
-`sys.meta.history("lyapunov_spectrum")`.
+Every call records its settings in `result.meta` — the horizon it actually used,
+the family, the parameters and the initial condition.
 
-!!! note "Reading the signs"
+!!! note "Reading the signs — and when the result refuses to read them"
     The number of positive exponents names the dynamics: **none** → regular
     (a fixed point, cycle or torus), **one** → chaos, **two or more** →
-    hyperchaos. `LyapunovSpectrum.summary()` does exactly this classification,
-    thresholding "positive" relative to the spectrum's own scale so a flow's
-    numerically-near-zero exponent is not mistaken for a real positive one.
+    hyperchaos. The repr prints that word, but only when it is *earned*.
+
+    The zero tolerance is calibrated on the estimator's **own realised zero**: a
+    flow has at least one structurally-zero exponent, so `min|λ|` measures how
+    close to zero this estimator got at this horizon — which is exactly the
+    tolerance the classification needs. A map has no structural zero and keeps a
+    relative floor. The supporting line shows which rule ran and at what floor:
+
+    ```
+    LyapunovSpectrum  λ = [0.9081, -0.001005, -14.57]   chaotic · D_KY = 2.062   (Lorenz)
+        (3 exponents · flow (realised zero) · λ > 0.0146)
+    ```
+
+    If the count changes when that floor is multiplied by ten, no word is
+    printed — the result says `indeterminate at this horizon (n_pos = 0..1
+    across a 10x tolerance band; raise final_time)` instead of guessing. And
+    `D_KY` is suppressed entirely when no exponent is positive, because on a
+    regular spectrum it is just the integer state dimension and printing it
+    would read as a measurement.
 
 ## Known values to test against
 
@@ -132,28 +154,35 @@ ones the bulk test suite checks continuously for every system that declares a
 | Logistic, `r = 4` | `[ln 2 ≈ 0.693]` | exact analytic result |
 | Mackey–Glass, `τ = 17` | leading `> 0` | chaotic; $\ge 1$ positive exponent |
 
-## `max_lyapunov` — no Jacobian required
+## Just the leading exponent — and no Jacobian required
 
-When you only need the *leading* exponent — or when the right-hand side is
-non-smooth and no analytic Jacobian exists — the classic two-trajectory method
-needs nothing but the stepping protocol:
+Ask for one exponent, and you get one:
 
 ```python
-ts.max_lyapunov(ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]), dt=0.05)   # ≈ 0.89
-ts.max_lyapunov(ts.systems.Henon(), ic=[0.1, 0.1])                # ≈ 0.42
+ts.analysis.lyapunov_spectrum(ts.systems.Lorenz(), k=1, ic=[1.0, 1.0, 1.0])
+ts.analysis.lyapunov_spectrum(ts.systems.Henon(), k=1, ic=[0.1, 0.1])
 ```
 
-Run a reference and a copy perturbed by `d0`, let them separate for `steps_per`
-protocol steps, log the growth $\ln(d/d_0)$, rescale the perturbation back to
-`d0`, and repeat `n` times (Benettin, Galgani & Strelcyn 1976). Because it only
-touches `step` / `state` / `set_state`, it works for any ODE or map — including
-systems where no Jacobian is available. The continuous normalisation divides by
-the *measured* elapsed `time()` of the reference run, so the exponent is
-correct whatever per-step advance the system makes. For a **map**,
-`max_lyapunov` returns the leading entry of the compiled QR tangent-map
-spectrum — far faster and more robust than per-iterate rescaling (no `d0` /
-collapse tuning). It is **not** available for DDEs, which cannot `set_state`;
-use `DelaySystem.lyapunov_spectrum` there.
+!!! note "`max_lyapunov` is gone — one question, one spelling"
+
+    Until v6 there was a second door, `max_lyapunov`, onto exactly this
+    question, and the two answered it with **different numbers**: on Hénon at
+    one nominal horizon `max_lyapunov` said `0.4233` and `lyapunov_spectrum`
+    said `0.4160`. The better half of it — the burn-in, and the Jacobian-free
+    two-trajectory machine — moved into `lyapunov_spectrum`, and the second door
+    closed. The old name raises, naming this one.
+
+When the system has a right-hand side to differentiate, the exponents come from
+a **tangent frame** carried alongside the orbit: nothing is perturbed and
+nothing is rescaled. When it does not — a
+[`WrappedSystem`](../start/defining-systems.md) around an external stepper, a
+non-smooth map with no analytic Jacobian — `lyapunov_spectrum` falls back to the
+classic **two-trajectory** method, which needs nothing but the stepping
+protocol: run a reference and a copy perturbed by `d0`, let them separate for
+`steps_per` protocol steps, log the growth $\ln(d/d_0)$, rescale back to `d0`,
+and repeat (Benettin, Galgani & Strelcyn 1976). The continuous normalisation
+divides by the *measured* elapsed `time()` of the reference run, so the exponent
+is correct whatever per-step advance the system makes.
 
 ## `lyapunov_from_data` — from a measured series
 
@@ -166,8 +195,8 @@ The result carries the full **stretching curve** $S(k)$ — the exponent is the
 slope of its linear scaling region.
 
 ```python
-traj = ts.systems.Henon().trajectory(6000, transient=500, ic=[0.1, 0.1])
-res = ts.lyapunov_from_data(traj.y[:, 0], dimension=4, k_max=12, fit=(0, 6))
+traj = ts.systems.Henon().run(6000, transient=500, ic=[0.1, 0.1])
+res = ts.analysis.lyapunov_from_data(traj.y[:, 0], dimension=4, k_max=12, fit=(0, 6))
 
 float(res)          # ≈ 0.42   (Hénon, per iteration)
 res.times, res.divergence     # the S(k) curve — inspect, then set fit=(lo, hi)
@@ -181,9 +210,14 @@ Two estimators are available via `method=`:
   to short records (Rosenstein, Collins & De Luca 1993).
 
 A Theiler window rejects temporally-correlated neighbours (Theiler 1986),
-defaulting to the embedding span. For a **flow** pass the sampling interval
-`dt=` so the exponent comes out per unit time; for a **map** leave `dt=1.0`
-(per iteration).
+defaulting to the embedding span.
+
+The exponent is reported **per unit of `dt`**, and `dt` is read from the data
+when the data knows it: hand the estimator a `Trajectory` and it uses that
+trajectory's own sampling interval, so the number is directly comparable with
+`lyapunov_spectrum`. Hand it a bare array — which carries no time axis — and it
+stays **per sample**, which is also the right reading for a map (per iteration).
+Pass `dt=` explicitly to override either way.
 
 !!! warning "Inspect the curve before you trust the number"
     The estimate is only as good as the embedding and the chosen scaling
@@ -198,7 +232,7 @@ The Lyapunov (Kaplan–Yorke) dimension estimates the attractor's fractal
 dimension straight from the spectrum — no box-counting required:
 
 ```python
-ts.kaplan_yorke_dimension([0.906, 0.0, -14.57])   # ≈ 2.06  (Lorenz)
+ts.analysis.kaplan_yorke_dimension([0.906, 0.0, -14.57])   # ≈ 2.06  (Lorenz)
 ```
 
 $$
@@ -215,11 +249,11 @@ negative (the spectrum does not close — compute more exponents). A
 ## `TangentSystem` — build your own loop
 
 When the prepackaged routines do not fit — covariant vectors, finite-time
-exponents, custom convergence monitoring — `TangentSystem` exposes the tangent
-machinery as a steppable system, so you own the loop:
+exponents, custom convergence monitoring — the tangent system exposes the
+tangent machinery as a steppable system, so you own the loop:
 
 ```python
-from tsdynamics import TangentSystem
+from tsdynamics.derived import TangentSystem
 
 tang = TangentSystem(ts.systems.Henon(), k=2)     # k deviation vectors
 tang.reinit([0.1, 0.1])
@@ -229,11 +263,11 @@ tang.exponents()      # running spectrum estimate ≈ [0.43, -1.63]
 tang.growths()        # per-step log stretch factors
 ```
 
-`TangentSystem` is the single Lyapunov engine underneath every routine above:
-maps run the compiled QR tangent-map kernel, ODEs integrate the extended
-variational system on the engine, and DDEs are excluded (their tangent space is
-infinite-dimensional — use `DelaySystem.lyapunov_spectrum`). It is exactly the
-object the showcase figure at the top of this page is built from.
+It is the single Lyapunov engine underneath every routine above: maps run the
+compiled QR tangent-map kernel, ODEs integrate the extended variational system on
+the engine, and DDEs are excluded (their tangent space is infinite-dimensional —
+use `lyapunov_spectrum`). It is exactly the object the showcase figure at the top
+of this page is built from.
 
 ## See also
 

@@ -6,10 +6,12 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import numpy as np
 
-from tsdynamics.families import ContinuousSystem, DelaySystem, DiscreteMap
+from tsdynamics._utils.tolerances import DEFAULT_ATOL, DEFAULT_RTOL
+from tsdynamics.families import ContinuousSystem, DelaySystem, DiscreteMap, Trajectory
+from tsdynamics.families._hidden import hide
 
 from ._base import DerivedSystem
-from ._variational import build_variational_tape, embed_extended, split_extended
+from ._variational import build_variational_tape_cached, embed_extended, split_extended
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from tsdynamics.viz.spec import PlotSpec
@@ -35,16 +37,34 @@ def _qr_growths(w: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return q, np.log(diag)
 
 
+@hide("convergence", "growths")
 class TangentSystem(DerivedSystem):
     """
     Evolve a system together with ``k`` deviation (tangent) vectors.
 
     Each ``step()`` advances the state and the deviation vectors, then
-    QR-reorthonormalises; :meth:`growths` exposes the per-step logarithmic
-    stretch factors ``log |diag R|`` and :meth:`exponents` their running
-    time-average — the Lyapunov spectrum estimate.  :meth:`lyapunov_spectrum`
-    wraps that into the standard burn-in + time-averaged estimate, and is the
-    single implementation every family's ``lyapunov_spectrum`` delegates to.
+    QR-reorthonormalises; :meth:`exponents` is their running time-average — the
+    Lyapunov spectrum estimate — and :meth:`deviations` is the live orthonormal
+    frame.  ``ts.analysis.lyapunov_spectrum`` wraps that into the standard
+    burn-in + time-averaged estimate, and is the single implementation every
+    family's Lyapunov answer delegates to.
+
+    Two members are withheld from ``dir()`` (``CONTRACT.md`` §11, T2) and remain
+    fully callable:
+
+    ``convergence(steps, ...)``
+        The Lyapunov estimates settling over time.  Measured, it returns exactly
+        ``run(steps, ...).unpack()`` — the same two arrays, element-for-element —
+        so it is a second spelling of the one trajectory verb (corollary C3).
+        The picture it exists for has a front door of its own::
+
+            ts.plot(system, "lyapunov_convergence", steps=4000)
+
+    ``growths()``
+        The most recent step's ``log|diag R|``.  A per-step internal of the
+        Benettin accumulation, meaningful only while you are driving ``step()``
+        yourself; the quantity users want is :meth:`exponents`, its running
+        average.
 
     Implementation per family
     -------------------------
@@ -54,7 +74,7 @@ class TangentSystem(DerivedSystem):
       :mod:`tsdynamics.derived._variational`) is lowered to an engine tape and
       integrated per step on the Rust engine (or the pure-Python reference
       oracle), then QR-reorthonormalised here.  Select the variational backend
-      with ``backend=``: ``"interp"`` (default), ``"jit"``, or ``"reference"``.
+      with ``backend=``: ``"jit"`` (default), ``"interp"``, or ``"reference"``.
     - **DDEs**: not supported — tangent dynamics of a DDE lives in an
       infinite-dimensional history space; use
       ``DelaySystem.lyapunov_spectrum`` (the engine DDE Lyapunov estimator).
@@ -66,9 +86,15 @@ class TangentSystem(DerivedSystem):
     k : int, optional
         Number of deviation vectors (``1 ≤ k ≤ system.dim``).  Defaults to the
         full state dimension.
-    backend : str, optional
-        ODE variational backend (ignored for maps): ``"interp"`` (default),
-        ``"jit"``, or ``"reference"``.
+    backend : {"jit", "interp", "reference"}, optional
+        ODE variational backend (ignored for maps): ``"jit"`` (default, the
+        Cranelift JIT served from the compiled-evaluator cache), ``"interp"``
+        (the bit-for-bit identical SSA-tape interpreter), or ``"reference"``
+        (the pure-Python oracle — not for production use).
+
+        .. versionchanged:: 6.0
+            Default moved from ``"interp"`` to ``"jit"``, once the v6
+            compiled-evaluator cache removed the JIT's per-call recompile.
 
     Examples
     --------
@@ -97,18 +123,17 @@ class TangentSystem(DerivedSystem):
                 f"got {type(system).__name__}."
             )
         super().__init__(system)
-        self.k = int(k) if k is not None else system.dim
-        if not 1 <= self.k <= system.dim:
-            raise ValueError(f"k must be in [1, {system.dim}], got {self.k}")
+        self.k = system.dim if k is None else k
 
         # Both maps and ODEs select among the same three backends: the compiled
-        # engine (``interp``/``jit``) or the pure-Python ``reference`` oracle.  For
-        # maps ``interp``/``jit`` run the Rust QR tangent-map kernel (stream
+        # engine (``jit``, the default, or ``interp``) or the pure-Python
+        # ``reference`` oracle.  For maps the two engine evaluators run the Rust
+        # QR tangent-map kernel (stream
         # perf/map-lyapunov-kernel) and ``reference`` the pure-NumPy QR loop (also
         # the transparent fallback when the engine declines — a non-lowering
         # ``_step`` or an absent wheel); for ODEs they select the variational
         # integration backend as before.
-        self._backend = (backend or "interp").lower()
+        self._backend = (backend or "jit").lower()
         if self._backend not in _ENGINE_BACKENDS:
             raise ValueError(
                 f"unknown {'map' if self._mode == 'map' else 'ODE'} tangent backend "
@@ -123,8 +148,8 @@ class TangentSystem(DerivedSystem):
         self._t = 0.0
         # ODE integration options (engine mode), captured at reinit.
         self._method: str | None = None
-        self._rtol = 1e-6
-        self._atol = 1e-9
+        self._rtol = DEFAULT_RTOL
+        self._atol = DEFAULT_ATOL
         self._integrator_kwargs: dict[str, Any] = {}
         # Resumable engine stepper amortisation (stream perf/lyapunov-stepper): when
         # the resolved kernel is *explicit* and the backend is the compiled engine
@@ -150,8 +175,70 @@ class TangentSystem(DerivedSystem):
         # so they raise an honest error instead of returning the long-run average.
         self._map_engine_stale = False
 
+    @property
+    def k(self) -> int:
+        """How many deviation vectors ride along — the number of exponents.
+
+        Writable, and validated on the way in against the same rule the
+        constructor applies (``1 <= k <= system.dim``).  It used to be a plain
+        attribute, so ``tang.k = 7`` on a 3-D flow was accepted and the next
+        ``step()`` died inside NumPy with ``cannot reshape array of size 6 into
+        shape (7,3)`` — an error about an array the caller never saw, from a
+        rule the constructor had already written down (``CONTRACT.md`` §11.3 T2,
+        §11.6 defect 1).
+
+        Changing it re-arms the estimator: the orthonormal frame and the
+        accumulated growth records are shaped by ``k``, so they are dropped and
+        the next :meth:`reinit` starts a fresh average.  Assigning the value it
+        already has is a no-op and keeps a running average intact.
+        """
+        return self._k
+
+    @k.setter
+    def k(self, value: Any) -> None:
+        from tsdynamics.errors import invalid_value
+
+        dim = int(self.system.dim)
+        try:
+            new = int(value)
+            whole = not isinstance(value, bool) and new == value
+        except (TypeError, ValueError):
+            new, whole = 0, False
+        if not whole:
+            raise invalid_value(
+                "TangentSystem.k", value, rule=f"must be a whole number in [1, {dim}]"
+            ) from None
+        if not 1 <= new <= dim:
+            raise invalid_value(
+                "TangentSystem.k",
+                new,
+                rule=f"must be in [1, {dim}]",
+                hint=(
+                    f"{type(self.system).__name__} has {dim} state components, so its "
+                    f"tangent space holds at most {dim} independent directions."
+                ),
+            )
+        previous = getattr(self, "_k", None)
+        self._k = new
+        if previous is None or previous == new:
+            # Construction, or a write that changes nothing: the constructor
+            # arms the accumulators itself immediately after, and a no-op write
+            # must not silently discard a running average.
+            return
+        self._W = None
+        self._z = None
+        self._ode_stepper = None
+        self._ext_tape = None
+        self._ext_tape_key = None
+        self._ext_tape_arrays = None
+        self._reset_accumulators()
+
     def _rebuild(self, inner: Any) -> TangentSystem:
         return TangentSystem(inner, self.k, backend=self._backend)
+
+    def __repr__(self) -> str:
+        """Name the inner system AND how many deviation vectors ride along."""
+        return f"TangentSystem({type(self.system).__name__}, k={self.k})"
 
     # --- lifecycle ---
 
@@ -161,6 +248,65 @@ class TangentSystem(DerivedSystem):
         self._sum_growths = np.zeros(self.k)
         self._elapsed = 0.0
         self._map_engine_stale = False
+
+    def run(
+        self,
+        steps: int = 2000,
+        n_or_dt: float | None = None,
+        *,
+        ic: Any | None = None,
+    ) -> Trajectory:
+        """Record the running Lyapunov estimates as a :class:`Trajectory`.
+
+        A tangent system's trajectory is not a state orbit — it is the **growth**
+        of the deviation vectors, i.e. each exponent's running estimate settling
+        as the time-average accumulates.  That is what this records, one column
+        per exponent, named ``lambda1 … lambdak``, so it plots, tabulates and
+        indexes like any other trajectory::
+
+            tang = ts.derived.TangentSystem(lor, k=3)
+            conv = tang.run(steps=2000)
+            conv["lambda1"][-1]        # the leading exponent at the horizon
+            ts.plot(conv)              # the convergence read-out
+
+        .. versionchanged:: 6.0
+            ``run`` was inherited from
+            :class:`~tsdynamics.derived._base.DerivedSystem` and raised a
+            ``NotImplementedError`` **with an empty message**, while ``hasattr``
+            and ``isinstance(tang, System)`` both answered ``True`` — a member
+            that lies.  The numbers it returns are exactly :meth:`convergence`'s,
+            which it calls.
+
+        Parameters
+        ----------
+        steps : int, optional
+            Number of tangent steps to record.  Default ``2000``.
+        n_or_dt : float, optional
+            Per-step increment — **iterations** for a map, a ``dt`` in **time
+            units** for a flow.  ``None`` uses the family default.
+        ic : array-like, optional
+            Start state for the base system; ``None`` resolves its default.
+
+        Returns
+        -------
+        Trajectory
+            ``(steps, k)``: the running estimate of each exponent after every
+            step, against the base system's clock.
+        """
+        times, estimates = self.convergence(steps, n_or_dt, ic=ic)
+        names = tuple(f"lambda{i + 1}" for i in range(self.k))
+        return Trajectory(
+            times,
+            estimates,
+            self,
+            meta={
+                "system": type(self.system).__name__,
+                "derived": "TangentSystem",
+                "k": self.k,
+                "variables": names,
+                "quantity": "running Lyapunov estimate",
+            },
+        )
 
     def reinit(
         self,
@@ -186,8 +332,8 @@ class TangentSystem(DerivedSystem):
         t0 = float(t) if t is not None else 0.0
         self._t = t0
         self._method = kwargs.pop("method", None)
-        self._rtol = kwargs.pop("rtol", 1e-6)
-        self._atol = kwargs.pop("atol", 1e-9)
+        self._rtol = kwargs.pop("rtol", DEFAULT_RTOL)
+        self._atol = kwargs.pop("atol", DEFAULT_ATOL)
         self._integrator_kwargs = dict(kwargs)
 
         self._reinit_ode_engine(ic_arr)
@@ -201,10 +347,22 @@ class TangentSystem(DerivedSystem):
         current structural values and rebuilt when they differ; an ordinary
         *control*-parameter change reads live from the system and needs no
         rebuild.
+
+        The per-instance key above only spares a *repeat* ``reinit`` on the **same**
+        ``TangentSystem``; every ``ContinuousSystem.lyapunov_spectrum`` call
+        constructs a fresh one, so the build itself is memoised process-wide by
+        :func:`~tsdynamics.derived._variational.build_variational_tape_cached` (the
+        shared bounded-LRU tape cache).  That turns a repeat spectrum into a cache
+        hit — worth ~17 s per call on a 32-D field system.
         """
-        key = tuple(sorted(self.system._structural_vals().items()))
+        # ``k`` is part of the key, not just the structural parameters: the tape
+        # carries the state PLUS k tangent vectors, so two values of k are two
+        # different tapes.  Keyed on the structural values alone, a later
+        # ``tang.k = 3`` reused the k=2 tape and ``split_extended`` failed with
+        # ``cannot reshape array of size 6 into shape (3,3)``.
+        key = (self.k, tuple(sorted(self.system._structural_vals().items())))
         if self._ext_tape is None or key != self._ext_tape_key:
-            self._ext_tape = build_variational_tape(self.system, self.k)
+            self._ext_tape = build_variational_tape_cached(self.system, self.k)
             self._ext_tape_key = key
             self._ext_tape_arrays = None  # re-marshal the wire arrays for the new tape
         w0 = np.eye(self.system.dim)[:, : self.k]
@@ -219,7 +377,7 @@ class TangentSystem(DerivedSystem):
         (``interp``/``jit``), build one durable
         :class:`tsdynamics._rust.OdeStepper` over the extended variational tape —
         the per-chunk loop then re-seeds it with ``set_state`` after each QR and
-        :func:`~tsdynamics.engine.run.step_advance` advances it one ``dt``,
+        :func:`~tsdynamics._engine.run.step_advance` advances it one ``dt``,
         marshalling the tape into the engine exactly once instead of per chunk
         (the ``TODO(stepper-amortize)``).  ``advance(dt)`` reproduces the per-dt
         ``integrate_dense`` bit-for-bit, so the spectrum is unchanged.
@@ -239,8 +397,8 @@ class TangentSystem(DerivedSystem):
         if self._backend == "reference":
             return
 
-        from tsdynamics import solvers
-        from tsdynamics.engine import run
+        from tsdynamics import _solvers as solvers
+        from tsdynamics._engine import run
 
         requested = self._method or self.system._default_method
         # ``method="auto"`` is owned by run.integrate (it probes the start-state
@@ -278,9 +436,9 @@ class TangentSystem(DerivedSystem):
     # --- protocol ---
 
     @property
-    def is_discrete(self) -> bool:
+    def _is_discrete(self) -> bool:
         """Match the wrapped system's time semantics."""
-        return cast(bool, self.system.is_discrete)
+        return cast(bool, self.system._is_discrete)
 
     def step(self, n_or_dt: float | None = None) -> np.ndarray:
         """
@@ -329,7 +487,7 @@ class TangentSystem(DerivedSystem):
         if self._z is None:
             self.reinit()
         assert self._z is not None  # reinit() seeds the extended state in ODE mode
-        from tsdynamics.engine import run
+        from tsdynamics._engine import run
 
         dim = self.system.dim
         t0 = self._t
@@ -342,7 +500,7 @@ class TangentSystem(DerivedSystem):
                 self._ode_stepper, dt, params_vec, name=type(self.system).__name__
             )
         else:
-            from tsdynamics.engine.problem import ODEProblem
+            from tsdynamics._engine.problem import ODEProblem
 
             method = self._method or self.system._default_method
             problem = ODEProblem(tape=self._ext_tape, ic=self._z, t0=t0, system=self.system)
@@ -378,7 +536,7 @@ class TangentSystem(DerivedSystem):
         ``system.params``, so a control-parameter change still takes effect on the
         next ``step`` exactly as the per-chunk ``run.integrate`` path did.
         """
-        from tsdynamics.engine.problem import ODEProblem
+        from tsdynamics._engine.problem import ODEProblem
 
         assert self._z is not None  # only called on the live (seeded) fast path
         prob = ODEProblem(tape=self._ext_tape, ic=self._z, t0=self._t, system=self.system)
@@ -414,8 +572,46 @@ class TangentSystem(DerivedSystem):
     def deviations(self) -> np.ndarray:
         """Return the current orthonormal deviation vectors, shape ``(dim, k)``.
 
+        The live tangent frame: column ``j`` is the direction the ``j``-th
+        Lyapunov exponent is currently being measured along, reorthonormalised at
+        every ``step()``.  Columns are ordered by decreasing growth, so
+        ``deviations()[:, 0]`` is the **most unstable direction at this point on
+        the orbit** — the covariant-direction estimate you want in order to
+        perturb a trajectory where it will actually separate, to seed a control
+        scheme, or to see how the stable/unstable splitting turns as the orbit
+        moves.
+
+        This is the only route to that frame, which is why it stays on the tab
+        surface while :meth:`growths` (a per-step scalar of the same accumulation)
+        does not: the spectrum is available from
+        ``ts.analysis.lyapunov_spectrum``, the *directions* are available here and
+        nowhere else.
+
         Available on every supported backend — maps and the ODE engine
         backends both carry the deviation matrix explicitly.
+
+        Returns
+        -------
+        numpy.ndarray
+            Shape ``(dim, k)``, orthonormal columns.  A copy: mutating it cannot
+            corrupt the running estimate.
+
+        Raises
+        ------
+        RuntimeError
+            Before the first :meth:`reinit`, and — in map mode — after a *batch*
+            engine ``lyapunov_spectrum``, whose Rust kernel returns the averaged
+            spectrum without the final frame.  Drive ``reinit()`` + ``step()``
+            yourself (or pass ``backend='reference'``) for a streaming frame.
+
+        Examples
+        --------
+        >>> tang = TangentSystem(Henon(), k=2)      # doctest: +SKIP
+        >>> tang.reinit([0.1, 0.1])                 # doctest: +SKIP
+        >>> for _ in range(100):                    # doctest: +SKIP
+        ...     tang.step()
+        >>> tang.deviations()[:, 0]                 # the unstable direction here
+        ...                                         # doctest: +SKIP
         """
         if self._mode == "map":
             if self._map_engine_stale:
@@ -528,13 +724,14 @@ class TangentSystem(DerivedSystem):
 
     # --- visualization seam ---
 
-    def to_plot_spec(
+    def __plot_spec__(
         self,
         kind: str | None = None,
         *,
         steps: int = 2000,
         n_or_dt: float | None = None,
         ic: Any | None = None,
+        **_unused: Any,
     ) -> PlotSpec:
         """Describe the Lyapunov-estimate convergence as a :class:`PlotSpec`.
 
@@ -579,7 +776,7 @@ class TangentSystem(DerivedSystem):
             kind=spec_kind,
             ndim=2,
             title=f"Lyapunov convergence — {type(self.system).__name__}",
-            x=Axis(label="iteration" if self.is_discrete else "time"),
+            x=Axis(label="iteration" if self._is_discrete else "time"),
             y=Axis(label="Lyapunov estimate"),
             layers=layers,
             legend=Legend(),
@@ -587,7 +784,7 @@ class TangentSystem(DerivedSystem):
 
     # --- the one Lyapunov engine: burn-in + time-averaged spectrum ---
 
-    def lyapunov_spectrum(self, **kwargs: Any) -> np.ndarray:
+    def _lyapunov_spectrum(self, **kwargs: Any) -> np.ndarray:
         """
         Estimate the Lyapunov spectrum — the unified engine for every family.
 
@@ -595,12 +792,14 @@ class TangentSystem(DerivedSystem):
         the QR/variational machinery lives in exactly one place.  Mode-specific
         keywords:
 
-        - **maps**: ``steps`` (default 5000), ``ic``, ``reortho_interval`` (1).
-        - **ODEs**: ``final_time`` (200.0), ``dt`` (0.1), ``ic``, ``burn_in``
-          (50.0), ``method``, ``rtol`` (1e-6), ``atol`` (1e-9), and any extra
-          integrator keywords.
+        - **maps**: ``n`` (default 5000), ``ic``, ``reortho_interval`` (1).
+        - **ODEs**: ``final_time`` (200.0), ``dt`` (0.1), ``ic``, ``transient``
+          (50.0), ``method``, ``rtol`` / ``atol``
+          (:data:`~tsdynamics._utils.tolerances.DEFAULT_RTOL` /
+          :data:`~tsdynamics._utils.tolerances.DEFAULT_ATOL`, ``1e-9`` /
+          ``1e-12``), and any extra integrator keywords.
 
-        The estimate is recorded in ``self.meta['lyapunov_spectrum']`` (the inner
+        The estimate is returned (the inner
         system's :class:`~tsdynamics.families.base.MetaStore`).
 
         Returns
@@ -614,15 +813,15 @@ class TangentSystem(DerivedSystem):
 
     def _lyapunov_spectrum_map(
         self,
-        steps: int = 5000,
+        n: int = 5000,
         ic: Any | None = None,
         reortho_interval: int = 1,
     ) -> np.ndarray:
         """QR tangent-map spectrum for a map, with random-IC retry on divergence.
 
-        For the compiled-engine backends (``interp``/``jit``, the default) the whole
+        For the compiled-engine backends (``jit`` — the default — and ``interp``) the whole
         QR tangent-map iteration runs in one Rust kernel call
-        (:func:`~tsdynamics.engine.run.map_lyapunov`) — no per-step Python→FFI
+        (:func:`~tsdynamics._engine.run.map_lyapunov`) — no per-step Python→FFI
         round-trip, ~thousands of times faster than the NumPy loop it supersedes.
         The ``reference`` backend, and any map whose ``_step`` will not lower to the
         engine IR (piecewise/ufunc) or a missing engine wheel, transparently use the
@@ -637,22 +836,14 @@ class TangentSystem(DerivedSystem):
         # Fast path: the compiled engine kernel (interp/jit).  Reference, a
         # non-lowering _step, or an absent wheel fall through to the NumPy loop.
         if self._backend in ("interp", "jit"):
-            engine_result = self._map_spectrum_engine(steps, ic, reortho_interval, max_retries)
+            engine_result = self._map_spectrum_engine(n, ic, reortho_interval, max_retries)
             if engine_result is not None:
                 return engine_result
 
         for attempt in range(max_retries):
             use_ic = ic if attempt == 0 else None
-            if self._accumulate_map(steps, use_ic, reortho_interval):
+            if self._accumulate_map(n, use_ic, reortho_interval):
                 exponents = self.exponents()
-                self.meta.record(
-                    "lyapunov_spectrum",
-                    exponents,
-                    steps=steps,
-                    n_exp=self.k,
-                    reortho_interval=reortho_interval,
-                    backend=self._backend,
-                )
                 return exponents
             if attempt < max_retries - 1:
                 # Force a fresh random IC: clear any stored one on the inner map.
@@ -661,7 +852,7 @@ class TangentSystem(DerivedSystem):
         raise ValueError(
             f"{type(self.system).__name__}.lyapunov_spectrum: failed after "
             f"{max_retries} retries — iterates diverge from every tried IC. "
-            f"Try a larger `steps` budget or pass an `ic` from a known basin point."
+            f"Try a larger `n` budget or pass an `ic` from a known basin point."
         )
 
     def _map_spectrum_engine(
@@ -674,20 +865,20 @@ class TangentSystem(DerivedSystem):
         """Run the map QR spectrum on the Rust engine kernel, or decline.
 
         Lowers the map ``_step`` (with its Jacobian) once and runs the entire QR
-        tangent-map iteration in one :func:`~tsdynamics.engine.run.map_lyapunov`
+        tangent-map iteration in one :func:`~tsdynamics._engine.run.map_lyapunov`
         call — the per-step Python QR loop replaced by a single FFI round-trip.
 
         Returns the spectrum (also seeding ``self`` so ``exponents()`` reports it)
         on success, or ``None`` to decline so the caller falls back to the pure-NumPy
         loop — when the map will not lower to the engine IR
-        (:class:`~tsdynamics.engine.compile.TapeCompileError`) or the compiled
+        (:class:`~tsdynamics._engine.compile.TapeCompileError`) or the compiled
         wheel is absent
-        (:class:`~tsdynamics.engine.run.EngineNotAvailableError`).  Mirrors the NumPy
+        (:class:`~tsdynamics._engine.run.EngineNotAvailableError`).  Mirrors the NumPy
         path's random-IC retry on divergence (a random draw can land off-basin); an
         explicit ``ic`` that diverges re-raises rather than retrying silently.
         """
-        from tsdynamics.engine import run
-        from tsdynamics.engine.compile import (
+        from tsdynamics._engine import run
+        from tsdynamics._engine.compile import (
             TapeCompileError,
             lower_map_cached,
             tape_jacobian_is_smooth,
@@ -749,14 +940,6 @@ class TangentSystem(DerivedSystem):
             self._last_growths = np.full(self.k, np.nan)
             self._elapsed = float(intervals * reortho_interval)
             self._map_engine_stale = True
-            self.meta.record(
-                "lyapunov_spectrum",
-                exponents,
-                steps=steps,
-                n_exp=self.k,
-                reortho_interval=reortho_interval,
-                backend=self._backend,
-            )
             return exponents
 
         # Unreachable: the loop returns on success or re-raises on the last attempt.
@@ -820,10 +1003,10 @@ class TangentSystem(DerivedSystem):
         dt: float = 0.1,
         *,
         ic: Any | None = None,
-        burn_in: float = 50.0,
+        transient: float = 50.0,
         method: str | None = None,
-        rtol: float = 1e-6,
-        atol: float = 1e-9,
+        rtol: float = DEFAULT_RTOL,
+        atol: float = DEFAULT_ATOL,
         **integrator_kwargs: Any,
     ) -> np.ndarray:
         """Burn-in then time-averaged spectrum for a flow (either ODE backend).
@@ -833,7 +1016,7 @@ class TangentSystem(DerivedSystem):
         — exactly the cases :meth:`_setup_ode_stepper` builds a stepper for — the
         **whole** burn-in + averaging Benettin loop (per-``dt`` extended-variational
         integration + QR + ``Σ log|diag R|`` accumulation) runs in one
-        :func:`~tsdynamics.engine.run.lyapunov_spectrum_ode` engine call instead of
+        :func:`~tsdynamics._engine.run.lyapunov_spectrum_ode` engine call instead of
         the per-``dt`` Python loop (one Python→FFI round-trip, no per-chunk NumPy
         ``qr``).  The per-``dt`` numerics are byte-for-byte the per-chunk path
         (``interp == jit``), so the spectrum is unchanged to floating-point
@@ -849,10 +1032,10 @@ class TangentSystem(DerivedSystem):
         self.reinit(ic, method=method, rtol=rtol, atol=atol, **integrator_kwargs)
 
         if self._step_explicit_engine and self._ode_stepper is not None:
-            exponents = self._engine_lyapunov_spectrum(dt, burn_in, final_time)
+            exponents = self._engine_lyapunov_spectrum(dt, transient, final_time)
         else:
             # Burn-in: advance the trajectory + tangent frame without accumulating.
-            t_burn = self._t + max(0.0, burn_in)
+            t_burn = self._t + max(0.0, transient)
             while self._t < t_burn - 1e-12:
                 self.step(min(dt, t_burn - self._t))
             self._reset_accumulators()
@@ -863,16 +1046,6 @@ class TangentSystem(DerivedSystem):
                 self.step(min(dt, t_end - self._t))
             exponents = self.exponents()
 
-        self.meta.record(
-            "lyapunov_spectrum",
-            exponents,
-            dt=dt,
-            final_time=final_time,
-            burn_in=burn_in,
-            n_exp=self.k,
-            method=method or self.system._default_method,
-            backend=self._backend,
-        )
         return exponents
 
     def _engine_lyapunov_spectrum(self, dt: float, burn_in: float, final_time: float) -> np.ndarray:
@@ -886,7 +1059,7 @@ class TangentSystem(DerivedSystem):
         ``self`` so :meth:`state` / :meth:`deviations` / :meth:`exponents` read
         exactly as the per-chunk loop would have left them.
         """
-        from tsdynamics.engine import run
+        from tsdynamics._engine import run
 
         assert self._z is not None  # reinit() seeds the extended state
         assert self._step_kernel is not None  # explicit-engine path resolved it

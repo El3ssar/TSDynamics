@@ -1,0 +1,113 @@
+{
+  "_comment": [
+    "Ceilings for the Rust engine's criterion benches (crates/*/benches/**), read",
+    "by benchmarks/check_engine_bench.py and enforced by",
+    ".github/workflows/perf-engine.yml.",
+    "",
+    "WHAT THIS CATCHES: order-of-magnitude regressions only. Each ceiling is 10x",
+    "the reference measurement below, so a case has to get ~10x slower to fail.",
+    "That is deliberate. Criterion numbers on shared CI runners vary by a factor",
+    "of 2-3 between runs and between runner generations, so a tight threshold",
+    "would flake constantly and a flaky blocking gate is worse than none. What a",
+    "10x ceiling does catch is the class of regression that actually hurts: a",
+    "compiled-evaluator cache that stopped caching (a hit becomes a full Cranelift",
+    "compile, ~1000x), an allocation added to a per-step loop, an accidental O(n^2)",
+    "in the integrate loop, a dropped fast path.",
+    "",
+    "WHAT IT DOES NOT CATCH: the fine-grained kernel optimisations. On the",
+    "reference machine, losing FSAL stage reuse costs ~8-18% of an rk45 step,",
+    "losing interpreter dead-register elimination ~25% of an RHS evaluation on a",
+    "Jacobian-bearing tape, losing the SDIRK frozen-Jacobian reuse a few multiples",
+    "at most. Those are guarded by deterministic *counting* tests instead, which",
+    "cannot flake:",
+    "  explicit::rk45::tests::fsal_reuse_saves_one_rhs_eval_per_continued_step",
+    "  implicit::sdirk2::tests::frozen_jacobian_is_reused_across_substages_sharing_a_shift",
+    "  interp::tests::rhs_live_mask_is_the_shared_reachable_from_pass",
+    "The benches quantify what those savings are worth; the tests are the gate.",
+    "",
+    "The v6 dense-output pair ('integrate_grid' vs 'integrate_grid_dense') is here",
+    "for the same reason: the deterministic gate is the counting test",
+    "  integrate::tests::dense_grid_rhs_evals_are_independent_of_output_dt",
+    "which pins the RHS-evaluation count as *exactly equal* across a 100x output-grid",
+    "refinement. These two pairs quantify it in wall time (5.7x on Lorenz at 1000",
+    "output points; 12.7x on a dim-1200 method-of-lines field at 400 points). The",
+    "field pair also answers the one question nobody had measured before shipping",
+    "dense output: whether the per-sample interpolation cost (~7 flops per component)",
+    "could outweigh the RHS evaluations it saves on a high-dimensional system. It",
+    "does not, by an order of magnitude.",
+    "",
+    "REFERENCE MACHINE: the numbers in 'reference_ns' were measured on a developer",
+    "workstation (x86_64, Linux, release profile with lto=thin / codegen-units=1).",
+    "They are recorded for context only - nothing compares against them. Only",
+    "'ceiling_ns' is enforced.",
+    "",
+    "UPDATING: regenerate with",
+    "  cd crates && cargo bench --workspace",
+    "  python benchmarks/check_engine_bench.py --update crates/target/criterion",
+    "and review the diff. A ceiling that moves DOWN is free; a ceiling that moves",
+    "UP needs a sentence in the PR saying why the case legitimately got slower."
+  ],
+  "multiplier": 10.0,
+  "cases": {
+    "engine/integrate_grid/field1200_rk45_400pts": {
+      "reference_ns": 57239000.0,
+      "ceiling_ns": 572390000.0
+    },
+    "engine/integrate_grid/lorenz_rk45_1000pts": {
+      "reference_ns": 429854.8,
+      "ceiling_ns": 4298548.2
+    },
+    "engine/integrate_grid_dense/field1200_rk45_400pts": {
+      "reference_ns": 4518700.0,
+      "ceiling_ns": 45187000.0
+    },
+    "engine/integrate_grid_dense/lorenz_rk45_1000pts": {
+      "reference_ns": 114410.0,
+      "ceiling_ns": 1144100.0
+    },
+    "engine/iterate_dense/henon_10000_steps": {
+      "reference_ns": 304124.4,
+      "ceiling_ns": 3041244.5
+    },
+    "explicit/rk45_fsal/recomputed": {
+      "reference_ns": 28747.5,
+      "ceiling_ns": 287474.9
+    },
+    "explicit/rk45_fsal/reused": {
+      "reference_ns": 26724.6,
+      "ceiling_ns": 267245.5
+    },
+    "implicit/backward_euler_always_reform/stiff_diffusion_16": {
+      "reference_ns": 640552.6,
+      "ceiling_ns": 6405526.2
+    },
+    "implicit/sdirk2_lu_reuse/stiff_diffusion_16": {
+      "reference_ns": 841431.9,
+      "ceiling_ns": 8414319.2
+    },
+    "interp/eval/jac_bearing_tape": {
+      "reference_ns": 34.0,
+      "ceiling_ns": 340.2
+    },
+    "interp/eval/plain_tape": {
+      "reference_ns": 32.0,
+      "ceiling_ns": 320.3
+    },
+    "interp/eval_jac/jac_bearing_tape": {
+      "reference_ns": 41.9,
+      "ceiling_ns": 418.9
+    },
+    "jit/cache_hit/diffusion_chain_256": {
+      "reference_ns": 11065.3,
+      "ceiling_ns": 110653.3
+    },
+    "jit/compile/diffusion_chain_256": {
+      "reference_ns": 12598337.6,
+      "ceiling_ns": 125983376.4
+    },
+    "jit/compile/lorenz_with_jacobian": {
+      "reference_ns": 217399.5,
+      "ceiling_ns": 2173994.8
+    }
+  }
+}

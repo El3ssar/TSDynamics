@@ -6,7 +6,6 @@ import numpy as np
 import pytest
 from hypothesis import HealthCheck, settings
 
-import tsdynamics.transforms as _transforms  # noqa: F401  (populates registry.transforms)
 from tsdynamics import registry
 
 # ---------------------------------------------------------------------------
@@ -51,14 +50,12 @@ _FAMILY_FIXTURES = {
     "system_entry": None,  # every family
 }
 
-# Registry-driven parametrization over the *generic* D4 registries (the new
-# analysis/transform plugin surface).  A test taking ``analysis_entry`` runs
-# once per registered analysis; ``transform_entry`` once per transform.  Adding
-# an analysis/transform therefore sweeps it into the meta-QA with zero edits —
-# the analyses/transforms analogue of the per-system sweep above.
+# Registry-driven parametrization over the *generic* D4 analysis registry (the
+# analysis plugin surface).  A test taking ``analysis_entry`` runs once per
+# registered analysis, so adding an analysis sweeps it into the meta-QA with zero
+# edits — the analyses analogue of the per-system sweep above.
 _REGISTRY_FIXTURES = {
     "analysis_entry": registry.analyses,
-    "transform_entry": registry.transforms,
 }
 
 

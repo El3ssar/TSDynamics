@@ -1,14 +1,14 @@
 """Tests for the fluent derived-builder verbs (stream WS-FLUENT).
 
-WS-ACCESSORS (#226) added the builder *verbs* (``poincare`` / ``stroboscope`` /
+WS-ACCESSORS (#226) added the builder *verbs* (``poincare`` (which absorbed ``stroboscope``) /
 ``tangent`` / ``project`` / ``ensemble``) and tested that each returns the right
 wrapper type (see ``test_accessors.py``).  WS-FLUENT (#203) adds the two pieces
 that make the fluent flow *read left-to-right and run*:
 
 * a ``.run(...)`` alias on the derived wrappers, so the documented flow
-  ``Rossler().poincare(section="y", at=0.0).run(steps=500)`` produces the section
-  (byte-identical to the wrapper's ``.trajectory(...)``);
-* forcing-period **inference** for ``stroboscope()`` — the period is read from
+  ``Rossler().poincare("y", 0.0).run(steps=500)`` produces the section
+  (byte-identical to the wrapper's ``.run(...)``);
+* forcing-period **inference** for ``poincare()`` — the period is read from
   the system's drive (``omega`` / ``drive_frequency`` / ``forcing_period``), with
   an explicit ``period=`` override retained and a clear error when none can be
   inferred.
@@ -25,7 +25,7 @@ import pytest
 
 import tsdynamics as ts
 from tsdynamics.derived import StroboscopicMap
-from tsdynamics.families._accessors import infer_forcing_period
+from tsdynamics.derived.stroboscopic import infer_forcing_period
 from tsdynamics.systems import Duffing, Lorenz, Rossler
 
 # Engine-backed (runs the flow); gates the module and auto-tags it ``engine``.
@@ -39,7 +39,7 @@ pytest.importorskip("tsdynamics._rust")
 
 def test_poincare_run_produces_a_section():
     """``sys.poincare(...).run(steps=N)`` returns the crossing section."""
-    pm = Rossler().poincare(section="y", at=0.0, direction=+1)
+    pm = Rossler().poincare("y", 0.0, direction=+1)
     assert hasattr(pm, "run")
     section = pm.run(steps=25, transient=5, ic=[1.0, 1.0, 1.0])
     # one row per requested crossing, full state width
@@ -48,20 +48,20 @@ def test_poincare_run_produces_a_section():
 
 def test_poincare_run_matches_trajectory():
     """``.run`` is a byte-identical alias of the wrapper's ``.trajectory``."""
-    pm = Rossler().poincare(section="y", at=0.0, direction=+1)
+    pm = Rossler().poincare("y", 0.0, direction=+1)
     ic = [0.5, 0.5, 0.5]
     via_run = pm.run(steps=30, transient=8, ic=ic)
-    via_traj = pm.trajectory(30, transient=8, ic=ic)
+    via_traj = pm.run(30, transient=8, ic=ic)
     assert np.array_equal(via_run.y, via_traj.y)
     assert np.array_equal(via_run.t, via_traj.t)
 
 
 def test_stroboscope_run_matches_trajectory():
     """The stroboscopic wrapper's ``.run`` alias matches ``.trajectory`` too."""
-    strobe = Duffing().stroboscope()
+    strobe = Duffing().poincare()
     ic = [0.1, 0.0, 0.0]
     via_run = strobe.run(steps=20, transient=3, ic=ic)
-    via_traj = strobe.trajectory(20, transient=3, ic=ic)
+    via_traj = strobe.run(20, transient=3, ic=ic)
     assert np.array_equal(via_run.y, via_traj.y)
 
 
@@ -76,7 +76,7 @@ def test_run_alias_lives_on_derived_base():
 
 def test_fluent_chain_reads_left_to_right():
     """The headline flow from the design dossier works end to end."""
-    section = Rossler().poincare(section="y", at=0.0).run(steps=40, ic=[1.0, 1.0, 1.0])
+    section = Rossler().poincare("y", 0.0).run(steps=40, ic=[1.0, 1.0, 1.0])
     assert section.y.shape[0] == 40
 
 
@@ -88,14 +88,14 @@ def test_fluent_chain_reads_left_to_right():
 def test_stroboscope_infers_period_from_omega():
     """A forced system's period is inferred as ``2*pi/omega`` from its drive."""
     duf = Duffing()
-    strobe = duf.stroboscope()
+    strobe = duf.poincare()
     assert isinstance(strobe, StroboscopicMap)
     assert strobe.period == pytest.approx(2.0 * np.pi / duf.omega)
 
 
 def test_stroboscope_explicit_period_overrides_inference():
     """An explicit ``period=`` is honoured and never inferred over."""
-    strobe = Duffing().stroboscope(period=3.21)
+    strobe = Duffing().poincare(period=3.21)
     assert strobe.period == 3.21
 
 
@@ -103,35 +103,36 @@ def test_stroboscope_inference_tracks_a_changed_omega():
     """Inference reads the drive *live*: a changed ``omega`` changes the period."""
     duf = Duffing()
     duf.omega = 2.0
-    strobe = duf.stroboscope()
+    strobe = duf.poincare()
     assert strobe.period == pytest.approx(2.0 * np.pi / 2.0)
     # with_params path agrees with the constructor path it sugars
     duf2 = Duffing().with_params(omega=2.0)
-    assert duf2.stroboscope().period == pytest.approx(np.pi)
+    assert duf2.poincare().period == pytest.approx(np.pi)
 
 
 def test_stroboscope_inferred_equals_explicit_constructor_path():
     """Inferred stroboscope is identical to the hand-built one (no behaviour add)."""
     duf = Duffing()
-    inferred = duf.stroboscope()
+    inferred = duf.poincare()
     explicit = StroboscopicMap(duf, 2.0 * np.pi / duf.omega)
     assert inferred.period == pytest.approx(explicit.period)
     assert type(inferred) is type(explicit)
 
 
-def test_stroboscope_unforced_system_raises_clearly():
-    """A system with no drive hook cannot infer a period — clear error."""
-    with pytest.raises(ts.errors.InvalidParameterError) as excinfo:
-        Lorenz().stroboscope()
-    msg = str(excinfo.value)
-    assert "period" in msg
-    # the message must point the user at the explicit escape hatch
-    assert "period=" in msg
+def test_stroboscope_unforced_system_chooses_a_plane():
+    """Ruling A3: a bare ``poincare()`` on an AUTONOMOUS flow picks a plane.
+
+    There is no drive to read a period from, and the two arguments are disjoint,
+    so the verb answers with the section that does exist rather than refusing.
+    """
+    from tsdynamics.derived import PoincareMap
+
+    assert isinstance(Lorenz().poincare(), PoincareMap)
 
 
 def test_stroboscope_unforced_system_works_with_explicit_period():
     """The explicit override keeps unforced systems usable (no regression)."""
-    strobe = Lorenz().stroboscope(period=1.5)
+    strobe = Lorenz().poincare(period=1.5)
     assert isinstance(strobe, StroboscopicMap)
     assert strobe.period == 1.5
 

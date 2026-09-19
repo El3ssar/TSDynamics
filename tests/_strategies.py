@@ -3,19 +3,18 @@ Shared Hypothesis strategies and deterministic signal builders for the
 property-test harness (stream I-QA).
 
 The property tests under ``tests/test_property_*.py`` assert *mathematical
-invariants* of the analysis and transform layer (e.g. ``permutation_entropy``
-is in ``[0, 1]`` when normalised, a Fourier surrogate preserves the power
-spectrum, ``detrend`` removes a linear trend).  To do that robustly, they need
-two kinds of input:
+invariants* of the analysis layer (e.g. a delay embedding preserves the sample
+values it stacks, a recurrence matrix is symmetric, the correlation dimension of
+a ``d``-cube is ``d``).  To do that robustly, they need two kinds of input:
 
 - **Structured signals** — sinusoids, AR(1) noise, deterministic-map orbits.
   These are far better estimator inputs than raw float arrays: they exercise the
   numeric routines on realistic data while staying reproducible.  The builders
   here take plain parameters (so Hypothesis can drive them) and return finite,
   non-degenerate ``float64`` arrays.
-- **Constrained raw arrays** — for the pure bound/shape invariants (PSD ``>= 0``,
-  length preservation), a finite, bounded, non-constant 1-D array is enough.
-  :func:`finite_signals` is that strategy.
+- **Constrained raw arrays** — for the pure bound/shape invariants (value
+  preservation, length preservation), a finite, bounded, non-constant 1-D array
+  is enough.  :func:`finite_signals` is that strategy.
 
 Everything here is deterministic given its inputs; the only randomness is
 seeded explicitly (``np.random.default_rng(seed)``), so a failing example always
@@ -109,8 +108,8 @@ def ar1(n: int = 512, *, phi: float = 0.7, seed: int = 0, scale: float = 1.0) ->
     """
     A seeded AR(1) process ``x_{t+1} = phi x_t + e_t`` (linear-stochastic null).
 
-    ``|phi| < 1`` keeps it stationary; this is the canonical *linear* signal a
-    surrogate/nonlinearity test must NOT reject.
+    ``|phi| < 1`` keeps it stationary; this is the canonical *linear-stochastic*
+    signal, the null a nonlinearity indicator must not mistake for structure.
     """
     rng = np.random.default_rng(int(seed))
     noise = rng.normal(0.0, float(scale), int(n))
@@ -153,7 +152,7 @@ def henon_series(
     """
     One coordinate of a Hénon-map orbit (a deterministic-chaotic series).
 
-    ``component=0`` returns the ``x`` series, ``1`` the ``y`` series.  Used as a
+    ``components=0`` returns the ``x`` series, ``1`` the ``y`` series.  Used as a
     cheap, compile-free chaotic source for the fast-tier property tests.
     """
     x, y = float(x0), float(y0)

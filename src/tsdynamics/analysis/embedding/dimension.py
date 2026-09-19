@@ -28,7 +28,9 @@ from typing import Any, ClassVar
 
 import numpy as np
 
+from .._common import reject_system
 from .._result import AnalysisResult
+from .._result_json import _sig
 from ._common import _as_series, _delay_columns
 
 __all__ = [
@@ -44,7 +46,7 @@ class EmbeddingDimension(AnalysisResult):
     r"""A minimum-embedding-dimension estimate with the curve it was read from.
 
     An :class:`~tsdynamics.analysis._result.AnalysisResult`, so it carries
-    ``.meta`` / ``.summary()`` / ``.to_dict()`` / the ``.plot`` seam.  It also
+    ``.meta`` / the readout ``repr`` / ``.to_dict()`` / the ``.plot`` seam.  It also
     behaves as the dimension integer (``int(result)`` drops it straight into
     :func:`~tsdynamics.analysis.embedding.embed.embed`), while carrying the
     per-dimension diagnostic so the saturation/decay can be inspected.
@@ -81,13 +83,83 @@ class EmbeddingDimension(AnalysisResult):
         """Return the recommended embedding dimension, so it drops into ``embed``."""
         return int(self.dimension)
 
-    def __repr__(self) -> str:  # noqa: D105
-        return (
-            f"EmbeddingDimension(method={self.method!r}, dimension={self.dimension}, "
-            f"delay={self.delay}, dims={self.dims[0]}..{self.dims[-1]})"
-        )
+    def __float__(self) -> float:
+        """Return the dimension as a float, so conversion and formatting agree.
 
-    def to_plot_spec(self, kind: str | None = None) -> Any:
+        Without it ``float(result)`` raised while ``f"{result:.3f}"`` returned
+        ``'3.000'`` — the format path fell back to ``__int__`` and the conversion
+        path did not, so one said the result is a number and the other said it is
+        not.
+        """
+        return float(self.dimension)
+
+    def __array__(self, dtype: Any = None, copy: bool | None = None) -> np.ndarray:
+        """Return the dimension as a 0-d **integer** array — it indexes and slices."""
+        arr = np.asarray(int(self.dimension))
+        if dtype is not None:
+            arr = arr.astype(dtype, copy=bool(copy))
+        elif copy:
+            arr = arr.copy()
+        return arr
+
+    @property
+    def saturated(self) -> bool:
+        r"""Whether the criterion was met **inside** the scanned range.
+
+        ``False`` when the selected dimension is the largest one tried, which
+        means the search hit its ceiling rather than finding saturation — and
+        the repr then says so instead of presenting the ceiling as the answer
+        (measured: ``m = 10`` reported with :math:`E_1 = 0.6`, nowhere near
+        saturation, with no flag).
+
+        Returns
+        -------
+        bool
+        """
+        dims = np.asarray(self.dims)
+        if dims.size < 2:
+            return False
+        return int(self.dimension) < int(dims[-1])
+
+    def _answer(self) -> str:
+        """Return ``m = <dimension>`` — the recommended embedding dimension."""
+        return f"m = {int(self.dimension)}"
+
+    def _interpretation(self) -> str | None:
+        """Flag a search that hit its ceiling instead of finding saturation."""
+        dims = np.asarray(self.dims)
+        if dims.size < 2 or self.saturated:
+            return None
+        return f"⚠ did not saturate — m = {int(self.dimension)} is the largest tried; raise max_dim"
+
+    def _derived(self) -> dict[str, Any]:
+        """Export the dimension and whether the search actually saturated."""
+        return {"dimension": int(self.dimension), "saturated": self.saturated}
+
+    def _context(self) -> str | None:
+        """Return the method, delay and the dimension range that was scanned."""
+        dims = np.asarray(self.dims)
+        span = f"d = {int(dims[0])}..{int(dims[-1])}" if dims.size else "no scan"
+        return f"{self.method}, τ={self.delay} samples, {span}"
+
+    def _details(self) -> tuple[str, ...]:
+        """Return the diagnostic value at the selected dimension."""
+        dims = np.asarray(self.dims)
+        if not dims.size:
+            return ()
+        where = np.flatnonzero(dims == int(self.dimension))
+        if not where.size:
+            return ()
+        i = int(where[0])
+        if self.fnn_fraction is not None:
+            return (f"false neighbours at m: {_sig(np.asarray(self.fnn_fraction)[i], 3)}",)
+        if self.afn_e1 is not None:
+            e1 = _sig(np.asarray(self.afn_e1)[i], 4)
+            e2 = "" if self.afn_e2 is None else f" · E2 = {_sig(np.asarray(self.afn_e2)[i], 4)}"
+            return (f"E1 at m: {e1}{e2}  (E1 saturates to 1; E2 near 1 means stochastic)",)
+        return ()
+
+    def __plot_spec__(self, kind: str | None = None) -> Any:
         r"""Describe the embedding-dimension diagnostic as a :class:`PlotSpec`.
 
         Builds a ``DIAGNOSTIC_CURVE`` of the per-dimension diagnostic against the
@@ -229,21 +301,45 @@ def _require_rows(rows: int, max_dim: int, tau: int) -> None:
         )
 
 
+#: The delay the dimension estimators use when the caller names none.
+#:
+#: ``None`` means "ask :func:`~tsdynamics.analysis.optimal_delay`", which is the
+#: library's own answer to the same question one function over.  It used to be a
+#: hard ``1``, so two adjacent doors disagreed by default on the same data —
+#: ``optimal_delay(x)`` said 16 and ``embedding_dimension(x)`` reconstructed at
+#: 1 — and on an oversampled series a lag-1 reconstruction is a thin diagonal
+#: line, the classic way to over-report the dimension.  The resolved value is
+#: printed by the result's repr (``(cao, τ=16 samples, …)``), so the choice is
+#: never made silently.
+def _resolve_delay(series: Any, delay: int | None, components: Any) -> int:
+    """Return ``delay``, estimating it from the data when it is ``None``."""
+    if delay is not None:
+        return int(delay)
+    from .delay import optimal_delay
+
+    return int(optimal_delay(series, components=components))
+
+
 def cao_dimension(
     data: Any,
     *,
-    delay: int = 1,
+    delay: int | None = None,
     max_dim: int = 10,
     threshold: float = 0.9,
     theiler: int = 0,
-    component: int | str | None = None,
+    components: int | str | None = None,
 ) -> EmbeddingDimension:
     r"""Cao's averaged-false-neighbour minimum embedding dimension.
+
+    The recommended estimator, and what ``embedding_dimension(x, method="cao")``
+    (the generic door) calls: Cao's :math:`E_1` saturates on its own, with no
+    rejection threshold to pick, where :func:`false_nearest_neighbors` needs
+    ``rtol`` / ``atol`` chosen for the data.
 
     Parameters
     ----------
     data : array-like or Trajectory
-        The scalar series (or a selected ``component``).
+        The scalar series (or a selected ``components``).
     delay : int, default 1
         Embedding delay :math:`\tau` in samples (use
         :func:`~tsdynamics.analysis.embedding.delay.optimal_delay`).
@@ -255,7 +351,7 @@ def cao_dimension(
     theiler : int, default 0
         Exclude temporally-close neighbours with :math:`|i-j| \le w`.  Set a few
         autocorrelation times for densely sampled flows.
-    component : int or str, optional
+    components : int or str, optional
         Component selector for a multi-component input.
 
     Returns
@@ -298,8 +394,8 @@ def cao_dimension(
     >>> int(cao_dimension(x, delay=10, max_dim=8)) >= 2
     True
     """
-    x = _as_series(data, component=component)
-    tau, max_dim = int(delay), int(max_dim)
+    x = _as_series(data, component=components, analysis="cao_dimension")
+    tau, max_dim = _resolve_delay(x, delay, None), int(max_dim)
     if tau < 1:
         raise ValueError("delay must be >= 1.")
     if max_dim < 2:
@@ -346,15 +442,21 @@ def cao_dimension(
 def false_nearest_neighbors(
     data: Any,
     *,
-    delay: int = 1,
+    delay: int | None = None,
     max_dim: int = 10,
     rtol: float = 15.0,
     atol: float = 2.0,
     threshold: float = 0.01,
     theiler: int = 0,
-    component: int | str | None = None,
+    components: int | str | None = None,
 ) -> EmbeddingDimension:
     r"""Kennel's false-nearest-neighbour minimum embedding dimension.
+
+    The classic estimator, and what ``embedding_dimension(x, method="fnn")``
+    calls.  Choose it over :func:`cao_dimension` when you want an explicit,
+    interpretable rejection criterion (the fraction of neighbours that are false)
+    rather than a saturation curve — at the cost of choosing ``rtol`` / ``atol``
+    for your data.
 
     A neighbour found in dimension :math:`d` is *false* when extending to
     :math:`d+1` either stretches the pair by more than ``rtol`` relative to their
@@ -366,7 +468,7 @@ def false_nearest_neighbors(
     Parameters
     ----------
     data : array-like or Trajectory
-        The scalar series (or a selected ``component``).
+        The scalar series (or a selected ``components``).
     delay : int, default 1
         Embedding delay :math:`\tau` in samples.
     max_dim : int, default 10
@@ -380,7 +482,7 @@ def false_nearest_neighbors(
         ``<= threshold``.
     theiler : int, default 0
         Exclude temporally-close neighbours with :math:`|i-j| \le w`.
-    component : int or str, optional
+    components : int or str, optional
         Component selector for a multi-component input.
 
     Returns
@@ -411,8 +513,8 @@ def false_nearest_neighbors(
     >>> int(false_nearest_neighbors(x, delay=10, max_dim=8)) >= 2
     True
     """
-    x = _as_series(data, component=component)
-    tau, max_dim = int(delay), int(max_dim)
+    x = _as_series(data, component=components, analysis="false_nearest_neighbors")
+    tau, max_dim = _resolve_delay(x, delay, None), int(max_dim)
     if tau < 1:
         raise ValueError("delay must be >= 1.")
     if max_dim < 1:
@@ -460,24 +562,43 @@ def embedding_dimension(
     data: Any,
     *,
     method: str = "cao",
-    delay: int = 1,
+    delay: int | None = None,
     max_dim: int = 10,
-    component: int | str | None = None,
+    components: int | str | None = None,
     **kwargs: Any,
 ) -> EmbeddingDimension:
     """Estimate the minimum embedding dimension by the chosen method.
 
+    The one door for the question "how many coordinates does this attractor
+    need?", with ``method=`` naming the estimator — the shape every other
+    estimator-choosing analysis in the library has (``fixed_points(method=)``,
+    ``optimal_delay(method=)``, ``lyapunov_from_data(method=)``).  The two
+    estimators keep their own names and their own citations, so
+    ``embedding_dimension(x, method="cao")`` and ``cao_dimension(x)`` return the
+    *identical* object; type whichever reads better at your call site.  Reach for
+    :func:`cao_dimension` first if you have no reason to prefer otherwise — Cao's
+    :math:`E_1` needs no threshold to be chosen for it, which is the usual
+    difficulty with :func:`false_nearest_neighbors`.
+
     Parameters
     ----------
     data : array-like or Trajectory
-        The scalar series (or a selected ``component``).
+        The scalar series (or a selected ``components``).
     method : {"cao", "fnn"}, default "cao"
         ``"cao"`` → :func:`cao_dimension`; ``"fnn"`` → :func:`false_nearest_neighbors`.
-    delay : int, default 1
-        Embedding delay in samples.
+    delay : int, optional
+        Embedding delay in samples.  ``None`` (the default) estimates it with
+        :func:`~tsdynamics.analysis.optimal_delay`, so this door and that one
+        agree about the same data; the resolved value is in the repr and in
+        ``result.meta["delay"]``.
+
+        .. versionchanged:: 6.0
+            Was a hard ``1``.  Two adjacent estimators disagreeing by default is
+            a trap on an oversampled series, where a lag-1 reconstruction is a
+            thin diagonal line.
     max_dim : int, default 10
         Largest dimension evaluated.
-    component : int or str, optional
+    components : int or str, optional
         Component selector for a multi-component input.
     **kwargs
         Forwarded to the selected estimator (``threshold``, ``theiler``,
@@ -499,12 +620,13 @@ def embedding_dimension(
     cao_dimension : Cao's averaged false-neighbour estimator.
     false_nearest_neighbors : Kennel's false-nearest-neighbour estimator.
     """
+    reject_system(data, analysis="embedding_dimension")
     method = method.lower()
     if method == "cao":
-        return cao_dimension(data, delay=delay, max_dim=max_dim, component=component, **kwargs)
+        return cao_dimension(data, delay=delay, max_dim=max_dim, components=components, **kwargs)
     if method == "fnn":
         return false_nearest_neighbors(
-            data, delay=delay, max_dim=max_dim, component=component, **kwargs
+            data, delay=delay, max_dim=max_dim, components=components, **kwargs
         )
     raise ValueError(f"unknown method {method!r}; use 'cao' or 'fnn'.")
 

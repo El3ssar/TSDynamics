@@ -8,7 +8,7 @@ mis-wired (bad tolerance threading, missing Jacobian build, alias not resolving)
 fails here.
 
 It is **dynamic**: the parametrisation reads
-:func:`tsdynamics.solvers.available_for`, so a newly added solver joins these
+:func:`tsdynamics._solvers.available_for`, so a newly added solver joins these
 sweeps automatically — no edit to this file. Two cheap reference problems keep CI
 fast:
 
@@ -29,7 +29,7 @@ import numpy as np
 import pytest
 
 import tsdynamics as ts
-from tsdynamics import solvers
+from tsdynamics import _solvers as solvers
 
 pytest.importorskip("tsdynamics._rust")
 
@@ -106,11 +106,11 @@ def test_every_ode_solver_integrates_the_nonstiff_reference(method):
     """
     sys = _DampedOscillator()
     final_time = 1.0
-    traj = sys.integrate(
+    traj = sys.run(
         final_time=final_time,
         dt=1e-3,
         ic=[1.0, 0.0],
-        method=method,
+        solver=method,
         rtol=1e-9,
         atol=1e-11,
         backend="interp",
@@ -131,11 +131,11 @@ def test_every_implicit_solver_handles_a_stiff_system(method):
     """
     sys = _StiffLinear()
     final_time = 1.0
-    traj = sys.integrate(
+    traj = sys.run(
         final_time=final_time,
         dt=0.05,
         ic=[1.0, 0.0],
-        method=method,
+        solver=method,
         rtol=1e-7,
         atol=1e-10,
         backend="interp",
@@ -149,11 +149,11 @@ def test_every_implicit_solver_handles_a_stiff_system(method):
 
 def _osc_error(method: str, rtol: float, atol: float, final_time: float) -> float:
     sys = _DampedOscillator()
-    traj = sys.integrate(
+    traj = sys.run(
         final_time=final_time,
         dt=0.5,
         ic=[1.0, 0.0],
-        method=method,
+        solver=method,
         rtol=rtol,
         atol=atol,
         backend="interp",
@@ -190,7 +190,7 @@ def test_interp_and_jit_backends_agree(method):
     solver that diverged between them would signal a backend-specific bug.
     """
     sys = _DampedOscillator()
-    kw = dict(final_time=1.0, dt=2e-3, ic=[1.0, 0.0], method=method, rtol=1e-9, atol=1e-11)
-    interp = np.asarray(sys.integrate(backend="interp", **kw).y[-1], dtype=float)
-    jit = np.asarray(sys.integrate(backend="jit", **kw).y[-1], dtype=float)
+    kw = dict(final_time=1.0, dt=2e-3, ic=[1.0, 0.0], solver=method, rtol=1e-9, atol=1e-11)
+    interp = np.asarray(sys.run(backend="interp", **kw).y[-1], dtype=float)
+    jit = np.asarray(sys.run(backend="jit", **kw).y[-1], dtype=float)
     np.testing.assert_array_equal(interp, jit, err_msg=f"{method}: interp != jit")

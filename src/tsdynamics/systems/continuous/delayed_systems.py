@@ -28,9 +28,9 @@ class MackeyGlass(DelaySystem):
     known_lyapunov = {
         "n_positive": 1,
         "kwargs": {
-            "n_exp": 1,
+            "k": 1,
             "dt": 0.5,
-            "burn_in": 100.0,
+            "transient": 100.0,
             "final_time": 1000.0,
             "rtol": 1e-4,
             "atol": 1e-4,
@@ -69,6 +69,7 @@ class IkedaDelay(DelaySystem):
 
     params = {"c": 1.0, "mu": -20, "tau": 2.0, "x0": 0.0}
     dim = 1
+    variables = ("x",)
     reference = "Ikeda & Matsumoto (1987), Physica D 29, 223-235"
     doi = "10.1016/0167-2789(87)90058-3"
 
@@ -97,6 +98,7 @@ class SprottDelay(DelaySystem):
 
     params = {"tau": 5.1}
     dim = 1
+    variables = ("x",)
     reference = "Sprott (2007), Physics Letters A 366, 397-402"
     doi = "10.1016/j.physleta.2007.01.083"
 
@@ -127,6 +129,7 @@ class ScrollDelay(DelaySystem):
 
     params = {"alpha": 0.2, "beta": 0.2, "tau": 10.0}
     dim = 1
+    variables = ("x",)
     reference = "Driver (1977), Ordinary and Delay Differential Equations, Springer"
     doi = "10.1007/978-1-4684-9467-9_5"
 
@@ -162,6 +165,7 @@ class PiecewiseCircuit(DelaySystem):
 
     params = {"alpha": 1.0, "beta": 1.0, "c": 2.24, "tau": 4.9}
     dim = 1
+    variables = ("x",)
     reference = "Tamasevicius, Mykolaitis & Bumeliene (2006), Electron. Lett. 42, 13"
     doi = "10.1049/el:20061245"
 
@@ -202,3 +206,23 @@ class VossDelay(DelaySystem):
         xt = Y(0, t - tau)
         f = -10.44 * xt**3 - 13.95 * xt**2 - 3.63 * xt + 0.85
         return [-alpha * Y(0) + f]
+
+
+__all__ = [
+    "IkedaDelay",
+    "MackeyGlass",
+    "PiecewiseCircuit",
+    "ScrollDelay",
+    "SprottDelay",
+    "VossDelay",
+]
+
+
+def __dir__() -> list[str]:
+    """Expose only the catalogue classes (``__all__``) to ``dir()`` / autocomplete.
+
+    ``__all__`` governs ``import *`` and nothing else, so without this the module
+    also offers every helper it imported — SymEngine's ``sin``/``cos``/``exp``,
+    ``numpy`` — as though they were part of this library's surface.
+    """
+    return sorted(__all__)

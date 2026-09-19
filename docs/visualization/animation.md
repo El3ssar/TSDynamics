@@ -1,5 +1,5 @@
 ---
-description: Animation as an orthogonal PlotSpec modifier — the reveal comet and the spatial-field movie, the fluent animate / trail / head / camera / clock tweaks, and the mp4, gif, interactive-HTML and three.js export targets.
+description: Animation as an orthogonal Plot modifier — the reveal comet and the spatial-field movie, the fluent animate / trail / head / camera / clock tweaks, and the mp4, gif, interactive-HTML and three.js export targets.
 ---
 
 <span class="ts-kicker">Visualization · Animation</span>
@@ -11,7 +11,7 @@ one page — every loop of the Lorenz butterfly drawn at once — which is exact
 what you want for a figure but exactly wrong for building intuition, giving a
 talk, or watching a transient settle onto an attractor. TSDynamics turns any
 plot into a movie by attaching one small directive, and the semantic plot is
-otherwise untouched: the same [`PlotSpec`](../reference/top-level.md) that
+otherwise untouched: the same [`Plot`](../reference/top-level.md) that
 renders a still renders the animation, and a backend that cannot animate simply
 draws the final frame.
 
@@ -27,7 +27,7 @@ HTML page, or a three.js viewer.
 
 <figure class="ts-fig" markdown>
 ![The Lorenz attractor drawing itself in as a looping reveal comet — an amber head tracing the orbit with a fading indigo tail on a dark stage, axes hidden](../assets/figures/viz/animation-lorenz-reveal.gif){ loading=lazy }
-<figcaption><span class="lbl">FIG 1</span> · a <strong>reveal comet</strong> of the Lorenz attractor: <code>to_plot_spec(animate=True)</code> keeps the full static curve and each frame shows a moving head (amber) with a fading tail reaching back 6 time units (indigo), axes hidden and drawn on the brand dark stage — the same "attractor floating in a dark room" look as the live <a href="backends.md#live-demo">WebGL viewer</a>. Built by the exact snippet in <a href="#a-first-animation">the first example below</a> and saved as a small looping GIF.</figcaption>
+<figcaption><span class="lbl">FIG 1</span> · a <strong>reveal comet</strong> of the Lorenz attractor: <code>ts.plot(traj, animate=True)</code> keeps the full static curve and each frame shows a moving head (amber) with a fading tail reaching back 6 time units (indigo), axes hidden and drawn on the brand dark stage — the same "attractor floating in a dark room" look as the live <a href="backends.md#live-demo">WebGL viewer</a>. Built by the exact snippet in <a href="#a-first-animation">the first example below</a> and saved as a small looping GIF.</figcaption>
 </figure>
 
 ---
@@ -35,16 +35,16 @@ HTML page, or a three.js viewer.
 ## A first animation
 
 The whole API hangs off one front-door argument. Every plot builder —
-`Trajectory.to_plot_spec`, `system.to_plot_spec`, `ts.viz.plot` — takes
+`ts.plot`, `traj.plot`, `system.plot` — takes
 `animate=`, and `animate=True` stamps the default animation onto the spec:
 
 ```python
 import tsdynamics as ts
 
 lor = ts.systems.Lorenz()
-traj = lor.integrate(final_time=45.0, dt=0.01, ic=[1.0, 1.0, 1.0]).after(3.0)
+traj = lor.run(final_time=45.0, dt=0.01, ic=[1.0, 1.0, 1.0]).after(3.0)
 
-spec = traj.to_plot_spec(components=["x", "y", "z"], animate=True)
+spec = ts.plot(traj, components=["x", "y", "z"], animate=True)
 spec.is_animated      # True — an Animation is attached
 spec.kind             # PlotKind.PHASE_PORTRAIT_3D — the semantic kind is unchanged
 ```
@@ -58,7 +58,7 @@ produces:
 AMBER, INDIGO, STAGE = "#E8912D", "#574FCF", "#0B0F14"
 
 spec = (
-    traj.to_plot_spec(components=["x", "y", "z"], animate=True)
+    ts.plot(traj, components=["x", "y", "z"], animate=True)
     .animate(n_frames=100, fps=25)          # 100 frames at 25 fps -> a 4 s loop
     .trail(("time", 6.0), fade=True)        # tail reaches back 6 time units, fading
     .head(size=9.0, color=AMBER)            # amber "current state" marker
@@ -111,10 +111,10 @@ import tsdynamics as ts
 
 TEAL, INDIGO = "#2CC5AE", "#574FCF"
 aiz = ts.systems.Aizawa()
-traj = aiz.integrate(final_time=95.0, dt=0.01, ic=[0.1, 0.0, 0.0]).after(15.0)
+traj = aiz.run(final_time=95.0, dt=0.01, ic=[0.1, 0.0, 0.0]).after(15.0)
 
 spec = (
-    traj.to_plot_spec(components=[0, 1, 2], animate=True)   # Aizawa has no named vars
+    ts.plot(traj, components=[0, 1, 2], animate=True)   # Aizawa has no named vars
     .animate(n_frames=100, fps=25)
     .trail(None)                          # persistent — the orbit accretes and stays
     .head(size=9.0, color=INDIGO)
@@ -143,10 +143,10 @@ import tsdynamics as ts
 
 # GrayScott has a deterministic seeded IC, so the pattern is reproducible.
 gs = ts.systems.GrayScott()
-gtr = gs.integrate(final_time=4000.0, dt=85.0)     # a 48x48 reaction-diffusion field
+gtr = gs.run(final_time=4000.0, dt=85.0)     # a 48x48 reaction-diffusion field
 
 spec = (
-    gtr.to_plot_spec(kind="field", animate=True)   # SPATIAL_FIELD, mode="frames"
+    ts.plot(gtr, "spatial_field", animate=True)   # SPATIAL_FIELD, mode="frames"
     .animate(fps=14)
     .style(cmap="viridis")
     .background("#0B0F14")
@@ -171,13 +171,13 @@ import numpy as np
 import tsdynamics as ts
 
 mg = ts.systems.MackeyGlass()
-traj = mg.integrate(
+traj = mg.run(
     final_time=900.0, dt=0.5,
     history=lambda s: [1.0 + 0.1 * np.sin(0.2 * s)],
 ).after(150.0)
 
 spec = (
-    traj.to_plot_spec(kind="delay", components="x", tau=17.0, animate=True)
+    ts.plot(traj, "delay_embedding", components="x", delay_time=17.0, animate=True)
     .animate(n_frames=100, fps=25)
     .trail(("time", 120.0), fade=True)
     .head(size=8.0, color="#574FCF")
@@ -200,31 +200,29 @@ series).
 
 <figure class="ts-fig" markdown>
 ![A two-panel movie: left, the Lorenz butterfly revealing as an indigo comet; right, its x(t) time series sweeping in teal, both advancing on one shared clock](../assets/figures/viz/animation-composite.gif){ loading=lazy }
-<figcaption><span class="lbl">FIG 5</span> · a <strong>lockstep composite</strong> via <code>ts.viz.plot(portrait, trace, layout="row", animate=Animation(...))</code>: the 3-D Lorenz reveal (indigo) and its <code>x(t)</code> trace (teal) play on one master clock — the head on the butterfly and the sweep on the trace are the same instant.</figcaption>
+<figcaption><span class="lbl">FIG 5</span> · a <strong>lockstep composite</strong> via <code>ts.plot(portrait, trace, layout="row", animate=Animation(...))</code>: the 3-D Lorenz reveal (indigo) and its <code>x(t)</code> trace (teal) play on one master clock — the head on the butterfly and the sweep on the trace are the same instant.</figcaption>
 </figure>
 
 ```python
 import tsdynamics as ts
-from tsdynamics.viz import get_theme, plot
-from tsdynamics.viz.producers import time_series
 from tsdynamics.viz.spec import Animation
 
 lor = ts.systems.Lorenz()
-traj = lor.integrate(final_time=42.0, dt=0.01, ic=[1.0, 1.0, 1.0]).after(3.0)
+traj = lor.run(final_time=42.0, dt=0.01, ic=[1.0, 1.0, 1.0]).after(3.0)
 
 portrait = (
-    traj.to_plot_spec(components=["x", "y", "z"])
+    ts.plot(traj, components=["x", "y", "z"])
     .style(lw=0.7, axes=False).recolor("#574FCF").camera(elev=22, azim=-60)
 )
 portrait.relabel(title="")
-trace = time_series(traj, components=["x"]).style(lw=1.0).recolor("#2CC5AE")
+trace = ts.plot(traj, components=["x"]).style(lw=1.0).recolor("#2CC5AE")
 trace.relabel(title="x(t)", x="time", y="x")
 # keep the visible time-series axes legible on the dark stage
-trace.theme(get_theme("dark"))
+trace.theme("dark")
 
 # A fully-built master Animation so both panels inherit frame count AND trail.
 master = Animation(n_frames=100, fps=25, trail_kind="time", trail_length=6.0, trail_fade=True)
-comp = plot(portrait, trace, layout="row", animate=master).size(8.0, 4.1)
+comp = ts.plot(portrait, trace, layout="row", animate=master).size(8.0, 4.1)
 comp.save("lorenz-composite.gif", dpi=80)
 ```
 
@@ -244,15 +242,15 @@ comp.save("lorenz-composite.gif", dpi=80)
 from tsdynamics.viz.spec import Animation
 
 # defaults
-a = traj.to_plot_spec(components=["x", "y", "z"], animate=True)
+a = ts.plot(traj, components=["x", "y", "z"], animate=True)
 
 # a dict tweaks specific fields (the rest stay at their per-kind defaults)
-b = traj.to_plot_spec(components=["x", "y", "z"], animate={"fps": 24, "n_frames": 60})
+b = ts.plot(traj, components=["x", "y", "z"], animate={"fps": 24, "n_frames": 60})
 b.animation.fps          # 24
 b.animation.n_frames     # 60
 
 # an Animation is copied in verbatim
-c = traj.to_plot_spec(components=["x", "z"], animate=Animation(fps=15, spin=1.0))
+c = ts.plot(traj, components=["x", "z"], animate=Animation(fps=15, spin=1.0))
 c.animation.spin         # 1.0
 ```
 
@@ -266,8 +264,8 @@ spec makes it animated with the same defaults. The two are equivalent:
 
 ```python
 # these produce the same spec
-traj.to_plot_spec(components=["x", "y", "z"], animate=True)
-traj.to_plot_spec(components=["x", "y", "z"]).animate()
+ts.plot(traj, components=["x", "y", "z"], animate=True)
+ts.plot(traj, components=["x", "y", "z"]).animate()
 ```
 
 ### Per-kind defaults
@@ -286,12 +284,12 @@ tuning:
   `frames` model** (the field movie) regardless of the other defaults.
 
 ```python
-d = traj.to_plot_spec(components=["x", "y", "z"], animate=True)
+d = ts.plot(traj, components=["x", "y", "z"], animate=True)
 d.animation.trail_kind      # 'steps'
 d.animation.trail_length    # 200.0   (min(n_steps // 10, 200); n_steps = 4201)
 d.animation.head            # True    (a 3-D portrait)
 
-e = traj.to_plot_spec(components="x", animate=True)   # a TIME_SERIES
+e = ts.plot(traj, components="x", animate=True)   # a TIME_SERIES
 e.animation.head            # False   (a bare growing curve)
 ```
 
@@ -328,7 +326,7 @@ else a capped default — always clamped to at most the number of samples (you
 cannot reveal more distinct points than exist):
 
 ```python
-s = traj.to_plot_spec(components="x", animate=True).animate(duration=4.0, fps=30)
+s = ts.plot(traj, components="x", animate=True).animate(duration=4.0, fps=30)
 s.animation.frame_count(len(traj.t))   # 120  (= 4.0 * 30)
 ```
 
@@ -357,10 +355,10 @@ A `"time"` length is converted to a sample count using the trajectory's `dt`
 resolves to `None` samples — the whole revealed curve is kept:
 
 ```python
-persistent = traj.to_plot_spec(components=["x", "y", "z"], animate=True).trail(None)
+persistent = ts.plot(traj, components=["x", "y", "z"], animate=True).trail(None)
 persistent.animation.tail_samples(0.01)   # None  (keep everything revealed so far)
 
-windowed = traj.to_plot_spec(components=["x", "y", "z"], animate=True).trail(("time", 6.0))
+windowed = ts.plot(traj, components=["x", "y", "z"], animate=True).trail(("time", 6.0))
 windowed.animation.tail_samples(0.01)     # 600   (6.0 / 0.01)
 ```
 
@@ -398,7 +396,7 @@ animated one — it makes the azimuth sweep `spin` full turns over the whole
 playback, and setting it *turns animation on*:
 
 ```python
-orbit = traj.to_plot_spec(components=["x", "y", "z"]).camera(elev=22, azim=-60, spin=2.0)
+orbit = ts.plot(traj, components=["x", "y", "z"]).camera(elev=22, azim=-60, spin=2.0)
 orbit.is_animated          # True — spin implied an animation
 orbit.animation.spin       # 2.0
 orbit.meta["camera"]       # {'elev': 22.0, 'azim': -60.0}
@@ -437,7 +435,7 @@ three.js drops its grid. The top figure uses it; so should most hero loops.
 
 ```python
 spec = (
-    traj.to_plot_spec(components=["x", "y", "z"], animate=True)
+    ts.plot(traj, components=["x", "y", "z"], animate=True)
     .style(lw=0.6, axes=False)      # thin line, no axes
     .recolor("#574FCF")
 )
@@ -455,9 +453,9 @@ reached through the `kind="field"` recipe:
 
 ```python
 gs = ts.systems.GrayScott()
-gtr = gs.integrate(final_time=1500.0, dt=5.0)      # a 48x48 reaction-diffusion field
+gtr = gs.run(final_time=1500.0, dt=5.0)      # a 48x48 reaction-diffusion field
 
-movie = gtr.to_plot_spec(kind="field", animate=True)
+movie = ts.plot(gtr, "spatial_field", animate=True)
 movie.kind                 # PlotKind.SPATIAL_FIELD
 movie.animation.mode       # 'frames'  (forced — the field IS the motion)
 movie.animation.head       # False     (no comet, no head marker)
@@ -479,9 +477,9 @@ import numpy as np
 
 ks = ts.systems.KuramotoSivashinsky()
 ic = 0.1 * np.cos(np.linspace(0.0, 2.0 * np.pi, ks.dim, endpoint=False))
-ktr = ks.integrate(final_time=150.0, dt=0.5, ic=ic).after(20.0)
+ktr = ks.run(final_time=150.0, dt=0.5, ic=ic).after(20.0)
 
-wave = ktr.to_plot_spec(kind="field", animate=True)
+wave = ts.plot(ktr, "spatial_field", animate=True)
 wave.kind                             # PlotKind.SPATIAL_FIELD
 wave.layers[0].data["frames"].shape   # (T, 32) — a 1-D profile stacked over time
 wave.save("ks-wave.gif")
@@ -567,7 +565,7 @@ plays**:
 ```python
 from tsdynamics.viz.render import render_spec
 
-spec = traj.to_plot_spec(components=["x", "y", "z"], animate=True).animate(fps=30).trail(("time", 4.0))
+spec = ts.plot(traj, components=["x", "y", "z"], animate=True).animate(fps=30).trail(("time", 4.0))
 payload = render_spec(spec, "threejs")
 "animation" in payload.payload["metadata"]      # True
 sorted(payload.payload["metadata"]["animation"])
@@ -582,9 +580,8 @@ comet to sweep, so the exporter drops to a **static payload and warns**
 
 ```python
 import warnings
-from tsdynamics.viz.producers import spacetime
 
-img = spacetime(traj).animate(fps=10)     # a SPACETIME (IMAGE) — no line to sweep
+img = ts.plot(traj, "spacetime").animate(fps=10)   # an IMAGE — no line to sweep
 with warnings.catch_warnings(record=True) as w:
     warnings.simplefilter("always")
     payload = render_spec(img, "threejs")
@@ -602,17 +599,17 @@ cached, shipped to a web frontend, or replotted without recomputation — and it
 adds **no** new `PlotKind` (the frozen plot-kind vocabulary is untouched):
 
 ```python
-from tsdynamics.viz.spec import PlotSpec
+from tsdynamics.viz.spec import Plot
 
 spec = (
-    traj.to_plot_spec(components=["x", "y", "z"], animate=True)
+    ts.plot(traj, components=["x", "y", "z"], animate=True)
     .animate(fps=25, n_frames=50)
     .trail(("steps", 300))
 )
 d = spec.to_dict()
 d["animation"]["fps"]        # 25.0
 
-rt = PlotSpec.from_dict(d)
+rt = Plot.from_dict(d)
 rt.is_animated               # True
 rt.animation.trail_kind      # 'steps'
 ```
@@ -665,11 +662,11 @@ Every fluent tweak above sets one or more fields on the
 
 ## See also
 
-- [Plot kinds & the front door](index.md) — the `to_plot_spec` auto-dispatch and
+- [Visualization](index.md) — the `ts.plot` grammar, its auto-dispatch, and
   the semantic kinds an animation rides on
 - [Styling & themes](styling.md) — the fluent `.style`/`.recolor`/`.theme`
   tweaks that compose with the animation ones, and `.style(axes=False)`
-- [Composition](composition.md) — `ts.viz.plot(...)`: a composite plays its panels in
+- [Composition](composition.md) — `ts.plot(...)`: a composite plays its panels in
   lockstep on one master clock
 - [three.js export](backends.md#threejs-export) — the interactive WebGL viewer the
   `metadata.animation` block drives

@@ -13,6 +13,8 @@ itself stays plot-free).
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from tsdynamics import registry
@@ -26,6 +28,13 @@ from tsdynamics.viz.render import (
     select_renderer,
 )
 from tsdynamics.viz.spec import Layer, PlotKind, PlotSpec
+
+# matplotlib is an OPTIONAL extra: the base CI job installs the library without
+# it and runs the viz suites in a separate job. Every test here renders, so skip
+# the module rather than fail — a late guard inside the tests does not help when
+# an autouse fixture or a module-level import reaches matplotlib first.
+pytest.importorskip("matplotlib")
+
 
 # ---------------------------------------------------------------------------
 # Fixtures / fakes
@@ -84,12 +93,36 @@ def test_normalize_kind_passes_real_kinds_through():
 
 
 def test_normalize_kind_resolves_accessor_aliases():
-    # The result.plot.phase() / .image() / .spectrum() accessor spellings.
+    # The result.plot.phase() / .image() / .section() accessor spellings.
     assert normalize_kind("phase") is PlotKind.PHASE_PORTRAIT_2D
     assert normalize_kind("phase3d") is PlotKind.PHASE_PORTRAIT_3D
     assert normalize_kind("image") is PlotKind.IMAGE
-    assert normalize_kind("spectrum") is PlotKind.POWER_SPECTRUM
     assert normalize_kind("section") is PlotKind.POINCARE_SECTION
+    assert normalize_kind("bifurcation_diagram") is PlotKind.BIFURCATION
+
+
+def test_aliases_to_removed_kinds_are_gone():
+    """The ``"spectrum"`` / ``"psd"`` / ``"histogram"`` aliases left with their kinds.
+
+    They pointed at ``POWER_SPECTRUM`` / ``HISTOGRAM_NULL``, which the v6
+    vocabulary surgery deleted (see ``tests/test_viz_vocab.py``).  An alias that
+    still *resolved* would be worse than a missing one: it would name a kind
+    nothing draws.
+    """
+    for alias in ("spectrum", "psd", "histogram_null"):
+        with pytest.raises(ValueError):
+            normalize_kind(alias)
+    # "histogram" is no longer an alias, but it IS a real layer mark, so it must
+    # resolve to the mark rather than to the deleted HISTOGRAM_NULL kind.
+    assert normalize_kind("histogram") is PlotKind.HISTOGRAM
+
+
+def test_every_kind_alias_targets_a_live_kind():
+    """No alias may point at a kind that is not in the vocabulary."""
+    from tsdynamics.viz.render import _KIND_ALIAS
+
+    for alias, target in _KIND_ALIAS.items():
+        assert target in set(PlotKind), f"alias {alias!r} targets a dead kind"
 
 
 def test_normalize_kind_rejects_garbage():
@@ -181,7 +214,518 @@ def test_render_with_no_backend_raises_not_installed(clean_renderers, monkeypatc
         render_spec(_line_spec())
 
 
-def test_unknown_backend_name_raises_keyerror(clean_renderers):
+def test_unknown_backend_name_lists_the_registered_backends(clean_renderers):
+    """A bad ``backend=`` is a bad option value: name the choices and a line to type.
+
+    It used to surface the registry's bare ``KeyError``, whose message named the
+    mistake and nothing else — and whose ``__str__`` is ``repr(arg)``, so a
+    multi-line remedy would print with literal ``\\n`` in it.
+    """
+    from tsdynamics.errors import InvalidParameterError
+
     clean_renderers.register("alpha", _make_renderer(RendererCapabilities.all_kinds("alpha")))
-    with pytest.raises(KeyError):
+    with pytest.raises(InvalidParameterError) as excinfo:
         render_spec(_line_spec(), "nope")
+    message = str(excinfo.value)
+    assert "'nope'" in message
+    assert "alpha" in message
+    assert "spec.render('alpha')" in message
+
+
+# ---------------------------------------------------------------------------
+# Unknown render keywords (the "a typo must not be swallowed" gate)
+# ---------------------------------------------------------------------------
+#
+# Before this gate, ``spec.render(backend=B, totally_bogus_kwarg=42)`` was
+# accepted with no warning on **all four** in-tree backends: three of the four
+# render cores end in a ``**_kw`` / ``**_ignored`` catch-all, and the fourth is
+# reached through a ``def _render(spec, /, **kw)`` wrapper.  A misspelled option
+# name was therefore indistinguishable from a correct one — the exact silent
+# no-op the viz rework exists to eliminate, sitting in the dispatcher itself.
+
+
+@pytest.mark.parametrize("backend", ["matplotlib", "plotly", "json", "threejs"])
+def test_unknown_render_kwarg_raises_naming_the_key_and_the_backend(backend):
+    """Every in-tree backend rejects an unknown render keyword, loudly."""
+    pytest.importorskip("matplotlib")  # plotly falls back to mpl if absent
+    if backend == "plotly":
+        pytest.importorskip("plotly")
+    from tsdynamics.errors import InvalidParameterError
+
+    register_builtin_renderers()
+    with pytest.raises(InvalidParameterError) as exc:
+        _line_spec().render(backend, totally_bogus_kwarg=42)
+    msg = str(exc.value)
+    assert "totally_bogus_kwarg" in msg
+    assert backend in msg
+    # The message must also say what this backend *does* take, per backend.
+    expected = {
+        "matplotlib": "figsize",
+        "plotly": "include_plotlyjs",
+        "json": "indent",
+        "threejs": "max_points",
+    }[backend]
+    assert expected in msg
+
+
+@pytest.mark.parametrize(
+    ("backend", "kwargs"),
+    [
+        ("matplotlib", {"figsize": (4.0, 3.0)}),
+        ("plotly", {"include_plotlyjs": "cdn"}),
+        ("json", {"indent": 2}),
+        ("threejs", {"decimals": 3}),
+    ],
+)
+def test_legitimate_backend_kwargs_still_pass_through(backend, kwargs):
+    """The per-backend check must not break a genuine backend option."""
+    pytest.importorskip("matplotlib")
+    if backend == "plotly":
+        pytest.importorskip("plotly")
+    register_builtin_renderers()
+    assert _line_spec().render(backend, **kwargs) is not None
+
+
+def test_a_kwarg_of_the_wrong_backend_is_rejected():
+    """``figsize`` is matplotlib's; asking plotly for it is an error, not a no-op."""
+    pytest.importorskip("plotly")
+    from tsdynamics.errors import InvalidParameterError
+
+    register_builtin_renderers()
+    with pytest.raises(InvalidParameterError, match="figsize"):
+        _line_spec().render("plotly", figsize=(4.0, 3.0))
+
+
+def test_out_of_tree_backend_with_var_keyword_keeps_its_pass_through(clean_renderers):
+    """An undeclared plugin taking ``**kwargs`` keeps the documented free pass-through.
+
+    The check must be *per backend*: we cannot know what a third-party renderer
+    reads, so a catch-all signature with no declaration is left alone.
+    """
+    clean_renderers.register("alpha", _make_renderer(RendererCapabilities.all_kinds("alpha")))
+    out = render_spec(_line_spec(), "alpha", whatever_it_wants=1)
+    assert out["kw"] == {"whatever_it_wants": 1}
+
+
+def test_out_of_tree_backend_may_opt_in_by_declaring_render_kwargs(clean_renderers):
+    """A plugin that declares ``render_kwargs`` gets the same protection."""
+    from tsdynamics.errors import InvalidParameterError
+
+    caps = RendererCapabilities.all_kinds("beta", render_kwargs={"scale"})
+    clean_renderers.register("beta", _make_renderer(caps))
+    assert render_spec(_line_spec(), "beta", scale=2)["kw"] == {"scale": 2}
+    with pytest.raises(InvalidParameterError, match="scal"):
+        render_spec(_line_spec(), "beta", scal=2)
+
+
+def test_out_of_tree_backend_with_explicit_signature_is_introspected(clean_renderers):
+    """A plugin with no catch-all is validated from its own signature."""
+    from tsdynamics.errors import InvalidParameterError
+
+    caps = RendererCapabilities.all_kinds("gamma")
+
+    def _render(spec, *, scale=1.0):
+        return {"kw": {"scale": scale}}
+
+    _render.capabilities = caps
+    clean_renderers.register("gamma", _render)
+    assert render_spec(_line_spec(), "gamma", scale=3.0)["kw"] == {"scale": 3.0}
+    with pytest.raises(InvalidParameterError):
+        render_spec(_line_spec(), "gamma", nope=1)
+
+
+def test_declared_render_kwargs_match_each_backend_core():
+    """The declaration table must match what each backend's real render fn accepts.
+
+    ``_BUILTIN_RENDER_KWARGS`` is hand-written (it has to be: every in-tree
+    renderer is registered as a ``**kw`` wrapper, so introspecting the registered
+    callable recovers nothing).  This is what stops it drifting: it introspects
+    each backend's *actual* entry point and fails if the declaration promises a
+    keyword the backend does not take, or omits one it does.
+    """
+    import inspect
+
+    pytest.importorskip("matplotlib")
+    pytest.importorskip("plotly")
+    from tsdynamics.viz.render.caps import _BUILTIN_RENDER_KWARGS
+
+    register_builtin_renderers()
+
+    def named_kwargs(fn):
+        sig = inspect.signature(fn)
+        return {
+            name
+            for name, p in sig.parameters.items()
+            if p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY) and name not in ("spec", "warn")
+        }
+
+    from tsdynamics.viz.render.mpl import _core as mpl_core
+    from tsdynamics.viz.render.plotly import _core as plotly_core
+
+    cores = {
+        "matplotlib": named_kwargs(mpl_core.render),
+        "plotly": named_kwargs(plotly_core.render),
+        # json / threejs register a closure that IS the entry point.
+        "json": named_kwargs(registry.renderers.get("json")),
+        "threejs": named_kwargs(registry.renderers.get("threejs")),
+    }
+    for backend, actual in cores.items():
+        assert _BUILTIN_RENDER_KWARGS[backend] == actual, backend
+
+
+# ---------------------------------------------------------------------------
+# v6 — the ts.viz surface, the renderers registry, and the save contract
+# ---------------------------------------------------------------------------
+
+#: The contract's ``ts.viz.<TAB>``, §2.5 + §11.3 T3.  Exact and sorted: a builder
+#: who produces a different listing has failed.  ``VisualizationDegraded`` was
+#: promoted in v6 round 9 (13 -> 14): it is the warning the docs tell you to
+#: catch, and its only address was the internal ``ts.viz.render``.
+_VIZ_TAB_SURFACE = [
+    "Plot",
+    "VisualizationDegraded",
+    "compatibility",
+    "draw",
+    "geometry",
+    "grid",
+    "load",
+    "plot",
+    "primitives",
+    "renderers",
+    "spec",
+    "styles",
+    "themes",
+    "transforms",
+]
+
+#: The contract's ``ts.viz.spec.<TAB>``, §2.7 + §11.3 T3 — the 18 IR nouns.
+#: The three envelope names left in v6 round 9 (plumbing with no executable use);
+#: the two renderer-declaration types joined, because writing a renderer is one of
+#: the six declared plugin doors and both were an ``AttributeError`` at every
+#: public address.  All five still resolve — see the two tests below.
+_SPEC_TAB_SURFACE = [
+    "Animation",
+    "Annotation",
+    "Axis",
+    "Colorbar",
+    "Frame",
+    "FrameSpace",
+    "Geometry",
+    "Layer",
+    "Layout",
+    "Legend",
+    "Part",
+    "PlotKind",
+    "PlotTransform",
+    "Presentation",
+    "RenderResult",
+    "RendererCapabilities",
+    "T",
+    "make_frame",
+]
+
+
+def test_ts_viz_tab_surface_is_the_contract() -> None:
+    """14 names: four registries, two doors, one arranger, one type, one warning, the IR."""
+    import tsdynamics as ts
+
+    assert sorted(ts.viz.__all__) == _VIZ_TAB_SURFACE
+    assert dir(ts.viz) == _VIZ_TAB_SURFACE
+    for name in _VIZ_TAB_SURFACE:
+        assert getattr(ts.viz, name) is not None, name
+
+
+def test_ts_viz_spec_holds_the_ir_and_every_noun_resolves() -> None:
+    """The IR is one dot away — and twelve of the eighteen come from sibling modules."""
+    import tsdynamics as ts
+
+    assert sorted(ts.viz.spec.__all__) == _SPEC_TAB_SURFACE
+    assert dir(ts.viz.spec) == _SPEC_TAB_SURFACE
+    for name in _SPEC_TAB_SURFACE:
+        assert getattr(ts.viz.spec, name) is not None, name
+    # Plot is deliberately NOT here: it is the one type you annotate, and it
+    # lives one level up.
+    assert "Plot" not in ts.viz.spec.__all__
+    assert ts.viz.Plot.__name__ == "Plot"
+
+
+def test_touching_the_viz_surface_imports_no_plot_library() -> None:
+    """``ts.viz`` and ``ts.viz.spec`` must stay free of matplotlib and plotly."""
+    import subprocess
+    import sys
+
+    code = (
+        "import sys, tsdynamics as ts;"
+        "_ = ts.viz.__all__; _ = ts.viz.spec.__all__; _ = ts.viz.spec.Geometry;"
+        "bad = [m for m in sys.modules if m.split('.')[0] in ('matplotlib', 'plotly')];"
+        "assert not bad, bad; print('CLEAN')"
+    )
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr
+    assert "CLEAN" in out.stdout
+
+
+def test_a_name_that_moved_says_where_it_went() -> None:
+    """The error message *is* the migration guide."""
+    import tsdynamics as ts
+
+    with pytest.raises(AttributeError, match=r"PlotSpec is now Plot"):
+        _ = ts.viz.PlotSpec
+    with pytest.raises(AttributeError, match=r"transforms\.names\(\)"):
+        _ = ts.viz.list_transforms
+    # A guess is still an ordinary miss, so hasattr keeps working.
+    assert not hasattr(ts.viz, "definitely_not_a_name")
+
+
+def test_the_four_registries_share_one_shape() -> None:
+    """``register`` / ``names`` / ``find`` / ``get`` — learn one, know all four."""
+    import tsdynamics as ts
+
+    for name in ("transforms", "primitives", "renderers", "themes"):
+        registry_obj = getattr(ts.viz, name)
+        missing = [
+            verb for verb in ("names", "get") if not callable(getattr(registry_obj, verb, None))
+        ]
+        assert not missing, f"ts.viz.{name} is missing {missing}"
+        assert registry_obj.names(), f"ts.viz.{name}.names() is empty"
+
+
+def test_the_four_registries_all_answer_find() -> None:
+    """``find`` is the fourth shared verb; three of four answer it today."""
+    import tsdynamics as ts
+
+    for name in ("transforms", "primitives", "renderers", "themes"):
+        assert callable(getattr(getattr(ts.viz, name), "find", None)), name
+
+
+def test_renderers_introspection_is_honest_before_the_first_render() -> None:
+    """Measured before v6: ``names()`` answered ``[]`` until something had drawn.
+
+    ``names()`` is now **sorted**, like the three sibling registries — a listing
+    is a listing, and the unsorted order leaked into every "installed backends
+    are …" message.  The *preference* it used to encode is a dispatch fact, so it
+    is asserted where it lives: a no-backend ``render()`` draws on matplotlib,
+    and ``find()`` (where order is the answer) still reports preference order.
+    """
+    import subprocess
+    import sys
+
+    code = (
+        "import matplotlib; matplotlib.use('Agg');"
+        "import tsdynamics as ts;"
+        "print(','.join(ts.viz.renderers.names()));"
+        "print(','.join(ts.viz.renderers.find(writes='.svg')));"
+        "import numpy as np;"
+        "p = ts.plot(np.sin(np.linspace(0, 6, 40)));"
+        "print(type(p.render()).__module__.split('.')[0])"
+    )
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr
+    listed, svg, drew_with = out.stdout.strip().splitlines()
+    names = listed.split(",")
+    assert names == sorted(names), listed
+    assert "matplotlib" in names, listed
+    assert svg == "matplotlib", svg
+    assert drew_with == "matplotlib", drew_with
+
+
+def test_writes_is_split_into_static_and_animated_because_savefig_disagrees() -> None:
+    """Measured: ``savefig`` refuses ``.mp4``; ``FuncAnimation.save`` writes it.
+
+    One undivided ``writes`` set made ``Plot.save`` promise four formats
+    matplotlib can never produce (``.apng`` ``.m4v`` ``.mov`` ``.webm``, all
+    static) while refusing ``.webp``, which it can.
+    """
+    import tsdynamics as ts
+
+    caps = ts.viz.renderers.get("matplotlib")
+    assert caps.can_save(".png") and not caps.can_save(".png", animated=True)
+    assert caps.can_save(".mp4", animated=True) and not caps.can_save(".mp4")
+    # ``.gif`` is a MOVIE container, so it is declared animated-only — even
+    # though ``savefig`` accepts it and fills it with a single frame.  See
+    # ``test_a_gif_of_a_still_is_refused_like_an_mp4``.
+    assert caps.can_save(".gif", animated=True) and not caps.can_save(".gif")
+    assert ".webp" in caps.writes_static, "declared and, before v6, unreachable"
+    assert ".pgf" in caps.writes_static, "works, and was simply never declared"
+    assert caps.writes == caps.writes_static | caps.writes_animated
+
+
+@pytest.mark.parametrize(
+    "ext",
+    [
+        ".png",
+        ".pdf",
+        ".svg",
+        ".svgz",
+        ".eps",
+        ".ps",
+        ".pgf",
+        ".jpg",
+        ".jpeg",
+        ".tif",
+        ".tiff",
+        ".webp",
+    ],
+)
+def test_every_extension_matplotlib_declares_statically_can_actually_be_written(
+    tmp_path, ext: str
+) -> None:
+    """The declaration and the writer must agree — in both directions.
+
+    ``.pgf`` is the one extension whose writer needs something outside Python: a
+    working TeX installation (``xelatex`` by default).  matplotlib declares the
+    format regardless, and so does this library, which is correct — the format IS
+    supported, the *toolchain* may be absent.  Measured on the CI viz runner,
+    saving one raised ``RuntimeError: 'xelatex' not found``, which says nothing
+    about whether the declaration and the writer agree.
+    """
+    pytest.importorskip("matplotlib")
+    import shutil
+    import warnings as _w
+
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    if ext == ".pgf" and shutil.which("xelatex") is None:
+        pytest.skip("`.pgf` needs a TeX installation; none on this machine")
+
+    t = np.linspace(0.0, 1.0, 8)
+    spec = PlotSpec(kind=PlotKind.TIME_SERIES, layers=[Layer(PlotKind.LINE, {"x": t, "y": t})])
+    target = tmp_path / f"figure{ext}"
+    with _w.catch_warnings():
+        _w.simplefilter("ignore")
+        spec.save(str(target))
+    assert target.stat().st_size > 0
+    plt.close("all")
+
+
+def test_a_third_party_backends_declared_extension_becomes_saveable(tmp_path) -> None:
+    """``save`` asks the backends and believes them — it keeps no table of its own.
+
+    Before v6 a registered backend could be *rendered* by name but its declared
+    extension could **never** be saved, because a hardcoded ``_WRITABLE_EXT`` in
+    ``spec.py`` was consulted first.
+    """
+    import numpy as np
+
+    written: list[str] = []
+
+    def _render(spec, /, *, path=None, **kw):
+        # A file-writing backend: it draws nothing, so with no ``path`` it has
+        # nothing to hand back — which is exactly the shape ``save`` must cope
+        # with when it does not recognise the writer up front.
+        if path is None:
+            return None
+        Path(path).write_text("TIKZ")
+        written.append(path)
+        return path
+
+    _render.capabilities = RendererCapabilities.all_kinds("tikz", writes=(".tikz",))
+    registry.renderers.register("tikz", _render)
+    try:
+        t = np.linspace(0.0, 1.0, 8)
+        spec = PlotSpec(kind=PlotKind.TIME_SERIES, layers=[Layer(PlotKind.LINE, {"x": t, "y": t})])
+        target = tmp_path / "figure.tikz"
+        assert "tikz" in ts_viz_renderers_find(".tikz")
+        spec.save(str(target), backend="tikz")
+        assert written and target.read_text() == "TIKZ"
+    finally:
+        registry.renderers.unregister("tikz")
+
+
+def ts_viz_renderers_find(ext: str) -> list[str]:
+    """Helper: which backends declare they can write ``ext``."""
+    import tsdynamics as ts
+
+    return ts.viz.renderers.find(writes=ext)
+
+
+# ---------------------------------------------------------------------------
+# v6 — one vocabulary, honest verbs
+# ---------------------------------------------------------------------------
+
+
+def test_a_gif_of_a_still_is_refused_like_an_mp4(tmp_path) -> None:
+    """Both are movie containers, so both must answer the same question the same way.
+
+    Measured before: ``ts.plot(traj).save("x.gif")`` wrote an 18 923-byte file
+    containing **one frame** — a still, in a movie container, that looked like a
+    working animation — while its sibling ``.mp4`` raised by name.  ``.gif`` left
+    matplotlib's ``writes_static`` declaration; an *animated* plot still writes
+    one through ``writes_animated``.
+    """
+    pytest.importorskip("matplotlib")
+    import numpy as np
+
+    t = np.linspace(0.0, 1.0, 8)
+    spec = PlotSpec(kind=PlotKind.TIME_SERIES, layers=[Layer(PlotKind.LINE, {"x": t, "y": t})])
+    with pytest.raises(Exception, match="movie format and this Plot is not animated"):
+        spec.save(str(tmp_path / "still.gif"))
+    # ... and the animated form of the very same plot writes one.
+    spec.animate(n_frames=3, fps=4)
+    assert Path(spec.save(str(tmp_path / "movie.gif"))).stat().st_size > 0
+
+
+def test_the_mpl_alias_resolves_at_every_door(tmp_path) -> None:
+    """One alias table: ``render``, ``save`` and ``renderers.get`` must agree.
+
+    Measured before: ``p.render(backend="mpl")`` worked while
+    ``p.save(path, backend="mpl")`` answered *"no backend named 'mpl' is
+    registered"* and ``ts.viz.renderers.get("mpl")`` *"unknown rendering backend
+    'mpl'"* — one spelling accepted at one door out of three.
+    """
+    pytest.importorskip("matplotlib")
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    import tsdynamics as ts
+
+    t = np.linspace(0.0, 1.0, 8)
+    spec = PlotSpec(kind=PlotKind.TIME_SERIES, layers=[Layer(PlotKind.LINE, {"x": t, "y": t})])
+    assert ts.viz.renderers.get("mpl").name == "matplotlib"
+    assert type(spec.render(backend="mpl")).__module__.split(".")[0] == "matplotlib"
+    assert Path(spec.save(str(tmp_path / "z.png"), backend="mpl")).stat().st_size > 0
+    plt.close("all")
+
+
+def test_the_four_registries_answer_the_same_four_verbs() -> None:
+    """``register`` / ``names`` / ``find`` / ``get`` — learn one, know all four.
+
+    Measured before v6, the promise was false in four dimensions at once:
+    ``transforms`` was not callable while the other three were; ``transforms``
+    and ``renderers`` returned unsorted listings; ``find("free text")`` raised
+    ``TypeError`` on **four** of five; and ``find`` returned names from three and
+    objects from ``themes`` / ``styles``.
+    """
+    import tsdynamics as ts
+
+    for name in ("transforms", "primitives", "renderers", "themes", "styles"):
+        reg = getattr(ts.viz, name)
+        assert callable(reg), f"ts.viz.{name}() must list the names"
+        listing = reg.names()
+        assert listing == sorted(listing), f"ts.viz.{name}.names() must be sorted"
+        assert reg() == listing, f"ts.viz.{name}() must equal .names()"
+        by_text = reg.find("e")  # the positional free-text query, on all five
+        assert isinstance(by_text, list)
+        assert all(isinstance(item, str) for item in by_text), (
+            f"ts.viz.{name}.find() must return names; get(name) is how you reach a record"
+        )
+        assert set(by_text) <= set(reg.names(aliases=True) if name == "styles" else listing)
+        for entry in listing[:2]:
+            assert reg.get(entry) is not None
+        assert callable(reg.register), f"ts.viz.{name}.register must exist"
+
+
+def test_the_style_vocabulary_is_closed_and_says_so() -> None:
+    """``styles`` answers the listing verbs, and **refuses** ``register`` by name.
+
+    It is the one table of the five that is a *contract* rather than an
+    extension point: every key declares which backends honor it, and one nobody
+    draws would be a keyword that silently does nothing.  A refusal that names
+    the two things that ARE extensible is better than a missing attribute.
+    """
+    import tsdynamics as ts
+    from tsdynamics.errors import InvalidParameterError
+
+    with pytest.raises(InvalidParameterError, match="style vocabulary is closed"):
+        ts.viz.styles.register("glow")

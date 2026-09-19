@@ -1,7 +1,7 @@
 """Engine-backed Poincaré crossing detection (stream WS-CROSSKERNEL).
 
 The Rust event engine (:func:`tsdyn_engine::integrate_events`, wired through
-:func:`tsdynamics.engine.run.crossings`) marches a whole attractor and refines
+:func:`tsdynamics._engine.run.crossings`) marches a whole attractor and refines
 its section crossings in **one FFI call per span**, replacing the Python
 ``PoincareMap`` loop that drove the flow one ``dt`` at a time through a full
 ``integrate()`` round-trip (the named "Poincaré sections are slow" culprit).
@@ -19,10 +19,24 @@ awaits a resumable ``PoincareMap.step()`` (WS-STEPPER) or routing
 
 Accuracy / answer-preservation
 ------------------------------
-The march uses the **fixed-step** ``rk4`` kernel at the detection step ``dt`` (the
-engine's adaptive kernels carry no step ceiling, so an adaptive march would grow
-the step, skip crossings, and degrade the O(h⁴) Hermite refinement that pins the
-crossing).  With ``rk4`` at ``dt`` the engine marches the exact same ``dt`` grid
+The march uses the **fixed-step** ``rk4`` kernel at the detection step ``dt``.
+
+This is a *workaround*, not a design property.  It was adopted because the
+engine's adaptive kernels carried **no step ceiling**, so an adaptive march would
+grow the step, skip crossings, and degrade the O(h⁴) Hermite refinement that pins
+the crossing.  Since v6 the engine has an explicit ``max_step`` ceiling
+(:attr:`tsdyn_engine::IntegrateConfig::max_step`, reachable from Python as
+``crossings(..., max_step=)``), so an adaptive march *is* now possible — and with
+it the ``_EXPLICIT_METHODS`` restriction below could be lifted, since
+``max_step = dt`` makes an implicit/stiff march safe too.  **Repointing this
+module at an adaptive march is deliberately a separate ticket**: it would move
+every Poincaré number in the library and break the "answer-identical to the
+Python ``rk4`` loop" contract stated here, so it needs its own evidence rather
+than riding along with the dense-output change (which leaves ``rk4`` — and
+therefore this whole module — byte-identical, because ``rk4`` carries no
+``Caps::dense``).
+
+With ``rk4`` at ``dt`` the engine marches the exact same ``dt`` grid
 as the Python ``PoincareMap`` and refines with the identical cubic-Hermite
 formula, so the crossings are answer-identical to that reference to ~1e-9 (only
 the bracketed root solver differs — Illinois vs ``brentq``, both to ``xtol=1e-14``).
@@ -38,7 +52,12 @@ from typing import Any
 
 import numpy as np
 
+from tsdynamics._utils.tolerances import DEFAULT_ATOL, DEFAULT_RTOL
 from tsdynamics.errors import ConvergenceError
+
+#: What this module *defines* — ``np``, ``Any`` and the two tolerance constants
+#: it imports are not part of its surface (``CONTRACT.md`` §11, T4).
+__all__ = ["engine_eligible", "plane_event_tape", "section_crossings"]
 
 #: The first span to probe, in time units, before the crossing rate is known.
 _INITIAL_SPAN_TIME: float = 50.0
@@ -53,12 +72,12 @@ def plane_event_tape(dim: int, normal: np.ndarray, offset: float) -> Any:
     """Lower the section plane ``g(u) = normal · u − offset`` to a one-output tape.
 
     The event function is pure geometry (no parameters, no time), so it lowers to a
-    single-output :class:`~tsdynamics.engine.compile.Tape` over the ``dim`` state
-    inputs — exactly the channel :func:`tsdynamics.engine.run.crossings` watches.
+    single-output :class:`~tsdynamics._engine.compile.Tape` over the ``dim`` state
+    inputs — exactly the channel :func:`tsdynamics._engine.run.crossings` watches.
     """
     import symengine
 
-    from tsdynamics.engine.compile import lower_expressions
+    from tsdynamics._engine.compile import lower_expressions
 
     syms = [symengine.Symbol(f"u{i}") for i in range(dim)]
     expr: Any = symengine.sympify(0)
@@ -86,7 +105,7 @@ def engine_eligible(system: Any, backend: str | None) -> bool:
         return False
     if backend is not None and str(backend).lower() == "reference":
         return False
-    from tsdynamics import solvers
+    from tsdynamics import _solvers as solvers
 
     try:
         name = solvers.resolve(getattr(system, "_default_method", "rk45")).name
@@ -105,13 +124,22 @@ def section_crossings(
     transient: int = 0,
     dt: float,
     max_time: float,
-    rtol: float = 1e-6,
-    atol: float = 1e-9,
-    backend: str = "interp",
+    rtol: float = DEFAULT_RTOL,
+    atol: float = DEFAULT_ATOL,
+    backend: str = "jit",
     t0: float = 0.0,
     ic: Any,
 ) -> tuple[np.ndarray, np.ndarray, float, np.ndarray]:
     """Collect ``n_crossings`` section crossings on the Rust engine.
+
+    ``rtol``/``atol`` are carried for signature parity with the rest of the
+    engine surface but are **inert here**: the march is pinned to the fixed-step
+    ``rk4`` kernel (an adaptive kernel would grow its step, skip crossings and
+    degrade the O(h⁴) Hermite refinement), and a non-adaptive kernel has no error
+    control to spend them on.  Measured: tightening them from ``1e-6``/``1e-9``
+    to ``1e-9``/``1e-12`` leaves a 400-crossing Rössler section bit-identical at
+    1.01x the cost.  They therefore track the global default rather than carrying
+    a private number.
 
     Returns ``(times, states, t_final, u_final)``: the crossing times and
     ``(n_crossings, dim)`` states after ``transient`` are discarded, plus the
@@ -123,8 +151,8 @@ def section_crossings(
     attractor or the direction is wrong) or the march makes no progress —
     matching the Python loop's contract.
     """
-    from tsdynamics.engine import run
-    from tsdynamics.engine.problem import ODEProblem, ode_problem
+    from tsdynamics._engine import run
+    from tsdynamics._engine.problem import ODEProblem, ode_problem
 
     dim = int(system.dim)
     need = int(n_crossings) + int(transient)
@@ -196,3 +224,8 @@ def section_crossings(
     all_times = np.concatenate(times_chunks)[:need]
     all_states = np.concatenate(states_chunks, axis=0)[:need]
     return all_times[transient:], all_states[transient:], t_cur, u_cur
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

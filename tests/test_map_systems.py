@@ -4,6 +4,12 @@ Tests for discrete map systems (``DiscreteMap`` subclasses).
 All sweeps are registry-driven: a new map is covered automatically.
 Iteration runs on the engine; the longer iterate/Lyapunov sweeps are marked
 ``slow`` on runtime grounds.
+
+Scope note: as in ``test_ode_systems``, the iteration sweep here checks shape
+and finiteness only — the pre-v6 Baker, whose every orbit collapsed to ``(0, 0)``
+within ~53 iterations, passed it.  The dynamical content (bounded,
+non-degenerate, recurrent, claim-consistent) is asserted per system by
+``tests/test_catalogue_dynamics.py``.
 """
 
 from __future__ import annotations
@@ -11,6 +17,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 from _sampling import MAP_LYAPUNOV_EXCLUDE
+
+import tsdynamics as ts
 
 # ---------------------------------------------------------------------------
 # Instantiation (fast)
@@ -32,11 +40,11 @@ def test_tinkerbell_uses_default_ic() -> None:
     """Tinkerbell sets ``default_ic`` because random ICs always escape the basin."""
     import tsdynamics as ts
 
-    tb = ts.Tinkerbell()
+    tb = ts.systems.Tinkerbell()
     assert tb.ic is None
-    assert tb.default_ic is not None
-    traj = tb.iterate(steps=100)
-    np.testing.assert_array_almost_equal(tb.ic, ts.Tinkerbell.default_ic)
+    assert tb.info.default_ic is not None
+    traj = tb.run(steps=100)
+    np.testing.assert_array_almost_equal(tb.ic, ts.systems.Tinkerbell._default_ic)
     assert np.all(np.isfinite(traj.y))
 
 
@@ -50,21 +58,36 @@ _STEPS = 200
 @pytest.mark.slow
 def test_map_iterate_shape_and_finiteness(map_entry) -> None:
     m = map_entry.cls()
-    traj = m.iterate(steps=_STEPS, max_retries=15)
-    assert traj.t.shape == (_STEPS,)
-    assert traj.y.shape == (_STEPS, m.dim)
-    np.testing.assert_array_equal(traj.t, np.arange(_STEPS))
+    traj = m.run(steps=_STEPS, max_retries=15)
+    # ``steps=N`` yields N + 1 rows: the initial condition, then N iterates —
+    # exactly as a flow returns its ``ic`` at ``t0``.  Before v6 a map returned N
+    # rows starting at f(ic), so ``t[0] = 0`` was labelling x_1, ``traj["x"][n]``
+    # was x_{n+1}, and every cobweb began one iterate late.
+    assert traj.t.shape == (_STEPS + 1,)
+    assert traj.y.shape == (_STEPS + 1, m.dim)
+    np.testing.assert_array_equal(traj.t, np.arange(_STEPS + 1))
     assert np.all(np.isfinite(traj.y))
 
 
 @pytest.mark.slow
-def test_map_custom_ic_stored() -> None:
+def test_map_explicit_ic_is_used_but_never_latched() -> None:
+    """An explicit ``run(ic=)`` starts the orbit and leaves the map alone (v6).
+
+    See ``test_ode_systems.py::test_ode_explicit_ic_is_used_but_never_latched``
+    — the same rule, in the map's own horizon word.
+    """
     import tsdynamics as ts
 
-    h = ts.Henon()
+    h = ts.systems.Henon()
     ic = np.array([0.2, 0.3])
-    h.iterate(steps=50, ic=ic)
-    np.testing.assert_array_almost_equal(h.ic, ic)
+    traj = h.run(steps=50, ic=ic)
+    # A map's grid starts at the INITIAL CONDITION, exactly as a flow's does, so
+    # row 0 IS the ic and row 1 is f(ic).  It used to start at f(ic), which made
+    # ``t[0] = 0`` label the first iterate and put every cobweb one step out.
+    a, b = 1.4, 0.3
+    np.testing.assert_array_almost_equal(traj.y[0], ic)
+    np.testing.assert_array_almost_equal(traj.y[1], [1 - a * ic[0] ** 2 + ic[1], b * ic[0]])
+    assert h.ic is None
 
 
 # ---------------------------------------------------------------------------
@@ -77,7 +100,7 @@ def test_map_lyapunov_shape(map_entry) -> None:
     if map_entry.name in MAP_LYAPUNOV_EXCLUDE:
         pytest.skip(MAP_LYAPUNOV_EXCLUDE[map_entry.name])
     m = map_entry.cls()
-    exps = m.lyapunov_spectrum(steps=300, n_exp=m.dim)
+    exps = ts.analysis.lyapunov_spectrum(m, n=300, k=m.dim)
     assert exps.shape == (m.dim,)
     assert np.all(np.isfinite(exps))
 
@@ -87,6 +110,6 @@ def test_map_lyapunov_partial_spectrum(map_entry) -> None:
     if map_entry.name in MAP_LYAPUNOV_EXCLUDE:
         pytest.skip(MAP_LYAPUNOV_EXCLUDE[map_entry.name])
     m = map_entry.cls()
-    exps = m.lyapunov_spectrum(steps=300, n_exp=1)
+    exps = ts.analysis.lyapunov_spectrum(m, n=300, k=1)
     assert exps.shape == (1,)
     assert np.isfinite(exps[0])

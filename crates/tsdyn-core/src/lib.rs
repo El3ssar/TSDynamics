@@ -8,7 +8,7 @@
 //! `Evaluator` / `Solver` seams. This is the only crate that knows about Python;
 //! everything below it is pure Rust.
 //!
-//! # The exposed surface (the Python `tsdynamics.engine.run` seam)
+//! # The exposed surface (the Python `tsdynamics._engine.run` seam)
 //!
 //! The function names and positional argument order mirror exactly what
 //! `tsdynamics/engine/run.py` calls on the `tsdynamics._rust` module, so that
@@ -28,6 +28,8 @@
 //! | [`integrate_events_dense`] | `(K,), (K, dim), …` | crossings of one event over a span |
 //! | [`PyOdeStepper`] (`OdeStepper`) | handle | resumable per-`dt` ODE stepper (stream WS-STEPPER) |
 //! | [`solvers`] | `list[str]` | registered `method=` names (introspection) |
+//! | [`jit_cache_stats`] | `dict[str, int]` | compiled-evaluator cache counters |
+//! | [`clear_jit_cache`] | `None` | drop every cached compiled evaluator |
 //!
 //! Unlike the stateless free functions above, [`OdeStepper`](PyOdeStepper) is a
 //! durable *handle*: it builds the tape/evaluator + solver once and carries the
@@ -54,18 +56,145 @@ use numpy::{
     IntoPyArray, PyArray1, PyArray2, PyArrayMethods, PyReadonlyArray1, PyReadonlyArray2,
     PyUntypedArrayMethods,
 };
-use pyo3::exceptions::{PyNotImplementedError, PyRuntimeError, PyValueError};
+use pyo3::exceptions::{PyMemoryError, PyNotImplementedError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
 /// Map an [`EngineError`] to the Python exception type its variant implies.
+///
+/// Two variants carry a *domain* meaning the library gives a typed exception in
+/// `tsdynamics.errors` (stream WS-ERRORS), so they are raised as those classes
+/// rather than as the bare stdlib types:
+///
+/// | variant | Python class | stdlib base |
+/// |---------|--------------|-------------|
+/// | [`EngineError::InvalidParameter`] | `InvalidParameterError` | `ValueError` |
+/// | [`EngineError::Diverged`] | `ConvergenceError` | `RuntimeError` |
+/// | [`EngineError::StepBudget`] | `StepBudgetError` | `RuntimeError` |
+///
+/// Two variants map to *builtin* exceptions rather than library ones, because
+/// what they report is a property of the process, not of the model:
+/// [`EngineError::OutOfMemory`] raises `MemoryError` (what Python raises for
+/// any failed allocation), and [`EngineError::Interrupted`] re-raises whatever
+/// the signal handler produced — normally `KeyboardInterrupt`.
+///
+/// Raising them here, at the FFI boundary, is what makes *every* engine surface
+/// (integrate / DDE / SDE / map / events / stepper / basin / Lyapunov) obey the
+/// documented contract at once — no caller has to sniff the message text to tell
+/// a numerical blow-up from a JIT-compile failure. Both classes subclass the
+/// stdlib exception the variant used to raise, so existing `except ValueError` /
+/// `except RuntimeError` handlers keep catching them unchanged.
 fn to_py_err(e: EngineError) -> PyErr {
     let msg = e.to_string();
     match e {
         EngineError::BadTape(_) | EngineError::BadShape(_) | EngineError::UnknownMethod(_) => {
             PyValueError::new_err(msg)
         }
+        EngineError::InvalidParameter(_) => typed_err("InvalidParameterError", msg, true),
         EngineError::Unsupported(_) => PyNotImplementedError::new_err(msg),
-        EngineError::JitCompile(_) | EngineError::Diverged(_) => PyRuntimeError::new_err(msg),
+        EngineError::JitCompile(_) => PyRuntimeError::new_err(msg),
+        EngineError::Diverged(_) => typed_err("ConvergenceError", msg, false),
+        EngineError::StepBudget(_) => typed_err("StepBudgetError", msg, false),
+        EngineError::OutOfMemory(_) => PyMemoryError::new_err(msg),
+        EngineError::Interrupted => interrupt::take_pending(),
+    }
+}
+
+/// The Python-side half of the engine's cooperative interrupt
+/// ([`tsdyn_engine::interrupt`]).
+///
+/// Long engine calls run with the GIL released, so Ctrl-C sets CPython's signal
+/// flag and then nothing happens until the FFI call returns — for a mistyped
+/// `final_time` that can be minutes, with the session unusable. The engine's
+/// sequential loops now poll [`poll_signals`] on a stride; this module is what
+/// they poll *into*.
+///
+/// The engine crate is Python-free, so the exception cannot travel back through
+/// it. It is parked in a thread-local instead and re-raised by [`to_py_err`]
+/// when the run unwinds — which is safe because the poll and the unwind happen
+/// on the same (calling) thread, by construction: only that thread is ever
+/// armed.
+mod interrupt {
+    use pyo3::exceptions::PyKeyboardInterrupt;
+    use pyo3::prelude::*;
+    use std::cell::RefCell;
+
+    thread_local! {
+        /// The exception the signal handler raised, awaiting re-raise.
+        static PENDING: RefCell<Option<PyErr>> = const { RefCell::new(None) };
+    }
+
+    /// Run CPython's pending-signal handlers; report whether to stop.
+    ///
+    /// Re-acquires the GIL — which is exactly why the engine consults this once
+    /// per [`tsdyn_engine::interrupt::POLL_STRIDE`] iterations and only from the
+    /// thread that owns the call, never from a rayon worker (where
+    /// `PyErr_CheckSignals` is a documented no-op anyway).
+    pub(super) fn poll_signals() -> bool {
+        Python::attach(|py| match py.check_signals() {
+            Ok(()) => false,
+            Err(err) => {
+                PENDING.with(|slot| slot.replace(Some(err)));
+                true
+            }
+        })
+    }
+
+    /// Take the parked exception, or synthesise a `KeyboardInterrupt`.
+    ///
+    /// The fallback covers the one case the thread-local cannot: an
+    /// `EngineError::Interrupted` that unwound to a different thread than the
+    /// one that polled. That should be unreachable, and raising the interrupt
+    /// the user almost certainly asked for beats raising nothing.
+    pub(super) fn take_pending() -> PyErr {
+        PENDING
+            .with(|slot| slot.borrow_mut().take())
+            .unwrap_or_else(|| PyKeyboardInterrupt::new_err("engine call interrupted"))
+    }
+}
+
+/// Run `f` with the GIL released **and** this thread armed for interrupt polls.
+///
+/// Every long-running engine entry point goes through here rather than calling
+/// `py.detach` directly: releasing the GIL is what makes the call uninterruptible
+/// in the first place, so the two belong together and cannot drift apart. The
+/// closure runs on the calling Python thread, which is the thread
+/// [`tsdyn_engine::interrupt::arm`] must arm.
+fn detached<R, F>(py: Python<'_>, f: F) -> R
+where
+    F: FnOnce() -> R + Send,
+    R: Send,
+{
+    py.detach(|| {
+        let _armed = tsdyn_engine::interrupt::arm();
+        f()
+    })
+}
+
+/// Build an exception instance of `class` from `tsdynamics.errors`, falling back
+/// to the stdlib base when that module cannot be reached.
+///
+/// The import is a `sys.modules` hit in every real call (the extension is only
+/// reachable *through* the `tsdynamics` package), so this costs a dict lookup on
+/// an already-failing path. The fallback exists for the pathological cases — an
+/// engine call during interpreter finalization, or a `tsdynamics.errors` that
+/// failed to import — where raising the stdlib base is strictly better than
+/// masking the original failure with an `ImportError`. `value_error` selects that
+/// base: `ValueError` for the parameter classes, `RuntimeError` otherwise.
+fn typed_err(class: &str, msg: String, value_error: bool) -> PyErr {
+    let typed = Python::attach(|py| {
+        let exc = py
+            .import("tsdynamics.errors")
+            .ok()?
+            .getattr(class)
+            .ok()?
+            .call1((msg.as_str(),))
+            .ok()?;
+        Some(PyErr::from_value(exc))
+    });
+    match typed {
+        Some(err) => err,
+        None if value_error => PyValueError::new_err(msg),
+        None => PyRuntimeError::new_err(msg),
     }
 }
 
@@ -160,7 +289,7 @@ impl OwnedTape {
 /// Evaluate `du/dt = f(u, p, t)` (or the next state, for a map tape) once.
 ///
 /// Returns the `(dim,)` derivative. The strongest, divergence-free signal that a
-/// system lowers correctly — used by `tsdynamics.engine.run.eval_rhs`.
+/// system lowers correctly — used by `tsdynamics._engine.run.eval_rhs`.
 #[pyfunction]
 #[allow(clippy::too_many_arguments)]
 fn eval_rhs<'py>(
@@ -180,9 +309,7 @@ fn eval_rhs<'py>(
     let tape = OwnedTape::copy_in(&ops, &a, &b, &imm, &outputs, &jac_outputs, n_state, n_param)?;
     let u = vec_f64("u", &u)?;
     let p = vec_f64("p", &p)?;
-    let deriv = py
-        .detach(|| bridge::eval_rhs(tape.build()?, &u, &p, t))
-        .map_err(to_py_err)?;
+    let deriv = detached(py, || bridge::eval_rhs(tape.build()?, &u, &p, t)).map_err(to_py_err)?;
     Ok(deriv.into_pyarray(py))
 }
 
@@ -209,9 +336,8 @@ fn eval_jac<'py>(
     let tape = OwnedTape::copy_in(&ops, &a, &b, &imm, &outputs, &jac_outputs, n_state, n_param)?;
     let u = vec_f64("u", &u)?;
     let p = vec_f64("p", &p)?;
-    let (deriv, jac) = py
-        .detach(|| bridge::eval_jac(tape.build()?, &u, &p, t))
-        .map_err(to_py_err)?;
+    let (deriv, jac) =
+        detached(py, || bridge::eval_jac(tape.build()?, &u, &p, t)).map_err(to_py_err)?;
     Ok((deriv.into_pyarray(py), jac.into_pyarray(py)))
 }
 
@@ -240,9 +366,8 @@ fn iterate_map<'py>(
     let tape = OwnedTape::copy_in(&ops, &a, &b, &imm, &outputs, &jac_outputs, n_state, n_param)?;
     let dim = tape.dim();
     let ic = vec_f64("ic", &ic)?;
-    let flat = py
-        .detach(|| bridge::iterate_map(tape.build()?, &ic, steps, jit))
-        .map_err(to_py_err)?;
+    let flat =
+        detached(py, || bridge::iterate_map(tape.build()?, &ic, steps, jit)).map_err(to_py_err)?;
     PyArray1::from_vec(py, flat).reshape([steps, dim])
 }
 
@@ -275,9 +400,10 @@ fn iterate_ensemble_final<'py>(
         .map_err(|_| PyValueError::new_err("ics must be a C-contiguous (n, dim) float64 array"))?
         .to_vec();
     let n_ic = ics.shape()[0];
-    let flat = py
-        .detach(|| bridge::map_ensemble_final(tape.build()?, &ics_vec, steps, jit))
-        .map_err(to_py_err)?;
+    let flat = detached(py, || {
+        bridge::map_ensemble_final(tape.build()?, &ics_vec, steps, jit)
+    })
+    .map_err(to_py_err)?;
     PyArray1::from_vec(py, flat).reshape([n_ic, dim])
 }
 
@@ -334,22 +460,21 @@ fn map_param_sweep<'py>(
         .collect();
     let n_values = values.len();
     let n_components = components.len();
-    let (points, status) = py
-        .detach(|| {
-            bridge::map_param_sweep(
-                tape.build()?,
-                &base_params,
-                sweep_index,
-                &values,
-                &ic,
-                &components,
-                transient,
-                n_record,
-                carry_state,
-                jit,
-            )
-        })
-        .map_err(to_py_err)?;
+    let (points, status) = detached(py, || {
+        bridge::map_param_sweep(
+            tape.build()?,
+            &base_params,
+            sweep_index,
+            &values,
+            &ic,
+            &components,
+            transient,
+            n_record,
+            carry_state,
+            jit,
+        )
+    })
+    .map_err(to_py_err)?;
     let points = PyArray1::from_vec(py, points).reshape([n_values * n_record, n_components])?;
     Ok((points, PyArray1::from_vec(py, status)))
 }
@@ -383,6 +508,8 @@ fn integrate_dense<'py>(
     method: String,
     rtol: f64,
     atol: f64,
+    max_step: f64,
+    dense: bool,
     jit: bool,
 ) -> PyResult<Bound<'py, PyArray2<f64>>> {
     let tape = OwnedTape::copy_in(&ops, &a, &b, &imm, &outputs, &jac_outputs, n_state, n_param)?;
@@ -391,11 +518,21 @@ fn integrate_dense<'py>(
     let p = vec_f64("p", &p)?;
     let t_eval = vec_f64("t_eval", &t_eval)?;
     let n_t = t_eval.len();
-    let flat = py
-        .detach(|| {
-            bridge::integrate_dense(tape.build()?, &ic, &p, &t_eval, &method, rtol, atol, jit)
-        })
-        .map_err(to_py_err)?;
+    let flat = detached(py, || {
+        bridge::integrate_dense(
+            tape.build()?,
+            &ic,
+            &p,
+            &t_eval,
+            &method,
+            rtol,
+            atol,
+            max_step,
+            dense,
+            jit,
+        )
+    })
+    .map_err(to_py_err)?;
     PyArray1::from_vec(py, flat).reshape([n_t, dim])
 }
 
@@ -441,23 +578,22 @@ fn integrate_dde_dense<'py>(
     let past_y = vec_f64("past_y", &past_y)?;
     let t_eval = vec_f64("t_eval", &t_eval)?;
     let n_t = t_eval.len();
-    let flat = py
-        .detach(|| {
-            bridge::integrate_dde_dense(
-                tape.build()?,
-                &slot_components,
-                &slot_delays,
-                &ic,
-                &past_t,
-                &past_y,
-                &t_eval,
-                &method,
-                rtol,
-                atol,
-                jit,
-            )
-        })
-        .map_err(to_py_err)?;
+    let flat = detached(py, || {
+        bridge::integrate_dde_dense(
+            tape.build()?,
+            &slot_components,
+            &slot_delays,
+            &ic,
+            &past_t,
+            &past_y,
+            &t_eval,
+            &method,
+            rtol,
+            atol,
+            jit,
+        )
+    })
+    .map_err(to_py_err)?;
     PyArray1::from_vec(py, flat).reshape([n_t, dim])
 }
 
@@ -490,6 +626,7 @@ fn integrate_ensemble_final<'py>(
     method: String,
     rtol: f64,
     atol: f64,
+    max_step: f64,
     jit: bool,
 ) -> PyResult<Bound<'py, PyArray2<f64>>> {
     let tape = OwnedTape::copy_in(&ops, &a, &b, &imm, &outputs, &jac_outputs, n_state, n_param)?;
@@ -500,22 +637,22 @@ fn integrate_ensemble_final<'py>(
         .to_vec();
     let n_ic = ics.shape()[0];
     let p = vec_f64("p", &p)?;
-    let flat = py
-        .detach(|| {
-            bridge::ensemble_final(
-                tape.build()?,
-                &ics_vec,
-                &p,
-                t0,
-                t1,
-                first_step,
-                &method,
-                rtol,
-                atol,
-                jit,
-            )
-        })
-        .map_err(to_py_err)?;
+    let flat = detached(py, || {
+        bridge::ensemble_final(
+            tape.build()?,
+            &ics_vec,
+            &p,
+            t0,
+            t1,
+            first_step,
+            &method,
+            rtol,
+            atol,
+            max_step,
+            jit,
+        )
+    })
+    .map_err(to_py_err)?;
     PyArray1::from_vec(py, flat).reshape([n_ic, dim])
 }
 
@@ -532,7 +669,7 @@ fn integrate_ensemble_final<'py>(
 /// resolved against the SDE registry), `dt` the fixed step *and* noise scale
 /// `√dt`, `seed` the noise stream's seed, and `jit` selects the Cranelift
 /// evaluator (numerically identical to the interpreter). Divergence raises
-/// `RuntimeError`.
+/// `ConvergenceError` (a `RuntimeError` subclass).
 #[pyfunction]
 #[allow(clippy::too_many_arguments)]
 fn integrate_sde_dense<'py>(
@@ -586,21 +723,20 @@ fn integrate_sde_dense<'py>(
     let p = vec_f64("p", &p)?;
     let t_eval = vec_f64("t_eval", &t_eval)?;
     let n_t = t_eval.len();
-    let flat = py
-        .detach(|| {
-            bridge::sde_integrate_dense(
-                drift.build()?,
-                diffusion.build()?,
-                &ic,
-                &p,
-                &t_eval,
-                &method,
-                dt,
-                seed,
-                jit,
-            )
-        })
-        .map_err(to_py_err)?;
+    let flat = detached(py, || {
+        bridge::sde_integrate_dense(
+            drift.build()?,
+            diffusion.build()?,
+            &ic,
+            &p,
+            &t_eval,
+            &method,
+            dt,
+            seed,
+            jit,
+        )
+    })
+    .map_err(to_py_err)?;
     PyArray1::from_vec(py, flat).reshape([n_t, dim])
 }
 
@@ -667,22 +803,21 @@ fn integrate_sde_ensemble_final<'py>(
         .to_vec();
     let n_ic = ics.shape()[0];
     let p = vec_f64("p", &p)?;
-    let flat = py
-        .detach(|| {
-            bridge::sde_ensemble_final(
-                drift.build()?,
-                diffusion.build()?,
-                &ics_vec,
-                &p,
-                t0,
-                t1,
-                &method,
-                dt,
-                seed,
-                jit,
-            )
-        })
-        .map_err(to_py_err)?;
+    let flat = detached(py, || {
+        bridge::sde_ensemble_final(
+            drift.build()?,
+            diffusion.build()?,
+            &ics_vec,
+            &p,
+            t0,
+            t1,
+            &method,
+            dt,
+            seed,
+            jit,
+        )
+    })
+    .map_err(to_py_err)?;
     PyArray1::from_vec(py, flat).reshape([n_ic, dim])
 }
 
@@ -700,7 +835,8 @@ fn integrate_sde_ensemble_final<'py>(
 /// slice). `first_step` seeds the solver; with the fixed-step `rk4` it *is* the
 /// detection step, so `method="rk4"`, `first_step=dt` reproduces the Python
 /// `PoincareMap` dt-grid march and its refinement (answer-identical). `terminal`
-/// stops the run at the first crossing. Divergence raises `RuntimeError`.
+/// stops the run at the first crossing. Divergence raises `ConvergenceError`
+/// (a `RuntimeError` subclass).
 ///
 /// Returns `(times, states, t_final, u_final, terminated)`: the `(K,)` crossing
 /// times, the `(K, dim)` crossing states, the time and state the run stopped at
@@ -735,6 +871,7 @@ fn integrate_events_dense<'py>(
     method: String,
     rtol: f64,
     atol: f64,
+    max_step: f64,
     jit: bool,
 ) -> PyResult<(
     Bound<'py, PyArray1<f64>>,
@@ -757,25 +894,25 @@ fn integrate_events_dense<'py>(
     let dim = rhs.dim();
     let ic = vec_f64("ic", &ic)?;
     let p = vec_f64("p", &p)?;
-    let (times, states, t_final, u_final, terminated) = py
-        .detach(|| {
-            bridge::integrate_events_dense(
-                rhs.build()?,
-                g.build()?,
-                &ic,
-                &p,
-                t0,
-                t1,
-                first_step,
-                direction,
-                terminal,
-                &method,
-                rtol,
-                atol,
-                jit,
-            )
-        })
-        .map_err(to_py_err)?;
+    let (times, states, t_final, u_final, terminated) = detached(py, || {
+        bridge::integrate_events_dense(
+            rhs.build()?,
+            g.build()?,
+            &ic,
+            &p,
+            t0,
+            t1,
+            first_step,
+            direction,
+            terminal,
+            &method,
+            rtol,
+            atol,
+            max_step,
+            jit,
+        )
+    })
+    .map_err(to_py_err)?;
     let n_hits = times.len();
     let times = PyArray1::from_vec(py, times);
     let states = PyArray1::from_vec(py, states).reshape([n_hits, dim])?;
@@ -941,24 +1078,23 @@ fn basin_march_flow<'py>(
         })?
         .to_vec();
     let cfg = march_config(max_steps, mx_fnd, mx_loc, mx_att, mx_bas, mx_lost);
-    let out = py
-        .detach(|| {
-            basin_march_flow_bridge(
-                tape.build()?,
-                &p,
-                &method,
-                rtol,
-                atol,
-                dt,
-                &grid_lo,
-                &grid_hi,
-                &grid_counts,
-                &seeds_vec,
-                cfg,
-                jit,
-            )
-        })
-        .map_err(to_py_err)?;
+    let out = detached(py, || {
+        basin_march_flow_bridge(
+            tape.build()?,
+            &p,
+            &method,
+            rtol,
+            atol,
+            dt,
+            &grid_lo,
+            &grid_hi,
+            &grid_counts,
+            &seeds_vec,
+            cfg,
+            jit,
+        )
+    })
+    .map_err(to_py_err)?;
     Ok(basin_outcome_to_py(py, out))
 }
 
@@ -1017,20 +1153,19 @@ fn basin_march_map<'py>(
         })?
         .to_vec();
     let cfg = march_config(max_steps, mx_fnd, mx_loc, mx_att, mx_bas, mx_lost);
-    let out = py
-        .detach(|| {
-            basin_march_map_bridge(
-                tape.build()?,
-                &p,
-                &grid_lo,
-                &grid_hi,
-                &grid_counts,
-                &seeds_vec,
-                cfg,
-                jit,
-            )
-        })
-        .map_err(to_py_err)?;
+    let out = detached(py, || {
+        basin_march_map_bridge(
+            tape.build()?,
+            &p,
+            &grid_lo,
+            &grid_hi,
+            &grid_counts,
+            &seeds_vec,
+            cfg,
+            jit,
+        )
+    })
+    .map_err(to_py_err)?;
     Ok(basin_outcome_to_py(py, out))
 }
 
@@ -1053,8 +1188,9 @@ use bridge::map_lyapunov_bridge;
 ///
 /// Returns `(exponents, intervals)`: the `k` time-averaged exponents (largest
 /// first) and the number of completed reorthonormalisation intervals. A divergence
-/// before the budget is exhausted raises `RuntimeError` (the "diverge loudly"
-/// contract); a malformed call / Jacobian-less tape raises `ValueError`.
+/// before the budget is exhausted raises `ConvergenceError` (a `RuntimeError`
+/// subclass — the "diverge loudly" contract); a malformed call / Jacobian-less
+/// tape raises `ValueError`.
 #[pyfunction]
 #[allow(clippy::too_many_arguments)]
 fn map_lyapunov_spectrum<'py>(
@@ -1075,9 +1211,10 @@ fn map_lyapunov_spectrum<'py>(
 ) -> PyResult<(Bound<'py, PyArray1<f64>>, usize)> {
     let tape = OwnedTape::copy_in(&ops, &a, &b, &imm, &outputs, &jac_outputs, n_state, n_param)?;
     let ic = vec_f64("ic", &ic)?;
-    let out = py
-        .detach(|| map_lyapunov_bridge(tape.build()?, &[], &ic, steps, k, reortho_interval, jit))
-        .map_err(to_py_err)?;
+    let out = detached(py, || {
+        map_lyapunov_bridge(tape.build()?, &[], &ic, steps, k, reortho_interval, jit)
+    })
+    .map_err(to_py_err)?;
     Ok((PyArray1::from_vec(py, out.exponents), out.intervals))
 }
 
@@ -1140,25 +1277,24 @@ fn lyapunov_spectrum_ode<'py>(
     let tape = OwnedTape::copy_in(&ops, &a, &b, &imm, &outputs, &jac_outputs, n_state, n_param)?;
     let p = vec_f64("p", &p)?;
     let z0 = vec_f64("z0", &z0)?;
-    let out = py
-        .detach(|| {
-            lyapunov_spectrum_ode_bridge(
-                tape.build()?,
-                &p,
-                &method,
-                rtol,
-                atol,
-                dim,
-                k,
-                &z0,
-                t0,
-                dt,
-                burn_in,
-                final_time,
-                jit,
-            )
-        })
-        .map_err(to_py_err)?;
+    let out = detached(py, || {
+        lyapunov_spectrum_ode_bridge(
+            tape.build()?,
+            &p,
+            &method,
+            rtol,
+            atol,
+            dim,
+            k,
+            &z0,
+            t0,
+            dt,
+            burn_in,
+            final_time,
+            jit,
+        )
+    })
+    .map_err(to_py_err)?;
     Ok((
         PyArray1::from_vec(py, out.spectrum),
         PyArray1::from_vec(py, out.final_state),
@@ -1232,9 +1368,10 @@ impl PyOdeStepper {
         let tape =
             OwnedTape::copy_in(&ops, &a, &b, &imm, &outputs, &jac_outputs, n_state, n_param)?;
         let ic = vec_f64("ic", &ic)?;
-        let inner = py
-            .detach(|| bridge::OdeStepper::new(tape.build()?, &ic, t0, &method, rtol, atol, jit))
-            .map_err(to_py_err)?;
+        let inner = detached(py, || {
+            bridge::OdeStepper::new(tape.build()?, &ic, t0, &method, rtol, atol, jit)
+        })
+        .map_err(to_py_err)?;
         Ok(PyOdeStepper { inner })
     }
 
@@ -1256,7 +1393,7 @@ impl PyOdeStepper {
     /// Reseat the live point to `(u, t)` without rebuilding the evaluator.
     fn set_state(&mut self, py: Python<'_>, u: PyReadonlyArray1<f64>, t: f64) -> PyResult<()> {
         let u = vec_f64("u", &u)?;
-        py.detach(|| self.inner.set_state(&u, t)).map_err(to_py_err)
+        detached(py, || self.inner.set_state(&u, t)).map_err(to_py_err)
     }
 
     /// Advance the live point by one `dt` segment; return the new `(dim,)` state.
@@ -1264,17 +1401,16 @@ impl PyOdeStepper {
     /// `p` is the live control-parameter vector, read each call so a mid-loop
     /// parameter change still takes effect (mirroring `ContinuousSystem.step()`).
     /// Byte-identical to the batch `integrate_dense([t, t+dt])`. Divergence raises
-    /// `RuntimeError`.
+    /// `ConvergenceError` (a `RuntimeError` subclass).
     fn advance<'py>(
         &mut self,
         py: Python<'py>,
         dt: f64,
+        max_step: f64,
         p: PyReadonlyArray1<f64>,
     ) -> PyResult<Bound<'py, PyArray1<f64>>> {
         let p = vec_f64("p", &p)?;
-        let u = py
-            .detach(|| self.inner.advance(dt, &p))
-            .map_err(to_py_err)?;
+        let u = detached(py, || self.inner.advance(dt, max_step, &p)).map_err(to_py_err)?;
         Ok(u.into_pyarray(py))
     }
 
@@ -1289,7 +1425,7 @@ impl PyOdeStepper {
     /// sign, with the live point advanced one marching step *past* it (so a repeated
     /// call finds the *next* crossing); with no hit `found` is `False`, the live
     /// point is advanced to `t + max_span`, and `u_cross` is a zero placeholder.
-    /// Divergence raises `RuntimeError`.
+    /// Divergence raises `ConvergenceError` (a `RuntimeError` subclass).
     #[allow(clippy::too_many_arguments, clippy::type_complexity)]
     fn advance_to_event<'py>(
         &mut self,
@@ -1304,6 +1440,7 @@ impl PyOdeStepper {
         n_param_g: usize,
         max_span: f64,
         first_step: f64,
+        max_step: f64,
         direction: i32,
         p: PyReadonlyArray1<f64>,
     ) -> PyResult<(bool, f64, Bound<'py, PyArray1<f64>>, i32)> {
@@ -1318,12 +1455,11 @@ impl PyOdeStepper {
             n_param_g,
         )?;
         let p = vec_f64("p", &p)?;
-        let (found, t_cross, u_cross, dir) = py
-            .detach(|| {
-                self.inner
-                    .advance_to_event(g.build()?, max_span, first_step, direction, &p)
-            })
-            .map_err(to_py_err)?;
+        let (found, t_cross, u_cross, dir) = detached(py, || {
+            self.inner
+                .advance_to_event(g.build()?, max_span, first_step, max_step, direction, &p)
+        })
+        .map_err(to_py_err)?;
         Ok((found, t_cross, u_cross.into_pyarray(py), dir))
     }
 }
@@ -1351,9 +1487,41 @@ fn _version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
 
+/// The compiled-evaluator (JIT) cache counters:
+/// `{"hits", "misses", "size", "maxsize"}`.
+///
+/// The Rust-side twin of `tsdynamics._engine.compile.tape_cache_stats()`, and for
+/// the same reason: without it a test cannot tell "the second `backend="jit"`
+/// call was fast" from "the second call re-compiled and the machine was busy".
+/// Reached from Python as `tsdynamics._engine.run.jit_cache_stats()`.
+#[pyfunction]
+fn jit_cache_stats(py: Python<'_>) -> PyResult<Py<pyo3::types::PyDict>> {
+    let s = tsdyn_jit::cache_stats();
+    let d = pyo3::types::PyDict::new(py);
+    d.set_item("hits", s.hits)?;
+    d.set_item("misses", s.misses)?;
+    d.set_item("size", s.size)?;
+    d.set_item("maxsize", s.maxsize)?;
+    Ok(d.unbind())
+}
+
+/// Drop every cached compiled evaluator and reset the counters.
+///
+/// Mirrors `tsdynamics._engine.compile.clear_tape_cache()`. Evaluators a running
+/// call still holds are kept alive by their `Arc`, so this is safe at any time.
+#[pyfunction]
+fn clear_jit_cache() {
+    tsdyn_jit::clear_cache();
+}
+
 /// The `tsdynamics._rust` engine extension.
 #[pymodule]
 fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    // Make long engine calls interruptible. The engine crate is Python-free and
+    // so cannot call `PyErr_CheckSignals` itself; installing the hook here — once,
+    // at import — is what turns its strided polls into a `KeyboardInterrupt` at
+    // the prompt instead of a session that has to be killed.
+    tsdyn_engine::interrupt::install(interrupt::poll_signals);
     // The duplicate-name tripwire the registry contract asks the engine to run
     // once at startup: link-time registration cannot reject a clash, so two
     // kernels sharing a name would silently shadow each other. Fail the import
@@ -1389,6 +1557,8 @@ fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(lyapunov_spectrum_ode, m)?)?;
     m.add_class::<PyOdeStepper>()?;
     m.add_function(wrap_pyfunction!(solvers, m)?)?;
+    m.add_function(wrap_pyfunction!(jit_cache_stats, m)?)?;
+    m.add_function(wrap_pyfunction!(clear_jit_cache, m)?)?;
     m.add_function(wrap_pyfunction!(_version, m)?)?;
     Ok(())
 }

@@ -9,16 +9,16 @@ what the bulk test-suite and the documentation generator iterate over;
 user-defined classes are registered too but excluded from iteration by
 default.
 
-Alongside the system registry, this module hosts three generic name registries —
-:data:`analyses`, :data:`transforms` and :data:`renderers` — :class:`Registry`
-containers (name → object + metadata) for the analysis, transform and
-visualization-backend streams to register into.  The in-tree analyses/transforms
-self-register from their subpackages on import, and :data:`renderers` is populated
+Alongside the system registry, this module hosts two generic name registries —
+:data:`analyses` and :data:`renderers` — :class:`Registry` containers
+(name → object + metadata) for the analysis and visualization-backend streams to
+register into.  The in-tree analyses self-register from their subpackages on
+import.  :data:`renderers` is populated
 by the four self-registering :mod:`tsdynamics.viz` backends (matplotlib / Plotly /
 JSON / three.js) when ``tsdynamics.viz`` is first imported — it is created empty
 here and stays empty until then, since ``import tsdynamics`` pulls in no plotting
 machinery.  Solvers are **not** registered here: they live in the richer
-:mod:`tsdynamics.solvers` registry (a ``name → SolverSpec`` table carrying
+:mod:`tsdynamics._solvers` registry (a ``name → SolverSpec`` table carrying
 capability flags, populated by that package's directory scan + the
 :mod:`~tsdynamics.plugins` entry-point loader).
 
@@ -30,7 +30,7 @@ Examples
 --------
 >>> from tsdynamics import registry
 >>> registry.families()
-{'ode': 136, 'dde': 6, 'sde': 3, 'map': 26}
+{'ode': 142, 'dde': 6, 'sde': 3, 'map': 26}
 >>> lorenz = registry.get("Lorenz")
 >>> lorenz.family, lorenz.category
 ('ode', 'chaotic_attractors')
@@ -55,8 +55,8 @@ __all__ = [
     "categories",
     "families",
     "get",
+    "plot_transforms",
     "renderers",
-    "transforms",
 ]
 
 Family = Literal["ode", "dde", "map", "sde", "other"]
@@ -106,6 +106,19 @@ class SystemEntry:
         ``False`` for user-defined classes.
     reference : str or None
         The literature citation shown in the docs, if the class declares one.
+    doi : str or None
+        The bare DOI of that citation (e.g. ``"10.1175/1520-0469(1963)020..."``).
+        **This field is new in v6 and closes a headline bug:** 155 catalogue
+        systems declare a DOI, the entry had nowhere to put it, and the docs tool
+        therefore read ``None`` for every one of them.
+    field_shape : tuple[int, ...] or None
+        The spatial grid of a spatially-extended system whose state vector is a
+        flattened field (``(Ny, Nx)`` / ``(N,)``), read off the class.  A
+        variable-``N`` field resolves its real shape per *instance*; this is the
+        class-level declaration only.
+    field_labels : tuple[str, ...] or None
+        The names of the field blocks packed into that state (Gray-Scott's
+        ``("u", "v")``).
     known_lyapunov : Mapping[str, Any] or None
         The reference Lyapunov metadata driving ``tests/test_known_values.py``,
         if the class declares it.
@@ -120,6 +133,9 @@ class SystemEntry:
     params: Mapping[str, Any]
     is_builtin: bool
     reference: str | None = None
+    doi: str | None = None
+    field_shape: tuple[int, ...] | None = None
+    field_labels: tuple[str, ...] | None = None
     known_lyapunov: Mapping[str, Any] | None = None
 
     def __repr__(self) -> str:  # noqa: D105
@@ -169,6 +185,39 @@ def _has_concrete_rhs(cls: type) -> bool:
     return False
 
 
+#: The catalogue metadata this registry snapshots, as ``(entry field, ClassVar)``.
+#:
+#: **Each is read under BOTH spellings, underscored first.**  v6 moves these
+#: ClassVars behind an underscore so they stay off ``system.<TAB>`` (§3.8 —
+#: ``system.info`` absorbs them).  For a catalogue class the move is done by
+#: ``SystemBase.__init_subclass__`` (``_ABSORBED_CLASSVARS``) before registration,
+#: so the underscored read always hits; the bare read covers everything that
+#: migration does not — a third-party class built by another metaclass, a record
+#: constructed directly, a class registered before the absorption runs.
+#:
+#: The reason to spell it defensively is the failure *mode*, not the current
+#: state: ``None`` is a legal value for all five, so a reader looking under one
+#: spelling that stops matching records "no citation" for every system in the
+#: catalogue and **nothing raises**.  That is how 155 DOIs and 172 citations came
+#: to be dropped in the first place.  The real guard is therefore the counting
+#: gate ``tests/test_registry.py::test_catalogue_metadata_reaches_the_registry``,
+#: which fails when a declared value stops arriving rather than when a field
+#: stops existing.
+_METADATA_CLASSVARS: tuple[tuple[str, str], ...] = (
+    ("reference", "reference"),
+    ("doi", "doi"),
+    ("field_shape", "field_shape"),
+    ("field_labels", "field_labels"),
+    ("known_lyapunov", "known_lyapunov"),
+)
+
+
+def _classvar(cls: type, name: str) -> Any:
+    """Read a catalogue ClassVar under its underscored, then its bare, spelling."""
+    value = getattr(cls, f"_{name}", None)
+    return value if value is not None else getattr(cls, name, None)
+
+
 def register_class(cls: type) -> None:
     """
     Register a system class.  Called from ``SystemBase.__init_subclass__``.
@@ -190,8 +239,7 @@ def register_class(cls: type) -> None:
         dim=getattr(cls, "dim", None),
         params=MappingProxyType(dict(getattr(cls, "params", {}))),
         is_builtin=is_builtin,
-        reference=getattr(cls, "reference", None),
-        known_lyapunov=getattr(cls, "known_lyapunov", None),
+        **{field: _classvar(cls, var) for field, var in _METADATA_CLASSVARS},
     )
 
     bucket = _BY_NAME.setdefault(entry.name, [])
@@ -280,16 +328,16 @@ def categories(family: str | None = None, *, builtin: bool | None = True) -> dic
 
 
 # ---------------------------------------------------------------------------
-# Generic name registries: analyses / transforms / renderers
+# Generic name registries: analyses / renderers
 #
 # The system registry above is deliberately specialised (family detection,
-# builtin shadowing, ``__init_subclass__`` hooks).  The analysis, transform and
-# renderer kinds need only a name → object map with metadata, so they share one
+# builtin shadowing, ``__init_subclass__`` hooks).  The analysis and renderer
+# kinds need only a name → object map with metadata, so they share one
 # small generic container.  Discovery (directory scans, entry-point plugins)
 # lives elsewhere and merely calls ``register``.
 #
 # Solvers do *not* use this generic container: they have their own richer
-# ``name → SolverSpec`` registry in :mod:`tsdynamics.solvers` (capability flags,
+# ``name → SolverSpec`` registry in :mod:`tsdynamics._solvers` (capability flags,
 # kernel names, directory + entry-point discovery).  Keep solver registration
 # there — do not re-add a ``solvers`` registry here.
 # ---------------------------------------------------------------------------
@@ -311,7 +359,7 @@ class Registry:
     """
     A minimal, generic name → object registry.
 
-    Backs the :data:`analyses` and :data:`transforms` registries.  It only
+    Backs the :data:`analyses` and :data:`renderers` registries.  It only
     stores and looks up; the *discovery* that fills it (directory scans,
     :mod:`~tsdynamics.plugins` entry points) is built on top of it elsewhere.
 
@@ -333,7 +381,7 @@ class Registry:
 
     @property
     def kind(self) -> str:
-        """What this registry holds (``"solver"`` / ``"analysis"`` / ``"transform"``)."""
+        """What this registry holds (``"analysis"`` / ``"renderer"``)."""
         return self._kind
 
     def _insert(self, name: str, obj: Any, *, replace: bool, metadata: Mapping[str, Any]) -> None:
@@ -377,9 +425,21 @@ class Registry:
         entry = self._entries.get(name)
         if entry is not None:
             return entry.obj
-        close = [n for n in self._entries if n.lower() == name.lower()]
+        import difflib
+
+        from tsdynamics.errors import InvalidParameterError
+
+        close = difflib.get_close_matches(name, list(self._entries), n=1, cutoff=0.6)
         hint = f" Did you mean {close[0]!r}?" if close else ""
-        raise KeyError(f"No {self._kind} registered as {name!r}.{hint}")
+        # [M44] The four viz registries and this one answer a miss the SAME way.
+        # ``get`` used to raise a bare ``KeyError`` here while ``themes.use``
+        # raised ``InvalidParameterError`` — one mistake in two exception
+        # families, so a caller catching ``ValueError`` around name resolution
+        # caught three registries and missed two.
+        raise InvalidParameterError(
+            f"No {self._kind} registered as {name!r}.{hint} "
+            f"Registered: {', '.join(sorted(self._entries)) or '(none)'}."
+        )
 
     def entry(self, name: str) -> RegistryEntry:
         """Return the full :class:`RegistryEntry` (object + metadata) for ``name``."""
@@ -419,8 +479,6 @@ class Registry:
 
 #: Registered analysis functions (Lyapunov, dimensions, recurrence, …).
 analyses = Registry("analysis")
-#: Registered data/signal transforms (spectral, filters, feature extractors).
-transforms = Registry("transform")
 #: Registered visualization renderers (backend name → a callable that consumes a
 #: :class:`~tsdynamics.viz.spec.PlotSpec` and draws it).  Created **empty** and
 #: populated lazily: the four in-tree backends (matplotlib / Plotly / JSON /
@@ -430,6 +488,42 @@ transforms = Registry("transform")
 #: resolves a backend through this registry; out-of-tree backends are discovered
 #: via the ``tsdynamics.renderers`` entry-point group (see :mod:`tsdynamics.viz`).
 renderers = Registry("renderer")
+
+#: Registered **plot transforms** — ``name → PlotTransform`` (see
+#: :mod:`tsdynamics.viz.transforms`).  A transform turns a subject (a trajectory,
+#: a system, an analysis result) into plottable *geometry*; a **primitive** turns
+#: that geometry into layers.  The record carries the transform's declared
+#: compatibility row, so the matrix lives beside the code that computes the
+#: numbers and cannot rot away from it.
+#:
+#: Created **empty** and populated lazily, like :data:`renderers`: the in-tree
+#: transforms register when :mod:`tsdynamics.viz` is first imported, and
+#: out-of-tree ones arrive through the ``tsdynamics.plot_transforms``
+#: entry-point group.
+#:
+#: **Naming note.** ``CLAUDE.md`` records that there is no ``transforms``
+#: registry and that one must not be re-added.  That prohibition is about the
+#: *generic time-series* package the v6 scope surgery deleted (PSD, detrending,
+#: filters, feature extraction) — a different concept wearing the same word.
+#: This registry is named ``plot_transforms`` (group
+#: ``tsdynamics.plot_transforms``) precisely so the two can never be confused.
+#:
+#: **The scope boundary is a checked rule, not a convention.**  The one member of
+#: the deleted layer re-admitted here is the **power spectrum of a trajectory**,
+#: under the rule:
+#:
+#:     *The PSD of a phase-space trajectory is a phase-space diagnostic; a PSD
+#:     toolbox with windowing options, detrending and filter design is not.*
+#:
+#: ``S(f)`` of an orbit is how the literature separates periodic from
+#: quasiperiodic from chaotic motion, so a plotting module claiming completeness
+#: cannot omit it.  Nothing else follows it in: the admitted set is the frozen
+#: constant ``tsdynamics.viz.transforms.ADMITTED_SERIES_DIAGNOSTICS``, the
+#: forbidden set is ``EXCLUDED_SERIES_TOOLBOX``, and
+#: ``tests/test_viz_transforms.py`` fails if either changes without a deliberate
+#: edit.  Without that gate, ``spectrogram`` and ``detrend`` are back within two
+#: releases and the scope decision is undone by accretion.
+plot_transforms = Registry("plot transform")
 
 
 def __dir__() -> list[str]:

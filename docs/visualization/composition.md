@@ -1,19 +1,19 @@
 ---
-description: Compose one or more plots into a figure with ts.viz.plot — overlaying compatible panels onto shared axes, tiling them into a stack / row / grid of COMPOSITE panels, and recursing spec-in-spec because the input and output are the same PlotSpec.
+description: Compose one or more plots into a figure with ts.viz.plot — overlaying compatible panels onto shared axes, tiling them into a stack / row / grid of COMPOSITE panels, and recursing spec-in-spec because the input and output are the same Plot.
 ---
 
 <span class="ts-kicker">Visualization</span>
 
 # Composition
 
-A single `to_plot_spec(...)` describes **one panel**. Real figures — a
+A single subject describes **one panel**. Real figures — a
 before/after pair, a small-multiples grid of attractors, two state variables
 stacked over a shared time axis — are *arrangements* of panels. `ts.viz.plot`
 is the figure-level front door that does the arranging.
 
-Its defining property is that it is **closed over `PlotSpec`**: it takes
+Its defining property is that it is **closed over `Plot`**: it takes
 plottables (a [`Trajectory`](../reference/top-level.md), a system, an analysis
-result) or already-built specs, and it *returns a `PlotSpec`*. Because the input
+result) or already-built specs, and it *returns a `Plot`*. Because the input
 type and the output type are the same, a `plot(...)` result feeds straight back
 into `plot(...)` — you build each panel with one flat call, then arrange the
 panels with another. The result renders itself: `.plot()`, `.save(path)`,
@@ -30,19 +30,20 @@ spec.
 ```python
 import tsdynamics as ts
 
-ts.viz.plot(*things, layout="overlay", animate=False, **build_kw)  # -> PlotSpec
+# skip-doctest — the signature, not a runnable call (`things` is your inputs)
+ts.plot(*things, layout="overlay", animate=False, **build_kw)  # -> Plot
 ```
 
-- **`*things`** — any mix of plottables and already-built `PlotSpec` objects.
+- **`*things`** — any mix of plottables and already-built `Plot` objects.
   A single list/tuple argument is unwrapped, so `plot([a, b])` and `plot(a, b)`
   are the same.
 - **`layout`** — `"overlay"` (default) draws everything on one set of axes;
   `"stack"` / `"row"` / `"grid"` give each thing its own panel in a
   [`COMPOSITE`](#composite-tiling-panels-into-a-figure) figure.
 - **`build_kw`** — `components=`, `kind=`, and the per-kind options are forwarded
-  to each non-spec thing's `to_plot_spec`, so `plot(a, b, components="x")`
+  to each subject as it is drawn, so `plot(a, b, components="x")`
   composes the *same view* of each. `build_kw` **cannot** be combined with an
-  already-built `PlotSpec` argument (you passed the build options when you first
+  already-built `Plot` argument (you passed the build options when you first
   built it) — mixing the two raises `InvalidParameterError`.
 - **`animate`** — animate the whole figure (see
   [Animating a figure](#animating-a-figure)).
@@ -54,21 +55,21 @@ ts.viz.plot(*things, layout="overlay", animate=False, **build_kw)  # -> PlotSpec
 `layout="overlay"` (the default) merges compatible single-panel specs onto **one**
 panel. It is the right layout when the drawables share a coordinate frame — two
 orbits in the same phase plane, several state variables over the same time axis,
-a signal and its surrogate.
+a trajectory and a coarser-`dt` rerun of it.
 
 The overlay figure above is one call:
 
 ```python
 import tsdynamics as ts
 
-r_cycle = ts.Rossler().with_params(c=2.3)   # a small limit cycle
-r_chaos = ts.Rossler().with_params(c=5.7)   # the classic chaotic band
+r_cycle = ts.systems.Rossler().with_params(c=2.3)   # a small limit cycle
+r_chaos = ts.systems.Rossler().with_params(c=5.7)   # the classic chaotic band
 ic = [0.1, 0.0, 0.0]
 
-t_cycle = r_cycle.trajectory(final_time=200.0, dt=0.05, ic=ic)
-t_chaos = r_chaos.trajectory(final_time=200.0, dt=0.05, ic=ic)
+t_cycle = r_cycle.run(final_time=200.0, dt=0.05, ic=ic)
+t_chaos = r_chaos.run(final_time=200.0, dt=0.05, ic=ic)
 
-fig = ts.viz.plot(t_cycle, t_chaos, components=["x", "y"])
+fig = ts.plot(t_cycle, t_chaos, components=["x", "y"])
 fig.recolor("#11857A", "#574FCF").save("compose-overlay.svg")
 ```
 
@@ -90,9 +91,9 @@ are those titles verbatim (no counter). Give a source a clearer name by
 relabelling its spec's `title` before you compose, or pin it inline:
 
 ```python
-a = t_cycle.to_plot_spec(components=["x", "y"]).relabel(title="limit cycle")
-b = t_chaos.to_plot_spec(components=["x", "y"]).relabel(title="chaos")
-ts.viz.plot(a, b)   # legend entries: "limit cycle" / "chaos"
+a = ts.plot(t_cycle, components=["x", "y"]).relabel(title="limit cycle")
+b = ts.plot(t_chaos, components=["x", "y"]).relabel(title="chaos")
+ts.plot(a, b)   # legend entries: "limit cycle" / "chaos"
 ```
 
 ### What can be overlaid
@@ -104,10 +105,10 @@ one of those. Mixing kinds — a time series and a 2-D portrait, or a 2-D and a
 panelled layout instead:
 
 ```pycon
->>> lor = ts.Lorenz()
->>> ts_spec = lor.to_plot_spec(components="x", final_time=40.0, dt=0.01, ic=[1.0, 1.0, 1.0])
->>> ph_spec = lor.to_plot_spec(components=["x", "y"], final_time=40.0, dt=0.01, ic=[1.0, 1.0, 1.0])
->>> ts.viz.plot(ts_spec, ph_spec)
+>>> lor = ts.systems.Lorenz()
+>>> ts_spec = ts.plot(lor, components="x", final_time=40.0, dt=0.01, ic=[1.0, 1.0, 1.0])
+>>> ph_spec = ts.plot(lor, components=["x", "y"], final_time=40.0, dt=0.01, ic=[1.0, 1.0, 1.0])
+>>> ts.plot(ts_spec, ph_spec)
 Traceback (most recent call last):
     ...
 tsdynamics.errors.InvalidParameterError: cannot overlay specs of kinds
@@ -122,7 +123,7 @@ arrange them into panels.
 !!! note "A single input passes through"
     `plot(one_thing)` with one argument returns that thing's spec unchanged
     (there is nothing to arrange). This is what lets `ts.viz.plot` double as a
-    convenience wrapper — `ts.viz.plot(system).save("x.png")`.
+    convenience wrapper — `ts.plot(system).save("x.png")`.
 
 ---
 
@@ -142,13 +143,13 @@ subplot grid.
 ```python
 import tsdynamics as ts
 
-lor, ros, hal, tho = ts.Lorenz(), ts.Rossler(), ts.Halvorsen(), ts.Thomas()
+lor, ros, hal, tho = ts.systems.Lorenz(), ts.systems.Rossler(), ts.systems.Halvorsen(), ts.systems.Thomas()
 
-grid = ts.viz.plot(
-    lor.to_plot_spec(components=[0, 2], final_time=100.0, dt=0.01, ic=[1.0, 1.0, 1.0]),
-    ros.to_plot_spec(components=[0, 1], final_time=200.0, dt=0.05, ic=[0.1, 0.0, 0.0]),
-    hal.to_plot_spec(components=[0, 1], final_time=100.0, dt=0.01, ic=[-5.0, 0.0, 0.0]),
-    tho.to_plot_spec(components=[0, 1], final_time=300.0, dt=0.05, ic=[1.1, 1.1, -0.01]),
+grid = ts.plot(
+    ts.plot(lor, components=[0, 2], final_time=100.0, dt=0.01, ic=[1.0, 1.0, 1.0]),
+    ts.plot(ros, components=[0, 1], final_time=200.0, dt=0.05, ic=[0.1, 0.0, 0.0]),
+    ts.plot(hal, components=[0, 1], final_time=100.0, dt=0.01, ic=[-5.0, 0.0, 0.0]),
+    ts.plot(tho, components=[0, 1], final_time=300.0, dt=0.05, ic=[1.1, 1.1, -0.01]),
     layout="grid",
 )
 grid.save("compose-grid.svg")
@@ -185,11 +186,11 @@ that names the same x axis (the canonical "`x(t)` above `y(t)` over one shared
 time axis" case), the panels auto-share their x axis.
 
 ```python
-lz = ts.Lorenz()
-px = lz.to_plot_spec(components="x", final_time=40.0, dt=0.01, ic=[1.0, 1.0, 1.0])
-py = lz.to_plot_spec(components="y", final_time=40.0, dt=0.01, ic=[1.0, 1.0, 1.0])
+lz = ts.systems.Lorenz()
+px = ts.plot(lz, components="x", final_time=40.0, dt=0.01, ic=[1.0, 1.0, 1.0])
+py = ts.plot(lz, components="y", final_time=40.0, dt=0.01, ic=[1.0, 1.0, 1.0])
 
-stack = ts.viz.plot(px, py, layout="stack")
+stack = ts.plot(px, py, layout="stack")
 ```
 
 ```pycon
@@ -211,38 +212,54 @@ grid.layout = Layout(mode="grid", rows=2, cols=2, share_x=True, share_y=True)
 
 ## Recursion: spec in, spec out
 
-Because a composite *is* a `PlotSpec`, you can compose composites. When a
-composite is passed into `plot`, its panels are **flattened one level** into the
-new figure — so you build the pieces bottom-up and combine them:
+Because a composite *is* a `Plot`, you can compose composites — and the rule is
+the one the parentheses suggest:
+
+> **A child composite of the *same* arrangement is absorbed; a child of a
+> *different* arrangement becomes a block.**
+
+So a stack of stacks is one taller stack, while a stack placed in a **row**
+stays a column occupying one cell of that row. That is what makes
+`(plot(a) | plot(b)) / plot(c)` draw a row of two with `c` spanning the width
+below, instead of three stacked rows. Build the pieces bottom-up and combine:
 
 ```python
 import tsdynamics as ts
 
-lz = ts.Lorenz()
+lz = ts.systems.Lorenz()
 ic = [1.0, 1.0, 1.0]
 
 # Panel 1: x(t) and y(t) stacked on a shared time axis.
-px = lz.to_plot_spec(components="x", final_time=40.0, dt=0.01, ic=ic)
-py = lz.to_plot_spec(components="y", final_time=40.0, dt=0.01, ic=ic)
-timeline = ts.viz.plot(px, py, layout="stack")
+px = ts.plot(lz, components="x", final_time=40.0, dt=0.01, ic=ic)
+py = ts.plot(lz, components="y", final_time=40.0, dt=0.01, ic=ic)
+timeline = ts.plot(px, py, layout="stack")
 
 # Panel 2: the phase portrait.
-portrait = lz.to_plot_spec(components=["x", "z"], final_time=40.0, dt=0.01, ic=ic)
+portrait = ts.plot(lz, components=["x", "z"], final_time=40.0, dt=0.01, ic=ic)
 
-# Combine — the stack's two panels flatten in alongside the portrait.
-figure = ts.viz.plot(timeline, portrait, layout="row")
+# Combine — the stack stays a column, beside the portrait.
+figure = ts.plot(timeline, portrait, layout="row")
 ```
 
 ```pycon
 >>> figure.kind, figure.layout.mode
 (<PlotKind.COMPOSITE: 'composite'>, 'row')
->>> len(figure.panels)          # timeline (2 panels, flattened) + portrait
+>>> len(figure.panels)          # the timeline (one block) + the portrait
+2
+>>> figure.panels[0].layout.mode     # ...and the block is still a stack
+'stack'
+```
+
+Pass that same stack into another **stack** and it is absorbed instead, because
+a column inside a column is just a longer column:
+
+```pycon
+>>> len(ts.plot(timeline, portrait, layout="stack").panels)
 3
 ```
 
-The flattening is one level deep, which is what makes the pattern predictable:
-the panels of any composite you pass in become panels of the new figure, never a
-nested sub-figure.
+That one rule — *same arrangement absorbs, different arrangement nests* — is what
+makes `|` and `/` compose the way the brackets read.
 
 ---
 
@@ -257,10 +274,10 @@ head marker on portraits and spacetime, off on a plain time series).
 ```python
 import tsdynamics as ts
 
-lor, ros = ts.Lorenz(), ts.Rossler()
-comp = ts.viz.plot(
-    lor.to_plot_spec(components=[0, 2], final_time=30.0, dt=0.01, ic=[1.0, 1.0, 1.0]),
-    ros.to_plot_spec(components=[0, 1], final_time=60.0, dt=0.05, ic=[0.1, 0.0, 0.0]),
+lor, ros = ts.systems.Lorenz(), ts.systems.Rossler()
+comp = ts.plot(
+    ts.plot(lor, components=[0, 2], final_time=30.0, dt=0.01, ic=[1.0, 1.0, 1.0]),
+    ts.plot(ros, components=[0, 1], final_time=60.0, dt=0.05, ic=[0.1, 0.0, 0.0]),
     layout="row",
     animate=True,
 )
@@ -307,17 +324,18 @@ See [Styling & themes](styling.md) for the full theme system.
 | Situation | What happens |
 | --- | --- |
 | Overlaying incompatible kinds (image + portrait, 2-D + 3-D) | Raises `InvalidParameterError` — use `layout="stack"` / `"row"` / `"grid"`. |
-| `build_kw` (`components=`, `kind=`) with an already-built `PlotSpec` | Raises `InvalidParameterError` — pass build options when you first build the spec. |
-| Passing a plain array / a non-plottable | Raises `InvalidInputError` — wrap it in a `Trajectory` or build a `PlotSpec`. |
+| `build_kw` (`components=`, `kind=`) with an already-built `Plot` | Raises `InvalidParameterError` — pass build options when you first build the spec. |
+| Passing a plain array / a non-plottable | Raises `InvalidInputError` — wrap it in a `Trajectory` or build a `Plot`. |
 | Two sources with the same title | Legend tags are auto-disambiguated (`Name (1)` / `Name (2)`); relabel a spec's `title` for clearer entries. |
-| Wanting a nested sub-figure | Not supported — composites flatten one level; keep the structure flat. |
+| Wanting a nested sub-figure | Supported — put a composite of the *other* arrangement inside (`(a \| b) / c`). A child of the **same** arrangement is absorbed. |
+| A nested figure on an interactive backend | Plotly declines it and matplotlib draws it, with one `VisualizationDegraded` — its subplot grid is flat, and it used to drop panels silently. |
 | A random-IC system in a snippet | Always pass an explicit `ic=` (see [the front door](plotting.md)) so the panel is deterministic. |
 
 ---
 
 ## See also
 
-- [Plotting — the front door](plotting.md) — the single-panel `to_plot_spec`
+- [Transforms & primitives](plotting.md) — the single-panel views
   each panel is built from.
 - [Styling & themes](styling.md) — the fluent tweaks (`recolor` / `theme` / …)
   that also chain on a composite result.

@@ -8,7 +8,7 @@ intent is to catch shape errors, wrong parameter signatures, and bad imports.
 
 from __future__ import annotations
 
-from tsdynamics.engine.symbols import state_time_symbols
+from tsdynamics._engine.symbols import state_time_symbols
 
 # The engine-native symbolic state/time accessors (`y(i)` / `t`), byte-identical
 # to the callables a system's `_equations` is written against.
@@ -56,7 +56,7 @@ def test_ode_jacobian_shape_if_defined(ode_entry) -> None:
 def test_lorenz96_equations_returns_n_expressions() -> None:
     import tsdynamics as ts
 
-    lor = ts.Lorenz96(N=8)
+    lor = ts.systems.Lorenz96(N=8)
     expr_list = _eval_equations(lor)
     assert len(expr_list) == 8
 
@@ -64,7 +64,7 @@ def test_lorenz96_equations_returns_n_expressions() -> None:
 def test_kuramoto_sivashinsky_equations_returns_n_expressions() -> None:
     import tsdynamics as ts
 
-    ks = ts.KuramotoSivashinsky(N=8, L=8.0)
+    ks = ts.systems.KuramotoSivashinsky(N=8, L=8.0)
     expr_list = _eval_equations(ks)
     assert len(expr_list) == 8
 
@@ -72,6 +72,6 @@ def test_kuramoto_sivashinsky_equations_returns_n_expressions() -> None:
 def test_multichua_equations_returns_3n_expressions() -> None:
     import tsdynamics as ts
 
-    mc = ts.MultiChua(n_circuits=4)
+    mc = ts.systems.MultiChua(n_circuits=4)
     expr_list = _eval_equations(mc)
     assert len(expr_list) == 12

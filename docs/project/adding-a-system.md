@@ -162,10 +162,10 @@ class MyAttractor(ts.ContinuousSystem):
         x, yv, z = y(0), y(1), y(2)
         return (-yv - z, x + a * yv, b + z * (x - c))
 
-traj = MyAttractor(ic=[1.0, 0.0, 0.0]).integrate(final_time=5.0, dt=0.05)
+traj = MyAttractor(ic=[1.0, 0.0, 0.0]).run(final_time=5.0, dt=0.05)
 np.round(traj.y[-1], 3)                    # → [ 0.647, -1.605,  0.037]
 
-exps = ts.lyapunov_spectrum(MyAttractor(ic=[1.0, 0.0, 0.0]))   # composes for free
+exps = ts.analysis.lyapunov_spectrum(MyAttractor(ic=[1.0, 0.0, 0.0]))   # composes for free
 ```
 
 A user-defined class registers as **non-builtin**
@@ -189,7 +189,7 @@ class MyAttractor(ts.ContinuousSystem):
     known_lyapunov = {                           # opt in to the known-value tests
         "spectrum": (0.0714, 0.0, -5.39),
         "atol": (0.06, 0.06, 1.5),
-        "kwargs": {"dt": 0.1, "burn_in": 100.0, "final_time": 500.0},
+        "kwargs": {"dt": 0.1, "transient": 100.0, "final_time": 500.0},
         "source": "Sprott (2003), Chaos and Time-Series Analysis",
     }
 ```
@@ -202,7 +202,7 @@ class MyAttractor(ts.ContinuousSystem):
 | `default_ic` | Fallback IC when a random `U[0,1)^dim` start escapes the basin |
 | `known_lyapunov` | Enrolls the system in `test_known_values.py` — literature spectra checked continuously |
 | `_structural_params` | For variable-dimension systems (see below) |
-| `_default_method` | `"bdf"` for a system known to be stiff, so `integrate` defaults to the implicit kernel |
+| `_default_method` | `"bdf"` for a system known to be stiff, so `run` defaults to the implicit kernel |
 | `_field_shape` / `field_labels` | For a spatially-extended (PDE) system whose state is a flattened field |
 
 ### Variable-dimension systems

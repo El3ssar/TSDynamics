@@ -17,8 +17,8 @@ from tsdynamics.viz import Annotation
 
 
 def _time_series_spec():
-    traj = ts.Lorenz().integrate(final_time=2.0, dt=0.1)
-    return traj.to_plot_spec(components=["x"])  # a simple 2-D time-series panel
+    traj = ts.systems.Lorenz().run(final_time=2.0, dt=0.1)
+    return traj.__plot_spec__(components=["x"])  # a simple 2-D time-series panel
 
 
 def test_vline_text_is_drawn_as_an_axes_text_artist():

@@ -1,8 +1,10 @@
 """dysts adapter — the GilpinLab chaotic-systems catalogue + integrator.
 
 ``dysts`` ships ~130 systems with a SciPy ``solve_ivp`` integrator plus analysis
-helpers (``gp_dim`` correlation dimension, ``dfa``). It contributes a second real
-dynamics library to the integration rows and to the from-data dimension/DFA rows.
+helpers (``gp_dim`` correlation dimension). It contributes a second real dynamics
+library to the integration rows and to the from-data correlation-dimension row.
+(Its ``dfa`` row went with the v6 scope narrowing — TSDynamics no longer ships a
+DFA estimator to compare against.)
 
 Deliberately **not** wired to the Lyapunov rows: dysts rescales each system's time
 axis per characteristic period (for ML benchmarking), so its Lyapunov exponents
@@ -90,15 +92,5 @@ class DystsAdapter(BaseAdapter):
 
         def run() -> float:
             return float(gp_dim(emb))
-
-        return run
-
-    def task_dfa(self, quick: bool) -> Callable[[], float]:
-        from dysts.analysis import dfa
-
-        x = np.ascontiguousarray(series.white_noise_series()[: self.cfg["series"]["dfa_n"]])
-
-        def run() -> float:
-            return float(dfa(x))
 
         return run

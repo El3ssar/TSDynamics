@@ -14,6 +14,21 @@ class DoublePendulum(ContinuousSystem):
     chaotic — exquisitely sensitive to initial conditions — once the energy is
     large enough for the arms to flip over.
 
+    For two uniform rods the gravitational potential is
+
+    .. math::
+
+        V(\theta_1, \theta_2)
+            = -\tfrac{1}{2} m g d \,(3\cos\theta_1 + \cos\theta_2),
+
+    so the upper arm feels three times the restoring torque of the lower one
+    (its own weight plus the whole weight of the arm hanging from it): the
+    factor 3 belongs on :math:`\sin\theta_1` alone. The small-oscillation normal
+    modes follow from :math:`\det(K - \omega^2 A) = 0` with
+    :math:`A = \tfrac{1}{6} m d^2 \begin{pmatrix} 8 & 3 \\ 3 & 2\end{pmatrix}`
+    and :math:`K = m g d\,\mathrm{diag}(3/2,\, 1/2)`, giving 2.6815 and
+    7.1923 rad/s at the defaults.
+
     Parameters
     ----------
     d : float
@@ -26,6 +41,7 @@ class DoublePendulum(ContinuousSystem):
     doi = "10.1016/c2013-0-12598-6"
     params = {"d": 1.0, "m": 1.0}
     dim = 4
+    variables = ("th1", "th2", "p1", "p2")
 
     @staticmethod
     def _equations(Y, t, *, d, m):
@@ -36,7 +52,7 @@ class DoublePendulum(ContinuousSystem):
         th1_dot = pre * (2 * p1 - 3 * cos(th1 - th2) * p2) / denom
         th2_dot = pre * (8 * p2 - 3 * cos(th1 - th2) * p1) / denom
         p1_dot = -0.5 * (m * d**2) * (th1_dot * th2_dot * sin(th1 - th2) + 3 * (g / d) * sin(th1))
-        p2_dot = -0.5 * (m * d**2) * (-th1_dot * th2_dot * sin(th1 - th2) + 3 * (g / d) * sin(th2))
+        p2_dot = -0.5 * (m * d**2) * (-th1_dot * th2_dot * sin(th1 - th2) + (g / d) * sin(th2))
         return th1_dot, th2_dot, p1_dot, p2_dot
 
 
@@ -64,6 +80,7 @@ class SwingingAtwood(ContinuousSystem):
     doi = "10.1119/1.13791"
     params = {"m1": 1.0, "m2": 4.5}
     dim = 4
+    variables = ("r", "th", "pr", "pth")
 
     @staticmethod
     def _equations(Y, t, *, m1, m2):
@@ -104,6 +121,7 @@ class Colpitts(ContinuousSystem):
     doi = "10.1109/81.331536"
     params = {"a": 30, "b": 0.8, "c": 20, "d": 0.08, "e": 10}
     dim = 3
+    variables = ("x", "y", "z")
 
     @staticmethod
     def _equations(Y, t, *, a, b, c, d, e):
@@ -147,6 +165,7 @@ class Laser(ContinuousSystem):
     doi = "10.1016/j.cnsns.2012.08.036"
     params = {"a": 10.0, "b": 1.0, "c": 5.0, "d": -1.0, "h": -5.0, "k": -6.0}
     dim = 3
+    variables = ("x", "y", "z")
 
     @staticmethod
     def _equations(Y, t, *, a, b, c, d, h, k):
@@ -189,6 +208,7 @@ class Blasius(ContinuousSystem):
         "zs": 0.006,
     }
     dim = 3
+    variables = ("x", "y", "z")
     default_ic = [4.031713, 5.1113788, 0.016508812]
 
     @staticmethod
@@ -225,6 +245,7 @@ class FluidTrampoline(ContinuousSystem):
     doi = "10.1017/s0022112008005442"
     params = {"gamma": 1.82, "psi": 0.01019, "w": 1.21}
     dim = 3
+    variables = ("x", "y", "th")
 
     @staticmethod
     def _equations(Y, t, *, gamma, psi, w):
@@ -256,6 +277,7 @@ class JerkCircuit(ContinuousSystem):
     doi = "10.1109/tcsii.2011.2124490"
     params = {"eps": 1e-9, "y0": 0.026}
     dim = 3
+    variables = ("x", "y", "z")
 
     @staticmethod
     def _equations(Y, t, *, eps, y0):
@@ -324,3 +346,25 @@ class WindmiReduced(ContinuousSystem):
         vdot = b1 * i - b2 * abs(p) ** (1 / 2) - b3 * v
         pdot = vsw**2 - abs(p) ** (5 / 4) * vsw ** (1 / 2) * (1 + tanh(z_clamped)) / 2
         return idot, vdot, pdot
+
+
+__all__ = [
+    "Blasius",
+    "Colpitts",
+    "DoublePendulum",
+    "FluidTrampoline",
+    "JerkCircuit",
+    "Laser",
+    "SwingingAtwood",
+    "WindmiReduced",
+]
+
+
+def __dir__() -> list[str]:
+    """Expose only the catalogue classes (``__all__``) to ``dir()`` / autocomplete.
+
+    ``__all__`` governs ``import *`` and nothing else, so without this the module
+    also offers every helper it imported — SymEngine's ``sin``/``cos``/``exp``,
+    ``numpy`` — as though they were part of this library's surface.
+    """
+    return sorted(__all__)

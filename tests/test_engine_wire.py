@@ -30,8 +30,8 @@ _rust = pytest.importorskip("tsdynamics._rust")
 
 import tsdynamics as ts  # noqa: E402
 from tsdynamics import StochasticSystem  # noqa: E402
-from tsdynamics.engine import run  # noqa: E402
-from tsdynamics.engine.problem import map_problem, sde_problem  # noqa: E402
+from tsdynamics._engine import run  # noqa: E402
+from tsdynamics._engine.problem import map_problem, sde_problem  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # SDE test fixtures (not catalogue systems; unique names to avoid registry
@@ -79,9 +79,9 @@ class WireOU(StochasticSystem):
 @pytest.mark.parametrize("method", ["euler_maruyama", "milstein"])
 def test_sde_interp_matches_reference_fixed_seed(method):
     gbm = WireGBM()
-    kw = dict(final_time=1.0, dt=0.01, ic=[1.0], method=method, seed=20240614)
-    ref = gbm.integrate(backend="reference", **kw)
-    eng = gbm.integrate(backend="interp", **kw)
+    kw = dict(final_time=1.0, dt=0.01, ic=[1.0], solver=method, seed=20240614)
+    ref = gbm.run(backend="reference", **kw)
+    eng = gbm.run(backend="interp", **kw)
     assert eng.y.shape == ref.y.shape
     np.testing.assert_allclose(eng.y[0], [1.0])  # first row is the IC
     # The two draw the same integer stream; only libm sin/cos vs sin_cos differs,
@@ -96,9 +96,9 @@ def test_sde_ensemble_interp_matches_reference_per_row(method):
     gbm = WireGBM()
     rng = np.random.default_rng(1)
     ics = 1.0 + 0.1 * rng.standard_normal((12, 1))
-    kw = dict(final_time=1.0, dt=0.01, method=method, seed=99)
-    ref = gbm.ensemble(ics, backend="reference", **kw)
-    eng = gbm.ensemble(ics, backend="interp", **kw)
+    kw = dict(final_time=1.0, dt=0.01, solver=method, seed=99)
+    ref = gbm.ensemble(ics).run(backend="reference", **kw).final
+    eng = gbm.ensemble(ics).run(backend="interp", **kw).final
     assert eng.shape == (12, 1)
     # Each trajectory i is seeded by seed_for(seed, i) on both paths.
     np.testing.assert_allclose(eng, ref, rtol=1e-6, atol=1e-9)
@@ -112,18 +112,18 @@ def test_sde_ensemble_interp_matches_reference_per_row(method):
 @pytest.mark.parametrize("method", ["euler_maruyama", "milstein"])
 def test_sde_jit_matches_interp_bit_for_bit(method):
     gbm = WireGBM()
-    kw = dict(final_time=1.0, dt=0.005, ic=[1.0], method=method, seed=7)
-    interp = gbm.integrate(backend="interp", **kw)
-    jit = gbm.integrate(backend="jit", **kw)
+    kw = dict(final_time=1.0, dt=0.005, ic=[1.0], solver=method, seed=7)
+    interp = gbm.run(backend="interp", **kw)
+    jit = gbm.run(backend="jit", **kw)
     np.testing.assert_array_equal(interp.y, jit.y)
 
 
 def test_sde_ensemble_jit_matches_interp_bit_for_bit():
     gbm = WireGBM()
     ics = np.linspace(0.8, 1.2, 10).reshape(-1, 1)
-    kw = dict(final_time=1.0, dt=0.01, method="milstein", seed=3)
-    interp = gbm.ensemble(ics, backend="interp", **kw)
-    jit = gbm.ensemble(ics, backend="jit", **kw)
+    kw = dict(final_time=1.0, dt=0.01, solver="milstein", seed=3)
+    interp = gbm.ensemble(ics).run(backend="interp", **kw).final
+    jit = gbm.ensemble(ics).run(backend="jit", **kw).final
     np.testing.assert_array_equal(interp, jit)
 
 
@@ -137,8 +137,10 @@ def test_gbm_ensemble_mean_matches_analytic():
     gbm = WireGBM()
     n, tf = 8000, 1.0
     ics = np.ones((n, 1))
-    finals = gbm.ensemble(
-        ics, final_time=tf, dt=0.005, method="milstein", seed=2024, backend="interp"
+    finals = (
+        gbm.ensemble(ics)
+        .run(final_time=tf, dt=0.005, solver="milstein", seed=2024, backend="interp")
+        .final
     )
     assert np.all(np.isfinite(finals))
     want = np.exp(gbm.params["mu"] * tf)
@@ -151,8 +153,10 @@ def test_ou_ensemble_matches_stationary_law():
     theta, mu, sigma = (ou.params[k] for k in ("theta", "mu", "sigma"))
     n = 12000
     ics = np.full((n, 1), mu)
-    finals = ou.ensemble(
-        ics, final_time=10.0, dt=0.005, method="euler_maruyama", seed=11, backend="interp"
+    finals = (
+        ou.ensemble(ics)
+        .run(final_time=10.0, dt=0.005, solver="euler_maruyama", seed=11, backend="interp")
+        .final
     )
     assert np.all(np.isfinite(finals))
     want_var = sigma * sigma / (2.0 * theta)
@@ -196,7 +200,7 @@ def test_run_integrate_and_ensemble_reject_sde_problems():
 
 @pytest.mark.parametrize("jit", [False, True])
 def test_map_ensemble_binding_matches_serial_iterate(jit):
-    henon = ts.Henon()
+    henon = ts.systems.Henon()
     prob = map_problem(henon)
     arrays = prob.tape.to_arrays()
     rng = np.random.default_rng(0)
@@ -213,14 +217,14 @@ def test_map_ensemble_binding_matches_serial_iterate(jit):
 def test_map_jit_equals_interp_through_run():
     """The map JIT path reproduces the interpreter path bit-for-bit (E2 invariant
     over the map loop, driven through the public run.integrate seam)."""
-    henon = ts.Henon()
+    henon = ts.systems.Henon()
     interp = run.integrate(henon, final_time=300, ic=[0.1, 0.1], backend="interp")
     jit = run.integrate(henon, final_time=300, ic=[0.1, 0.1], backend="jit")
     np.testing.assert_array_equal(interp.y, jit.y)
 
 
 def test_map_ensemble_through_run_matches_single_integrate():
-    henon = ts.Henon()
+    henon = ts.systems.Henon()
     rng = np.random.default_rng(2)
     ics = np.array([0.1, 0.1]) + 0.05 * rng.standard_normal((6, 2))
     steps = 50
@@ -232,7 +236,7 @@ def test_map_ensemble_through_run_matches_single_integrate():
 
 
 def test_map_ensemble_reference_matches_engine():
-    henon = ts.Henon()
+    henon = ts.systems.Henon()
     rng = np.random.default_rng(4)
     ics = np.array([0.1, 0.1]) + 0.05 * rng.standard_normal((5, 2))
     eng = run.ensemble(henon, ics, final_time=30, backend="interp")
@@ -247,7 +251,7 @@ def test_map_ensemble_reference_matches_engine():
 
 @pytest.mark.parametrize("name", ["Lorenz", "Rossler"])
 def test_ode_jit_matches_interp_bit_for_bit(name):
-    system = getattr(ts, name)()
+    system = getattr(ts.systems, name)()
     ic = system.resolve_ic(None)
     kw = dict(final_time=3.0, dt=0.05, ic=ic, method="dop853", rtol=1e-10, atol=1e-12)
     interp = run.integrate(system, backend="interp", **kw)
@@ -257,8 +261,8 @@ def test_ode_jit_matches_interp_bit_for_bit(name):
 
 
 def test_dde_jit_matches_interp():
-    mg = ts.MackeyGlass()
-    kw = dict(final_time=40.0, dt=0.5, rtol=1e-7, atol=1e-9, method="rk45")
-    interp = mg.integrate(backend="interp", **kw)
-    jit = mg.integrate(backend="jit", **kw)
+    mg = ts.systems.MackeyGlass()
+    kw = dict(final_time=40.0, dt=0.5, rtol=1e-7, atol=1e-9, solver="rk45")
+    interp = mg.run(backend="interp", **kw)
+    jit = mg.run(backend="jit", **kw)
     np.testing.assert_array_equal(interp.y, jit.y)

@@ -49,27 +49,42 @@ use std::collections::{HashMap, HashSet};
 use tsdyn_ir::Evaluator;
 use tsdyn_solvers::Solver;
 
-use crate::integrate::{integrate_grid, IntegrateConfig};
+use crate::integrate::{integrate_grid_polled, IntegrateConfig, IntegrateError};
+use crate::interrupt::Poller;
 use crate::map::map_step_once;
 
 /// The label a seed gets when it leaves the region / never settles (mirrors the
 /// Python `DIVERGED = -1`).
 pub const DIVERGED: i64 = -1;
 
-/// Why a basin march could not be set up (a shape / grid validation failure). The
-/// march itself never errors — a diverged trajectory is a [`DIVERGED`] label, not
-/// an error — so this only covers caller-side mistakes the binding maps to
-/// `ValueError`.
+/// Why a basin march could not be set up or completed.
+///
+/// A *diverged trajectory* is still not an error — it is a [`DIVERGED`] label,
+/// and the march continues — so these are the whole-call failures: a caller-side
+/// shape mistake the binding maps to `ValueError`, and an interrupt.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BasinError {
     /// A buffer length / grid invariant disagrees with the tape or itself.
     BadShape(String),
+    /// The embedder's interrupt hook stopped the march (see
+    /// [`crate::interrupt`]) — normally a Ctrl-C at the Python prompt.
+    ///
+    /// A basin image is `n_seeds` FSM runs of up to `max_steps` cell checks
+    /// each; on a fine grid that is minutes of compute from a single innocuous
+    /// call, which makes it one of the calls a user most often wants back.
+    Interrupted {
+        /// The seed index being classified when the interrupt was observed.
+        seed: usize,
+    },
 }
 
 impl core::fmt::Display for BasinError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             BasinError::BadShape(m) => f.write_str(m),
+            BasinError::Interrupted { seed } => {
+                write!(f, "interrupted while classifying seed {seed}")
+            }
         }
     }
 }
@@ -215,6 +230,17 @@ where
     Map { ev: &'e dyn Evaluator },
 }
 
+/// The outcome of one cell-check advance.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Advance {
+    /// The live point moved one cell check forward.
+    Ok,
+    /// The trajectory blew up — "gone for good", the [`DIVERGED`] label.
+    Diverged,
+    /// The interrupt hook fired mid-advance; the whole march must unwind.
+    Interrupted,
+}
+
 /// The live integration point a [`MarchDriver`] carries across cell checks.
 struct MarchState {
     u: Vec<f64>,
@@ -243,11 +269,17 @@ where
         }
     }
 
-    /// Advance the live point one cell-check step in place; return `false` if the
-    /// trajectory blew up (a diverged integration, a non-finite map iterate, or any
-    /// non-finite component) — the Python `_advance() is None` contract.
+    /// Advance the live point one cell-check step in place.
+    ///
+    /// Returns [`Advance::Diverged`] if the trajectory blew up (a diverged
+    /// integration, a non-finite map iterate, or any non-finite component) — the
+    /// Python `_advance() is None` contract — and [`Advance::Interrupted`] if the
+    /// segment was cut short by the interrupt hook. Telling those two apart is
+    /// the point of the enum: this used to be a `bool`, so an interrupt landing
+    /// inside a flow segment would have been silently recorded as "this initial
+    /// condition diverges" and quietly corrupted the basin image.
     #[inline]
-    fn advance(&self, st: &mut MarchState, p: &[f64]) -> bool {
+    fn advance(&self, st: &mut MarchState, p: &[f64], poll: &mut Poller) -> Advance {
         match self {
             MarchDriver::Flow {
                 ev,
@@ -264,33 +296,44 @@ where
                 let t_eval = [st.t, tf];
                 let mut solver = solver_factory();
                 let cfg = IntegrateConfig::new(tf - st.t);
-                match integrate_grid(*ev, &mut *solver, &st.u[..dim], p, &t_eval, &cfg) {
+                // The march's poller, not a fresh one: a `dt` segment is a
+                // handful of solver steps, so a per-segment poller would reset
+                // long before a stride and the march would never poll.
+                match integrate_grid_polled(*ev, &mut *solver, &st.u[..dim], p, &t_eval, &cfg, poll)
+                {
                     Ok(out) => {
                         // `out` is the flat `(2, dim)` buffer; the last row is the
                         // advanced state.
                         let last = &out[dim..2 * dim];
                         if !last.iter().all(|x| x.is_finite()) {
-                            return false;
+                            return Advance::Diverged;
                         }
                         st.u[..dim].copy_from_slice(last);
                         st.t = tf;
-                        true
+                        Advance::Ok
                     }
+                    Err(IntegrateError::Interrupted { .. }) => Advance::Interrupted,
                     // A diverged / collapsed integration is "gone for good" — the
                     // Python `_advance` catches ConvergenceError → None.
-                    Err(_) => false,
+                    Err(_) => Advance::Diverged,
                 }
             }
             MarchDriver::Map { ev } => {
                 let dim = ev.dim();
+                // A map cell check is a single application of `f`, so this loop
+                // is where the map march's polling has to happen — there is no
+                // inner integration to carry it.
+                if poll.tick() {
+                    return Advance::Interrupted;
+                }
                 // One map application; `t = 0.0` (maps are autonomous in the IR),
                 // matching the engine map loop and the reference path. A non-finite
-                // iterate is divergence (`false`), the map step's overflow contract.
+                // iterate is divergence, the map step's overflow contract.
                 if map_step_once(*ev, &st.u[..dim], p, &mut st.scratch, &mut st.next) {
                     st.u[..dim].copy_from_slice(&st.next[..dim]);
-                    true
+                    Advance::Ok
                 } else {
-                    false
+                    Advance::Diverged
                 }
             }
         }
@@ -348,6 +391,10 @@ impl LabelStore {
 /// the shared [`LabelStore`]. The counter logic, the `att`/`bas`/`visited` order,
 /// the lost-counter, and the locate-then-label sequence match the Python exactly,
 /// so the per-seed classification is bit-identical.
+///
+/// Returns `None` when the interrupt hook fired: the seed has no label, and the
+/// caller must abandon the whole march rather than record a fabricated one.
+#[allow(clippy::too_many_arguments)]
 fn map_ic<F>(
     driver: &MarchDriver<'_, F>,
     st: &mut MarchState,
@@ -356,7 +403,8 @@ fn map_ic<F>(
     cfg: &MarchConfig,
     store: &mut LabelStore,
     ic: &[f64],
-) -> i64
+    poll: &mut Poller,
+) -> Option<i64>
 where
     F: Fn() -> Box<dyn Solver>,
 {
@@ -368,9 +416,11 @@ where
     let (mut c, mut att_hit, mut bas_hit, mut lost) = (0usize, 0usize, 0usize, 0usize);
 
     for _it in 0..cfg.max_steps {
-        if !driver.advance(st, p) {
+        match driver.advance(st, p, poll) {
+            Advance::Ok => {}
             // the step blew up — the trajectory is gone for good.
-            return DIVERGED;
+            Advance::Diverged => return Some(DIVERGED),
+            Advance::Interrupted => return None,
         }
         let cell = match grid.index(&st.u) {
             None => {
@@ -380,7 +430,7 @@ where
                 att_hit = 0;
                 bas_hit = 0;
                 if lost >= cfg.mx_lost {
-                    return DIVERGED;
+                    return Some(DIVERGED);
                 }
                 continue;
             }
@@ -394,7 +444,7 @@ where
             bas_hit = 0;
             if att_hit >= cfg.mx_att {
                 store.label_basin(&trail, known);
-                return known;
+                return Some(known);
             }
             continue;
         }
@@ -405,7 +455,7 @@ where
             att_hit = 0;
             if bas_hit >= cfg.mx_bas {
                 store.label_basin(&trail, known);
-                return known;
+                return Some(known);
             }
             continue;
         }
@@ -416,7 +466,7 @@ where
         if visited.contains(&cell) {
             c += 1;
             if c >= cfg.mx_fnd {
-                return locate_attractor(driver, st, grid, p, cfg, store, &trail);
+                return locate_attractor(driver, st, grid, p, cfg, store, &trail, poll);
             }
         } else {
             visited.insert(cell);
@@ -425,7 +475,7 @@ where
         trail.push(cell);
     }
 
-    DIVERGED
+    Some(DIVERGED)
 }
 
 /// Recurrence detected: integrate on to map the attractor's cells/points, assign a
@@ -436,6 +486,10 @@ where
 /// cells, roll the id back and return [`DIVERGED`]; otherwise label the located
 /// cells as the new attractor, drop them from `bas_cells`, store the point cloud,
 /// and `setdefault` the trail's non-attractor cells into the basin.
+///
+/// Returns `None` on an interrupt, like [`map_ic`]; the half-built attractor id
+/// is rolled back first so an interrupted march leaves no partial state behind.
+#[allow(clippy::too_many_arguments)]
 fn locate_attractor<F>(
     driver: &MarchDriver<'_, F>,
     st: &mut MarchState,
@@ -444,7 +498,8 @@ fn locate_attractor<F>(
     cfg: &MarchConfig,
     store: &mut LabelStore,
     trail: &[u64],
-) -> i64
+    poll: &mut Poller,
+) -> Option<i64>
 where
     F: Fn() -> Box<dyn Solver>,
 {
@@ -459,8 +514,15 @@ where
     let mut points: Vec<Vec<f64>> = Vec::new();
 
     for _ in 0..cfg.mx_loc {
-        if !driver.advance(st, p) {
-            break;
+        match driver.advance(st, p, poll) {
+            Advance::Ok => {}
+            Advance::Diverged => break,
+            Advance::Interrupted => {
+                // Roll the reserved id back: the march is unwinding, and a
+                // half-located attractor must not outlive it.
+                store.next_id -= 1;
+                return None;
+            }
         }
         match grid.index(&st.u) {
             None => break,
@@ -476,7 +538,7 @@ where
     if att_cells.is_empty() {
         // Could not pin the attractor down (left the region while locating).
         store.next_id -= 1;
-        return DIVERGED;
+        return Some(DIVERGED);
     }
 
     for &cell in &att_cells {
@@ -491,7 +553,7 @@ where
             store.bas_cells.entry(cell).or_insert(new_id);
         }
     }
-    new_id
+    Some(new_id)
 }
 
 /// The per-seed labels + the final labelling maps a [`basin_march`] returns.
@@ -527,7 +589,7 @@ fn run_march<F>(
     seeds: &[f64],
     p: &[f64],
     cfg: &MarchConfig,
-) -> BasinMarchOutcome
+) -> Result<BasinMarchOutcome, BasinError>
 where
     F: Fn() -> Box<dyn Solver>,
 {
@@ -543,13 +605,20 @@ where
         next: vec![0.0; dim],
     };
 
+    // ONE poller for the whole march: the per-seed FSM feeds it into the flow's
+    // `integrate_grid_polled` (so a flow polls per solver step) and ticks it
+    // directly on the map path (so a map polls per iterate).
+    let mut poll = Poller::new();
+
     for s in 0..n_seeds {
         let ic = &seeds[s * dim..(s + 1) * dim];
-        let label = map_ic(driver, &mut st, grid, p, cfg, &mut store, ic);
-        labels.push(label);
+        match map_ic(driver, &mut st, grid, p, cfg, &mut store, ic, &mut poll) {
+            Some(label) => labels.push(label),
+            None => return Err(BasinError::Interrupted { seed: s }),
+        }
     }
 
-    finish(store, labels, dim)
+    Ok(finish(store, labels, dim))
 }
 
 /// Pack the accumulated [`LabelStore`] into the FFI-shaped [`BasinMarchOutcome`].
@@ -640,7 +709,7 @@ where
         solver_factory,
         dt,
     };
-    Ok(run_march(&driver, &grid, seeds, p, &cfg))
+    run_march(&driver, &grid, seeds, p, &cfg)
 }
 
 /// Run the basin recurrence FSM for a **map** (discrete system).
@@ -677,7 +746,7 @@ pub fn basin_march_map(
     // `MarchDriver::Map` never calls the solver factory; supply a never-used one to
     // satisfy the generic bound.
     let driver: MarchDriver<'_, fn() -> Box<dyn Solver>> = MarchDriver::Map { ev };
-    Ok(run_march(&driver, &grid, seeds, p, &cfg))
+    run_march(&driver, &grid, seeds, p, &cfg)
 }
 
 #[cfg(test)]
@@ -816,6 +885,31 @@ mod tests {
                 assert!(r2 < 0.25, "attractor point far from origin: {chunk:?}");
             }
         }
+    }
+
+    /// An armed interrupt stops the march instead of labelling seeds.
+    ///
+    /// The mechanism worth guarding here is the [`Advance`] enum: `advance` used
+    /// to return a bare `bool`, so an interrupt was indistinguishable from a
+    /// blow-up and would have been silently written into the basin image as
+    /// [`DIVERGED`]. A wrong picture is worse than no picture.
+    #[test]
+    fn an_armed_interrupt_stops_the_march_and_is_not_called_divergence() {
+        let _stop = crate::interrupt::testing::force_stop();
+        let _armed = crate::interrupt::arm();
+
+        let ev = VmEval::new(cubic_map(1.5));
+        // One seed, with recurrence detection disabled (`mx_fnd` unreachable) so
+        // the FSM is guaranteed to run its whole `max_steps` budget — far more
+        // than one poll stride of map iterates — instead of settling early.
+        let mut c = cfg();
+        c.mx_fnd = usize::MAX;
+        c.max_steps = 50 * crate::interrupt::POLL_STRIDE;
+        let err = basin_march_map(&ev, &[], &[-2.0], &[2.0], &[400], &[0.3], c).unwrap_err();
+        assert!(
+            matches!(err, BasinError::Interrupted { seed: 0 }),
+            "got {err:?}"
+        );
     }
 
     #[test]

@@ -82,7 +82,7 @@ def _histogram_prebinned() -> PlotSpec:
     centres = np.linspace(0.0, 1.0, 8)
     counts = np.array([1.0, 3.0, 5.0, 7.0, 6.0, 4.0, 2.0, 1.0])
     return PlotSpec(
-        kind=PlotKind.HISTOGRAM_NULL,
+        kind=PlotKind.DIAGNOSTIC_CURVE,
         layers=[Layer(kind=PlotKind.HISTOGRAM, data={"x": centres, "y": counts})],
     )
 
@@ -90,14 +90,14 @@ def _histogram_prebinned() -> PlotSpec:
 def _histogram_raw() -> PlotSpec:
     samples = np.random.default_rng(1).standard_normal(40)
     return PlotSpec(
-        kind=PlotKind.HISTOGRAM_NULL,
+        kind=PlotKind.DIAGNOSTIC_CURVE,
         layers=[Layer(kind=PlotKind.HISTOGRAM, data={"x": samples})],
     )
 
 
 def _bar_categorical() -> PlotSpec:
     return PlotSpec(
-        kind=PlotKind.FEATURE_BARS,
+        kind=PlotKind.CATEGORICAL_BAR,
         layers=[
             Layer(kind=PlotKind.BAR, data={"cat": np.arange(3.0), "y": np.array([1.0, 2.0, 3.0])})
         ],
@@ -318,11 +318,17 @@ def test_caps_decline_3d_marks():
     assert caps.can_render_spec(_time_series()) is True
 
 
-def test_caps_decline_animation_kinds():
-    """The animation semantic kinds are declined (deferred everywhere)."""
-    caps = _plotly_caps()
-    assert PlotKind.TRAJECTORY_ANIMATION not in _SUPPORTED_KINDS
-    assert caps.can_render(PlotKind.TRAJECTORY_ANIMATION) is False
+def test_no_declined_kinds_remain():
+    """``_DECLINED_KINDS`` is empty since the v6 vocabulary surgery.
+
+    It held only the two legacy animation kinds, which are gone from
+    ``PlotKind`` — animation is the orthogonal ``Animation`` modifier, and
+    plotly's refusal of an animated *composite* is expressed by
+    ``can_render_spec``, not by a kind.
+    """
+    from tsdynamics.viz.render.plotly import _DECLINED_KINDS
+
+    assert not _DECLINED_KINDS
 
 
 def test_3d_spec_falls_back_to_matplotlib_with_warning():

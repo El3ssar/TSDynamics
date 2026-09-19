@@ -29,8 +29,8 @@ uv run pre-commit install    # optional: ruff lint + format enforced at commit t
 ## The everyday loop — change-scoped testing
 
 The test suite is **registry-driven**: every per-system test is parametrised
-over all 171 built-in systems, and every analysis / transform test over the
-whole toolkit. A plain `uv run pytest` is therefore thousands of items and takes
+over all 177 built-in systems, and every analysis test over the whole
+toolkit. A plain `uv run pytest` is therefore thousands of items and takes
 minutes. **Don't reach for the full suite as your inner loop.** Instead run only
 what your diff touches:
 
@@ -103,7 +103,7 @@ worth knowing:
   needs no hand-written page. `TSD_DOCS_FIGURES=0` skips the (slow) figure
   rendering during local previews.
 
-When you add an analysis or transform, add its prose page under
+When you add an analysis, add its prose page under
 `docs/analysis/`, an mkdocstrings stanza on the matching `docs/reference/*` page,
 and a `nav` entry in `mkdocs.yml`.
 
@@ -116,7 +116,7 @@ the changelog and release notes are generated from them:
 feat: add Sprott-N attractor to chaotic_attractors
 fix(dde): reject zero or negative delay parameters
 perf(engine): reuse the frozen Jacobian across SDIRK substages
-docs: clarify n_exp behaviour in DelaySystem.lyapunov_spectrum
+docs: clarify k behaviour in DelaySystem.lyapunov_spectrum
 ```
 
 The prefix decides the release: `feat:` → minor, `fix:` / `perf:` → patch,

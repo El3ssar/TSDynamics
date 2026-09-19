@@ -35,7 +35,14 @@ from typing import Any
 
 import numpy as np
 
-from ._common import DimensionResult, _as_points, _metric_p
+from .._common import runaway_meta
+from ._common import (
+    DimensionResult,
+    _as_points,
+    _metric_p,
+    _resolve_theiler,
+    require_min_points,
+)
 from ._scaling import fit_scaling_region
 
 __all__ = ["fixed_mass_dimension"]
@@ -67,12 +74,12 @@ def fixed_mass_dimension(
     data: Any,
     *,
     ks: np.ndarray | None = None,
-    theiler: int = 0,
+    theiler: int | str = "auto",
     metric: str | float = "euclidean",
     n_ref: int | None = 1500,
     n_ks: int = 16,
     min_window: int = 5,
-    tol: float = 1.5,
+    flatness: float = 1.5,
     seed: int = 0,
 ) -> DimensionResult:
     r"""Fixed-mass (nearest-neighbour) dimension.
@@ -84,8 +91,12 @@ def fixed_mass_dimension(
     ks : array-like of int, optional
         Neighbour counts (masses) to probe.  Default: a log-spaced integer grid
         from 1 to ``N // 10``.
-    theiler : int, default 0
-        Exclude neighbours with :math:`|i - j| \le w` (set for dense flows).
+    theiler : int or "auto", default "auto"
+        Exclude neighbours with :math:`|i - j| \le w`.  ``"auto"`` reads the
+        window off the space--time separation profile of the data, exactly as in
+        :func:`~tsdynamics.analysis.dimensions.correlation.correlation_sum`; pass
+        ``0`` for the uncorrected estimate.  The resolved window is recorded in
+        ``result.meta["theiler"]``.
     metric : str or float, default "euclidean"
         Distance metric.
     n_ref : int or None, default 1500
@@ -95,8 +106,10 @@ def fixed_mass_dimension(
         Number of masses when ``ks`` is not given.
     min_window : int, default 5
         Minimum number of masses in the fitted scaling region.
-    tol : float, default 1.5
-        Scaling-region residual tolerance.
+    flatness : float, default 1.5
+        How flat the fitted scaling region has to be: a window is admitted when
+        its straight-line residual is within this factor of the flattest window
+        found.  (It is **not** a solver tolerance — hence the v6 rename.)
     seed : int, default 0
         Seed for the reference sub-sample (keeps the estimate reproducible).
 
@@ -127,11 +140,16 @@ def fixed_mass_dimension(
     from scipy.spatial import cKDTree
     from scipy.special import digamma
 
-    points = _as_points(data)
+    points = _as_points(data, analysis="fixed_mass_dimension")
+    require_min_points(
+        points,
+        analysis="fixed_mass_dimension",
+        reason=(
+            "the k-th-neighbour distances of a handful of points measure the sample, not the set"
+        ),
+    )
     n = points.shape[0]
-    w = int(theiler)
-    if w < 0:
-        raise ValueError("theiler must be non-negative.")
+    w = _resolve_theiler(theiler, points)
     p = _metric_p(metric)
 
     if ks is None:
@@ -184,7 +202,7 @@ def fixed_mass_dimension(
     y = digamma(ks.astype(float))
     order = np.argsort(x)
     x, y = x[order], y[order]
-    fit = fit_scaling_region(x, y, min_window=min_window, tol=tol)
+    fit = fit_scaling_region(x, y, min_window=min_window, tol=flatness)
     return DimensionResult(
         estimate=fit.slope,
         stderr=fit.stderr,
@@ -194,7 +212,16 @@ def fixed_mass_dimension(
         fit_region=(fit.lo, fit.hi),
         intercept=fit.intercept,
         q=None,
-        meta={"analysis": "fixed_mass_dimension", "kind": "fixed_mass", "q": None},
+        meta={
+            "analysis": "fixed_mass_dimension",
+            "kind": "fixed_mass",
+            "q": None,
+            "theiler": w,
+            # One coordinate means "points on a line" — the estimator answers
+            # D ~ 1 whatever the attractor is, so the result says so.
+            "n_components": int(points.shape[1]),
+            **runaway_meta(points, analysis="fixed_mass_dimension"),
+        },
     )
 
 

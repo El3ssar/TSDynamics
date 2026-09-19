@@ -7,8 +7,8 @@ description: Subclass a family base and write the dynamics as one symbolic metho
 # Defining systems
 
 The built-in catalogue is a starting point, not a ceiling. Defining your own
-system is the same three-line contract every built-in follows: declare the
-parameters, the dimension, and one method holding the math. Subclass the right
+system is the same short contract every built-in follows: name the components,
+declare the parameters, and write one method holding the math. Subclass the right
 family base and everything else — lowering to the engine, integration, the whole
 [analysis toolkit](../analysis/index.md), and even a documentation page — comes
 for free.
@@ -27,8 +27,8 @@ $$
 $$
 
 It is not in the catalogue, so we can build it from scratch. Subclass
-`ContinuousSystem`, declare the parameters and dimension, name the components,
-and translate the equations into `_equations`:
+`ContinuousSystem`, name the components, declare the parameters, and translate
+the equations into `_equations`:
 
 ```python
 import tsdynamics as ts
@@ -36,13 +36,12 @@ import tsdynamics as ts
 class FitzHughNagumo(ts.ContinuousSystem):
     """FitzHugh–Nagumo excitable-neuron model."""
 
+    variables = ("v", "w")                   # dim inferred = 2
     params = {"a": 0.7, "b": 0.8, "tau": 12.5, "I": 0.5}
-    dim = 2
-    variables = ("v", "w")
-    reference = "FitzHugh (1961), Biophys. J. 1, 445–466"
+    _reference = "FitzHugh (1961), Biophys. J. 1, 445–466"
+    _doi = "10.1016/S0006-3495(61)86902-6"
 
-    @staticmethod
-    def _equations(y, t, *, a, b, tau, I):
+    def _equations(y, t, a, b, tau, I):
         v, w = y(0), y(1)
         return (
             v - v**3 / 3 - w + I,
@@ -52,14 +51,15 @@ class FitzHughNagumo(ts.ContinuousSystem):
 
 Four things are worth reading carefully.
 
-**`params`** is an ordinary dict of named control parameters with their defaults.
-They become attributes (`fhn.tau`), and `_equations` receives them as
-**keyword-only** arguments — the `*` in `_equations(y, t, *, a, b, tau, I)` is
-required, and the names must match the dict.
+**`variables`** names the components, and **`dim` follows from it** — declaring
+both is no longer required, and declaring both while disagreeing raises at class
+definition. The names let the trajectory be indexed by name (`traj["v"]`) and
+give the docs and plots meaningful axis labels. (A system with no natural names
+declares `dim = N` instead and gets `y0 … y{N-1}`.)
 
-**`dim`** is the state dimension. **`variables`** is optional but recommended: it
-names the components so the trajectory can be indexed by name (`traj["v"]`) and
-so the docs and plots carry meaningful labels.
+**`params`** is an ordinary dict of named control parameters with their defaults.
+They become attributes (`fhn.tau`), and `_equations` receives them by name — the
+parameter names must match the dict keys.
 
 **`_equations`** returns one symbolic expression per component, in state order.
 `y(i)` is the symbolic accessor for component `i`; `t` is the time symbol. The
@@ -67,6 +67,19 @@ body must build **symbolic** expressions — plain arithmetic plus
 `symengine` functions (`sin`, `cos`, `exp`, `sqrt`, …). It is lowered to an
 engine tape once, not called sample by sample, so NumPy, Python's `math`, and a
 Python `if` on the state do not belong here (they cannot be traced).
+
+**`@staticmethod` is optional.** The first slot of `_equations` is the state
+accessor whatever you call it; only naming it `self` is a mistake, and the error
+says so rather than demanding a decorator.
+
+!!! tip "`system.info` is the frozen record of everything above"
+    ```python
+    print(FitzHughNagumo().info)
+    ```
+    prints the family and dimension, the rendered equations, the parameters,
+    the component names, the citation and DOI, the solver defaults, and how many
+    analyses accept this subject — one place to check that what you declared is
+    what the library read.
 
 !!! tip "Nonlinear functions come from `symengine`"
     For anything beyond `+ - * / **`, import from `symengine`:
@@ -78,12 +91,12 @@ Python `if` on the state do not belong here (they cannot be traced).
 
 ### It just works
 
-There is no registration call, no build step, and no warmup. The class is a fully
+There is no registration call and no build step. The class is a fully
 functional system the moment it is defined:
 
 ```python
 fhn = FitzHughNagumo()
-traj = fhn.integrate(final_time=200.0, dt=0.05, ic=[-1.0, 1.0])
+traj = fhn.run(final_time=200.0, dt=0.05, ic=[-1.0, 1.0])
 
 traj.y.shape          # (4001, 2)
 traj["v"].min(), traj["v"].max()   # ≈ (-2.0, 1.9) — the relaxation spikes
@@ -94,11 +107,11 @@ The lone equilibrium is unstable, which is exactly why the state settles into a
 limit cycle around it:
 
 ```python
-fps = ts.fixed_points(fhn)
-fps[0].x        # ≈ [-0.805, -0.131]  — the single equilibrium
-fps[0].stable   # False → the orbit spirals out onto a limit cycle
+fps = ts.analysis.fixed_points(fhn)
+fps[0]            # ≈ [-0.805, -0.131]  — the single equilibrium, as an array
+fps.is_stable[0]  # False → the orbit spirals out onto a limit cycle
 
-ts.estimate_period(fhn.integrate(final_time=400, dt=0.05, ic=[-1.0, 1.0])["v"], dt=0.05)
+ts.analysis.estimate_period(fhn.run(final_time=400, dt=0.05, ic=[-1.0, 1.0])["v"], dt=0.05)
 # ≈ 39  — the relaxation-oscillation period
 ```
 
@@ -119,8 +132,7 @@ class Ring(ts.ContinuousSystem):
     dim = 8
     _structural_params = frozenset({"N"})
 
-    @staticmethod
-    def _equations(y, t, *, N, k):
+    def _equations(y, t, N, k):
         return tuple(
             k * (y((i - 1) % N) - 2 * y(i) + y((i + 1) % N))
             for i in range(N)
@@ -143,7 +155,6 @@ class StandardMap(ts.DiscreteMap):
     """Chirikov standard (kicked-rotor) map."""
 
     params = {"k": 0.97}
-    dim = 2
     variables = ("theta", "p")
 
     @staticmethod
@@ -152,24 +163,37 @@ class StandardMap(ts.DiscreteMap):
         p_new = p + k * np.sin(theta)
         theta_new = theta + p_new
         return (theta_new, p_new)
-
-    @staticmethod
-    def _jacobian(X, k):
-        theta, p = X
-        return ((1 + k * np.cos(theta), 1.0), (k * np.cos(theta), 1.0))
 ```
 
 ```python
 sm = StandardMap()
-sm.iterate(steps=3000, ic=[0.1, 0.1]).y.shape     # (3000, 2)
+sm.run(steps=3000, ic=[0.1, 0.1]).y.shape     # (3000, 2)
 ```
+
+**`_jacobian` is optional.** Defining a map is *writing `_step`*, exactly as
+defining a flow is writing `_equations`: the Jacobian is derived symbolically
+from the step by the same trace the engine already performs. Write one by hand
+only when the step cannot be traced (a Python `if` on the state), or when a
+one-sided slope on a discontinuity is the meaningful answer:
+
+```python
+# skip-doctest — a class-body fragment, shown in place
+    @staticmethod
+    def _jacobian(X, k):                  # optional — this is what gets derived
+        theta, p = X
+        return ((1 + k * np.cos(theta), 1.0), (k * np.cos(theta), 1.0))
+```
+
+The state vector `X` is a genuine array here — a map `_step` is the one family
+whose body unpacks its state — because the map kernel is traced through NumPy
+ufuncs rather than built as a symbolic tree.
 
 !!! warning "Map parameters are positional"
     `_step` and `_jacobian` take their parameters **positionally**, in the
-    insertion order of `params` — not keyword-only like an ODE. The state vector
-    `X` is the *first* argument (unpack it inside), and the parameter names must
-    match the `params` order. A signature that disagrees is rejected with a
-    `TypeError` at import, so a re-ordered `params` cannot fail silently.
+    insertion order of `params`. The state vector `X` is the *first* argument
+    (unpack it inside), and the parameter names must match the `params` order. A
+    signature that disagrees is rejected with a `TypeError` at import, so a
+    re-ordered `params` cannot fail silently.
 
 ## Stochastic equations
 
@@ -183,9 +207,8 @@ class DoubleWellSDE(ts.StochasticSystem):
     """Overdamped gradient flow in a symmetric double well."""
 
     params = {"a": 1.0, "b": 1.0, "sigma": 0.4}
-    dim = 1
     variables = ("x",)
-    default_ic = [1.0]
+    _default_ic = [1.0]
 
     @staticmethod
     def _drift(y, t, a, b, sigma):
@@ -198,15 +221,49 @@ class DoubleWellSDE(ts.StochasticSystem):
 
 ```python
 dw = DoubleWellSDE()
-traj = dw.integrate(final_time=100.0, dt=0.01, seed=1)   # seed → reproducible path
+traj = dw.run(final_time=100.0, dt=0.01, seed=1)   # seed → reproducible path
 ```
 
-Like maps, `_drift`/`_diffusion` take parameters positionally. Integrating runs a
-fixed-step scheme (`method="euler_maruyama"` by default, `"milstein"` for strong
-order 1); `dt` is the noise scale $\sqrt{dt}$, and `seed=` fixes the realisation.
+Like maps, `_drift`/`_diffusion` take parameters positionally. Running an SDE
+uses a fixed-step scheme (`solver="euler_maruyama"` by default, `"milstein"` for
+strong order 1); `dt` is the noise scale $\sqrt{dt}$, and `seed=` fixes the
+realisation.
 
 Delay equations follow the same shape with `DelaySystem` and a delayed accessor
 `y(i, t - tau)` — see [the mental model](concepts.md#dde-delaysystem).
+
+## Code you already have: `WrappedSystem`
+
+The four families all ask you for the *equations*, so the library can lower them
+to the engine. When you already have a **stepper** — a foreign ODE solver, an
+agent-based model, a hardware-in-the-loop rig, anything that advances a state
+vector — `WrappedSystem` adapts it to the same protocol, and the whole analysis
+toolkit applies unchanged. It is the one place where subclassing (well,
+instantiating) a library type is genuinely the only path: there is no equation to
+lower and so nothing to infer.
+
+```python
+import numpy as np
+
+def step(u, n):                      # your stepper, whatever it is inside
+    x = u[0]
+    for _ in range(int(n)):
+        x = 3.9 * x * (1.0 - x)
+    return [x]
+
+sysm = ts.WrappedSystem(step, dim=1, family="map",
+                        ic=[0.5], variables=("x",))
+
+traj = sysm.run(500)                       # a Trajectory, like any other family
+ts.analysis.lyapunov_spectrum(sysm, k=1, ic=[0.3])  # ≈ 0.5 — chaotic
+ts.plot(traj)                              # and it plots like any other
+```
+
+`step_fn(state, n_or_dt) -> new_state` is the whole contract. Pass
+`family="ode"` and `n_or_dt` becomes a time increment instead of an iteration
+count; `default_dt=` is what a bare `.step()` advances by. Anything that reads a
+system through the protocol — orbit diagrams, Poincaré sections, ensembles,
+basins — works on it.
 
 ## Auto-registration and auto-docs
 
@@ -230,16 +287,18 @@ into everything at once: the bulk test suite sweeps it, and the docs build
 generates its page — equations rendered to LaTeX, a static figure, an
 interactive 3-D viewer for 3-D flows — directly from the class. Adding a system
 to the catalogue *is* adding its tests and its documentation. The optional
-metadata that enriches that page — `reference` and `doi` for the citation,
-`known_lyapunov` for a literature-value test, `default_ic` for a robust starting
-point — is all declared as class attributes, exactly like `params` and `dim`.
+metadata that enriches that page — `_reference` and `_doi` for the citation,
+`_known_lyapunov` for a literature-value test, `_default_ic` for a robust
+starting point — is declared as class attributes alongside `params` and
+`variables`. They are underscored because they are *facts the library reads*, not
+part of the tab surface of the system you get back: `system.info` is where you
+read them again.
 
 ---
 
 ## See also
 
 - [The mental model](concepts.md) — the four families, the protocol, and the backends
-- [Systems](../systems/index.md) — the 171 built-ins, each defined exactly this way
+- [Systems](../systems/index.md) — the 177 built-ins, each defined exactly this way
 - [Analysis](../analysis/index.md) — the quantifiers that compose over any system you define
 - [Fixed & periodic points](../analysis/fixed-points.md) — the equilibria and limit cycles used above
-</content>

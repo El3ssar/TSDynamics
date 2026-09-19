@@ -4,7 +4,7 @@ Covers the contract agreed in design:
 
 1. Animation is an **orthogonal modifier** (``meta``-free typed
    :class:`~tsdynamics.viz.spec.Animation` on ``PlotSpec.animation``): any kind
-   becomes a movie via ``to_plot_spec(animate=...)`` / ``.animate()``; the
+   becomes a movie via ``__plot_spec__(animate=...)`` / ``.animate()``; the
    semantic kind is unchanged.
 2. The chainable knobs (``animate`` / ``trail`` / ``head`` / ``camera`` /
    ``clock``) mutate-and-return-self and compose with the static tweaks.
@@ -31,7 +31,7 @@ from tsdynamics.viz.spec import Animation, PlotKind, PlotSpec
 
 
 def _lorenz():
-    return ts.Lorenz().integrate(final_time=20.0, dt=0.01, ic=[1.0, 1.0, 1.0]).after(3.0)
+    return ts.systems.Lorenz().run(final_time=20.0, dt=0.01, ic=[1.0, 1.0, 1.0]).after(3.0)
 
 
 # ---------------------------------------------------------------------------
@@ -40,19 +40,19 @@ def _lorenz():
 
 
 def test_animate_is_an_orthogonal_modifier_keeping_the_kind():
-    spec = _lorenz().to_plot_spec(animate=True)
+    spec = _lorenz().__plot_spec__(animate=True)
     assert spec.is_animated
     assert spec.kind == PlotKind.PHASE_PORTRAIT_3D  # kind unchanged
     assert isinstance(spec.animation, Animation)
 
 
 def test_static_spec_is_not_animated():
-    assert _lorenz().to_plot_spec().is_animated is False
+    assert _lorenz().__plot_spec__().is_animated is False
 
 
 def test_default_animation_is_a_windowed_comet():
     """The default is a smooth windowed comet (not a heavy persistent reveal)."""
-    a = _lorenz().to_plot_spec(animate=True).animation
+    a = _lorenz().__plot_spec__(animate=True).animation
     assert a.trail_kind == "steps"
     assert a.trail_length is not None and a.trail_length > 0
 
@@ -62,13 +62,13 @@ def test_default_animation_is_a_windowed_comet():
     [(None, True), ("time_series", False), ("spacetime", True)],
 )
 def test_per_kind_head_default(kind, head_default):
-    tr = ts.Lorenz96(N=6).trajectory(final_time=8.0, dt=0.1)
-    spec = tr.to_plot_spec(kind=kind, animate=True)
+    tr = ts.systems.Lorenz96(N=6).run(final_time=8.0, dt=0.1)
+    spec = tr.__plot_spec__(kind=kind, animate=True)
     assert spec.animation.head is head_default
 
 
 def test_chainable_knobs_mutate_and_return_self():
-    spec = _lorenz().to_plot_spec(animate=True)
+    spec = _lorenz().__plot_spec__(animate=True)
     out = (
         spec.animate(fps=24, duration=8, loop=False, pingpong=True)
         .trail(length=("time", 5.0), fade=True)
@@ -86,33 +86,33 @@ def test_chainable_knobs_mutate_and_return_self():
 
 
 def test_animate_turns_animation_on_for_a_static_spec():
-    spec = _lorenz().to_plot_spec()
+    spec = _lorenz().__plot_spec__()
     assert not spec.is_animated
     spec.animate(fps=12)
     assert spec.is_animated and spec.animation.fps == 12.0
 
 
 def test_trail_persistent_clears_the_window():
-    spec = _lorenz().to_plot_spec(animate=True).trail(length=("steps", 50))
+    spec = _lorenz().__plot_spec__(animate=True).trail(length=("steps", 50))
     assert spec.animation.trail_kind == "steps"
     spec.trail(length=None)
     assert spec.animation.trail_kind is None and spec.animation.trail_length is None
 
 
 def test_clock_default_on_and_static_tweaks_compose():
-    spec = _lorenz().to_plot_spec(animate=True).clock().relabel(title="orbit").rescale(z="linear")
+    spec = _lorenz().__plot_spec__(animate=True).clock().relabel(title="orbit").rescale(z="linear")
     assert spec.animation.clock is True
     assert spec.title == "orbit"  # static tweak still applies under animation
 
 
 def test_animate_dict_overrides_defaults():
-    spec = _lorenz().to_plot_spec(animate={"fps": 10, "pingpong": True})
+    spec = _lorenz().__plot_spec__(animate={"fps": 10, "pingpong": True})
     assert spec.animation.fps == 10.0 and spec.animation.pingpong is True
     assert spec.animation.head is True  # per-kind default preserved alongside the override
 
 
 def test_animate_with_an_animation_object():
-    spec = _lorenz().to_plot_spec(animate=Animation(fps=5, head=False))
+    spec = _lorenz().__plot_spec__(animate=Animation(fps=5, head=False))
     assert spec.animation.fps == 5.0 and spec.animation.head is False
 
 
@@ -161,7 +161,7 @@ def test_two_frame_pingpong_has_no_reverse_leg():
 def test_animated_spec_round_trips_byte_identical():
     spec = (
         _lorenz()
-        .to_plot_spec(animate=True)
+        .__plot_spec__(animate=True)
         .animate(duration=6, fps=20, pingpong=True)
         .trail(length=("time", 3.0), fade=True)
         .camera(spin=1.0)
@@ -174,7 +174,7 @@ def test_animated_spec_round_trips_byte_identical():
 
 
 def test_static_spec_serializes_animation_none():
-    assert _lorenz().to_plot_spec().to_dict()["animation"] is None
+    assert _lorenz().__plot_spec__().to_dict()["animation"] is None
 
 
 def test_animation_all_fields_round_trip():
@@ -257,7 +257,7 @@ def test_pre_animated_composite_panel_is_preserved():
 
 def test_matplotlib_renders_a_funcanimation():
     pytest.importorskip("matplotlib")
-    spec = _lorenz().to_plot_spec(animate=True).animate(n_frames=8)
+    spec = _lorenz().__plot_spec__(animate=True).animate(n_frames=8)
     anim = spec.render(backend="matplotlib")
     assert hasattr(anim, "to_jshtml")  # the FuncAnimation signature attribute
     # Consume it (renders frames via Agg, no external writer) so it is not
@@ -275,32 +275,58 @@ def test_matplotlib_composite_animation_renders():
 
 
 def test_save_gif(tmp_path):
+    """The GIF plays: ``n_frames`` frames, all different, at the requested rate.
+
+    ``st_size > 0`` is not enough — a **one-frame** GIF is a perfectly valid file
+    and has shipped from this library before.  The frame count, the pairwise
+    difference and the inter-frame delay are what a reader would actually notice.
+    """
     pytest.importorskip("matplotlib")
     pytest.importorskip("PIL")  # the pillow gif writer
+    import numpy as np
+
     out = tmp_path / "orbit.gif"
-    spec = _lorenz().to_plot_spec(animate=True).animate(n_frames=6).trail(length=("steps", 100))
+    spec = _lorenz().__plot_spec__(animate=True).animate(n_frames=6).trail(length=("steps", 100))
     returned = spec.save(str(out), fps=10)
     assert returned == str(out)
     assert out.stat().st_size > 0
 
+    frames = _gif_frames(out)
+    assert len(frames) == 6  # not one, not "some"
+    assert len({f.tobytes() for f in frames}) == 6  # six different pictures
+    diffs = [
+        int(np.abs(frames[i].astype(int) - frames[i - 1].astype(int)).sum()) for i in range(1, 6)
+    ]
+    assert all(d > 0 for d in diffs)
+
+    from PIL import Image
+
+    with Image.open(out) as im:
+        assert im.info.get("duration") == pytest.approx(100, abs=10)  # fps=10 → 100 ms/frame
+
 
 def test_save_mp4(tmp_path):
+    """The MP4 plays: ``n_frames`` decoded frames at the requested rate."""
     import shutil
 
     pytest.importorskip("matplotlib")
-    if shutil.which("ffmpeg") is None:
-        pytest.skip("ffmpeg not available for mp4 export")
+    if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
+        pytest.skip("ffmpeg/ffprobe not available for mp4 export")
     out = tmp_path / "orbit.mp4"
-    spec = _lorenz().to_plot_spec(animate=True).animate(n_frames=6)
+    spec = _lorenz().__plot_spec__(animate=True).animate(n_frames=6)
     assert spec.save(str(out), fps=10) == str(out)
     assert out.stat().st_size > 0
+
+    n_frames, rate = _mp4_stream_info(out)
+    assert n_frames == 6
+    assert rate == pytest.approx(10.0, abs=0.5)
 
 
 def test_save_still_image_renders_final_frame(tmp_path):
     """A still-image extension on an animated spec writes the final (full) frame, not a movie."""
     pytest.importorskip("matplotlib")
     out = tmp_path / "orbit.png"
-    spec = _lorenz().to_plot_spec(animate=True).animate(n_frames=6)
+    spec = _lorenz().__plot_spec__(animate=True).animate(n_frames=6)
     assert spec.save(str(out)) == str(out)
     assert out.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"  # a real PNG, not a failed movie write
 
@@ -312,7 +338,7 @@ def test_save_still_image_renders_final_frame(tmp_path):
 
 def test_plotly_renders_frames_with_play_and_slider():
     pytest.importorskip("plotly")
-    spec = _lorenz().to_plot_spec(animate=True).animate(n_frames=12)
+    spec = _lorenz().__plot_spec__(animate=True).animate(n_frames=12)
     fig = spec.render(backend="plotly")
     assert type(fig).__name__ == "Figure"
     assert len(fig.frames) == 12  # one frame per head index
@@ -324,7 +350,7 @@ def test_plotly_renders_frames_with_play_and_slider():
 def test_plotly_is_camera_locked_with_comet_over_context():
     """The killer feat: camera preserved across frames (rotatable while playing)."""
     pytest.importorskip("plotly")
-    fig = _lorenz().to_plot_spec(animate=True).animate(n_frames=10).render(backend="plotly")
+    fig = _lorenz().__plot_spec__(animate=True).animate(n_frames=10).render(backend="plotly")
     assert fig.layout.uirevision  # camera / zoom preserved across frames
     assert fig.layout.scene.uirevision  # the 3-D camera specifically
     # a static full-curve context trace + the comet; frames touch only the comet
@@ -337,7 +363,7 @@ def test_fade_comet_3d_renders():
     pytest.importorskip("matplotlib")
     spec = (
         _lorenz()
-        .to_plot_spec(animate=True)
+        .__plot_spec__(animate=True)
         .animate(n_frames=6)
         .trail(length=("steps", 80), fade=True)
     )
@@ -358,7 +384,7 @@ def test_save_html_is_realtime_and_rotatable(tmp_path):
     """
     pytest.importorskip("plotly")
     out = tmp_path / "orbit.html"
-    assert _lorenz().to_plot_spec(animate=True).save(str(out)) == str(out)
+    assert _lorenz().__plot_spec__(animate=True).save(str(out)) == str(out)
     text = out.read_text()
     assert "requestAnimationFrame" in text  # the smooth frame-rate driver
     assert "Plotly.extendTraces" in text  # in-place comet streaming (no gl3d scene rebuild)
@@ -372,7 +398,7 @@ def test_save_html_is_realtime_and_rotatable(tmp_path):
 
 def test_style_axes_false_hides_axes_across_backends(tmp_path):
     """``style(axes=False)`` records the intent and every backend honors it."""
-    spec = _lorenz().to_plot_spec()
+    spec = _lorenz().__plot_spec__()
     assert spec.style(axes=False) is spec  # chainable
     assert spec._axes_hidden() is True
     assert spec.meta["axes_visible"] is False
@@ -382,21 +408,21 @@ def test_style_axes_false_hides_axes_across_backends(tmp_path):
     pytest.importorskip("plotly")
     from tsdynamics.viz.render.plotly._threed import _scene
 
-    hidden = _lorenz().to_plot_spec().style(axes=False)
+    hidden = _lorenz().__plot_spec__().style(axes=False)
     scene = _scene(hidden)
     assert scene["xaxis"]["visible"] is False
     assert scene["zaxis"]["visible"] is False
 
     # The animated HTML layout also hides the scene axes.
     out = tmp_path / "clean.html"
-    _lorenz().to_plot_spec(animate=True).style(axes=False).save(str(out))
+    _lorenz().__plot_spec__(animate=True).style(axes=False).save(str(out))
     assert '"visible": false' in out.read_text().lower() or '"visible":false' in out.read_text()
 
 
 def test_style_axes_false_matplotlib(tmp_path):
     """The matplotlib renderer turns the axes off for a clean still and animation."""
     pytest.importorskip("matplotlib")
-    spec = _lorenz().to_plot_spec().style(axes=False)
+    spec = _lorenz().__plot_spec__().style(axes=False)
     fig = spec.render("matplotlib")
     ax = fig.axes[0]
     assert ax.axison is False  # set_axis_off() took effect
@@ -410,8 +436,8 @@ def test_style_axes_false_matplotlib(tmp_path):
 
 def _field_2d_traj():
     """A cheap 2-D field trajectory (a Swift–Hohenberg lattice) whose field evolves."""
-    return ts.systems.SwiftHohenberg(N=8, L=40.0).trajectory(
-        final_time=20.0, dt=0.2, backend="interp", method="rk45"
+    return ts.systems.SwiftHohenberg(N=8, L=40.0).run(
+        final_time=20.0, dt=0.2, backend="interp", solver="rk45"
     )
 
 
@@ -421,7 +447,39 @@ def _field_1d_traj():
     Uses the catalogue default grid (N=32) — KS is stiff and a coarser grid is
     numerically fragile; a short window keeps it cheap.
     """
-    return ts.KuramotoSivashinsky(N=32, L=22.0).trajectory(final_time=20.0, dt=0.5)
+    return ts.systems.KuramotoSivashinsky(N=32, L=22.0).run(final_time=20.0, dt=0.5)
+
+
+def _mp4_stream_info(path):
+    """Return ``(n_frames, frame_rate)`` decoded from an MP4 with ``ffprobe``.
+
+    Counting the frames is the only way to tell a movie from a one-frame file that
+    happens to carry the right container; the rate proves ``fps=`` reached the writer.
+    """
+    import json
+    import subprocess
+
+    out = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-count_frames",
+            "-show_entries",
+            "stream=nb_read_frames,r_frame_rate",
+            "-of",
+            "json",
+            str(path),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    stream = json.loads(out)["streams"][0]
+    num, _, den = stream["r_frame_rate"].partition("/")
+    return int(stream["nb_read_frames"]), float(num) / float(den or 1)
 
 
 def _gif_frames(path):
@@ -439,7 +497,7 @@ def _gif_frames(path):
 
 def test_field_recipe_builds_a_spatial_field_spec_from_the_system_grid():
     """``kind="field"`` reshapes the flattened state via the system's grid → SPATIAL_FIELD."""
-    spec = _field_2d_traj().to_plot_spec(kind="field")
+    spec = _field_2d_traj().__plot_spec__(kind="field")
     assert spec.kind == PlotKind.SPATIAL_FIELD
     assert spec.ndim == 2  # a 2-D field → a heatmap
     layer = spec.layers[0]
@@ -450,7 +508,7 @@ def test_field_recipe_builds_a_spatial_field_spec_from_the_system_grid():
 
 def test_field_recipe_one_d_field_is_a_profile_line():
     """A 1-D field (no 2-D grid) plays as a profile LINE — honest, never a guessed grid."""
-    spec = _field_1d_traj().to_plot_spec(kind="field")
+    spec = _field_1d_traj().__plot_spec__(kind="field")
     assert spec.kind == PlotKind.SPATIAL_FIELD
     assert spec.ndim == 1
     assert spec.layers[0].kind == PlotKind.LINE
@@ -459,7 +517,7 @@ def test_field_recipe_one_d_field_is_a_profile_line():
 
 def test_field_animate_defaults_to_the_frames_field_movie():
     """``kind="field", animate=True`` is the field movie — frames mode, no comet/head."""
-    spec = _field_2d_traj().to_plot_spec(kind="field", animate=True)
+    spec = _field_2d_traj().__plot_spec__(kind="field", animate=True)
     assert spec.is_animated
     assert spec.kind == PlotKind.SPATIAL_FIELD  # animation is orthogonal — kind unchanged
     a = spec.animation
@@ -469,7 +527,7 @@ def test_field_animate_defaults_to_the_frames_field_movie():
 
 
 def test_field_spec_round_trips_through_to_dict():
-    spec = _field_2d_traj().to_plot_spec(kind="field", animate=True).animate(n_frames=10, fps=12)
+    spec = _field_2d_traj().__plot_spec__(kind="field", animate=True).animate(n_frames=10, fps=12)
     d = spec.to_dict()
     rebuilt = PlotSpec.from_dict(d)
     assert rebuilt.to_dict() == d
@@ -480,7 +538,7 @@ def test_field_spec_round_trips_through_to_dict():
 
 def test_field_movie_renders_a_funcanimation():
     pytest.importorskip("matplotlib")
-    spec = _field_2d_traj().to_plot_spec(kind="field", animate=True).animate(n_frames=8)
+    spec = _field_2d_traj().__plot_spec__(kind="field", animate=True).animate(n_frames=8)
     anim = spec.render(backend="matplotlib")
     assert hasattr(anim, "to_jshtml")  # a real FuncAnimation
     assert isinstance(anim.to_jshtml(), str)  # frames render without error
@@ -496,7 +554,7 @@ def test_field_movie_2d_frames_carry_distinct_evolving_content():
     import numpy as np
 
     pytest.importorskip("matplotlib")
-    spec = _field_2d_traj().to_plot_spec(kind="field", animate=True).animate(n_frames=10)
+    spec = _field_2d_traj().__plot_spec__(kind="field", animate=True).animate(n_frames=10)
     anim = spec.render(backend="matplotlib")
     image = anim._fig.axes[0].images[0]
 
@@ -521,7 +579,7 @@ def test_field_movie_1d_profile_frames_differ():
     import numpy as np
 
     pytest.importorskip("matplotlib")
-    spec = _field_1d_traj().to_plot_spec(kind="field", animate=True).animate(n_frames=10)
+    spec = _field_1d_traj().__plot_spec__(kind="field", animate=True).animate(n_frames=10)
     anim = spec.render(backend="matplotlib")
     line = anim._fig.axes[0].lines[0]
 
@@ -540,7 +598,7 @@ def test_field_movie_gif_frames_evolve(tmp_path):
     pytest.importorskip("PIL")
     import numpy as np
 
-    spec = _field_2d_traj().to_plot_spec(kind="field", animate=True).animate(n_frames=8)
+    spec = _field_2d_traj().__plot_spec__(kind="field", animate=True).animate(n_frames=8)
     out = tmp_path / "field.gif"
     assert spec.save(str(out), fps=8) == str(out)
 
@@ -557,7 +615,7 @@ def test_field_static_render_is_the_final_field(tmp_path):
     """A static ``kind="field"`` spec renders the field at the final time (a real PNG)."""
     pytest.importorskip("matplotlib")
     out = tmp_path / "field.png"
-    spec = _field_2d_traj().to_plot_spec(kind="field")  # no animate → static final field
+    spec = _field_2d_traj().__plot_spec__(kind="field")  # no animate → static final field
     assert spec.is_animated is False
     assert spec.save(str(out)) == str(out)
     assert out.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"  # a real PNG
@@ -567,7 +625,7 @@ def test_field_movie_still_image_is_the_final_field(tmp_path):
     """A still-image extension on an animated field spec writes the final field frame."""
     pytest.importorskip("matplotlib")
     out = tmp_path / "field_still.png"
-    spec = _field_2d_traj().to_plot_spec(kind="field", animate=True).animate(n_frames=6)
+    spec = _field_2d_traj().__plot_spec__(kind="field", animate=True).animate(n_frames=6)
     assert spec.save(str(out)) == str(out)
     assert out.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"  # a real PNG, not a failed movie
 
@@ -576,11 +634,9 @@ def test_field_movie_block_selection_for_multi_field_systems():
     """``components=`` selects a field block (Gray–Scott's u / v); v is the default."""
     import numpy as np
 
-    tr = ts.systems.GrayScott(N=8).trajectory(
-        final_time=80.0, dt=4.0, backend="interp", method="rk45"
-    )
-    spec_v = tr.to_plot_spec(kind="field")  # default → the activator v (last block)
-    spec_u = tr.to_plot_spec(kind="field", components="u")
+    tr = ts.systems.GrayScott(N=8).run(final_time=80.0, dt=4.0, backend="interp", solver="rk45")
+    spec_v = tr.__plot_spec__(kind="field")  # default → the activator v (last block)
+    spec_u = tr.__plot_spec__(kind="field", components="u")
     assert spec_v.layers[0].data["z"].shape == (8, 8)
     # The two blocks are distinct fields (u starts near 1, v near 0).
     assert not np.array_equal(spec_v.layers[0].data["z"], spec_u.layers[0].data["z"])
@@ -592,7 +648,7 @@ def test_frames_mode_without_a_field_stack_warns_and_degrades():
     from tsdynamics.viz.render.caps import VisualizationDegraded
 
     # A plain time series carries no field stack — frames mode cannot apply.
-    spec = _lorenz().to_plot_spec(kind="time_series", components="x")
+    spec = _lorenz().__plot_spec__(kind="time_series", components="x")
     spec.animation = Animation(mode="frames", n_frames=5)
     with pytest.warns(VisualizationDegraded):
         anim = spec.render(backend="matplotlib")
@@ -621,18 +677,18 @@ def _build_animatable_spec(name):
     """Build one representative animated spec for ``name`` (lazily — no collection cost)."""
     if name.startswith("spatial_field"):
         traj = _field_2d_traj() if name.endswith("2d") else _field_1d_traj()
-        return traj.to_plot_spec(kind="field", animate=True)
+        return traj.__plot_spec__(kind="field", animate=True)
     if name == "spacetime_reveal":
-        field = ts.Lorenz96(N=8).trajectory(final_time=8.0, dt=0.1)
-        return field.to_plot_spec(kind="spacetime", animate=True)
-    lor = ts.Lorenz().integrate(final_time=8.0, dt=0.02, ic=[1.0, 1.0, 1.0]).after(1.0)
+        field = ts.systems.Lorenz96(N=8).run(final_time=8.0, dt=0.1)
+        return field.__plot_spec__(kind="spacetime", animate=True)
+    lor = ts.systems.Lorenz().run(final_time=8.0, dt=0.02, ic=[1.0, 1.0, 1.0]).after(1.0)
     if name == "time_series":
-        return lor.to_plot_spec(kind="time_series", components="x", animate=True)
+        return lor.__plot_spec__(kind="time_series", components="x", animate=True)
     if name == "phase_portrait_2d":
-        return lor.to_plot_spec(components=["x", "y"], animate=True)
+        return lor.__plot_spec__(components=["x", "y"], animate=True)
     if name == "delay_embedding":
-        return lor.to_plot_spec(kind="delay", tau=0.1, components="x", animate=True)
-    return lor.to_plot_spec(animate=True)  # phase_portrait_3d
+        return lor.__plot_spec__(kind="delay", delay_time=0.1, components="x", animate=True)
+    return lor.__plot_spec__(animate=True)  # phase_portrait_3d
 
 
 @pytest.mark.parametrize("name", _ANIMATABLE_KINDS)
@@ -650,10 +706,12 @@ def test_curve_kinds_reveal_multiple_distinct_frames():
     import numpy as np
 
     pytest.importorskip("matplotlib")
-    lor = ts.Lorenz().integrate(final_time=8.0, dt=0.02, ic=[1.0, 1.0, 1.0]).after(1.0)
+    lor = ts.systems.Lorenz().run(final_time=8.0, dt=0.02, ic=[1.0, 1.0, 1.0]).after(1.0)
     # A persistent reveal so the drawn curve strictly grows (no windowing).
     spec = (
-        lor.to_plot_spec(components=["x", "y"], animate=True).animate(n_frames=8).trail(length=None)
+        lor.__plot_spec__(components=["x", "y"], animate=True)
+        .animate(n_frames=8)
+        .trail(length=None)
     )
     anim = spec.render(backend="matplotlib")
     # With a persistent trail the first Line2D is the revealing curve; its vertex
@@ -683,8 +741,8 @@ def test_spacetime_reveal_sweep_line_moves():
     import numpy as np
 
     pytest.importorskip("matplotlib")
-    field = ts.Lorenz96(N=8).trajectory(final_time=8.0, dt=0.1)
-    spec = field.to_plot_spec(kind="spacetime", animate=True).animate(n_frames=8)
+    field = ts.systems.Lorenz96(N=8).run(final_time=8.0, dt=0.1)
+    spec = field.__plot_spec__(kind="spacetime", animate=True).animate(n_frames=8)
     anim = spec.render(backend="matplotlib")
     ax = anim._fig.axes[0]
     # The moving "now" sweep line is the only Line2D over the static image.
@@ -706,8 +764,8 @@ def test_spacetime_reveal_sweep_line_moves():
 def test_building_an_animation_imports_no_plot_library():
     code = (
         "import sys, tsdynamics as ts;"
-        "tr = ts.Lorenz().integrate(final_time=10.0, dt=0.05).after(2.0);"
-        "spec = tr.to_plot_spec(animate=True).animate(fps=20).trail(length=('time', 3.0));"
+        "tr = ts.systems.Lorenz().run(final_time=10.0, dt=0.05).after(2.0);"
+        "spec = tr.__plot_spec__(animate=True).animate(fps=20).trail(length=('time', 3.0));"
         "spec.to_dict();"
         "bad = [m for m in sys.modules if m.split('.')[0] in ('matplotlib', 'plotly')];"
         "assert not bad, bad; print('NO_PLOT_LIBS')"

@@ -7,7 +7,7 @@ description: The visualization styling and theme system — the canonical per-la
 # Styling & themes
 
 Every plot TSDynamics produces is a backend-agnostic
-[`PlotSpec`](index.md): a *semantic* description of a figure — what to draw and
+[`Plot`](index.md): a *semantic* description of a figure — what to draw and
 what it means — rendered on demand by matplotlib, plotly, or the
 [three.js / JSON exporters](backends.md). Nothing about a spec is tied to a
 drawing library, which is exactly what lets one figure render identically
@@ -28,7 +28,7 @@ There are two levers, and they compose:
   line / marker defaults shared across the whole figure. Set with
   [`.theme(...)`](#theme) and its conveniences
   [`.palette`/`.grid`/`.font`/`.background`/`.size`](#palette-grid-font-background-size),
-  or globally with [`set_theme`](#the-global-default).
+  or globally with [`themes.use`](#the-global-default).
 
 A theme is applied **first** — it auto-colours every layer that carries no
 explicit colour — and per-layer style then overrides it. All of these are
@@ -38,20 +38,19 @@ and render the same on every backend.
 ```python
 import tsdynamics as ts
 
-spec = (
-    ts.Lorenz(ic=[1.0, 1.0, 1.0])
-    .to_plot_spec(components=["x", "z"])
+p = (
+    ts.plot(ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]), components=["x", "z"])
     .theme("dark")                    # figure-level look
-    .grid()                           # gridlines on
+    .gridlines()                      # gridlines on
     .recolor("crimson")               # this layer's colour
     .style(lw=2, linestyle="dashed")  # this layer's line
 )
-spec.save("lorenz-dark.png")          # matplotlib (by extension)
+p.save("lorenz-dark.png")             # matplotlib (by extension)
 ```
 
 <figure markdown>
 ![Two panels of the same Lorenz x–z portrait: a bare default spec on the left, and on the right the same data restyled with a teal recolor, thicker semi-transparent line, faint grid, and a warm off-white background](../assets/figures/viz/styling.svg){ loading=lazy }
-<figcaption>The same Lorenz <code>(x, z)</code> portrait, twice. <b>Left:</b> a bare <code>to_plot_spec()</code> — default palette, no grid, backend background. <b>Right:</b> the identical trajectory after one chained recipe — <code>.recolor("#11857A")</code>, <code>.style(lw=2.2, alpha=0.85)</code>, <code>.grid(color="#9aa7b0", alpha=0.4)</code>, <code>.background("#faf7f2")</code>. The <em>data</em> is byte-for-byte identical; only the presentation layer changed, and the same recipe would render the same on plotly.</figcaption>
+<figcaption>The same Lorenz <code>(x, z)</code> portrait, twice. <b>Left:</b> a bare <code>ts.plot(traj)</code> — default palette, no grid, backend background. <b>Right:</b> the identical trajectory after one chained recipe — <code>.recolor("#11857A")</code>, <code>.style(lw=2.2, alpha=0.85)</code>, <code>.gridlines(color="#9aa7b0", alpha=0.4)</code>, <code>.background("#faf7f2")</code>. The <em>data</em> is byte-for-byte identical; only the presentation layer changed, and the same recipe would render the same on plotly.</figcaption>
 </figure>
 
 Everything below is runnable as shown. Where a snippet prints a value it pins an
@@ -182,9 +181,8 @@ groups: the **axis/label** tweaks, the **per-layer style** tweaks, and the
 These reshape the axes without touching the data or the look.
 
 ```python
-spec = (
-    ts.Rossler(ic=[0.1, 0.1, 0.1])
-    .to_plot_spec(components=["x", "y"])
+p = (
+    ts.plot(ts.systems.Rossler(ic=[0.1, 0.1, 0.1]), components=["x", "y"])
     .relabel(x="x(t)", y="y(t)", title="Rössler x–y")
     .limits(x=(-12, 12), y=(-12, 12))
     .ticks(x=[-10, 0, 10])
@@ -209,7 +207,7 @@ Merge style keys into one layer or every layer. `**keys` go through
 `normalize_style` (aliases canonicalised, values validated, unknown keys warned).
 
 ```python
-spec = ts.Rossler(ic=[0.1, 0.1, 0.1]).to_plot_spec()
+spec = ts.plot(ts.systems.Rossler(ic=[0.1, 0.1, 0.1]))
 
 spec.style(color="teal", lw=2, alpha=0.8)   # apply to every layer
 spec.style(linestyle="dotted", layer=0)     # apply to layer 0 only
@@ -233,9 +231,9 @@ layer is set to `colors[0]`:
 
 ```python
 # Two 3-D attractors overlaid on one set of axes, coloured by source.
-ts.viz.plot(
-    ts.Lorenz(ic=[1.0, 1.0, 1.0]),
-    ts.Rossler(ic=[0.1, 0.1, 0.1]),
+ts.plot(
+    ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]),
+    ts.systems.Rossler(ic=[0.1, 0.1, 0.1]),
 ).recolor("crimson", "royalblue")
 ```
 
@@ -260,15 +258,15 @@ spec.theme(None, line_width=2.0)              # global default + override
 **Snapshot semantics.** `.theme("dark")` *pins* the dark theme onto the spec. A
 spec that never calls `.theme(...)` carries no theme of its own and resolves to
 the active global default **at render time** (so it tracks a later
-[`set_theme`](#the-global-default)); calling `.theme(...)` — even
+[`themes.use`](#the-global-default)); calling `.theme(...)` — even
 `.theme(None, ...)` — materialises a concrete theme now and **detaches** the spec
 from future global-default changes. You can always read the effective theme back:
 
 ```pycon
 >>> import tsdynamics as ts
->>> ts.Lorenz(ic=[1.0, 1.0, 1.0]).to_plot_spec().resolved_theme.name
+>>> ts.plot(ts.systems.Lorenz(ic=[1.0, 1.0, 1.0])).resolved_theme.name
 'default'
->>> ts.Lorenz(ic=[1.0, 1.0, 1.0]).to_plot_spec().theme("dark").resolved_theme.name
+>>> ts.plot(ts.systems.Lorenz(ic=[1.0, 1.0, 1.0])).theme("dark").resolved_theme.name
 'dark'
 ```
 
@@ -284,7 +282,7 @@ with `.theme(...)` and with each other:
 ```python
 spec.palette(["#11857A", "#574FCF", "#E8A33D"])  # explicit colour cycle
 spec.palette("dark")                              # borrow a registered theme's palette
-spec.grid(show=True, axis="y", color="#9aa7b0", alpha=0.3)  # y-axis gridlines, styled
+spec.gridlines(show=True, axis="y", color="#9aa7b0", alpha=0.3)  # y-axis gridlines, styled
 spec.font(family="serif", size=12)                # theme font family / size
 spec.background("#0b1020")                         # figure / axes facecolor
 spec.size(width=8, height=5, dpi=150)              # figure geometry
@@ -317,19 +315,24 @@ Because every tweak returns `self`, a full figure recipe reads top to bottom —
 axes, then look, then geometry:
 
 ```python
-spec = (
-    ts.Lorenz(ic=[1.0, 1.0, 1.0])
-    .to_plot_spec(components=["x", "z"])
+p = (
+    ts.plot(ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]), components=["x", "z"])
     .relabel(x="x(t)", y="z(t)", title="Lorenz x–z")
     .theme("dark")
-    .grid(color="#3a3f4b", alpha=0.6)
+    .gridlines(color="#3a3f4b", alpha=0.6)
     .recolor("#4cc9f0")
     .style(lw=1.6, alpha=0.9)
     .font(family="monospace")
     .size(width=7, height=7)
 )
-spec.save("lorenz.html")   # interactive (plotly, by extension)
+p.save("lorenz.png")       # matplotlib, by extension — honors the whole chain
 ```
+
+Note the extension. Saving this same chain as `.html` routes to plotly, which
+does not honor `figsize` (see the honoring table above), so the `.size(...)` step
+would be dropped with a `VisualizationDegraded` warning naming it. That is the
+contract working as designed: a backend that cannot render a tweak says so
+rather than silently ignoring it.
 
 The static tweaks compose with the [animation](animation.md) modifiers
 (`.animate` / `.trail` / `.head` / `.camera` / `.clock`) the same way — they are
@@ -351,25 +354,19 @@ A `Theme` is a **frozen** dataclass describing the figure-level look applied
 | `font_family`, `font_size`, `title_size` | typography |
 | `grid`, `grid_color`, `grid_alpha` | default gridline visibility / look |
 | `line_width`, `marker_size` | default line / marker sizes |
+| `figsize`, `dpi`, `layout_engine` | figure geometry — honoured by matplotlib; plotly declines them with a `VisualizationDegraded` |
 
-Because it is frozen it is safe to share and cache. `theme.merged(**fields)`
-returns a *copy* with fields overridden (the original is unchanged), and a theme
-round-trips through `to_dict` / `from_dict`:
+Because it is frozen it is safe to share and cache, and you never have to build
+one: `ts.viz.themes.register(name, **fields)` takes the keywords directly, and
+returns the built theme if you want it. Deriving from an existing theme is the
+same call with the original passed positionally:
 
-```pycon
->>> from tsdynamics.viz import Theme
->>> base = Theme(name="brand", palette=("#0b6", "#e63"), font_family="serif")
->>> warm = base.merged(background="#fffaf0", grid=True)
->>> base.background        # the original is untouched — it is frozen
->>> warm.background, warm.grid
-('#fffaf0', True)
->>> Theme.from_dict(base.to_dict()).name   # round-trips
-'brand'
+```python
+lab = ts.viz.themes.register("lab", ts.viz.themes.get("minimal"),
+                             palette=("#0b6", "#e63"), font_family="serif")
+lab.background          # the built theme, if you want the object
+ts.viz.themes.get("minimal").palette   # ...and the original is untouched
 ```
-
-`figsize` / `dpi` are **not** theme fields — they are figure geometry
-(`spec.meta`, set by `.size(...)`), so a theme stays a pure *look* you can reuse
-across figures of any size.
 
 ### The built-in themes
 
@@ -384,36 +381,35 @@ Four themes ship out of the box, applied per figure with `.theme(...)`:
 
 <figure markdown>
 ![The same Lorenz x–z portrait rendered under all four built-in themes, tiled 2×2: default (light, blue), dark (near-black background, cyan line), minimal (light, muted slate), publication (white, serif labels, black line)](../assets/figures/viz/themes.svg){ loading=lazy }
-<figcaption>One Lorenz <code>(x, z)</code> portrait, four themes, tiled with <code>ts.viz.plot(..., layout="grid")</code>. Only the theme differs between panels: <b>default</b> (matplotlib-ish blue on white), <b>dark</b> (bright cyan on <code>#11131a</code> — the panel keeps its near-black background through the composite), <b>minimal</b> (muted slate, thinner line), and <b>publication</b> (serif labels, larger type, the colourblind-safe Wong palette). Switching theme is a one-word change to the recipe.</figcaption>
+<figcaption>One Lorenz <code>(x, z)</code> portrait, four themes, tiled with <code>ts.plot(..., layout="grid")</code>. Only the theme differs between panels: <b>default</b> (matplotlib-ish blue on white), <b>dark</b> (bright cyan on <code>#11131a</code> — the panel keeps its near-black background through the composite), <b>minimal</b> (muted slate, thinner line), and <b>publication</b> (serif labels, larger type, the colourblind-safe Wong palette). Switching theme is a one-word change to the recipe.</figcaption>
 </figure>
 
 ```pycon
 >>> import tsdynamics as ts
->>> ts.viz.themes()
+>>> ts.viz.themes.names()
 ['dark', 'default', 'minimal', 'publication']
->>> ts.viz.get_theme("publication").font_family, ts.viz.get_theme("publication").title_size
+>>> ts.viz.themes.get("publication").font_family, ts.viz.themes.get("publication").title_size
 ('serif', 15.0)
->>> ts.viz.get_theme("dark").background, ts.viz.get_theme("dark").palette[0]
+>>> ts.viz.themes.get("dark").background, ts.viz.themes.get("dark").palette[0]
 ('#11131a', '#4cc9f0')
 ```
 
 Apply one and save straight to a paper-ready vector:
 
 ```python
-ts.Lorenz(ic=[1.0, 1.0, 1.0]).to_plot_spec().theme("publication").save("lorenz-pub.pdf")
+ts.plot(ts.systems.Lorenz(ic=[1.0, 1.0, 1.0])).theme("publication").save("lorenz-pub.pdf")
 ```
 
 ### Registering your own
 
-Build a `Theme` and register it under its name; it then joins `themes()` and is
-reachable by name everywhere a name is accepted (`.theme("mine")`,
-`.palette("mine")`, `set_theme("mine")`):
+**`ts.viz.themes.register(name, **fields)` takes plain keywords** — there is no
+library type to build. The theme then joins `themes.names()` and is reachable by
+name everywhere a name is accepted (`.theme("mine")`, `.palette("mine")`,
+`themes.use("mine")`):
 
 ```python
-from tsdynamics.viz import Theme, register_theme
-
-register_theme(Theme(
-    name="tsd-brand",
+ts.viz.themes.register(
+    "tsd-brand",
     palette=("#11857A", "#574FCF", "#E8A33D", "#C2405A"),  # teal · indigo · amber · rose
     background="#faf7f2",
     foreground="#1c2b2d",
@@ -422,54 +418,65 @@ register_theme(Theme(
     grid_color="#9aa7b0",
     grid_alpha=0.35,
     line_width=1.6,
-))
+)
 
-ts.Lorenz(ic=[1.0, 1.0, 1.0]).to_plot_spec().theme("tsd-brand")   # now usable by name
+ts.plot(ts.systems.Lorenz(ic=[1.0, 1.0, 1.0])).theme("tsd-brand")   # usable by name
+```
+
+Derive one from a built-in by passing it positionally and overriding fields:
+
+```python
+ts.viz.themes.register("paper", ts.viz.themes.get("publication"),
+                       font_family="serif", dpi=600)
 ```
 
 ```pycon
->>> ts.viz.themes()                       # after register_theme(...)
-['dark', 'default', 'minimal', 'publication', 'tsd-brand']
->>> ts.viz.get_theme("tsd-brand").background
+>>> ts.viz.themes.names()                       # after registering
+['dark', 'default', 'minimal', 'paper', 'publication', 'tsd-brand']
+>>> ts.viz.themes.get("tsd-brand").background
 '#faf7f2'
 ```
 
+`register` returns the built `Theme`, so it is also the one-liner form of
+"build a theme object" when you genuinely want one.
+
 A registered theme is the right home for your lab's or paper's house style — set
 it once, then every figure is one `.theme("tsd-brand")` (or one
-[`set_theme`](#the-global-default)) away.
+[`themes.use`](#the-global-default)) away.
 
 ### The global default
 
-`set_theme` / `get_theme` read and write the **single** mutable global in the viz
+`themes.use` / `themes.get` read and write the **single** mutable global in the viz
 layer — the active default theme that any spec *without its own theme* resolves to
 at render time:
 
 ```pycon
->>> ts.viz.get_theme().name          # the active default
+>>> ts.viz.themes.get().name          # the active default
 'default'
->>> ts.viz.set_theme("dark")         # every un-themed plot is now dark
->>> ts.viz.get_theme().name
+>>> ts.viz.themes.use("dark")         # every un-themed plot is now dark
+>>> ts.viz.themes.get().name
 'dark'
->>> ts.viz.set_theme("default")      # back to baseline
+>>> ts.viz.themes.use("default")      # back to baseline
 ```
 
-`set_theme` accepts a registered *name* or a `Theme` *instance* (which it
-registers and activates in one step). `set_theme("default")` always returns to
+`themes.use` accepts a registered *name* or a `Theme` *instance* (which it
+registers and activates in one step). `themes.use("default")` always returns to
 the baseline. Because a spec that never called `.theme(...)` resolves **lazily**,
 switching the global default re-themes every such spec on its next render — set it
 once at the top of a notebook or script and every plot follows:
 
 ```python
-ts.viz.set_theme("publication")
-ts.Lorenz(ic=[1.0, 1.0, 1.0]).to_plot_spec().save("fig1.pdf")   # publication-themed
-ts.Rossler(ic=[0.1, 0.1, 0.1]).to_plot_spec().save("fig2.pdf")  # …and so is this
-ts.viz.set_theme("default")                                      # tidy up
+ts.viz.themes.use("publication")
+ts.plot(ts.systems.Lorenz(ic=[1.0, 1.0, 1.0])).save("fig1.pdf")   # publication-themed
+ts.plot(ts.systems.Rossler(ic=[0.1, 0.1, 0.1])).save("fig2.pdf")  # …and so is this
+ts.viz.themes.use("default")                                      # tidy up
 ```
 
 !!! tip "Global vs. pinned"
-    Use **`set_theme`** for a document-wide default that every un-themed plot
-    should follow, and **`.theme(...)`** to pin one figure regardless of the
-    global. A pinned spec ignores a later `set_theme`; an un-pinned one tracks it.
+    Use **`themes.use(...)`** for a document-wide default that every un-themed
+    plot should follow, and **`.theme(...)`** to pin one figure regardless of the
+    global. A pinned plot ignores a later `themes.use`; an un-pinned one tracks
+    it.
 
 ---
 
@@ -507,7 +514,7 @@ listing the dropped keys alphabetically:
 ```pycon
 >>> import warnings
 >>> import tsdynamics as ts
->>> spec = ts.Lorenz(ic=[1.0, 1.0, 1.0]).to_plot_spec().style(
+>>> spec = ts.plot(ts.systems.Lorenz(ic=[1.0, 1.0, 1.0])).style(
 ...     linestyle="dashed", marker="square", cmap="viridis"
 ... )
 >>> with warnings.catch_warnings(record=True) as w:
@@ -545,6 +552,7 @@ exporters, so a knob only matplotlib understands cannot be allowed through. The
 trade is a louder upgrade for a portable, predictable spec.
 
 ```python
+# skip-doctest — the first call deliberately shows what now RAISES
 # v3 — forwarded to matplotlib, silently accepted
 spec.style(marker="v", linestyle=(0, (3, 1)), alpha=1.5, zorder=2.0)
 
@@ -581,6 +589,7 @@ short aliases `- -- : -.`. The matplotlib **dash-tuple** form (e.g.
 `(0, (3, 1, 1, 1))`) now raises — pick the nearest named style:
 
 ```python
+# skip-doctest — the first line deliberately shows what now RAISES
 spec.style(linestyle=(0, (5, 2)))   # v3 — raises ValueError now
 spec.style(linestyle="dashed")      # v5
 ```
@@ -671,9 +680,9 @@ The whole styling surface is discoverable from `tsdynamics.viz`:
 | --- | --- |
 | `ts.viz.STYLE_KEYS` | the canonical vocabulary — `name → StyleKey` (each with `aliases`, `honored_by`, `validate`, `doc`) |
 | `ts.viz.normalize_style` | the alias / validation / unknown-key choke point |
-| `ts.viz.themes()` | sorted names of all registered themes |
-| `ts.viz.get_theme()` / `ts.viz.set_theme()` | read / write the active global default |
-| `ts.viz.register_theme()` | add a named theme |
+| `ts.viz.themes.names()` | sorted names of all registered themes |
+| `ts.viz.themes.get()` / `ts.viz.themes.use()` | read / write the active global default |
+| `ts.viz.themes.register()` | add a named theme |
 | `ts.viz.Theme` | the theme dataclass |
 
 ```pycon
@@ -693,13 +702,13 @@ caches on first access).
 
 ## See also
 
-- [Visualization overview](index.md) — the `PlotSpec` IR, the front door
-  `to_plot_spec` / `plot`, and the renderer catalogue these styles apply to
+- [Visualization overview](index.md) — the `Plot` IR, the front door
+  `ts.plot` grammar, and the renderer catalogue these styles apply to
 - [Animation](animation.md) — the animation modifiers
   (`.animate`/`.trail`/`.head`/`.camera`/`.clock`) that chain with these tweaks,
   and the honoring gaps for the web exporter
 - [Lyapunov spectra](../analysis/lyapunov.md) — an example of a result that
-  describes itself as a stylable `PlotSpec`
+  describes itself as a stylable `Plot`
 
 ## References
 

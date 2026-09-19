@@ -27,13 +27,14 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, ClassVar
 
 import numpy as np
 
 from tsdynamics.families import Trajectory
 
 from .._result import AnalysisResult
+from .._result_json import _sig
 from .poincare import _seeded_ic, poincare_section
 
 __all__ = ["ReturnMap", "return_map"]
@@ -47,12 +48,35 @@ class ReturnMap(AnalysisResult):
     Result of :func:`return_map`.
 
     An :class:`~tsdynamics.analysis._result.AnalysisResult`, so it carries
-    ``.meta`` / ``.summary()`` / ``.to_dict()`` / the ``.plot`` seam.  The recorded
-    observable values are :attr:`values`; the return map itself is the pair
-    (:attr:`current`, :attr:`successor`) = :math:`(v_n, v_{n+1})`.  Iterate for
+    ``.meta`` / the readout ``repr`` / ``.to_dict()`` / the ``.plot`` seam.  Iterate for
     ``(current, successor)`` pairs, or use :meth:`flat` for the scatter-ready
     arrays.
+
+    Attributes
+    ----------
+    current, successor : ndarray
+        **The return map itself** — :math:`(v_n, v_{n+1})`, the pair you plot.
+    values : ndarray
+        **The raw observable series** the map was built from: every recorded
+        :math:`v_n` in time order, including the last one (which has no
+        successor and so appears in :attr:`current` for no pair).  It is the
+        *input* to the map, not the map.  (``values`` is the one name in the
+        result layer that means different things on different classes: the
+        *answer* on a spectrum or an embedding, the swept parameter on
+        :class:`~tsdynamics.analysis.results.OrbitDiagram` and
+        :class:`~tsdynamics.analysis.results.ContinuationResult`, this series
+        here.)
+    times : ndarray
+        When each entry of :attr:`values` was recorded.
+    kind : str
+        ``"max"``, ``"min"`` or ``"poincare"`` — how successive values were
+        picked off the orbit.
     """
+
+    #: R1 — ``observable`` is the component INDEX the caller asked to record,
+    #: echoed back; the repr's title already names it in words.  The measured
+    #: series is :attr:`values` and the map itself is ``current`` / ``successor``.
+    _HIDDEN_ATTRIBUTES: ClassVar[frozenset[str]] = frozenset({"observable"})
 
     current: np.ndarray = field(default_factory=lambda: np.empty(0), compare=False)  # v_n
     successor: np.ndarray = field(default_factory=lambda: np.empty(0), compare=False)  # v_{n+1}
@@ -67,11 +91,27 @@ class ReturnMap(AnalysisResult):
     def __len__(self) -> int:
         return int(self.current.size)
 
+    def __getitem__(self, key: Any) -> Any:
+        """Return the ``(current, successor)`` pair at position ``key`` — what iteration yields.
+
+        It was sized and iterable but **not** subscriptable, so ``rm[0]`` raised
+        ``TypeError`` while ``len(rm)`` and ``for a, b in rm`` both worked, and
+        ``np.asarray(rm)`` degenerated to a 0-d object array.
+        """
+        return list(zip(self.current, self.successor, strict=True))[key]
+
+    def __array__(self, dtype: Any = None, copy: bool | None = None) -> np.ndarray:
+        """Return the map as the ``(n, 2)`` scatter it draws: :math:`(v_n, v_{n+1})`."""
+        arr = np.column_stack(
+            [np.asarray(self.current, dtype=float), np.asarray(self.successor, dtype=float)]
+        )
+        return arr.astype(dtype, copy=bool(copy)) if dtype is not None else arr
+
     def flat(self) -> tuple[np.ndarray, np.ndarray]:
         """Return the scatter-plot arrays ``(current, successor)``."""
         return self.current, self.successor
 
-    def to_plot_spec(self, kind: str | None = None) -> Any:
+    def __plot_spec__(self, kind: str | None = None) -> Any:
         r"""Describe this return map as a backend-agnostic :class:`PlotSpec`.
 
         Builds a ``RETURN_MAP`` scatter of :math:`(v_n, v_{n+1})` with the
@@ -91,9 +131,10 @@ class ReturnMap(AnalysisResult):
         """
         from .. import _plotbuilder as pb
 
+        xlabel, ylabel, legend_label = self._axis_labels()
         cur = np.asarray(self.current, dtype=float)
         suc = np.asarray(self.successor, dtype=float)
-        layers = [pb.scatter(cur, suc, label=r"$v_{n+1}$ vs $v_n$")]
+        layers = [pb.scatter(cur, suc, label=legend_label)]
         if cur.size:
             layers.append(pb.diagonal(cur, suc))
         return pb.spec(
@@ -101,9 +142,9 @@ class ReturnMap(AnalysisResult):
             "return_map",
             layers=layers,
             aspect="equal",
-            xlabel=r"$v_n$",
-            ylabel=r"$v_{n+1}$",
-            title=f"{self.kind} return map",
+            xlabel=xlabel,
+            ylabel=ylabel,
+            title=f"{self.kind} return map of {self._observable_label()}",
             meta=self.meta,
         )
 
@@ -130,9 +171,10 @@ class ReturnMap(AnalysisResult):
         """
         from .. import _plotbuilder as pb
 
+        xlabel, ylabel, legend_label = self._axis_labels()
         cur = np.asarray(self.current, dtype=float)
         suc = np.asarray(self.successor, dtype=float)
-        layers = [pb.scatter(cur, suc, label=r"$v_{n+1}$ vs $v_n$")]
+        layers = [pb.scatter(cur, suc, label=legend_label)]
         if cur.size:
             layers.append(pb.diagonal(cur, suc))
             stair_x, stair_y = _cobweb_path(cur, suc)
@@ -144,18 +186,56 @@ class ReturnMap(AnalysisResult):
             "cobweb",
             layers=layers,
             aspect="equal",
-            xlabel=r"$v_n$",
-            ylabel=r"$v_{n+1}$",
-            title=f"{self.kind} cobweb",
+            xlabel=xlabel,
+            ylabel=ylabel,
+            title=f"{self.kind} cobweb of {self._observable_label()}",
             legend=len(layers) > 1,
             meta=self.meta,
         )
 
-    def __repr__(self) -> str:
-        return (
-            f"ReturnMap(kind={self.kind!r}, observable={self.observable}, "
-            f"{self.values.size} values)"
+    def _observable_label(self) -> str:
+        """Return the recorded component's declared name, or its index."""
+        variables = self.meta.get("variables") if self.meta else None
+        if variables is not None:
+            names = tuple(variables)
+            if 0 <= int(self.observable) < len(names):
+                return str(names[int(self.observable)])
+        return f"component {int(self.observable)}"
+
+    def _axis_labels(self) -> tuple[str, str, str]:
+        r"""Return ``(x, y, legend)`` labels naming the observable this map is OF.
+
+        The axes read :math:`v_n` / :math:`v_{n+1}` for every input, so
+        ``return_map(traj, components="z")`` — the Lorenz z-maxima cusp, the
+        textbook example — drew a figure captioned about a ``v`` that appears
+        nowhere in the system.  The repr already names the channel (``"85 returns
+        of z"``), so the picture and the sentence beside it disagreed about what
+        was measured.  Here the subscripts are genuinely mathematical, so the
+        name is set in mathtext rather than plain (the rule
+        :func:`tsdynamics.analysis._plotbuilder.axis_labels` follows for a label
+        that *is* a name).
+        """
+        v = self._observable_label()
+        # "component 2" is a sentence, not a symbol; subscripting it reads badly,
+        # so the indexed fallback keeps the generic symbol it always had.
+        sym = v if " " not in v else "v"
+        return f"${sym}_n$", f"${sym}_{{n+1}}$", f"${sym}_{{n+1}}$ vs ${sym}_n$"
+
+    def _answer(self) -> str:
+        """Return how many returns were collected, of which observable."""
+        n = int(self.current.size)
+        label = self._observable_label()
+        which = {"max": "successive maxima", "min": "successive minima"}.get(
+            self.kind, "successive crossings"
         )
+        return f"{n} returns of {label} · {which}"
+
+    def _details(self) -> tuple[str, ...]:
+        """Return the span of the recorded observable."""
+        v = np.asarray(self.values, dtype=float)
+        if not v.size:
+            return ()
+        return (f"{self._observable_label()} ∈ [{_sig(v.min(), 4)}, {_sig(v.max(), 4)}]",)
 
 
 def _cobweb_path(current: np.ndarray, successor: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -180,9 +260,9 @@ def _cobweb_path(current: np.ndarray, successor: np.ndarray) -> tuple[np.ndarray
 
 def return_map(
     system: Any,
-    component: int | str = 0,
+    components: int | str = 0,
     *,
-    method: str = "max",
+    kind: str = "max",
     plane: tuple[Any, ...] | None = None,
     direction: int = +1,
     n: int = 2000,
@@ -191,7 +271,7 @@ def return_map(
     transient: float = 0.0,
     skip_crossings: int = 0,
     ic: Any | None = None,
-    seed: int | None = None,
+    seed: int | None = 0,
     **integrate_kwargs: Any,
 ) -> ReturnMap:
     r"""
@@ -207,45 +287,56 @@ def return_map(
         What to read the observable from.  A continuous
         :class:`~tsdynamics.families.ContinuousSystem` is integrated first; a
         :class:`~tsdynamics.data.Trajectory` is read directly; a 1-D array is
-        treated as the observable series itself (``method`` must be ``"max"`` or
+        treated as the observable series itself (``kind`` must be ``"max"`` or
         ``"min"``).  (Trajectory / array inputs are the ``data`` overload.)
-    component : int or str, default 0
+    components : int or str, default 0
         Which state component to record (names allowed when the system /
         trajectory declares ``variables``).  Ignored when ``system`` is a raw
         1-D series.
-    method : {"max", "min", "poincare"}, default "max"
+    kind : {"max", "min", "poincare"}, default "max"
         ``"max"`` / ``"min"`` record successive local maxima / minima of the
         observable (the Lorenz construction); ``"poincare"`` records the
         observable at successive section crossings (needs ``plane``).
     plane : tuple, optional
-        ``(i, c)`` or ``(normal, offset)`` — the section for ``method="poincare"``
+        ``(i, c)`` or ``(normal, offset)`` — the section for ``kind="poincare"``
         (see :func:`~tsdynamics.analysis.orbits.poincare_section`).
     direction : {+1, -1, 0}, default +1
-        Crossing-direction filter (``method="poincare"`` only).
+        Crossing-direction filter (``kind="poincare"`` only).
     n : int, default 2000
         Number of section crossings to collect when integrating a system in
-        ``method="poincare"`` mode.
-    final_time, dt : float
-        Integration horizon and detection / output step used when ``system`` is
-        a flow.  In extremum mode ``dt`` only needs to resolve the peaks; the
+        ``kind="poincare"`` mode.
+    final_time : float, default 200.0
+        Integration horizon, in **time units**, when ``system`` is a flow
+        (extremum mode only).
+    dt : float, default 0.01
+        Step, in **time units**, when ``system`` is a flow.  In extremum mode it
+        is the *output sampling* step and only needs to resolve the peaks — the
         recorded value is sharpened by parabolic interpolation, so a coarse grid
-        still gives accurate extrema.  In ``method="poincare"`` mode only ``dt``
-        is used (the section is marched until ``n`` crossings); ``final_time``,
-        ``ic``, ``transient`` and ``**integrate_kwargs`` apply to extremum mode
-        and are ignored.
+        still gives accurate extrema.  In ``kind="poincare"`` mode it is the
+        crossing-**detection** step of the section march.  Ignored for a
+        ``Trajectory`` / a bare series, which are already sampled.
+        In ``kind="poincare"`` mode ``final_time``, ``ic``, ``transient`` and
+        ``**integrate_kwargs`` do not apply and are ignored (the section is
+        marched until ``n`` crossings).
     transient : float, default 0.0
-        Elapsed **time** discarded before recording extrema (``method="max"`` /
-        ``"min"``, system input).
+        Dynamics discarded before recording extrema, in **time units** — the unit
+        ``final_time`` and ``run(transient=)`` use (``kind="max"`` / ``"min"``,
+        system input).  The *section* transient is the separate
+        ``skip_crossings``, because a count of crossings is a different quantity
+        from an elapsed time.
     skip_crossings : int, default 0
         Number of leading **crossings** discarded before recording
-        (``method="poincare"``, system input).
+        (``kind="poincare"``, system input).
     ic : array-like, optional
         Initial state when ``system`` is a flow.
-    seed : int, optional
-        Seed for the random initial condition when the system has none; makes
-        the map reproducible.
+    seed : int, default 0
+        Seed for the random initial condition when the system has none, so the
+        map is reproducible.  Pass ``seed=None`` for an unseeded draw.
+
+        .. versionchanged:: 6.0
+            Was ``None`` — the same call returned a different map each run.
     **integrate_kwargs
-        Forwarded to ``system.integrate`` (extremum mode, system input).
+        Forwarded to ``system.run`` (extremum mode, system input).
 
     Returns
     -------
@@ -254,28 +345,32 @@ def return_map(
 
     Examples
     --------
-    >>> rm = return_map(Lorenz(), "z", method="max", final_time=400.0, transient=40.0)
+    >>> rm = return_map(Lorenz(), "z", kind="max", final_time=400.0, transient=40.0)
     >>> x, y = rm.flat()       # the cusp map z_n -> z_{n+1}
-    >>> rm = return_map(Rossler(), 0, method="poincare", plane=(0, 0.0), n=400)
+    >>> rm = return_map(Rossler(), 0, kind="poincare", plane=(0, 0.0), n=400)
     """
-    method = method.lower()
-    if method not in _KINDS:
-        raise ValueError(f"method must be one of {_KINDS}, got {method!r}.")
+    kind = kind.lower()
+    if kind not in _KINDS:
+        raise ValueError(f"kind must be one of {_KINDS}, got {kind!r}.")
 
-    if method == "poincare":
+    if kind == "poincare":
         values, times, obs_idx = _poincare_observable(
-            system, component, plane, direction, n, skip_crossings, dt, seed
+            system, components, plane, direction, n, skip_crossings, dt, seed
         )
     else:
         values, times, obs_idx = _extremum_observable(
-            system, component, method, final_time, dt, transient, ic, seed, integrate_kwargs
+            system, components, kind, final_time, dt, transient, ic, seed, integrate_kwargs
         )
 
     current = values[:-1]
     successor = values[1:]
-    meta: dict[str, Any] = {"kind": method, "observable": obs_idx, "n": int(values.size)}
+    meta: dict[str, Any] = {"kind": kind, "observable": obs_idx, "n": int(values.size)}
     if plane is not None:
         meta["plane"] = plane
+    names = tuple(getattr(system, "variables", ()) or ())
+    if names:
+        # The repr says "26 returns of z", not "of component 2" (S3 inbox d).
+        meta["variables"] = names
     src_name = getattr(type(system), "__name__", None)
     if not isinstance(system, np.ndarray | list | tuple):
         meta["source"] = src_name
@@ -285,7 +380,7 @@ def return_map(
         values=values,
         times=times,
         observable=obs_idx,
-        kind=method,
+        kind=kind,
         meta=meta,
     )
 
@@ -326,8 +421,8 @@ def _extremum_observable(
         traj = system.after(transient) if transient else system
         idx = _observable_index(traj, component)
         return *_local_extrema(traj.y[:, idx], traj.t, method), idx
-    if hasattr(system, "is_discrete"):  # a System
-        if system.is_discrete:
+    if hasattr(system, "family"):  # a System
+        if system.family == "map" or getattr(system, "_is_discrete", False):
             raise TypeError(
                 "extremum return maps need a continuous flow; for a map, iterate and "
                 "pass the series, or use orbit_diagram."
@@ -335,7 +430,7 @@ def _extremum_observable(
         idx = _observable_index(system, component)
         seeded = _seeded_ic(system, ic, seed)
         run_ic = seeded if seeded is not None else ic
-        traj = system.integrate(final_time=final_time, dt=dt, ic=run_ic, **integrate_kwargs)
+        traj = system.run(final_time=final_time, dt=dt, ic=run_ic, **integrate_kwargs)
         if transient:
             traj = traj.after(transient)
         return *_local_extrema(traj.y[:, idx], traj.t, method), idx
@@ -361,7 +456,7 @@ def _poincare_observable(
 ) -> tuple[np.ndarray, np.ndarray, int]:
     """Extract the observable series (+ times) for Poincaré-return mode."""
     if plane is None:
-        raise ValueError("method='poincare' needs a `plane=(i, c)`.")
+        raise ValueError("kind='poincare' needs a `plane=(i, c)`.")
     if isinstance(system, Trajectory):
         # the system path discards `skip_crossings` crossings inside
         # poincare_section; the data path has them all, so drop the first
@@ -370,19 +465,19 @@ def _poincare_observable(
         idx = _observable_index(section, component)
         skip = int(skip_crossings)
         return section.y[skip:, idx], section.t[skip:], idx
-    if hasattr(system, "is_discrete"):
+    if hasattr(system, "family"):
         section = poincare_section(
             system,
             plane,
             direction=direction,
-            n=n,
+            crossings=n,
             skip_crossings=int(skip_crossings),
             dt=dt,
             seed=seed,
         )
         idx = _observable_index(section, component)
         return section.y[:, idx], section.t, idx
-    raise TypeError("method='poincare' needs a System or Trajectory input, not a raw series.")
+    raise TypeError("kind='poincare' needs a System or Trajectory input, not a raw series.")
 
 
 def _local_extrema(series: Any, times: Any | None, kind: str) -> tuple[np.ndarray, np.ndarray]:

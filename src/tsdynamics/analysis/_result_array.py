@@ -1,7 +1,23 @@
-"""The :class:`ArrayResult` ndarray-valued result.
+"""The :class:`ArrayResult` ndarray-valued result, and the mixin under it.
 
 Split out of ``analysis/_result.py``; wraps a bare ``ndarray`` return so it
 stays a drop-in for its array while carrying the result surface.
+
+:class:`_ArrayBacked` is that drop-in behaviour on its own, so a result whose
+numbers live under a *domain* name — a fixed point's ``x``, an orbit's
+``points``, an attractor's cloud — is the array too, without restating forty
+lines of operators per class.
+
+It is **not** what puts a record on the indexing path.  Indexing a collection
+gives a plain :class:`numpy.ndarray` (contract §4.2 rule 6):
+``fixed_points(sys)[0]`` is the point, and ``fixed_points(sys).details[0]`` is
+the :class:`~tsdynamics.analysis.results.FixedPoint` that still prints
+``x* = [-1.13, -0.34]  unstable``.  Emulating an array was measurably not the
+same as being one — ``fps[0].shape`` and ``fps[0].tolist()`` raised
+``AttributeError`` on the emulation, which is the class making itself visible at
+the moment the caller believed it held an array.  What this mixin buys is that
+the *record*, once asked for by name, is still arithmetic: ``fps.details[0] - x``
+and ``np.linalg.norm(fps.details[0])`` work.
 """
 
 from __future__ import annotations
@@ -11,45 +27,45 @@ from typing import Any, ClassVar
 
 import numpy as np
 
-from tsdynamics.analysis._result_base import AnalysisResult
-from tsdynamics.analysis._result_json import _fmt, _jsonify
+from tsdynamics.analysis._result_base import AnalysisResult, _unknown_result_attribute
+from tsdynamics.analysis._result_json import _jsonify, _state
 from tsdynamics.analysis._result_viz import VisualizationNotInstalled
 
 
-@dataclass(frozen=True, eq=False)
-class ArrayResult(AnalysisResult):
-    """An array-valued measurement that stays a drop-in for its ``ndarray``.
+class _ArrayBacked(np.lib.mixins.NDArrayOperatorsMixin):
+    """Make a result behave as the array held under :attr:`_array_field`.
 
-    Wraps a bare ``ndarray`` return (a Lyapunov spectrum, a delay-embedded point
-    cloud, a mutual-information-vs-lag curve, a surrogate ensemble) so it carries
-    the result surface while ``np.asarray(result)``, indexing/slicing, ``len`` /
-    iteration, elementwise comparisons (``result >= 0``) and attribute access
-    (``result.shape``, ``result.max()``) all defer to the underlying array.
+    ``np.asarray(result)``, ``result[i]``, ``len``, iteration, the elementwise
+    comparisons and the full arithmetic set all defer to that array, so the class
+    never has to be unwrapped.  Operators are resolved on the *type*, never via
+    ``__getattr__``, so the ones a plain Python operand needs are spelled out
+    (``int.__mul__(result)`` returns ``NotImplemented`` without ever reaching
+    NumPy); :class:`numpy.lib.mixins.NDArrayOperatorsMixin` fills in the rest
+    through :meth:`__array_ufunc__`.
 
-    Indexing and slicing return the *raw* array element/sub-array (never another
-    wrapper), so ``result[:, 0]`` flows straight into NumPy as before.  Operators
-    are resolved on the type (``__getattr__`` cannot intercept them), so the
-    comparison/arithmetic dunders are spelled out and return raw arrays.
-
-    Attributes
-    ----------
-    values : numpy.ndarray
-        The wrapped array.  ``np.asarray(result)`` returns it.
+    A subclass sets ``_array_field`` to the name of the field that holds its
+    numbers.  Nothing else is required.
     """
 
-    _repr_fields: ClassVar[tuple[str, ...]] = ()
+    #: Name of the field holding the numbers this result *is*.
+    _array_field: ClassVar[str] = "values"
 
-    values: np.ndarray = field(default_factory=lambda: np.empty(0), repr=False, compare=False)
+    def _backing_array(self) -> np.ndarray:
+        """Return the array this result stands for."""
+        return np.asarray(getattr(self, type(self)._array_field))
 
-    def __repr__(self) -> str:  # noqa: D105
-        return f"{type(self).__name__}({_fmt(np.asarray(self.values))})"
-
-    # -- ndarray protocol ----------------------------------------------------
+    def __array_ufunc__(self, ufunc: Any, method: str, *inputs: Any, **kwargs: Any) -> Any:
+        """Unwrap every result operand to its array and defer to NumPy."""
+        args = [np.asarray(x) if isinstance(x, _ArrayBacked) else x for x in inputs]
+        out = kwargs.get("out")
+        if out is not None:
+            kwargs["out"] = tuple(np.asarray(o) if isinstance(o, _ArrayBacked) else o for o in out)
+        return getattr(ufunc, method)(*args, **kwargs)
 
     def __array__(self, dtype: Any = None, copy: bool | None = None) -> np.ndarray:  # noqa: D105
         # NumPy 2.0 passes ``copy`` into ``__array__``; honor it so ``np.array``
         # (which defaults to copying) does not error under ``filterwarnings=error``.
-        arr = np.asarray(self.values)
+        arr = self._backing_array()
         if dtype is not None:
             arr = arr.astype(dtype, copy=bool(copy))
         elif copy:
@@ -57,23 +73,21 @@ class ArrayResult(AnalysisResult):
         return arr
 
     def __getitem__(self, key: Any) -> Any:  # noqa: D105
-        return self.values[key]
+        return self._backing_array()[key]
 
     def __len__(self) -> int:  # noqa: D105
-        return len(self.values)
+        return len(self._backing_array())
 
     def __iter__(self) -> Any:  # noqa: D105
-        return iter(self.values)
+        return iter(self._backing_array())
 
-    def __getattr__(self, name: str) -> Any:
-        """Forward unknown public attributes to the wrapped array (``.shape``, ``.max``)."""
-        if name.startswith("_"):
-            raise AttributeError(name)
-        try:
-            values = object.__getattribute__(self, "values")
-        except AttributeError as exc:  # pragma: no cover - during unpickling
-            raise AttributeError(name) from exc
-        return getattr(values, name)
+    def __bool__(self) -> bool:
+        """Defer to the backing array — a drop-in cannot answer where ndarray raises.
+
+        ``bool(np.arange(3))`` is a ``ValueError``; a result standing in for that
+        array must say the same thing rather than a cheerful ``True``.
+        """
+        return bool(self._backing_array())
 
     # -- elementwise comparisons / arithmetic (return raw arrays) ------------
 
@@ -110,15 +124,86 @@ class ArrayResult(AnalysisResult):
 
     __rmul__ = __mul__
 
-    def to_dict(self) -> dict[str, Any]:
+
+@dataclass(frozen=True, eq=False)
+class ArrayResult(_ArrayBacked, AnalysisResult):
+    """An array-valued measurement that stays a drop-in for its ``ndarray``.
+
+    Wraps a bare ``ndarray`` return (a Lyapunov spectrum, a delay-embedded point
+    cloud, a mutual-information-vs-lag curve, a surrogate ensemble) so it carries
+    the result surface while ``np.asarray(result)``, indexing/slicing, ``len`` /
+    iteration, elementwise comparisons (``result >= 0``) and attribute access
+    (``result.shape``, ``result.max()``) all defer to the underlying array.
+
+    Indexing and slicing return the *raw* array element/sub-array (never another
+    wrapper), so ``result[:, 0]`` flows straight into NumPy as before.  Operators
+    are resolved on the type (``__getattr__`` cannot intercept them), so the
+    comparison/arithmetic dunders are spelled out and return raw arrays;
+    :class:`numpy.lib.mixins.NDArrayOperatorsMixin` supplies the rest
+    (``/``, ``**``, ``//``, ``%``, unary ``-``, the in-place forms) through
+    :meth:`__array_ufunc__` — before v6 ``result / 2`` raised ``TypeError`` while
+    ``result * 2`` worked, which is the worst of both worlds for a drop-in.
+
+    Attributes
+    ----------
+    values : numpy.ndarray
+        The wrapped array.  ``np.asarray(result)`` returns it.
+    """
+
+    _repr_fields: ClassVar[tuple[str, ...]] = ()
+
+    values: np.ndarray = field(default_factory=lambda: np.empty(0), repr=False, compare=False)
+
+    # -- the readout ---------------------------------------------------------
+
+    def _answer(self) -> str:
+        """Return the array itself when it is small, else its shape."""
+        arr = np.asarray(self.values)
+        if arr.ndim <= 1:
+            return f"= {_state(arr)}"
+        return f"{arr.shape[0]} × {int(np.prod(arr.shape[1:]))} values"
+
+    # -- ndarray protocol (from :class:`_ArrayBacked`) -----------------------
+
+    def __getattr__(self, name: str) -> Any:
+        """Forward to the wrapped array — but answer a WRONG guess as this class.
+
+        ``.shape`` / ``.max`` / ``.sum`` are the point of wrapping an array and
+        keep forwarding.  A name numpy does not have used to be answered by
+        numpy anyway (``AttributeError: 'numpy.ndarray' object has no attribute
+        'chaotic'``), naming a type the caller never typed and offering no
+        replacement — so every wrong guess on every result was the worst error
+        message in the library.  Now the answer names THIS result and what it
+        does carry.
+        """
+        if name.startswith("_"):
+            raise AttributeError(name)
+        try:
+            values = object.__getattribute__(self, "values")
+        except AttributeError as exc:  # pragma: no cover - during unpickling
+            raise AttributeError(name) from exc
+        if hasattr(values, name):
+            return getattr(values, name)
+        raise _unknown_result_attribute(self, name)
+
+    def to_dict(self, full: bool = False) -> dict[str, Any]:
         """Return a JSON-friendly mapping (the array as a nested list + ``meta``).
+
+        Parameters
+        ----------
+        full : bool, default False
+            Also emit the derived quantities the repr reports (see
+            :meth:`AnalysisResult._derived`).
 
         Returns
         -------
         dict
             ``{"values": <nested list>, "meta": <provenance>}``.
         """
-        return {"values": _jsonify(self.values), "meta": _jsonify(self.meta)}
+        data = {"values": _jsonify(self.values), "meta": _jsonify(self.meta)}
+        if full:
+            data.update({k: _jsonify(v) for k, v in self._full_extras().items()})
+        return data
 
     def to_frame(self) -> Any:
         """Return a :class:`pandas.DataFrame` tabulating the wrapped array.
@@ -132,7 +217,8 @@ class ArrayResult(AnalysisResult):
         ``meta`` rides on ``frame.attrs["meta"]`` like the other subclasses.
 
         ``pandas`` is a soft dependency, imported lazily; a missing install raises
-        an :class:`ImportError` naming the ``tsdynamics[frame]`` extra.
+        an :class:`ImportError` pointing at ``pip install pandas`` (there is no
+        ``tsdynamics[frame]`` extra — this docstring used to name one).
 
         Returns
         -------
@@ -143,7 +229,8 @@ class ArrayResult(AnalysisResult):
         Raises
         ------
         ImportError
-            If :mod:`pandas` is not installed.
+            If :mod:`pandas` is not installed (the message points at
+            ``pip install pandas``).
         """
         pd = self._require_pandas()
         arr = np.asarray(self.values)
@@ -155,7 +242,7 @@ class ArrayResult(AnalysisResult):
         frame.attrs["meta"] = dict(self.meta) if self.meta else {}
         return frame
 
-    def to_plot_spec(self, kind: str | None = None) -> Any:
+    def __plot_spec__(self, kind: str | None = None) -> Any:
         """Describe the wrapped array as a :class:`PlotSpec` (safe generic view).
 
         A 1-D array becomes a ``DIAGNOSTIC_CURVE`` ``LINE`` against its index; a
@@ -229,5 +316,5 @@ class ArrayResult(AnalysisResult):
 
         raise VisualizationNotInstalled(
             f"{title} wraps an empty or higher-than-2-D array, so the generic ArrayResult "
-            "to_plot_spec() has nothing to draw; export it with .to_dict() instead."
+            "__plot_spec__() has nothing to draw; export it with .to_dict() instead."
         )

@@ -39,6 +39,17 @@ from tsdynamics.analysis.dimensions.generalized import (
     _occupancy,
 )
 
+#: These tests measure point sets that really do live on a LINE (a Cantor set, a
+#: 1-cube), which is exactly the input
+#: :class:`~tsdynamics.analysis.dimensions.UnembeddedSeriesWarning` warns about:
+#: a single-coordinate point set cannot be told apart from a scalar time series,
+#: and for a *series* the answer D ~ 1 is wrong.  They mean the 1-D reading, so
+#: they say so once here rather than wrapping every call.
+pytestmark = pytest.mark.filterwarnings(
+    "ignore::tsdynamics.analysis.dimensions._common.UnembeddedSeriesWarning"
+)
+
+
 _CANTOR_D0 = np.log(2.0) / np.log(3.0)  # ≈ 0.6309
 
 

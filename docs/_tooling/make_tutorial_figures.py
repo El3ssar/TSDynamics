@@ -91,7 +91,7 @@ def fig_basins_image(plt, out_path):
     sys = _TiltedDuffing.make()()  # F = 0
 
     grid = data.Grid(np.array([-2.0, -2.0]), np.array([2.0, 2.0]), (300, 300))
-    basins = ts.basins_of_attraction(sys, grid, dt=0.5, max_steps=2000)
+    basins = ts.analysis.basins(sys, grid, dt=0.5, max_steps=2000)
     labels = np.asarray(basins.labels)
 
     from matplotlib.colors import ListedColormap
@@ -147,7 +147,7 @@ def fig_basins_continuation(plt, out_path):
     region = data.Box(np.array([-2.0, -2.0]), np.array([2.0, 2.0]))
 
     values = np.linspace(0.0, 0.5, 11)
-    cont = ts.continuation(
+    cont = ts.analysis.continuation(
         sys, "F", values, region, n=300, resolution=40, dt=0.5, max_steps=2000, seed=0
     )
     fr = cont.fractions
@@ -155,7 +155,7 @@ def fig_basins_continuation(plt, out_path):
     left = np.nan_to_num(np.asarray(fr[1], float), nan=0.0)
     right = np.nan_to_num(np.asarray(fr[2], float), nan=0.0)
 
-    tp = ts.tipping_points(cont)
+    tp = ts.analysis.tipping_points(cont)
     tip_F = tp[0]["value"] if len(tp) else None
 
     fig, ax = plt.subplots(figsize=(6.0, 3.9))
@@ -195,11 +195,11 @@ def fig_poincare_section(plt, out_path):
     import tsdynamics as ts
 
     ros = ts.systems.Rossler()
-    ic = ros.integrate(final_time=200.0, dt=0.02, ic=[1.0, 1.0, 1.0]).y[-1]
+    ic = ros.run(final_time=200.0, dt=0.02, ic=[1.0, 1.0, 1.0]).y[-1]
 
     # A short window of the flow for context.
-    traj = ros.integrate(final_time=120.0, dt=0.01, ic=ic)
-    sec = ts.poincare_section(ros, plane=("y", 0.0, "up"), n=500, dt=0.02, seed=0)
+    traj = ros.run(final_time=120.0, dt=0.01, ic=ic)
+    sec = ts.analysis.poincare_section(ros, plane=("y", 0.0, "up"), crossings=500, dt=0.02, seed=0)
 
     fig, ax = plt.subplots(figsize=(6.2, 4.2))
     ax.plot(traj["x"], traj["z"], color=INDIGO, lw=0.4, alpha=0.16, zorder=1)
@@ -230,14 +230,14 @@ def fig_return_map(plt, out_path):
 
     # Rössler first-return in x at the section.
     ros = ts.systems.Rossler()
-    rm = ts.return_map(
+    rm = ts.analysis.return_map(
         ros, "x", method="poincare", plane=("y", 0.0), direction=+1, n=500, dt=0.02, seed=0
     )
 
     # Lorenz z-maxima cusp.
     lor = ts.systems.Lorenz()
-    ic_l = lor.integrate(final_time=40.0, dt=0.01, ic=[1.0, 1.0, 1.0]).y[-1]
-    zc = ts.return_map(lor, "z", method="max", n=2000, final_time=400.0, dt=0.01, ic=ic_l)
+    ic_l = lor.run(final_time=40.0, dt=0.01, ic=[1.0, 1.0, 1.0]).y[-1]
+    zc = ts.analysis.return_map(lor, "z", method="max", n=2000, final_time=400.0, dt=0.01, ic=ic_l)
 
     fig, (a0, a1) = plt.subplots(1, 2, figsize=(7.4, 3.7))
 
@@ -281,7 +281,7 @@ def fig_ou_ensemble(plt, out_path):
 
     # A handful of sample paths.
     for i, seed in enumerate((0, 3, 7, 11, 19)):
-        p = ou.integrate(final_time=8.0, dt=0.01, ic=[2.0], seed=seed)
+        p = ou.run(final_time=8.0, dt=0.01, ic=[2.0], seed=seed)
         ax.plot(p.t, p.y[:, 0], color=TEAL, lw=0.7, alpha=0.5, zorder=2)
 
     # Ensemble mean ± sd on a grid of horizons.
@@ -334,12 +334,10 @@ def fig_double_well_switching(plt, out_path):
     import tsdynamics as ts
 
     dw = ts.systems.DoubleWell(params={"a": 1.0, "b": 1.0, "sigma": 0.5})
-    path = dw.integrate(final_time=200.0, dt=0.01, ic=[-1.0], seed=1)
+    path = dw.run(final_time=200.0, dt=0.01, ic=[-1.0], seed=1)
     t, x = path.t, path.y[:, 0]
 
-    fig, (a0, a1) = plt.subplots(
-        1, 2, figsize=(7.6, 3.6), gridspec_kw={"width_ratios": [2.6, 1.0]}
-    )
+    fig, (a0, a1) = plt.subplots(1, 2, figsize=(7.6, 3.6), gridspec_kw={"width_ratios": [2.6, 1.0]})
 
     # -- The telegraph path --
     a0.axhline(1.0, color="#888888", lw=0.7, ls=":", alpha=0.7)

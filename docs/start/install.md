@@ -1,5 +1,5 @@
 ---
-description: Install TSDynamics with pip or uv from a prebuilt wheel — the compiled Rust engine ships inside it, so there is no build step, no compiler, and no warmup.
+description: Install TSDynamics with pip or uv from a prebuilt wheel — the compiled Rust engine ships inside it, so there is no build step and no compiler toolchain.
 ---
 
 <span class="ts-kicker">Start · 01</span>
@@ -32,15 +32,17 @@ covers every CPython ≥ 3.12.
 Concretely, this means:
 
 - **No toolchain.** Installing and running the library never invokes a compiler.
-- **No warmup, no compile cache.** Every family — ODEs, delay equations,
+- **No build step, nothing on disk.** Every family — ODEs, delay equations,
   stochastic equations, and maps — lowers its symbolic equations to an
-  in-process engine *tape* the first time you run it, in a fraction of a second.
-  There is no ahead-of-time compilation step and nothing written to disk. Editing
-  a system's equations simply takes effect on the next run; there is no cache to
-  wipe.
-- **The same numbers everywhere.** The tape is executed by a Rust interpreter (or
-  optionally a JIT — see [backends](concepts.md#backends-interp-jit-reference)),
-  so results do not depend on which BLAS or Python build you happen to have.
+  in-process engine *tape* the first time you run it, in a fraction of a second,
+  and the tape is compiled to native code by the built-in JIT. Both steps are
+  in-process and memoised per system; there is no ahead-of-time compilation and
+  nothing is written to disk. Editing a system's equations simply takes effect on
+  the next run; there is no cache to wipe.
+- **The same numbers everywhere.** The tape runs on a Cranelift JIT by default,
+  or on a Rust interpreter that is bit-for-bit identical — see
+  [backends](concepts.md#backends-jit-interp-reference) — so results do not
+  depend on which BLAS or Python build you happen to have.
 
 !!! note "Building from source"
     Only building *from the source distribution* — the `sdist`, the fallback for
@@ -51,15 +53,13 @@ Concretely, this means:
 ## Optional extras
 
 The base install pulls in **no plotting library** — `import tsdynamics` stays
-lightweight and imports nothing heavy. Plotting backends and a couple of
-optional accelerators are opt-in extras:
+lightweight and imports nothing heavy. The plotting backends are opt-in extras:
 
 | Extra | Installs | When you want it |
 | ----- | -------- | ---------------- |
 | `tsdynamics[viz]` | `matplotlib` | The reference renderer: static 2-D and 3-D figures, movies (mp4/gif) |
 | `tsdynamics[interactive]` | `plotly` | The interactive backend: rotatable 3-D and self-contained HTML export |
 | `tsdynamics[plot]` | `matplotlib` | A back-compatible alias of `viz` |
-| `tsdynamics[lz]` | `lzcomplexity` | An optional fast provider for Lempel–Ziv complexity (a native parser is built in, so this is never required) |
 
 Combine extras in the usual way:
 
@@ -77,16 +77,16 @@ a plot description over the standard library. See
 import tsdynamics as ts
 
 print(ts.__version__)
-print(ts.registry.families())   # {'ode': 136, 'dde': 6, 'sde': 3, 'map': 26}
+print(ts.registry.families())   # {'ode': 142, 'dde': 6, 'sde': 3, 'map': 26}
 
-traj = ts.systems.Henon().iterate(steps=100, ic=[0.1, 0.1])
+traj = ts.systems.Henon().run(steps=100, ic=[0.1, 0.1])
 print(traj.y.shape)             # (100, 2)
 ```
 
 `ts.registry.families()` reports the built-in catalogue by family. If
 
 ```python
-ts.systems.Lorenz().integrate(final_time=1.0).y.shape   # (51, 3)
+ts.systems.Lorenz().run(final_time=1.0).y.shape   # (51, 3)
 ```
 
 also returns cleanly, the engine is wired up and you are ready to go.
@@ -94,5 +94,4 @@ also returns cleanly, the engine is wired up and you are ready to go.
 ## Next
 
 [**02 · First trajectory**](first-trajectory.md) — instantiate the Lorenz
-system, integrate it, read its components, and compute its Lyapunov spectrum.
-</content>
+system, run it, read its components, and measure its Lyapunov spectrum.

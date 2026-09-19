@@ -35,6 +35,7 @@ class Tent(DiscreteMap):
     reference = "Classical map; see e.g. Strogatz, Nonlinear Dynamics and Chaos"
     params = {"mu": 0.95}
     dim = 1
+    variables = ("x",)
 
     @staticmethod
     def _step(X, mu):
@@ -52,31 +53,51 @@ class Tent(DiscreteMap):
 
 class Baker(DiscreteMap):
     r"""
-    Baker's map, an area-preserving stretch-cut-stack map of the unit square.
+    Baker's map, the stretch-cut-stack transformation of the unit square.
 
     Modelled on a baker kneading dough, the map stretches the unit square to
-    twice its width and half its height, cuts it in two, and stacks the halves
-    back onto :math:`[0, 1]^2`. With ``alpha = 0.5`` it is the classic
-    measure-preserving baker's transformation — uniformly hyperbolic, mixing,
-    and conjugate to a two-sided Bernoulli shift, making it a canonical example
-    in ergodic theory. For ``alpha`` other than 0.5 the fold is asymmetric (the
-    generalized / asymmetric baker's map), expanding in :math:`x` while
-    contracting unevenly in :math:`y`.
+    twice its width, cuts it at :math:`x = 1/2`, and stacks the right half on
+    top of the left:
+
+    .. math::
+
+        x' = 2x \bmod 1, \qquad
+        y' = \begin{cases}
+            \alpha y                & x < 1/2 \\
+            \alpha y + (1 - \alpha) & x \ge 1/2 .
+        \end{cases}
+
+    The :math:`x` direction is uniformly expanding with slope 2 and the
+    :math:`y` direction uniformly contracting with slope :math:`\alpha`, so the
+    Lyapunov exponents are exactly :math:`(\ln 2,\ \ln\alpha)` and the Jacobian
+    determinant is the constant :math:`2\alpha`. With ``alpha = 0.5`` the map is
+    the classic **measure-preserving** baker's transformation (:math:`|\det J| =
+    1`) — uniformly hyperbolic, mixing, and conjugate to a two-sided Bernoulli
+    shift, making it a canonical example in ergodic theory. For
+    ``alpha < 0.5`` it is the dissipative (asymmetric) baker's map, whose
+    attractor is the product of the unit interval with a Cantor set of
+    dimension :math:`\ln 2 / \ln(1/\alpha)`.
 
     Parameters
     ----------
     alpha : float
-        Fold fraction ``0 < alpha < 1`` splitting the height of the square. The
-        symmetric, area-preserving case is ``alpha = 0.5`` (the default).
+        Contraction ratio of the fold, ``0 < alpha <= 0.5``. The symmetric,
+        area-preserving case is ``alpha = 0.5`` (the default); smaller values
+        give a dissipative map with a fractal attractor. (The two branch images
+        overlap for ``alpha > 0.5``, which is no longer a baker's map.)
+
+    Notes
+    -----
+    The ``x`` update is a doubling map wrapped just below 1 rather than exactly
+    mod 1, for the same reason as :class:`~tsdynamics.systems.KaplanYorke` — see
+    ``_step``.
     """
 
     params = {"alpha": 0.5}
     dim = 2
+    variables = ("x", "y")
     reference = "Hopf (1937), Ergodentheorie (Springer, Berlin)"
     doi = "10.1007/978-3-642-86630-2"
-    # Float doubling collapses the orbit onto the x = 0 discontinuity after
-    # ~53 iterations, so finite differences always straddle the jump there.
-    _jacobian_fd_check = False
 
     @staticmethod
     def _step(X, alpha):
@@ -84,31 +105,32 @@ class Baker(DiscreteMap):
         Right-hand side of the Baker map.
 
         x, y: Current state variables
-        alpha: Fraction determining the fold (0 < alpha < 1)
+        alpha: Contraction ratio of the fold (0 < alpha <= 0.5)
 
-        Written branchlessly with ``np.where`` (rather than a Python ``if`` on
-        the state) so the step traces to a straight-line tape and runs on the
-        Rust engine.  On the attractor ``y in [0, 1)`` the single test
-        ``y < alpha`` is equivalent to ``0 <= y < alpha``.
+        The canonical ``x`` fold is ``(2 * x) % 1``, but the pure doubling map
+        drains a float mantissa one bit per step (``2 * x`` is an exact binary
+        shift), so every orbit collapses onto the ``x = 0`` fixed point in ~52
+        iterations and the chaos dies. Wrapping just below 1 injects a ~5e-8
+        offset at each fold that keeps the orbit non-degenerate; the dynamics
+        (and the exponents ``ln 2`` / ``ln alpha``) are unchanged to that
+        tolerance. This is the same guard :class:`KaplanYorke` carries.
+
+        The ``y`` branch is written with ``np.where`` (rather than a Python
+        ``if`` on the state) so the step traces to a straight-line tape and runs
+        on the Rust engine.
         """
         x, y = X
-        lower = y < alpha
-        xp = np.where(lower, (2 * x) % 1, (2 * x - 1) % 1)  # stretch / shift in x
-        yp = np.where(lower, y / alpha, (y - alpha) / (1 - alpha))  # fold in y
+        xp = (2 * x) % 0.99999995  # stretch in x (wrapped just below 1)
+        yp = np.where(x < 0.5, alpha * y, alpha * y + (1 - alpha))  # contract + stack
         return xp, yp
 
     @staticmethod
     def _jacobian(X, alpha):
         x, y = X
-        # Same branch test as ``_step`` (``y < alpha``, equivalent to
-        # ``0 <= y < alpha`` on the attractor) so the hand Jacobian matches the
-        # symbolic derivative of the lowered step.
-        if y < alpha:
-            row1 = [2, 0]
-            row2 = [0, 1 / alpha]
-        else:
-            row1 = [2, 0]
-            row2 = [0, 1 / (1 - alpha)]
+        # Constant on each branch: expand by 2 in x, contract by alpha in y.
+        # The branch shift is additive, so the Jacobian is the same either side.
+        row1 = [2, 0]
+        row2 = [0, alpha]
         return row1, row2
 
 
@@ -137,6 +159,7 @@ class Circle(DiscreteMap):
 
     params = {"omega": 0.333, "k": 5.7}
     dim = 1
+    variables = ("theta",)
     reference = "Arnold (1965), Amer. Math. Soc. Transl. 46, 213-284"
 
     @staticmethod
@@ -174,6 +197,7 @@ class Chebyshev(DiscreteMap):
 
     params = {"a": 6.0}
     dim = 1
+    variables = ("x",)
     reference = "Adler & Rivlin (1964), Proc. Amer. Math. Soc. 15, 794-796"
     doi = "10.1090/s0002-9939-1964-0202968-3"
 
@@ -187,3 +211,21 @@ class Chebyshev(DiscreteMap):
         # chain rule: d/dx arccos(x) = -1/sqrt(1-x^2), the two minuses cancel
         x = X
         return [a * np.sin(a * np.arccos(x)) / np.sqrt(1 - x**2)]
+
+
+__all__ = [
+    "Baker",
+    "Chebyshev",
+    "Circle",
+    "Tent",
+]
+
+
+def __dir__() -> list[str]:
+    """Expose only the catalogue classes (``__all__``) to ``dir()`` / autocomplete.
+
+    ``__all__`` governs ``import *`` and nothing else, so without this the module
+    also offers every helper it imported — SymEngine's ``sin``/``cos``/``exp``,
+    ``numpy`` — as though they were part of this library's surface.
+    """
+    return sorted(__all__)

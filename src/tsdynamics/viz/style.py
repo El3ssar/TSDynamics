@@ -31,7 +31,14 @@ import numbers
 import warnings
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import Any, Literal, cast
+
+from ._visibility import dir_without, listing_dir
+
+#: The figure layout algorithms a renderer may be asked to apply.  Spelled as a
+#: closed literal (not a bare ``str``) so a backend can pass it straight through
+#: to matplotlib's ``Figure(layout=...)``, whose accepted set is exactly these.
+LayoutEngineName = Literal["constrained", "compressed", "tight"]
 
 __all__ = [
     "DEFAULT_PALETTE",
@@ -44,8 +51,11 @@ __all__ = [
     "register_theme",
     "resolve_palette",
     "set_theme",
+    "styles",
     "themes",
 ]
+
+__dir__ = listing_dir(__all__)
 
 
 # ---------------------------------------------------------------------------
@@ -101,6 +111,38 @@ def _validate_positive(value: Any) -> float:
     if v < 0.0:
         raise ValueError(f"expected a non-negative number, got {value!r}")
     return v
+
+
+def _validate_color(value: Any) -> Any:
+    """Check a colour **at the door**, naming the vocabulary a backend would.
+
+    Every other style key validates its value here; ``color`` did not, so
+    ``ts.plot(traj, c="time")`` — a plausible guess, since ``color_by="time"``
+    is real — was accepted, survived every tweak, and died inside ``.save()``
+    with a raw matplotlib ``ValueError``: the one untranslated backend error in
+    the whole session.
+
+    Validation is delegated to matplotlib when it is importable (it is the
+    reference renderer and owns the widest vocabulary), and skipped entirely
+    when it is not — the viz layer must stay usable with no backend installed,
+    and refusing a colour some *other* backend understands would be worse than
+    letting it through.
+    """
+    if value is None or not isinstance(value, (str, tuple, list)):
+        return value
+    try:
+        import matplotlib.colors as mcolors
+    except ImportError:  # pragma: no cover - no backend installed
+        return value
+    if mcolors.is_color_like(value):
+        return value
+    hint = ""
+    if isinstance(value, str) and value in ("time", "speed", "index", "arclength", "curvature"):
+        hint = f" (did you mean color_by={value!r}? that colours the curve BY a quantity)"
+    raise ValueError(
+        f"{value!r} is not a colour{hint}. Give a CSS name ('crimson'), a hex string "
+        "('#d81b60'), a grey level ('0.4'), or an (r, g, b[, a]) tuple of floats in [0, 1]"
+    )
 
 
 #: Canonical line-style names, plus the matplotlib short spellings we accept.
@@ -214,6 +256,17 @@ class StyleKey:
     validate: Callable[[Any], Any] | None = None
     doc: str = ""
 
+    def __dir__(self) -> list[str]:
+        """Expose the vocabulary entry: ``name`` ``aliases`` ``honored_by`` ``doc``.
+
+        Those four *are* the question ``ts.viz.styles`` exists to answer — what
+        may I pass, what else is it spelled, will this backend draw it, and what
+        does it do.  :attr:`validate` is the coercer
+        :func:`normalize_style` runs on the way in; it is the machinery behind
+        the vocabulary, not part of it.  Still public, still tested.
+        """
+        return dir_without(self, {"validate"})
+
 
 def _build_style_keys() -> dict[str, StyleKey]:
     """Build the canonical :data:`STYLE_KEYS` table (one :class:`StyleKey` per key)."""
@@ -222,6 +275,7 @@ def _build_style_keys() -> dict[str, StyleKey]:
             name="color",
             aliases=("c",),
             honored_by=_ALL_BACKENDS,
+            validate=_validate_color,
             doc="line/marker/fill color (CSS name, hex, or rgb tuple)",
         ),
         StyleKey(
@@ -249,10 +303,18 @@ def _build_style_keys() -> dict[str, StyleKey]:
         ),
         StyleKey(
             name="markersize",
-            aliases=("ms", "s"),
+            # ``"s"`` is deliberately **NOT** an alias (removed in v6).  It collided
+            # head-on with two other meanings: matplotlib's ``s`` is a marker *area*
+            # (pt²) — which is what every in-tree emitter assumed when it wrote
+            # ``{"s": 40.0}`` — while ``markersize`` is a *diameter* (pt); and the
+            # single-character marker **value** ``"s"`` means *square*, so
+            # ``{"s": 1, "marker": "s"}`` used one letter for both a size key and a
+            # shape value.  One canonical spelling, one unit: ``markersize``, pt
+            # diameter.
+            aliases=("ms",),
             honored_by=_ALL_BACKENDS,
             validate=_validate_positive,
-            doc="marker size (pt)",
+            doc="marker size (pt diameter; 's' is NOT accepted — it meant area)",
         ),
         StyleKey(
             name="alpha",
@@ -268,6 +330,16 @@ def _build_style_keys() -> dict[str, StyleKey]:
             doc=(
                 "colormap name for the c / image channel (threejs uses a fixed "
                 "built-in ramp — an arbitrary cmap name is not honored)"
+            ),
+        ),
+        StyleKey(
+            name="filled",
+            honored_by=frozenset({"matplotlib", "plotly"}),
+            validate=_validate_bool,
+            doc=(
+                "whether a marker is filled (True) or hollow/open (False) — the "
+                "stable-vs-unstable distinction on a fixed-point overlay "
+                "(threejs draws points only — fill is not honored)"
             ),
         ),
         StyleKey(
@@ -311,6 +383,20 @@ def _build_alias_index() -> dict[str, str]:
 
 #: alias-or-canonical spelling → canonical key name (built once from STYLE_KEYS).
 _ALIAS_INDEX: dict[str, str] = _build_alias_index()
+
+
+def style_names() -> frozenset[str]:
+    """Every accepted spelling of a per-layer style keyword (canonical + alias).
+
+    The single source of truth for "is this keyword about the *look* of the
+    plot?", used by every front door that routes keywords by category —
+    :func:`tsdynamics.viz.compose.split_presentation`,
+    :meth:`tsdynamics.data.Trajectory.plot` and
+    :meth:`tsdynamics.families._plottable.SystemPlottable.plot`.  One derived
+    set rather than three hand-kept ones, so ``color=`` cannot mean a style at
+    one door and an unknown keyword at its sibling.
+    """
+    return frozenset(_ALIAS_INDEX)
 
 
 #: Mark-rendering **structural** knobs that ride on a layer's ``style`` dict but
@@ -417,8 +503,17 @@ class Theme:
     per-layer style: the background facecolor, the default ink (text / axes /
     ticks color), the font family + sizes, whether gridlines show, and the default
     line / marker sizes.  Layers that carry no explicit ``color`` are auto-colored
-    from :attr:`palette` (the color cycle).  ``figsize`` / ``dpi`` are **not** on a
-    theme — they live in ``PlotSpec.meta`` (set by ``PlotSpec.size``).
+    from :attr:`palette` (the color cycle).
+
+    .. versionchanged:: 6.0
+        :attr:`figsize` / :attr:`dpi` / :attr:`layout_engine` **are** theme fields
+        now.  They used to live only in ``PlotSpec.meta`` (set by
+        :meth:`~tsdynamics.viz.spec.PlotSpec.size`), which meant the
+        ``"publication"`` theme produced matplotlib's default 6.4×4.8 in @ 100 dpi
+        figure — publication *ink* on a screenshot-resolution canvas.  A theme now
+        carries its output geometry too.  ``PlotSpec.meta["figsize"]`` /
+        ``meta["dpi"]`` still **win** when set (an explicit ``spec.size(...)`` beats
+        the theme); the theme is the default underneath.
 
     Parameters
     ----------
@@ -446,6 +541,21 @@ class Theme:
         Default line width, or ``None``.
     marker_size : float, optional
         Default marker size, or ``None``.
+    figsize : tuple of float, optional
+        Default figure size ``(width, height)`` in inches, or ``None`` for the
+        backend default.  Overridden by ``PlotSpec.meta["figsize"]``.
+    dpi : float, optional
+        Default output resolution (dots per inch), or ``None``.  Overridden by
+        ``PlotSpec.meta["dpi"]``.
+    layout_engine : {"constrained", "compressed", "tight"}, optional
+        The figure layout algorithm a renderer should apply.  ``None`` (default)
+        defers to the renderer's own default — which, since v6, is
+        ``"constrained"``, so axis labels are never clipped out of the artifact.
+    autostyle : bool, optional
+        Whether renderers may derive density-aware line resolution (thinner,
+        slightly transparent lines for a very densely sampled curve) when the
+        caller set no explicit ``linewidth`` / ``alpha``.  Default ``True``; set
+        ``False`` for a constant-width line at every sample count.
     """
 
     name: str = "default"
@@ -460,6 +570,25 @@ class Theme:
     grid_alpha: float | None = None
     line_width: float | None = None
     marker_size: float | None = None
+    figsize: tuple[float, float] | None = None
+    dpi: float | None = None
+    layout_engine: LayoutEngineName | None = None
+    autostyle: bool = True
+
+    def __dir__(self) -> list[str]:
+        """Expose the sixteen fields; hide the three construction/serialization helpers.
+
+        ``styling.md`` reads ``.palette`` ``.font_family`` ``.title_size``
+        ``.background`` ``.name`` straight off a theme, so every field stays.
+
+        :meth:`merged` leaves the listing because the **taught** derive route is
+        ``ts.viz.themes.register("mine", "dark", palette=(...))`` — one call that
+        derives *and* names *and* registers, which is what a user actually wants
+        and which ``merged`` alone does not do.  ``to_dict`` / ``from_dict`` are
+        the envelope's.  All three stay public and are what ``themes.register``
+        calls.
+        """
+        return dir_without(self, {"from_dict", "merged", "to_dict"})
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-friendly mapping of this theme."""
@@ -476,12 +605,17 @@ class Theme:
             "grid_alpha": None if self.grid_alpha is None else float(self.grid_alpha),
             "line_width": None if self.line_width is None else float(self.line_width),
             "marker_size": None if self.marker_size is None else float(self.marker_size),
+            "figsize": None if self.figsize is None else [float(v) for v in self.figsize],
+            "dpi": None if self.dpi is None else float(self.dpi),
+            "layout_engine": self.layout_engine,
+            "autostyle": bool(self.autostyle),
         }
 
     @classmethod
     def from_dict(cls, d: Mapping[str, Any]) -> Theme:
         """Rebuild a :class:`Theme` from :meth:`to_dict` output (tolerates missing keys)."""
         palette = d.get("palette")
+        figsize = d.get("figsize")
         return cls(
             name=d.get("name", "default"),
             palette=tuple(palette) if palette is not None else DEFAULT_PALETTE,
@@ -495,6 +629,10 @@ class Theme:
             grid_alpha=d.get("grid_alpha"),
             line_width=d.get("line_width"),
             marker_size=d.get("marker_size"),
+            figsize=(float(figsize[0]), float(figsize[1])) if figsize is not None else None,
+            dpi=d.get("dpi"),
+            layout_engine=cast("LayoutEngineName | None", d.get("layout_engine")),
+            autostyle=bool(d.get("autostyle", True)),
         )
 
     def merged(self, **overrides: Any) -> Theme:
@@ -617,6 +755,12 @@ def _build_builtin_themes() -> dict[str, Theme]:
             grid_alpha=0.5,
             line_width=1.5,
             marker_size=6.0,
+            # The point of the "publication" theme is publication *output*, not
+            # only publication ink: a single-column figure at print resolution.
+            # Without these it rendered at matplotlib's 6.4x4.8 in @ 100 dpi.
+            figsize=(5.0, 3.5),
+            dpi=300.0,
+            layout_engine="constrained",
         ),
     }
 
@@ -655,13 +799,17 @@ def get_theme(name: str | None = None) -> Theme:
 
     Raises
     ------
-    KeyError
+    tsdynamics.errors.InvalidParameterError
         If ``name`` is given but is not a registered theme.
     """
+    from tsdynamics.errors import InvalidParameterError
+
     if name is None:
         return THEMES[_ACTIVE]
     if name not in THEMES:
-        raise KeyError(f"unknown theme {name!r}; registered themes are {', '.join(themes())}")
+        raise InvalidParameterError(
+            f"unknown theme {name!r}; registered themes are {', '.join(themes())}"
+        )
     return THEMES[name]
 
 
@@ -679,22 +827,295 @@ def set_theme(theme: str | Theme) -> None:
 
     Raises
     ------
-    KeyError
+    tsdynamics.errors.InvalidParameterError
         If a *name* is given that is not a registered theme.
     """
+    from tsdynamics.errors import InvalidParameterError
+
     global _ACTIVE
     if isinstance(theme, Theme):
         register_theme(theme)
         _ACTIVE = theme.name
         return
     if theme not in THEMES:
-        raise KeyError(f"unknown theme {theme!r}; registered themes are {', '.join(themes())}")
+        raise InvalidParameterError(
+            f"unknown theme {theme!r}; registered themes are {', '.join(themes())}"
+        )
     _ACTIVE = theme
 
 
-def themes() -> list[str]:
-    """Return the sorted names of all registered themes (built-in + user)."""
-    return sorted(THEMES)
+class _ThemeRegistry:
+    """``ts.viz.themes`` — the theme registry, in the shared four-verb shape.
+
+    Every registry in the library answers to the same four verbs, so learning one
+    teaches the rest::
+
+        ts.viz.themes.names()          # what is there
+        ts.viz.themes.get("dark")      # one of them
+        ts.viz.themes.find(dark=True)  # the ones matching a filter
+        ts.viz.themes.register("lab", palette=(...), dpi=200)
+        ts.viz.themes.use("lab")       # ...and make it this session's default
+
+    ``register`` taking **keywords** is what removed the only reason
+    :class:`Theme` was ever exported (corollary C1: a name exported because a
+    signature demands it is a signature bug).  Measured before v6:
+    ``register_theme({...})`` gave ``AttributeError: 'dict' object has no
+    attribute 'name'`` and ``set_theme({...})`` a raw ``TypeError: cannot use
+    'dict' as a dict key``.
+
+    Calling the object (``ts.viz.themes()``) still returns the sorted name list,
+    so the pre-v6 spelling keeps working.
+    """
+
+    __slots__ = ()
+
+    def __call__(self) -> list[str]:
+        """Return the sorted theme names (the pre-v6 ``themes()`` spelling)."""
+        return self.names()
+
+    def names(self) -> list[str]:
+        """Return the sorted names of all registered themes (built-in + user)."""
+        return sorted(THEMES)
+
+    def get(self, name: str | None = None) -> Theme:
+        """Return a theme by name, or the active default when ``name`` is ``None``."""
+        return get_theme(name)
+
+    def find(self, what: str = "", /, **filters: Any) -> list[str]:
+        """Return the **names** of the themes matching a free-text query and filters.
+
+        The fourth shared registry verb, in the shape all four now have —
+        ``find(text, /, **filters) -> list[str]``::
+
+            ts.viz.themes.find("dark")        # free text over the name
+            ts.viz.themes.find(grid=True)     # by declared field
+
+        .. versionchanged:: 6.0
+            It took no positional argument (``themes.find("dark")`` was a
+            ``TypeError``) and returned :class:`Theme` objects while its three
+            siblings returned names — two of the four ways the "learn one, know
+            all four" promise was false.  ``get(name)`` is how you reach the
+            record, which is the same lesson everywhere.
+        """
+        unknown = [k for k in filters if not hasattr(Theme, k) and k not in Theme.__annotations__]
+        if unknown:
+            from tsdynamics.errors import InvalidParameterError
+
+            fields = ", ".join(sorted(Theme.__annotations__))
+            raise InvalidParameterError(
+                f"themes have no field {unknown[0]!r}; the fields are {fields}."
+            )
+        text = what.lower()
+        return [
+            name
+            for name, t in sorted(THEMES.items())
+            if (not text or text in name.lower())
+            and all(getattr(t, k, None) == v for k, v in filters.items())
+        ]
+
+    def register(self, name: str, theme: Theme | None = None, /, **fields: Any) -> Theme:
+        """Build (or derive) a theme, file it under ``name``, and return it.
+
+        Two spellings, one verb::
+
+            ts.viz.themes.register("lab", palette=("#264653", "#e76f51"), dpi=200)
+            ts.viz.themes.register("paper", ts.viz.themes.get("publication"),
+                                   font_family="Charter", dpi=600)
+
+        Parameters
+        ----------
+        name : str
+            The registry key; also the built theme's :attr:`Theme.name`.
+        theme : Theme, optional
+            A base to derive from.  ``None`` (default) starts from the built-in
+            ``"default"`` theme, so only the fields you name change.
+        **fields
+            :class:`Theme` fields to override.
+
+        Returns
+        -------
+        Theme
+            The registered theme.
+        """
+        from tsdynamics.errors import InvalidParameterError
+
+        base = theme if theme is not None else THEMES["default"]
+        if not isinstance(base, Theme):
+            raise InvalidParameterError(
+                f"the base of a theme must be a Theme (from ts.viz.themes.get(...)), not "
+                f"{type(base).__name__}; pass the fields as keywords instead: "
+                'ts.viz.themes.register("lab", palette=(...), dpi=200).'
+            )
+        unknown = sorted(set(fields) - set(Theme.__annotations__) - {"name"})
+        if unknown:
+            known = ", ".join(sorted(set(Theme.__annotations__) - {"name"}))
+            raise InvalidParameterError(
+                f"themes have no field {unknown[0]!r}; the fields are {known}."
+            )
+        built = base.merged(name=name, **fields)
+        register_theme(built)
+        return built
+
+    def use(self, theme: str | Theme) -> Theme:
+        """Make ``theme`` this session's default, and return it.
+
+        Raises
+        ------
+        tsdynamics.errors.InvalidParameterError
+            If a *name* is given that is not registered — naming the ones that are.
+        """
+        from tsdynamics.errors import InvalidParameterError
+
+        if isinstance(theme, str) and theme not in THEMES:
+            raise InvalidParameterError(
+                f"unknown theme {theme!r}; registered themes are {', '.join(self.names())}."
+            )
+        if not isinstance(theme, (str, Theme)):
+            raise InvalidParameterError(
+                f"use() takes a registered theme name or a Theme, not {type(theme).__name__}; "
+                'build one first with ts.viz.themes.register("lab", ...).'
+            )
+        set_theme(theme)
+        return get_theme()
+
+    def __contains__(self, name: object) -> bool:
+        """Whether ``name`` is a registered theme."""
+        return name in THEMES
+
+    def __repr__(self) -> str:
+        """List the registered themes and name the active one."""
+        active = get_theme().name
+        listed = ", ".join(f"*{n}" if n == active else n for n in self.names())
+        return f"ts.viz.themes: {listed}  (* = active; .use(name) to switch)"
+
+
+#: ``ts.viz.themes`` — the theme registry (also callable, returning the names).
+themes = _ThemeRegistry()
+
+
+class _StyleTable:
+    """``ts.viz.styles`` — the closed per-layer style vocabulary, and who honors it.
+
+    The answer to "what can I pass to ``color=``?" and "will plotly draw my
+    ``linestyle``?", printed::
+
+        >>> import tsdynamics as ts
+        >>> ts.viz.styles.names()[:3]
+        ['alpha', 'cmap', 'color']
+        >>> ts.viz.styles.get("linewidth").aliases
+        ('lw',)
+
+    The **same** vocabulary lands at every plotting door — ``ts.plot(...)``,
+    ``traj.plot(...)``, ``system.plot(...)`` and ``Plot.style(...)`` — plus the
+    aliases (``lw`` / ``c`` / ``ms`` / ``"--"`` / ``"o"``).
+    """
+
+    __slots__ = ()
+
+    def __call__(self) -> list[str]:
+        """Return the canonical style-key names (aliases excluded)."""
+        return self.names()
+
+    def names(self, *, aliases: bool = False) -> list[str]:
+        """Return the sorted canonical style keys, optionally including the aliases."""
+        return sorted(style_names()) if aliases else sorted(STYLE_KEYS)
+
+    def get(self, name: str) -> StyleKey:
+        """Return one :class:`StyleKey`, resolving an alias to its canonical key."""
+        canonical = _ALIAS_INDEX.get(name, name)
+        if canonical not in STYLE_KEYS:
+            from tsdynamics.errors import InvalidParameterError
+
+            raise InvalidParameterError(
+                f"unknown style key {name!r}; the vocabulary is "
+                f"{', '.join(self.names())} (plus aliases)."
+            )
+        return STYLE_KEYS[canonical]
+
+    def find(self, what: str = "", /, *, honored_by: str | None = None) -> list[str]:
+        """Return the **names** of the style keys matching a query and filters.
+
+        ``ts.viz.styles.find(honored_by="threejs")`` is the honest answer to "what
+        will actually change if I switch backend?" — the same declaration the
+        dispatcher's :class:`~tsdynamics.viz.render.caps.VisualizationDegraded`
+        warning is generated from.  ``ts.viz.styles.find("color")`` is free text
+        over the key name and its aliases.
+
+        .. versionchanged:: 6.0
+            Took no positional query and returned :class:`StyleKey` objects;
+            all four registries answer ``find(text, /, **filters) -> list[str]``
+            now, and ``get(name)`` is the one way to reach a record.
+        """
+        text = what.lower()
+        out = []
+        for name in sorted(STYLE_KEYS):
+            key = STYLE_KEYS[name]
+            if honored_by is not None and honored_by not in key.honored_by:
+                continue
+            if text and text not in name.lower() and not any(text in a for a in key.aliases):
+                continue
+            out.append(name)
+        return out
+
+    def register(self, name: str, *args: Any, **kwargs: Any) -> Any:
+        """Refuse, by name: the style vocabulary is **closed**, and says why.
+
+        The other four registries are extension points; this one is a *contract*.
+        Every :class:`StyleKey` declares ``honored_by`` — which backends genuinely
+        render it — and ``tests/test_viz_honoring_contract.py`` draws every claim
+        and inspects the artifact.  A key a user adds is honored by no backend, so
+        registering one would only buy a keyword that silently does nothing, which
+        is the exact defect ``normalize_style``'s drop-with-a-warning exists to
+        prevent.
+
+        Raises
+        ------
+        tsdynamics.errors.InvalidParameterError
+            Always — naming the two things that *are* extensible.
+        """
+        del args, kwargs
+        from tsdynamics.errors import InvalidParameterError, remedy
+
+        raise InvalidParameterError(
+            f"the style vocabulary is closed, so {name!r} cannot be registered: a style key "
+            "is a contract each backend must honor (StyleKey.honored_by), and one no "
+            "renderer draws would be a keyword that silently does nothing. What IS "
+            "extensible: a look (a theme) and a way of drawing (a primitive)."
+            + remedy(
+                "ts.viz.themes.register('mine', palette=('#264653', '#e76f51'))",
+                "ts.viz.primitives.register('mine', requires=('x', 'y'))",
+            )
+        )
+
+    def __iter__(self) -> Any:
+        """Iterate the canonical :class:`StyleKey` records, sorted by name."""
+        return iter(STYLE_KEYS[n] for n in sorted(STYLE_KEYS))
+
+    def __len__(self) -> int:
+        """Return how many canonical style keys there are."""
+        return len(STYLE_KEYS)
+
+    def __getitem__(self, name: str) -> StyleKey:
+        """``ts.viz.styles["lw"]`` — the same lookup as :meth:`get`."""
+        return self.get(name)
+
+    def __contains__(self, name: object) -> bool:
+        """Whether ``name`` is a style key or one of its aliases."""
+        return isinstance(name, str) and (name in STYLE_KEYS or name in _ALIAS_INDEX)
+
+    def __repr__(self) -> str:
+        """Render the vocabulary as a table: key, aliases, and who honors it."""
+        rows = ["ts.viz.styles — the style vocabulary (same at every plotting door)", ""]
+        width = max(len(n) for n in STYLE_KEYS)
+        for key in self:
+            alias = f"({', '.join(key.aliases)})" if key.aliases else ""
+            honored = ", ".join(sorted(key.honored_by)) or "nothing"
+            rows.append(f"  {key.name:<{width}} {alias:<12} honored by: {honored}")
+        return "\n".join(rows)
+
+
+#: ``ts.viz.styles`` — the style vocabulary table (also callable, returning names).
+styles = _StyleTable()
 
 
 def resolve_palette(p: str | Sequence[str]) -> tuple[str, ...]:

@@ -32,18 +32,32 @@ figure.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from ..._visibility import listing_dir
 from ...spec import Axis, PlotKind, PlotSpec
 
 if TYPE_CHECKING:
     import plotly.graph_objects as go
 
-__all__ = ["animated_html", "build_animated_figure"]
+__all__ = ["animated_html", "build_animated_figure", "playback_seconds"]
+
+__dir__ = listing_dir(__all__)
+
+
+def playback_seconds(anim: Any, n_samples: int) -> float:
+    """Delegate to :meth:`tsdynamics.viz.spec.Animation.playback_seconds` [M41].
+
+    Kept as a one-line adapter so this backend's call sites stay short; the
+    algebra lives in exactly one place now, shared with the three.js exporter.
+    """
+    return float(anim.playback_seconds(int(n_samples)))
+
 
 #: The real-time driver: a ``requestAnimationFrame`` loop that advances a comet by
 #: **streaming its trace buffers in place with ``Plotly.extendTraces``** (append the
@@ -363,7 +377,10 @@ def build_animated_figure(spec: PlotSpec) -> go.Figure:
         # Nothing to reveal — hand back a static figure (the final frame).
         from ._core import render as _static_render
 
-        static = PlotSpec.from_dict({**spec.to_dict(), "animation": None})
+        # ``dataclasses.replace`` clones the spec by reference; the old
+        # ``from_dict(to_dict())`` idiom round-tripped every float array through a
+        # dict just to drop one field.
+        static = dataclasses.replace(spec, animation=None)
         return _static_render(static)
 
     n = _sample_count(curves)
@@ -635,7 +652,10 @@ def animated_html(
     )
     curves = _curve_layers(spec)
     if not curves:  # nothing to animate — write the static figure
-        static = PlotSpec.from_dict({**spec.to_dict(), "animation": None})
+        # ``dataclasses.replace`` clones the spec by reference; the old
+        # ``from_dict(to_dict())`` idiom round-tripped every float array through a
+        # dict just to drop one field.
+        static = dataclasses.replace(spec, animation=None)
         if path is not None:
             return _write_html(
                 static, path, full_html=full_html is not False, include_plotlyjs=include_plotlyjs
@@ -672,7 +692,7 @@ def animated_html(
     _realtime_layout(fig, spec, three_d=three_d)
 
     # Speed: traverse the whole series in ~duration seconds at the browser's 60 fps.
-    duration = float(anim.duration) if anim.duration else 12.0
+    duration = playback_seconds(anim, n)
     stride = max(1, round(n / (duration * 60.0)))
     js = (
         _REALTIME_JS.replace("__LAYERS__", json.dumps(layers_meta))

@@ -18,7 +18,9 @@ use crate::{
     register_solver, Caps, Evaluator, ProblemKind, ProblemKinds, Solver, SolverState, StepOutcome,
 };
 
-use super::control::{combine, error_vector, scaled_rms, step_factor, RkWork, MIN_FACTOR};
+use super::control::{
+    combine, dense_poly, error_vector, scaled_rms, step_factor, RkWork, MIN_FACTOR,
+};
 
 // ---------------------------------------------------------------------------
 // FSAL (First Same As Last) reuse — shared by the FSAL kernels (rk45, tsit5, bs3)
@@ -134,6 +136,7 @@ pub(super) fn fsal_adaptive_step(
 ) -> StepOutcome {
     let dim = st.u.len();
     work.ensure(c.len(), dim);
+    work.invalidate_dense();
 
     // Stage 0: reuse the cached last stage of the previous accepted step when it
     // was taken at exactly this `(u, t)`, else evaluate `f(u, t)` afresh. Both
@@ -194,6 +197,9 @@ pub(super) fn fsal_adaptive_step(
         let last = c.len() - 1;
         let k_last = &work.k[last];
         fsal.store(k_last, &st.u, st.t);
+        // The stage buffers now describe an accepted step, so `interpolate` may
+        // read them until the next `step` call (debug-only guard).
+        work.validate_dense();
         StepOutcome::Accepted {
             h_next: h * step_factor(err, err_exponent),
         }
@@ -260,6 +266,62 @@ const E: &[f64] = &[
     -1.0 / 40.0,
 ];
 
+// Shampine's continuous extension of Dormand–Prince 5(4) — the dense-output
+// coefficients `P`, one row of four θ-powers per stage (lowest power first, no
+// constant term), evaluated by `control::dense_poly` as
+// `u(t₀ + θh) = u₀ + h·Σ_i k_i·(P[i][0]θ + P[i][1]θ² + P[i][2]θ³ + P[i][3]θ⁴)`.
+//
+// These are the exact rationals SciPy's `RK45.P` is built from (Shampine, *Math.
+// Comp.* **46** (1986) 135–150 — "Some practical Runge-Kutta formulas"), written
+// as literal quotients so the pinning test compares bit patterns rather than
+// re-typed decimals. Each row sums to the corresponding solution weight `B[i]`
+// (row 6 to 0), which is what makes θ = 1 reproduce the propagated solution.
+//
+// The continuous extension is order 4 (local error O(h⁵) at an interior point,
+// measured 4.96–5.00 under h-halving), i.e. one order below the propagated
+// solution's local O(h⁶) — the standard DP5 dense-output trade, and the same one
+// SciPy's `RK45.dense_output()` makes. It costs **zero** extra RHS evaluations:
+// it is a pure linear combination of the seven stages the step already computed.
+const P: &[&[f64]] = &[
+    &[
+        1.0,
+        -8048581381.0 / 2820520608.0,
+        8663915743.0 / 2820520608.0,
+        -12715105075.0 / 11282082432.0,
+    ],
+    &[0.0, 0.0, 0.0, 0.0],
+    &[
+        0.0,
+        131558114200.0 / 32700410799.0,
+        -68118460800.0 / 10900136933.0,
+        87487479700.0 / 32700410799.0,
+    ],
+    &[
+        0.0,
+        -1754552775.0 / 470086768.0,
+        14199869525.0 / 1410260304.0,
+        -10690763975.0 / 1880347072.0,
+    ],
+    &[
+        0.0,
+        127303824393.0 / 49829197408.0,
+        -318862633887.0 / 49829197408.0,
+        701980252875.0 / 199316789632.0,
+    ],
+    &[
+        0.0,
+        -282668133.0 / 205662961.0,
+        2019193451.0 / 616988883.0,
+        -1453857185.0 / 822651844.0,
+    ],
+    &[
+        0.0,
+        40617522.0 / 29380423.0,
+        -110615467.0 / 29380423.0,
+        69997945.0 / 29380423.0,
+    ],
+];
+
 // Controller exponent −1/(error_estimator_order + 1) with estimator order 4.
 const ERR_EXPONENT: f64 = -1.0 / 5.0;
 
@@ -312,7 +374,9 @@ impl Solver for Rk45 {
     }
 
     fn caps(&self) -> Caps {
-        Caps::explicit(ProblemKinds::of(ProblemKind::Ode)).adaptive()
+        Caps::explicit(ProblemKinds::of(ProblemKind::Ode))
+            .adaptive()
+            .with_dense()
     }
 
     fn step(&mut self, ev: &dyn Evaluator, st: &mut SolverState, h: f64) -> StepOutcome {
@@ -331,11 +395,29 @@ impl Solver for Rk45 {
             &mut self.fsal,
         )
     }
+
+    fn interpolate(&self, u0: &[f64], h: f64, theta: f64, out: &mut [f64]) -> bool {
+        // Valid only in the window between an accepted `step` and the next
+        // `step` call on this kernel, with the `u0`/`h` that step was taken
+        // from: `work.k` is overwritten by every trial, rejected ones included.
+        #[cfg(debug_assertions)]
+        debug_assert!(
+            self.work.dense_valid,
+            "interpolate() called outside the window of an accepted step"
+        );
+        if self.work.k.len() != P.len() || out.len() != u0.len() {
+            return false;
+        }
+        dense_poly(u0, h, theta, &self.work.k, P, out);
+        true
+    }
 }
 
 register_solver!(
     "rk45",
-    Caps::explicit(ProblemKinds::of(ProblemKind::Ode)).adaptive(),
+    Caps::explicit(ProblemKinds::of(ProblemKind::Ode))
+        .adaptive()
+        .with_dense(),
     || Box::new(Rk45::new())
 );
 
@@ -345,6 +427,117 @@ mod tests {
     use crate::explicit::testkit::{
         converges_at_order, fixed_propagate, integrate_adaptive, max_abs_diff, HarmonicEval,
     };
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// A wrapper that counts RHS evaluations through the `Evaluator` seam.
+    ///
+    /// `Evaluator: Sync`, so the counter is an [`AtomicUsize`].
+    struct Counting<'e> {
+        inner: &'e dyn Evaluator,
+        evals: AtomicUsize,
+    }
+
+    impl Evaluator for Counting<'_> {
+        fn dim(&self) -> usize {
+            self.inner.dim()
+        }
+        fn n_param(&self) -> usize {
+            self.inner.n_param()
+        }
+        fn n_scratch(&self) -> usize {
+            self.inner.n_scratch()
+        }
+        fn has_jacobian(&self) -> bool {
+            self.inner.has_jacobian()
+        }
+        fn eval(&self, u: &[f64], p: &[f64], t: f64, scratch: &mut [f64], deriv: &mut [f64]) {
+            self.evals.fetch_add(1, Ordering::Relaxed);
+            self.inner.eval(u, p, t, scratch, deriv);
+        }
+        fn eval_jac(
+            &self,
+            u: &[f64],
+            p: &[f64],
+            t: f64,
+            scratch: &mut [f64],
+            deriv: &mut [f64],
+            jac: &mut [f64],
+        ) {
+            self.inner.eval_jac(u, p, t, scratch, deriv, jac);
+        }
+    }
+
+    /// FSAL is a *performance* contract, and performance contracts are invisible
+    /// to the numerical tests: deleting the stage reuse changes no result, so the
+    /// whole suite would stay green while every adaptive run got ~17% more
+    /// expensive. This pins the eval count instead, which is exact and
+    /// machine-independent — unlike the criterion bench in `benches/kernels.rs`,
+    /// which measures the same saving in wall time and so can only be advisory.
+    ///
+    /// Dormand–Prince 5(4) has 7 stages. The first accepted step must evaluate
+    /// all 7; every later step that continues from the accepted point reuses the
+    /// cached last stage as its stage 0 and evaluates only 6.
+    #[test]
+    fn fsal_reuse_saves_one_rhs_eval_per_continued_step() {
+        let inner = HarmonicEval { omega: 1.0 };
+        let ev = Counting {
+            inner: &inner,
+            evals: AtomicUsize::new(0),
+        };
+        let mut solver = Rk45::new();
+        let mut st = SolverState::for_evaluator(&ev, vec![1.0, 0.0], 0.0, vec![]);
+
+        // A step small enough that the controller accepts it every time, so the
+        // count is deterministic.
+        let h = 1e-3;
+        assert!(matches!(
+            solver.step(&ev, &mut st, h),
+            StepOutcome::Accepted { .. }
+        ));
+        assert_eq!(
+            ev.evals.load(Ordering::Relaxed),
+            C.len(),
+            "the first step has no cached stage and must evaluate every stage"
+        );
+
+        for i in 1..5 {
+            assert!(matches!(
+                solver.step(&ev, &mut st, h),
+                StepOutcome::Accepted { .. }
+            ));
+            assert_eq!(
+                ev.evals.load(Ordering::Relaxed),
+                C.len() + i * (C.len() - 1),
+                "step {i} must reuse the previous step's last stage as its stage 0"
+            );
+        }
+    }
+
+    /// The reuse is keyed on the *point*, not on "did the last step accept?", so
+    /// re-seating the state must invalidate it — otherwise a `set_state` (or a
+    /// fresh integration from a new IC) would propagate a stale derivative.
+    #[test]
+    fn re_seating_the_state_invalidates_the_fsal_cache() {
+        let inner = HarmonicEval { omega: 1.0 };
+        let ev = Counting {
+            inner: &inner,
+            evals: AtomicUsize::new(0),
+        };
+        let mut solver = Rk45::new();
+        let mut st = SolverState::for_evaluator(&ev, vec![1.0, 0.0], 0.0, vec![]);
+        solver.step(&ev, &mut st, 1e-3);
+        let after_first = ev.evals.load(Ordering::Relaxed);
+
+        // Move the point somewhere the cache does not describe.
+        st.u = vec![0.0, 1.0];
+        st.t = 5.0;
+        solver.step(&ev, &mut st, 1e-3);
+        assert_eq!(
+            ev.evals.load(Ordering::Relaxed) - after_first,
+            C.len(),
+            "a re-seated point must recompute stage 0, not reuse a stale derivative"
+        );
+    }
 
     #[test]
     fn caps_are_explicit_adaptive_ode() {
@@ -466,5 +659,178 @@ mod tests {
             other => panic!("dim=0 should accept, got {other:?}"),
         }
         assert_eq!(st.t, 0.1);
+    }
+
+    // -----------------------------------------------------------------------
+    // Dense output (v6)
+    // -----------------------------------------------------------------------
+
+    /// **S1.** Pin every one of the 28 dense-output coefficients against the
+    /// published table, bit-for-bit.
+    ///
+    /// The precedent is `tsit5`'s `e_coefficients_match_table`, which caught a
+    /// real 5e-12 transcription typo. A dense-output coefficient is exactly the
+    /// kind of constant that can be wrong in the 11th digit and still pass every
+    /// convergence test, so pin the bits rather than an approximation. The
+    /// reference values are Shampine's DP5 continuous-extension rationals — the
+    /// same table SciPy's `RK45.P` is built from (verified bit-for-bit against
+    /// `scipy.integrate._ivp.rk.RK45.P` during development).
+    #[test]
+    fn dense_p_matrix_matches_published_coefficients() {
+        const P_TABLE: &[&[f64]] = &[
+            &[
+                1.0,
+                -8048581381.0 / 2820520608.0,
+                8663915743.0 / 2820520608.0,
+                -12715105075.0 / 11282082432.0,
+            ],
+            &[0.0, 0.0, 0.0, 0.0],
+            &[
+                0.0,
+                131558114200.0 / 32700410799.0,
+                -68118460800.0 / 10900136933.0,
+                87487479700.0 / 32700410799.0,
+            ],
+            &[
+                0.0,
+                -1754552775.0 / 470086768.0,
+                14199869525.0 / 1410260304.0,
+                -10690763975.0 / 1880347072.0,
+            ],
+            &[
+                0.0,
+                127303824393.0 / 49829197408.0,
+                -318862633887.0 / 49829197408.0,
+                701980252875.0 / 199316789632.0,
+            ],
+            &[
+                0.0,
+                -282668133.0 / 205662961.0,
+                2019193451.0 / 616988883.0,
+                -1453857185.0 / 822651844.0,
+            ],
+            &[
+                0.0,
+                40617522.0 / 29380423.0,
+                -110615467.0 / 29380423.0,
+                69997945.0 / 29380423.0,
+            ],
+        ];
+        assert_eq!(P.len(), P_TABLE.len());
+        assert_eq!(P.len(), C.len(), "one dense row per stage");
+        for (i, (row, want)) in P.iter().zip(P_TABLE).enumerate() {
+            assert_eq!(row.len(), 4, "row {i} must be a quartic in theta");
+            for (j, (&got, &w)) in row.iter().zip(want.iter()).enumerate() {
+                assert_eq!(got.to_bits(), w.to_bits(), "P[{i}][{j}] = {got}, want {w}");
+            }
+        }
+        // The structural identity that makes theta = 1 reproduce the propagated
+        // solution: each row sums to that stage's solution weight.
+        for (i, (row, &b)) in P.iter().zip(B).enumerate() {
+            let s: f64 = row.iter().sum();
+            assert!(
+                (s - b).abs() < 1e-15,
+                "row {i} sums to {s}, but B[{i}] = {b}"
+            );
+        }
+    }
+
+    /// **S2.** `interpolate` reproduces the step's own endpoints: `theta = 0` is
+    /// `u0` **bit-for-bit** (the polynomials carry no constant term, so the whole
+    /// sum is multiplied by zero), and `theta = 1` is the propagated solution to
+    /// a few ULP (the row-sum identity above, in floating point).
+    #[test]
+    fn interpolate_reproduces_the_step_endpoints() {
+        let ev = HarmonicEval { omega: 1.3 };
+        // Loose tolerances so the trial step is accepted outright: `interpolate`
+        // is only valid after an *accepted* step, and this test is about the
+        // interpolant, not the controller.
+        let mut s = Rk45::with_tolerances(1e-4, 1e-6);
+        let u0 = vec![0.7, -0.4];
+        let mut st = SolverState::for_evaluator(&ev, u0.clone(), 0.0, vec![]);
+        let h = 0.05;
+        assert!(matches!(
+            s.step(&ev, &mut st, h),
+            StepOutcome::Accepted { .. }
+        ));
+        let u_new = st.u.clone();
+
+        let mut out = vec![0.0; 2];
+        assert!(s.interpolate(&u0, h, 0.0, &mut out));
+        for (i, (&got, &want)) in out.iter().zip(&u0).enumerate() {
+            assert_eq!(got.to_bits(), want.to_bits(), "theta=0, component {i}");
+        }
+        assert!(s.interpolate(&u0, h, 1.0, &mut out));
+        for (i, (&got, &want)) in out.iter().zip(&u_new).enumerate() {
+            let ulps = (got - want).abs() / want.abs().max(f64::MIN_POSITIVE) / f64::EPSILON;
+            assert!(
+                ulps < 8.0,
+                "theta=1, component {i}: {got} vs {want} ({ulps} ulp)"
+            );
+        }
+    }
+
+    /// **S3.** The continuous extension is a genuine order-4 interpolant, i.e.
+    /// its *local* error at an interior point converges at `O(h⁵)` under
+    /// h-halving. (One order below the propagated solution's local `O(h⁶)` — the
+    /// standard DP5 dense-output trade, and the same one SciPy makes.)
+    ///
+    /// Reference-free: it needs only the analytic solution, so it cannot pass on
+    /// guessed coefficients.
+    #[test]
+    fn interpolate_is_a_fifth_order_local_extension() {
+        let ev = HarmonicEval { omega: 1.0 };
+        let hs = [0.4_f64, 0.1];
+        let mut errs = Vec::new();
+        for &h in &hs {
+            let mut s = Rk45::with_tolerances(1e18, 1e18); // accept any step
+            let u0 = vec![1.0, 0.0];
+            let mut st = SolverState::for_evaluator(&ev, u0.clone(), 0.0, vec![]);
+            assert!(matches!(
+                s.step(&ev, &mut st, h),
+                StepOutcome::Accepted { .. }
+            ));
+            let mut out = vec![0.0; 2];
+            let mut e: f64 = 0.0;
+            for j in 1..20 {
+                let theta = j as f64 / 20.0;
+                assert!(s.interpolate(&u0, h, theta, &mut out));
+                let t = theta * h;
+                e = e
+                    .max((out[0] - t.cos()).abs())
+                    .max((out[1] + t.sin()).abs());
+            }
+            errs.push(e);
+        }
+        let order = (errs[0] / errs[1]).ln() / (hs[0] / hs[1]).ln();
+        assert!(
+            order > 4.5,
+            "measured dense-output order {order:.2} (errors {errs:?}), expected ~5"
+        );
+    }
+
+    /// **S4.** Every kernel that does NOT advertise `Caps::dense` must return
+    /// `false` from `interpolate` — a registry-wide sweep, so a kernel that gains
+    /// an interpolant without the flag (or the flag without an interpolant) is
+    /// caught. Together with `registered_caps_match_instance_caps` this is what
+    /// makes `Caps::dense` a trustworthy gate for the whole dense-output feature.
+    #[test]
+    fn non_dense_kernels_return_false_from_interpolate() {
+        let u0 = [1.0, 0.0];
+        let mut out = [0.0; 2];
+        let mut checked = 0usize;
+        for reg in crate::registered() {
+            let s = (reg.make)();
+            if s.caps().dense {
+                continue;
+            }
+            assert!(
+                !s.interpolate(&u0, 0.1, 0.5, &mut out),
+                "{} reports Caps::dense = false but interpolate() returned true",
+                s.name()
+            );
+            checked += 1;
+        }
+        assert!(checked > 5, "the sweep saw only {checked} kernels");
     }
 }

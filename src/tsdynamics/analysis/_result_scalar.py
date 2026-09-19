@@ -14,7 +14,35 @@ from typing import Any, ClassVar
 import numpy as np
 
 from tsdynamics.analysis._result_base import AnalysisResult
-from tsdynamics.analysis._result_json import _jsonify
+from tsdynamics.analysis._result_json import _jsonify, _sig
+
+#: Analyses whose answer is a **rate**, so its unit depends on whether the
+#: subject's time is continuous: per unit time for a flow, per iteration for a
+#: map.  Printing the wrong one is a wrong answer, not a cosmetic slip — the two
+#: differ by the sampling interval (a factor of ~60 on a Lorenz run at dt=0.02).
+#:
+#: No SHIPPED analysis returns a scalar Lyapunov exponent since v6 round 6 —
+#: ``max_lyapunov`` was retired into ``lyapunov_spectrum(k=1)``, which returns a
+#: :class:`~tsdynamics.analysis.LyapunovSpectrum`.  Both spellings stay in the
+#: table because it is keyed on a ``meta`` STRING, so a hand-built
+#: ``ScalarResult`` carrying either one still renders and classifies correctly.
+_RATE_ANALYSES = frozenset({"lyapunov_spectrum", "max_lyapunov"})
+
+#: Fixed units for the analyses that return a bare number.  A result may always
+#: override by recording ``meta["unit"]`` at the call site; this table exists so
+#: the ones that ship today read correctly without touching their estimators.
+#: ``estimate_period`` is deliberately ABSENT: its unit is not a constant.  The
+#: estimator returns ``lag * step``, so the answer is in **samples** only when
+#: the data carried no time axis; on a ``Trajectory`` it is in time units, and
+#: the hardcoded word made the repr wrong by a factor of ``1/dt`` (100x on the
+#: library's own docstring example).  It records ``meta["unit"]`` instead.
+_UNITS: dict[str, str] = {
+    "optimal_delay": "samples",
+    "embedding_dimension": "",
+    "cao_dimension": "",
+    "false_nearest_neighbors": "",
+    "transient_time_field": "time units",
+}
 
 
 def _coerce_float(value: Any) -> float:
@@ -22,7 +50,7 @@ def _coerce_float(value: Any) -> float:
     return float(value)
 
 
-class _NumericOps:
+class _NumericOps(np.lib.mixins.NDArrayOperatorsMixin):
     """Mixin giving a result the full numeric protocol of ``float(self)``.
 
     A :class:`ScalarResult` wraps a bare ``float``/``int`` return so it can carry
@@ -37,7 +65,31 @@ class _NumericOps:
     :data:`NotImplemented` so Python falls back to *its* reflected operator — which
     is exactly how ``result == pytest.approx(x)`` resolves (approx then calls
     ``float(self)`` itself).
+
+    **Both halves are required (contract §4.2 rule 4).**  The spelled-out
+    operators above cover what a *Python* number does and are kept because
+    ``__array_ufunc__`` alone would break them: NumPy consults it only when NumPy
+    dispatches, and ``int.__mul__(result)`` returns :data:`NotImplemented`
+    without ever reaching NumPy, so ``result * 2`` and ``result + 1`` — which
+    work today — would start raising.  :class:`numpy.lib.mixins.NDArrayOperatorsMixin`
+    then fills in every operator *not* spelled out (``**``, ``//``, ``%``,
+    ``divmod``, the in-place forms) by routing it through
+    :meth:`__array_ufunc__`, which unwraps the result to its float and hands the
+    call back to NumPy.
     """
+
+    def __array_ufunc__(self, ufunc: Any, method: str, *inputs: Any, **kwargs: Any) -> Any:
+        """Unwrap every result operand to its float and defer to NumPy.
+
+        The single entry point :class:`numpy.lib.mixins.NDArrayOperatorsMixin`
+        routes its generated operators through, so ``result ** 2`` and
+        ``np.exp(result)`` both work and both return a plain NumPy value.
+        """
+        args = [float(x) if isinstance(x, _NumericOps) else x for x in inputs]
+        out = kwargs.get("out")
+        if out is not None:
+            kwargs["out"] = tuple(np.asarray(o) if isinstance(o, _NumericOps) else o for o in out)
+        return getattr(ufunc, method)(*args, **kwargs)
 
     def __float__(self) -> float:  # noqa: D105
         return _coerce_float(self.value)  # type: ignore[attr-defined]
@@ -160,7 +212,7 @@ class ScalarResult(_NumericOps, AnalysisResult):
 
     Wraps a bare ``float`` return (a maximal Lyapunov exponent, an entropy, a
     0--1-test ``K``, …) so it carries the :class:`AnalysisResult` surface —
-    ``.meta``, ``.summary()``, ``.to_dict()``, the ``.plot`` seam — while
+    ``.meta``, the readout ``repr``, ``.to_dict()``, the ``.plot`` seam — while
     ``float(result)`` and every comparison / arithmetic operator keep working via
     :class:`_NumericOps`, so it is a drop-in for the value it replaces.
 
@@ -178,7 +230,87 @@ class ScalarResult(_NumericOps, AnalysisResult):
 
     value: float = 0.0
 
-    def to_plot_spec(self, kind: str | None = None) -> Any:
+    # -- the readout ------------------------------------------------------
+
+    def _unit(self) -> str:
+        """Return the unit the number is quoted in (``""`` when dimensionless).
+
+        ``meta["unit"]`` wins when an estimator records one.  Otherwise a rate
+        (:data:`_RATE_ANALYSES`) is resolved against the subject's family — per
+        iteration for a map, per unit time for a flow — and everything else
+        reads :data:`_UNITS`.
+        """
+        unit = self.meta.get("unit") if self.meta else None
+        if unit:
+            return str(unit)
+        analysis = str(self.meta.get("analysis") or "") if self.meta else ""
+        if analysis in _RATE_ANALYSES:
+            family = self._subject_family()
+            if family == "map":
+                return "per iteration"
+            if family is None:
+                return ""
+            return "per unit time"
+        return _UNITS.get(analysis, "")
+
+    def _answer(self) -> str:
+        """Return ``= <value> ± <quantum> <unit>`` — the number, honestly precise.
+
+        Six significant figures is right for a number the estimator actually
+        resolved to six.  An estimator that *quantises* its answer — a
+        grid-derived distance, say — records the quantum on
+        ``meta["quantization"]``, and then the readout carries it: measured, the
+        minimal-fatal-shock ``resilience`` printed ``0.615385`` for a distance
+        that is exactly six grid cells and is biased ~8% high, alongside a
+        sibling in the same module printing ``49.4% ± 0.5%``.  Six digits on a
+        safety margin is an invitation to quote it.
+        """
+        unit = self._unit()
+        quantum = self.meta.get("quantization") if self.meta else None
+        if quantum is None:
+            return f"= {_sig(float(self), 6)}" + (f" {unit}" if unit else "")
+        return f"= {_sig(float(self), 3)} ± {_sig(float(quantum), 2)}" + (
+            f" {unit}" if unit else ""
+        )
+
+    def _details(self) -> tuple[str, ...]:
+        """Return the line that says where a quantised answer's ± comes from."""
+        reason = self.meta.get("quantization_reason") if self.meta else None
+        return (f"({reason})",) if reason else ()
+
+    def _interpretation(self) -> str | None:
+        r"""Name the dynamics when the number is a Lyapunov exponent.
+
+        Only a scalar Lyapunov exponent gets a verdict, and only against the same realised
+        floor :class:`~tsdynamics.analysis.LyapunovSpectrum` uses: a bare
+        ``lambda > 0`` test would call floating-point noise chaos.
+        """
+        chaotic = self.chaotic
+        if chaotic is None:
+            return None
+        return "→ chaotic (λ > 0)" if chaotic else "→ regular (λ ≤ 0)"
+
+    @property
+    def chaotic(self) -> bool | None:
+        r"""Whether the measured exponent says the dynamics is chaotic.
+
+        ``None`` — never ``False`` — when this scalar is not a Lyapunov exponent
+        (the only measurement that classifies) or is not finite, matching
+        :attr:`~tsdynamics.analysis.results.WadaResult.applicable`: a verdict is
+        reported only when it was measured.
+
+        Returns
+        -------
+        bool or None
+        """
+        if (self.meta.get("analysis") if self.meta else None) not in _RATE_ANALYSES:
+            return None
+        value = float(self)
+        if not np.isfinite(value):
+            return None
+        return bool(value > 0.0)
+
+    def __plot_spec__(self, kind: str | None = None) -> Any:
         """Describe the scalar as a one-point :class:`PlotSpec` (rarely plotted).
 
         A lone number has no natural figure; this emits a minimal
@@ -207,15 +339,43 @@ class CountResult(int, AnalysisResult):
     and slices arrays, it survives ``delay=result`` round-trips into estimators
     that type-check their arguments, and all integer arithmetic / comparisons work
     natively.  It *also* carries the :class:`AnalysisResult` surface — ``.meta`` /
-    ``.summary()`` / ``.to_dict()`` / the ``.plot`` seam.
+    the readout ``repr`` / ``.to_dict()`` / the ``.plot`` seam.
 
     Attributes
     ----------
     value : int
         The measured count (an alias for the integer itself).
+
+    .. versionchanged:: 6.0
+        ``dir()`` no longer lists the eleven members inherited from ``int``
+        (``bit_length``, ``to_bytes``, ``numerator``, …).  They are the *most*
+        of what a count's tab completion used to show and the *least* of what a
+        reader of an embedding delay wants; being an ``int`` is the contract, so
+        the MRO is untouched and every one of them still resolves and still
+        works.
     """
 
     _repr_fields: ClassVar[tuple[str, ...]] = ("value",)
+
+    #: The ``int`` protocol, inherited because being an ``int`` *is* this class's
+    #: contract (§4 "a result behaves as the plain thing it replaced") — and
+    #: noise on ``result.<TAB>``, where it outnumbered the answer 11 to 8.  A
+    #: listing edit only: ``tau.bit_length()`` and ``tau.numerator`` still work.
+    _HIDDEN_ATTRIBUTES: ClassVar[frozenset[str]] = frozenset(
+        {
+            "as_integer_ratio",
+            "bit_count",
+            "bit_length",
+            "conjugate",
+            "denominator",
+            "from_bytes",
+            "imag",
+            "is_integer",
+            "numerator",
+            "real",
+            "to_bytes",
+        }
+    )
 
     def __new__(cls, value: Any = 0, *, meta: Mapping[str, Any] | None = None) -> CountResult:
         """Construct the integer (``int.__new__``); ``meta`` is set in ``__init__``."""
@@ -230,14 +390,81 @@ class CountResult(int, AnalysisResult):
         """The measured count (the integer value itself)."""
         return int(self)
 
-    def __repr__(self) -> str:  # noqa: D105
-        return f"{type(self).__name__}({int(self)})"
+    def _unit(self) -> str:
+        """Return the unit the count is quoted in (``"samples"`` for a delay)."""
+        unit = self.meta.get("unit") if self.meta else None
+        if unit:
+            return str(unit)
+        return _UNITS.get(str(self.meta.get("analysis") or "") if self.meta else "", "")
 
-    def to_dict(self) -> dict[str, Any]:
-        """Return a JSON-friendly mapping of the value and provenance."""
-        return {"value": int(self), "meta": _jsonify(self.meta)}
+    def _answer(self) -> str:
+        """Return ``= <count> <unit>``."""
+        unit = self._unit()
+        return f"= {int(self)}" + (f" {unit}" if unit else "")
 
-    def to_plot_spec(self, kind: str | None = None) -> Any:
+    def __array__(self, dtype: Any = None, copy: bool | None = None) -> np.ndarray:
+        """Return the count as a 0-d **integer** array — a drop-in stays an ``int``.
+
+        The base :meth:`~tsdynamics.analysis._result_base.AnalysisResult.__array__`
+        goes through ``float(self)``, which would hand back ``float64`` and break
+        ``np.asarray(tau)`` as an index.
+        """
+        arr = np.asarray(int(self))
+        if dtype is not None:
+            arr = arr.astype(dtype, copy=bool(copy))
+        elif copy:
+            arr = arr.copy()
+        return arr
+
+    #: ``int.__repr__`` sits ahead of :class:`AnalysisResult` in the MRO, so the
+    #: shared headline repr has to be claimed explicitly — otherwise a count
+    #: reprs as a bare ``9`` and the console never says *what* was measured.
+    __repr__ = AnalysisResult.__repr__
+
+    def __str__(self) -> str:
+        """Return the plain integer text — a count **is** its number.
+
+        The one deliberate exception to "``str`` is the headline".  A
+        :class:`CountResult` is an ``int`` subclass whose whole point is being a
+        drop-in, and ``int.__str__ is object.__str__``, so without this override
+        ``f"tau={c}"`` renders ``tau=CountResult(28)``.  That output is committed
+        to the repository, inside
+        ``docs/assets/figures/analysis/embedding.svg``.
+        """
+        return repr(int(self))
+
+    def __format__(self, spec: str) -> str:
+        """Format as an ``int``, falling back to ``float`` for float codes.
+
+        ``f"{tau:d}"`` and ``f"{tau:>4}"`` keep integer semantics; ``f"{tau:.3f}"``
+        formats the same number as a float instead of raising.
+        """
+        if not spec:
+            return str(self)
+        try:
+            return int.__format__(self, spec)
+        except (TypeError, ValueError):
+            return format(float(self), spec)
+
+    def to_dict(self, full: bool = False) -> dict[str, Any]:
+        """Return a JSON-friendly mapping of the value and provenance.
+
+        Parameters
+        ----------
+        full : bool, default False
+            Also emit the derived quantities (here: the ``unit`` the count is
+            quoted in).
+        """
+        data = {"value": int(self), "meta": _jsonify(self.meta)}
+        if full:
+            data.update({k: _jsonify(v) for k, v in self._full_extras().items()})
+        return data
+
+    def _derived(self) -> dict[str, Any]:
+        """Return the unit the repr quotes, so an export can carry it too."""
+        return {"unit": self._unit()}
+
+    def __plot_spec__(self, kind: str | None = None) -> Any:
         """Describe the count as a one-point :class:`PlotSpec` (rarely plotted)."""
         from . import _plotbuilder as pb
 

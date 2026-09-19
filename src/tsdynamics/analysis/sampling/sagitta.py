@@ -17,9 +17,11 @@ local chord, used e.g. as a ``color_by`` field).  The result container
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import ClassVar
 
 import numpy as np
 
+from tsdynamics.analysis._common import reject_system
 from tsdynamics.analysis.embedding import embedding_dimension, optimal_delay
 from tsdynamics.errors import invalid_value
 
@@ -48,11 +50,19 @@ class SagittaDt:
         The percentile used (kept for inspection).
     epsilon : float
         The geometric tolerance used (kept for inspection).
-    searched_ms : numpy.ndarray
-        The candidate strides evaluated during the search.
     notes : str
         Informational / warning text (e.g. embedding parameters for 1-D input).
+
+    .. versionchanged:: 6.0
+        ``searched_ms`` is off ``dir()`` (it still resolves).  It is the
+        *search's* own scratch — every candidate stride the selector tried on the
+        way to :attr:`stride` — and reading a solver's trial list off the answer
+        it returned is debugging, not use.
     """
+
+    #: The candidate strides the search walked through: a trace of how the
+    #: answer was found, not part of it.  Contract §11.3.
+    _HIDDEN_ATTRIBUTES: ClassVar[frozenset[str]] = frozenset({"searched_ms"})
 
     delta_t: float  # Δt* = stride * base_dt
     stride: int  # stride m*
@@ -62,6 +72,16 @@ class SagittaDt:
     epsilon: float  # tolerance used (kept for backward-compat)
     searched_ms: np.ndarray  # candidate strides evaluated
     notes: str = ""  # info / warnings
+
+    def __dir__(self) -> list[str]:
+        """List the fields a caller reads, minus :attr:`_HIDDEN_ATTRIBUTES`.
+
+        :class:`SagittaDt` is not an
+        :class:`~tsdynamics.analysis._result_base.AnalysisResult` (it is a
+        sampling *tool*'s return, not a quantifier's), so it carries its own copy
+        of the one-line curation the result layer applies.  A listing edit only.
+        """
+        return sorted(set(super().__dir__()) - self._HIDDEN_ATTRIBUTES)
 
 
 def _sagitta_chord(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -162,6 +182,7 @@ def sagitta_profile(
     np.ndarray, shape (n,)
         The per-point sagitta, aligned to ``samples``.
     """
+    reject_system(samples, analysis="sagitta_profile")
     s = np.asarray(samples, dtype=float)
     if s.ndim == 1:
         s = s[:, None]
@@ -233,7 +254,9 @@ def estimate_dt_from_sagitta(
     min_points_per_segment: int = 3,
     search_growth: float = 1.5,
 ) -> SagittaDt:
-    r"""Sagitta-based output-step :math:`\Delta t^\ast` selector.
+    r"""Output dt that keeps the drawn bow under epsilon.
+
+    The sagitta-based output-step :math:`\Delta t^\ast` selector.
 
     A derivative-free, scale-invariant, idempotent heuristic for the output
     sampling step.  For a range of candidate strides it measures the *sagitta* —
@@ -368,6 +391,7 @@ def estimate_dt_from_sagitta(
         use_relative = needs_embedding
 
     # -------- per-feature σ-normalization (scale invariance) --------
+    reject_system(y, analysis="estimate_dt_from_sagitta")
     y = np.asarray(y, dtype=float)
     feature_std = y.std(axis=0, ddof=1)
     feature_std[~np.isfinite(feature_std) | (feature_std == 0.0)] = 1.0

@@ -46,7 +46,7 @@ $$
 
 Comparisons across method variants (Geist, Parlitz & Lauterborn 1990)
 established this as the robust default, and it is what TSDynamics uses for
-maps (`DiscreteMap.lyapunov_spectrum`, `TangentSystem`) with the exact
+maps (the compiled QR tangent-map kernel behind `TangentSystem`) with the exact
 `_jacobian` at every iterate.
 
 ## What each family actually solves
@@ -65,17 +65,18 @@ maps (`DiscreteMap.lyapunov_spectrum`, `TangentSystem`) with the exact
 
 - **DDEs** — the tangent space of a delay system is the
   **infinite-dimensional** history space $C([-\tau_{\max}, 0])$; there is
-  a full spectrum of infinitely many exponents. `DelaySystem.lyapunov_spectrum`
+  a full spectrum of infinitely many exponents. The DDE estimator
   approximates the leading few by building an *extended* delay system — the base
   state plus deviation states whose dynamics are the symbolic variational
   equations — and integrating it on the engine in delay-window chunks, with a
-  function-space QR over the deviation history segment. This is why `n_exp` must
+  function-space QR over the deviation history segment. This is why `k` must
   be chosen consciously, why the estimates converge more slowly than ODE ones,
   and why `TangentSystem` refuses delay systems outright.
 
 ## The two-trajectory estimator
 
-`max_lyapunov` implements the older and simpler estimator (Benettin,
+`lyapunov_spectrum` falls back to the older and simpler estimator when the
+system carries no Jacobian to differentiate (Benettin,
 Galgani & Strelcyn 1976): evolve the system and a copy displaced by
 $d_0$, measure the separation $d$ after a short interval, accumulate
 $\ln(d/d_0)$, renormalize the displacement back to $d_0$, repeat. It

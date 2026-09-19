@@ -40,6 +40,7 @@ class Sakarya(ContinuousSystem):
         "s": 1.0,
     }
     dim = 3
+    variables = ("x", "y", "z")
 
     @staticmethod
     def _equations(Y, t, *, a, b, c, h, p, q, r, s):
@@ -92,6 +93,7 @@ class Bouali2(ContinuousSystem):
     doi = "10.1142/s0218127499000535"
     params = {"a": 3.0, "b": 2.2, "bb": 0.0, "c": 0.0, "g": 1.0, "m": -0.0026667, "y0": 1.0}
     dim = 3
+    variables = ("x", "y", "z")
     default_ic = [-0.7939, 1.3618, -0.0306]
 
     @staticmethod
@@ -137,6 +139,7 @@ class LuChenCheng(ContinuousSystem):
     doi = "10.1142/s021812740401014x"
     params = {"a": -10, "b": -4, "c": 18.1}
     dim = 3
+    variables = ("x", "y", "z")
 
     @staticmethod
     def _equations(Y, t, *, a, b, c):
@@ -181,6 +184,7 @@ class LuChen(ContinuousSystem):
     doi = "10.1142/s0218127402004620"
     params = {"a": 36, "b": 3, "c": 18}
     dim = 3
+    variables = ("x", "y", "z")
 
     @staticmethod
     def _equations(Y, t, *, a, b, c):
@@ -226,6 +230,7 @@ class QiChen(ContinuousSystem):
     doi = "10.1016/j.chaos.2006.09.012"
     params = {"a": 38, "b": 2.666, "c": 80}
     dim = 3
+    variables = ("x", "y", "z")
 
     @staticmethod
     def _equations(Y, t, *, a, b, c):
@@ -270,6 +275,7 @@ class ZhouChen(ContinuousSystem):
     doi = "10.1142/s0218127404010175"
     params = {"a": 2.97, "b": 0.15, "c": -3.0, "d": 1, "e": -8.78}
     dim = 3
+    variables = ("x", "y", "z")
 
     @staticmethod
     def _equations(Y, t, *, a, b, c, d, e):
@@ -314,6 +320,7 @@ class BurkeShaw(ContinuousSystem):
     doi = "10.1515/zna-1981-0115"
     params = {"e": 13, "n": 10}
     dim = 3
+    variables = ("x", "y", "z")
 
     @staticmethod
     def _equations(Y, t, *, e, n):
@@ -360,6 +367,7 @@ class Chen(ContinuousSystem):
 
     params = {"a": 35, "b": 3, "c": 28}
     dim = 3
+    variables = ("x", "y", "z")
     reference = "Chen & Ueta (1999), Int. J. Bifurcation Chaos 9, 1465-1466"
     doi = "10.1142/s0218127499001024"
     # Canonical Chen attractor (a=35, b=3, c=28). The Lyapunov spectrum is
@@ -372,9 +380,9 @@ class Chen(ContinuousSystem):
         "ic": (-0.1, 0.5, -0.6),
         "kwargs": {
             "dt": 0.02,
-            "burn_in": 50.0,
+            "transient": 50.0,
             "final_time": 300.0,
-            "method": "dop853",
+            "solver": "dop853",
             "rtol": 1e-9,
             "atol": 1e-12,
         },
@@ -425,6 +433,7 @@ class ChenLee(ContinuousSystem):
     doi = "10.1016/j.chaos.2003.12.034"
     params = {"a": 5, "b": -10, "c": -0.38}
     dim = 3
+    variables = ("x", "y", "z")
 
     @staticmethod
     def _equations(Y, t, *, a, b, c):
@@ -469,6 +478,7 @@ class WangSun(ContinuousSystem):
     doi = "10.1590/s0103-97332009000500007"
     params = {"a": 0.2, "b": -0.01, "d": -0.4, "e": -1.0, "f": -1.0, "q": 1.0}
     dim = 3
+    variables = ("x", "y", "z")
 
     @staticmethod
     def _equations(Y, t, *, a, b, d, e, f, q):
@@ -516,6 +526,7 @@ class YuWang(ContinuousSystem):
     doi = "10.48084/etasr.86"
     params = {"a": 10, "b": 40, "c": 2, "d": 2.5}
     dim = 3
+    variables = ("x", "y", "z")
 
     @staticmethod
     def _equations(Y, t, *, a, b, c, d):
@@ -562,6 +573,7 @@ class YuWang2(ContinuousSystem):
     doi = "10.48084/etasr.86"
     params = {"a": 10, "b": 30, "c": 2, "d": 2.5}
     dim = 3
+    variables = ("x", "y", "z")
 
     @staticmethod
     def _equations(Y, t, *, a, b, c, d):
@@ -603,6 +615,7 @@ class SanUmSrisuchinwong(ContinuousSystem):
     doi = "10.4304/jcp.7.4.1041-1047"
     params = {"a": 2}
     dim = 3
+    variables = ("x", "y", "z")
 
     @staticmethod
     def _equations(Y, t, *, a):
@@ -652,6 +665,7 @@ class DequanLi(ContinuousSystem):
     doi = "10.1016/j.physleta.2007.07.045"
     params = {"a": 40, "c": 1.833, "d": 0.16, "eps": 0.65, "f": 20, "k": 55}
     dim = 3
+    variables = ("x", "y", "z")
 
     @staticmethod
     def _equations(Y, t, *, a, c, d, eps, f, k):
@@ -713,30 +727,85 @@ class LiuChen(Sakarya):
 
 
 class PanXuZhou(DequanLi):
-    """Pan–Xu–Zhou three-dimensional chaotic attractor.
+    r"""Pan–Xu–Zhou (Pan) three-dimensional chaotic attractor.
 
     A Lorenz-family quadratic flow sharing the :class:`DequanLi` functional form
     (``x' = a y - a x + d x z``; ``y' = k x + f y - x z``;
     ``z' = c z + x y - eps x^2``).  At the Pan–Xu–Zhou parameters the extra
-    ``x*z`` / ``x**2`` terms vanish (``d = eps = f = 0``), reducing it to a
-    compact single-scroll chaotic attractor.
+    ``x*z`` / ``x**2`` terms vanish (``d = eps = f = 0``), leaving the compact
+    Lorenz-like form
+
+    .. math::
+
+        x' = a (y - x), \quad y' = k x - x z, \quad z' = c z + x y ,
+
+    whose attractor has two scrolls symmetric under
+    :math:`(x, y, z) \mapsto (-x, -y, z)`.  It differs from Lorenz only in the
+    missing ``-y`` damping of the ``y`` channel, which the original paper argues
+    makes it topologically non-equivalent to the Lorenz system.
 
     Parameters
     ----------
     a, c, d, eps, f, k : float
         As in :class:`DequanLi`.
+
+    Notes
+    -----
+    **Deviation from the cited source.**  This class ships ``k = 28``.  The
+    cited paper — and the ``dysts`` catalogue entry derived from it — use
+    ``k = 16``.  **At the published ``k = 16`` this system is not chaotic**, so
+    the default was moved rather than shipping a system that contradicts its own
+    description.  Three independent checks agree:
+
+    1. *Linear stability.*  With ``b = -c`` the two non-trivial equilibria sit
+       at :math:`(\pm\sqrt{bk},\, \pm\sqrt{bk},\, k)`, and the Routh–Hurwitz
+       condition on the characteristic polynomial
+       :math:`\lambda^3 + (a+b)\lambda^2 + (ab + bk)\lambda + 2abk` makes them
+       *stable* for
+
+       .. math::
+
+           k < \frac{a\,(a + b)}{a - b} = 17.2729 \quad (a = 10,\ b = 8/3),
+
+       so ``k = 16`` lies **below** the Hopf threshold.
+    2. *Eigenvalues.*  At ``k = 16`` the equilibria are
+       :math:`(\pm 6.532, \pm 6.532, 16)` with spectrum
+       :math:`-12.557,\; -0.0548 \pm 8.243 i` — a stable focus.
+    3. *Measured Lyapunov spectrum.*  A variational-QR run at ``k = 16``
+       (``final_time=3000``, ``dt=0.005``, ``transient=1000``) returns
+       :math:`(-0.0548,\, -0.0548,\, -12.557)` — no positive exponent and no
+       zero exponent; it has converged onto the focus above, not onto an
+       attractor.
+
+    At the shipped ``k = 28`` the same measurement gives
+    :math:`(0.999,\, 0.000,\, -13.666)` — one positive, one zero, and the sum
+    matching the constant divergence :math:`-(a - f) + c = -12.667` exactly —
+    from every initial condition tried (five random draws from
+    :math:`[-10, 10]^3`, all landing on the same attractor).  Pass
+    ``params={"k": 16.0}`` to recover the published, non-chaotic parameters.
     """
 
     reference = "Zhou, Wuneng et al. (2008), Phys. Lett. A 372, 5773-5777"
     doi = "10.1016/j.physleta.2008.07.032"
-    params = {"a": 10.0, "c": -2.6667, "d": 0.0, "eps": 0.0, "f": 0.0, "k": 16.0}
+    # k = 28 (not the paper's 16, which is below the Hopf threshold ~17.27 and
+    # decays to a stable focus — see Notes).
+    params = {"a": 10.0, "c": -2.6667, "d": 0.0, "eps": 0.0, "f": 0.0, "k": 28.0}
     default_ic = [-3.038, -1.9805, 14.6567]
+    known_lyapunov = {
+        "spectrum": (1.0, 0.0, -13.67),
+        "atol": (0.15, 0.05, 0.2),
+        "kwargs": {"final_time": 3000.0, "dt": 0.005, "transient": 1000.0},
+        "source": (
+            "measured; the sum is pinned analytically by the constant divergence "
+            "-(a - f) + c = -12.667"
+        ),
+    }
 
 
 class Tsucs2(DequanLi):
     """Three-Scroll Unified Chaotic System 2 (TSUCS-2).
 
-    A three-scroll chaotic system in the :class:`DequanLi` family
+    A member of the :class:`DequanLi` family
     (``x' = a y - a x + d x z``; ``y' = k x + f y - x z``;
     ``z' = c z + x y - eps x^2``) at the TSUCS-2 parameters (``k = 0``), a
     unified model that contains several three-scroll attractors as special
@@ -746,9 +815,58 @@ class Tsucs2(DequanLi):
     ----------
     a, c, d, eps, f, k : float
         As in :class:`DequanLi`.
+
+    Warning
+    -------
+    **At the published parameters this system is quasi-periodic, not chaotic.**
+    Unlike :class:`PanXuZhou`, the shipped values here are **unchanged** from the
+    reference, and the attractor they produce is bounded, large
+    (``|x| <~ 68.5``, ``|y| <~ 66.6``, ``|z| <~ 74.8``) and visually
+    three-scroll-like — but it is a 2-torus, not a strange attractor.  The
+    measured Lyapunov spectrum is ``(0.000, 0.000, -1.497)`` — two zero
+    exponents — from every initial
+    condition tried (``final_time=3000``, ``dt=0.002``, ``transient=1000``), on
+    both the engine QR estimator and an independent two-trajectory Benettin run
+    at ``rtol = 1e-10``.  Lowering ``f`` restores chaos (``f = 10`` measures
+    ``(0.492, 0.000, -2.727)``), but no literature source for a chaotic TSUCS-2
+    parameter set could be verified, so the published values are kept rather
+    than silently replaced.  Treat any "chaotic" quantity computed from the
+    defaults with suspicion.
     """
 
     reference = "Pan, Zhou & Li (2013), Nonlinear Dyn. 73, 1965-1976"
     doi = "10.1007/s11071-013-0922-8"
     params = {"a": 40.0, "c": 0.833, "d": 0.5, "eps": 0.65, "f": 20.0, "k": 0.0}
     default_ic = [1.297, 1.1214, 50.029]
+
+
+__all__ = [
+    "Bouali",
+    "Bouali2",
+    "BurkeShaw",
+    "Chen",
+    "ChenLee",
+    "DequanLi",
+    "LiuChen",
+    "LuChen",
+    "LuChenCheng",
+    "PanXuZhou",
+    "QiChen",
+    "Sakarya",
+    "SanUmSrisuchinwong",
+    "Tsucs2",
+    "WangSun",
+    "YuWang",
+    "YuWang2",
+    "ZhouChen",
+]
+
+
+def __dir__() -> list[str]:
+    """Expose only the catalogue classes (``__all__``) to ``dir()`` / autocomplete.
+
+    ``__all__`` governs ``import *`` and nothing else, so without this the module
+    also offers every helper it imported — SymEngine's ``sin``/``cos``/``exp``,
+    ``numpy`` — as though they were part of this library's surface.
+    """
+    return sorted(__all__)

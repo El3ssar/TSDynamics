@@ -1,7 +1,7 @@
 """Diff- and registry-aware test selection for fast, change-scoped CI.
 
 The bulk suite is *registry-driven*: most tests are parametrized over every
-built-in system (151 today) or every registered analysis/transform, so a run of
+built-in system (171 today) or every registered analysis, so a run of
 the whole ``not full`` tier is thousands of items.  On a PR that only touches one
 system or one analysis area, almost all of that work is irrelevant — yet the old
 CI ran it all, on a 2×2 matrix, twice.  This module narrows a run to the tests a
@@ -32,10 +32,33 @@ Selection model
      as a wheel or editable);
    * a changed ``src/tsdynamics/analysis/<area>/…`` → run that area's test
      files (``_AREA_TESTS``);
-   * a changed ``transforms``/``viz`` source file → that surface's tests;
+   * a changed ``benchmarks/…`` file → the harness gate that imports it
+     (``_AREA_TESTS["benchmarks"]``);
+   * a changed ``viz`` source file → **every** ``test_viz_*.py`` (discovered by
+     glob, not hand-listed) plus the viz tests that do not carry that prefix
+     (``_VIZ_EXTRA_TESTS``);
+   * a changed **documentation** path → the tests that *execute* it
+     (``_docs_gate_tests``; see "Documentation is executable" below);
    * a cheap set of registry/layout **guard** tests always runs in scoped mode;
-   * documentation / planning / tooling paths are ignored (no test impact);
+   * planning / editor / issue-template paths are ignored (no test impact);
    * **any path that matches none of the above escalates to a full run.**
+
+Documentation is executable
+---------------------------
+``docs/`` used to be listed as having "no bearing on the test suite", alongside
+``*.md``, ``README.md`` and ``mkdocs.yml``.  That was false the day the doctest
+gate was inverted (v6, ``docs-truth``): ``tests/test_doctests.py`` **runs** every
+runnable ``python`` fence on every ``docs/**.md`` page under
+``filterwarnings = error``, parses ``mkdocs.yml``'s exclusion block, and checks
+the catalogue counts written in ``README.md`` / ``CLAUDE.md`` / ``mkdocs.yml``
+against the live registry.  Measured before this rule existed,
+``classify(['docs/analysis/lyapunov.md'])`` selected three cheap registry guards
+and **not** ``test_doctests.py`` — so a docs-only PR could break every example on
+a page and go green, with the failure deferred to the merge or the nightly.
+
+``docs/_tooling/`` is worse than prose: it is *code the suite imports* — the
+gallery builder, the golden-figure corpus, and ``editorial.json`` (read by
+``test_catalogue_dynamics.py``) — so it selects those gates too.
 
 The result is a :class:`Plan`.  ``conftest`` turns it into deselections and
 prints exactly what it kept and why (``[changed-select] …``).
@@ -50,6 +73,7 @@ ambiguous case above resolves to running more, never fewer, tests.
 
 from __future__ import annotations
 
+import contextlib
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
@@ -81,8 +105,6 @@ _FOUNDATIONAL_FILES: frozenset[str] = frozenset(
         "src/tsdynamics/plugins.py",
         "src/tsdynamics/analysis/__init__.py",
         "src/tsdynamics/analysis/_result.py",
-        "src/tsdynamics/transforms/__init__.py",
-        "src/tsdynamics/transforms/_common.py",
         "tests/conftest.py",
         "tests/_engine_marker.py",
         "tests/_strategies.py",
@@ -97,23 +119,59 @@ _FOUNDATIONAL_FILES: frozenset[str] = frozenset(
 #: Analysis leaf area (``src/tsdynamics/analysis/<area>/``) → its test files.
 #: A changed area not listed here escalates to a full run (and the guard test
 #: ``tests/test_changed_select.py`` flags the omission).
+#:
+#: ``"benchmarks"`` is the one non-analysis key: ``benchmarks/analysis_bench.py``
+#: is not importable as a package but *is* imported by path from
+#: ``test_perf_regression.py``, so editing the harness must select the test that
+#: exercises it rather than escalating the whole suite.
 _AREA_TESTS: dict[str, tuple[str, ...]] = {
-    "entropy": ("test_entropy.py", "test_property_entropy.py"),
+    "benchmarks": ("test_perf_regression.py",),
     "dimensions": (
         "test_dimensions.py",
         "test_property_dimensions.py",
         "test_boxcount_origin.py",
         "test_fixedmass_digamma.py",
         "test_gendim_negative_q.py",
+        "test_audit_WP2_dimensions_corr.py",
     ),
-    "embedding": ("test_embedding.py", "test_property_embedding.py", "test_embedding_theiler.py"),
-    "recurrence": ("test_recurrence.py", "test_property_recurrence.py"),
-    "surrogate": ("test_surrogate.py", "test_property_surrogate.py"),
-    "chaos": ("test_chaos.py",),
-    "fixedpoints": ("test_fixed_points.py", "test_fixed_points_flow_region.py"),
-    "orbits": ("test_orbits.py", "test_orbit_diagram_perf.py", "test_poincare_perf.py"),
-    "basins": ("test_basins.py",),
-    "sampling": ("test_analysis_sagitta.py",),
+    "embedding": (
+        "test_embedding.py",
+        "test_property_embedding.py",
+        "test_embedding_theiler.py",
+        "test_audit_WP7_embedding.py",
+    ),
+    "recurrence": (
+        "test_recurrence.py",
+        "test_property_recurrence.py",
+    ),
+    "chaos": (
+        "test_chaos.py",
+        "test_gali_ic_policy.py",
+        "test_audit_WP9_chaos_zeroone.py",
+    ),
+    "fixedpoints": (
+        "test_fixed_points.py",
+        "test_fixed_points_flow_region.py",
+        "test_audit_WP4_fixedpoints.py",
+    ),
+    "orbits": (
+        "test_orbits.py",
+        "test_orbit_diagram_perf.py",
+        "test_poincare_api.py",
+        "test_poincare_perf.py",
+        "test_audit_WP8_orbits.py",
+    ),
+    "basins": (
+        "test_basins.py",
+        "test_basin_kernel.py",
+        "test_basins_diverged_policy.py",
+        "test_resilience_edge.py",
+        "test_audit_WP10_basins.py",
+    ),
+    "sampling": (
+        "test_analysis_sagitta.py",
+        "test_audit_WP5_sagitta.py",
+    ),
     # Lyapunov is cross-cutting (the spectrum feeds the known-value catalogue),
     # so it pulls its dedicated tests *and* the literature catalogue.
     "lyapunov": (
@@ -121,20 +179,98 @@ _AREA_TESTS: dict[str, tuple[str, ...]] = {
         "test_variational.py",
         "test_dde_lyapunov.py",
         "test_known_values.py",
+        "test_map_lyapunov_kernel.py",
+        "test_audit_WP1_results_lyap.py",
     ),
 }
 
-_TRANSFORM_TESTS: tuple[str, ...] = ("test_transforms.py", "test_property_transforms.py")
-_VIZ_TESTS: tuple[str, ...] = (
+#: The result-surface gate, appended to **every** analysis area below.
+#:
+#: ``tests/test_result_visibility.py`` pins what ``result.<TAB>`` shows, class by
+#: class, and the declarations it pins (``_HIDDEN_ATTRIBUTES`` /
+#: ``_extra_attribute_names``) live in the *area* modules — ``recurrence/rqa.py``,
+#: ``dimensions/_common.py``, ``lyapunov/from_data.py`` and seven more — not in
+#: the shared ``_result*.py`` files.  Only the shared files escalate to a full
+#: run, so without this every area could add a public field to its result class,
+#: grow the listing, and go green on the PR: measured, a change to
+#: ``recurrence/rqa.py`` selected 7 files and none of them was this gate.  It is
+#: cheap (0.4 s, no integration), so it rides along with all of them rather than
+#: being mapped area by area — which is also what keeps a *new* area covered on
+#: the day it is added, instead of depending on someone remembering this file.
+_RESULT_SURFACE_GATE: tuple[str, ...] = ("test_result_visibility.py",)
+
+_AREA_TESTS = {
+    area: tests if area == "benchmarks" else tests + _RESULT_SURFACE_GATE
+    for area, tests in _AREA_TESTS.items()
+}
+
+#: Viz test files that do **not** carry the ``test_viz_`` prefix, and so cannot be
+#: discovered by :func:`viz_tests`' glob.  Everything named ``test_viz_*.py`` is
+#: picked up automatically — deliberately, because the old hand-written tuple
+#: listed three files while sixteen ``test_viz_*.py`` existed, so a viz change
+#: reached ``main`` with most of its own tests deselected.  A hand-maintained list
+#: of a growing family is the defect; the glob plus this short exception table is
+#: the fix, and ``tests/test_changed_select.py`` fails if any lane goes stale.
+_VIZ_EXTRA_TESTS: tuple[str, ...] = (
     "test_plotspec.py",
+    "test_plotspec_completeness.py",
+    # Named for the method v6 retired; the file still tests the trajectory plot
+    # front door (now the ``__plot_spec__`` seam behind ``ts.plot`` /
+    # ``traj.plot``).  ``.github/workflows/ci.yml`` names the path too, so the
+    # rename is a CI-infra change, not a test change.
     "test_to_plot_spec.py",
+    "test_plot_accessor_kinds.py",
     "test_renderers_registry.py",
+    "test_audit_WP12_viz_compose_spec.py",
+    "test_audit_WP13_viz_render.py",
 )
+
+
+def viz_tests() -> tuple[str, ...]:
+    """Every test file that exercises the ``viz`` surface, as sorted basenames.
+
+    The ``test_viz_*.py`` family is **discovered**, not listed: it grows with the
+    renderer/transform work, and a hand-maintained tuple silently under-selects
+    the moment someone adds a file.  Discovery falls back to the exception table
+    alone if the tests directory cannot be read (the selector never raises; an
+    empty lane would under-select, which is the one outcome to avoid — so a
+    directory that cannot be listed is treated as "unknown" by the caller, which
+    keeps the always-on guards and the explicit files).
+    """
+    found: set[str] = set(_VIZ_EXTRA_TESTS)
+    with contextlib.suppress(OSError):  # defensive: an unreadable tests directory
+        found.update(p.name for p in Path(__file__).parent.glob("test_viz_*.py"))
+    return tuple(sorted(found))
+
+
+#: Test-file basename **prefixes** that name a *lane* — an area whose tests are
+#: recognisable by their filename — mapped to a source path in that area.  This
+#: table is what makes the lanes *checkable*: ``tests/test_changed_select.py``
+#: classifies each probe path and fails if any existing test file carrying the
+#: prefix is absent from the resulting selection.  Without it, adding
+#: ``tests/test_viz_newthing.py`` (or ``test_basins_something.py``) silently
+#: leaves it out of every scoped run — the blind spot that let a viz change reach
+#: ``main`` with thirteen of its sixteen test files deselected.
+#:
+#: A prefix only belongs here when *every* file carrying it genuinely belongs to
+#: that one lane; a prefix shared across areas would make the guard lie.
+LANE_PREFIXES: dict[str, str] = {
+    "test_viz_": "src/tsdynamics/viz/spec.py",
+    "test_basin": "src/tsdynamics/analysis/basins/basins.py",
+    "test_chaos": "src/tsdynamics/analysis/chaos/gali.py",
+    "test_dimensions": "src/tsdynamics/analysis/dimensions/correlation.py",
+    "test_embedding": "src/tsdynamics/analysis/embedding/embed.py",
+    "test_fixed_points": "src/tsdynamics/analysis/fixedpoints/fixed.py",
+    "test_lyapunov": "src/tsdynamics/analysis/lyapunov/from_data.py",
+    "test_orbit": "src/tsdynamics/analysis/orbits/orbit_diagram.py",
+    "test_poincare": "src/tsdynamics/analysis/orbits/poincare.py",
+    "test_recurrence": "src/tsdynamics/analysis/recurrence/matrix.py",
+}
 
 #: Cross-cutting analysis tests that exercise functions from *several* areas
 #: (the "regular vs random" cross-quantifier gate; the analysis-pack smoke).
-#: Added whenever ANY analysis area or transform is touched, since a one-area
-#: edit can break the cross-quantifier agreement they assert.
+#: Added whenever ANY analysis area is touched, since a one-area edit can break
+#: the cross-quantifier agreement they assert.
 _CROSSCUT_ANALYSIS_TESTS: tuple[str, ...] = (
     "test_known_quantifiers.py",
     "test_analysis.py",
@@ -173,28 +309,68 @@ _CATALOGUE_GATES: tuple[str, ...] = (
     "test_xval_catalogue.py",
 )
 
+#: The gate that **executes** the documentation: every runnable ``python`` fence
+#: on every ``docs/**.md`` page, the ``mkdocs.yml`` exclusion block, and the
+#: catalogue counts written in prose.  A documentation change selects it.
+_DOCS_GATE_TESTS: tuple[str, ...] = ("test_doctests.py",)
+
+#: ``docs/_tooling/`` is code the suite imports, not prose: the gallery builder
+#: (``test_viz_gallery.py``), the committed golden-figure corpus
+#: (``test_docs_figures_golden.py``) and ``editorial.json``, the reviewed
+#: per-system claim table ``test_catalogue_dynamics.py`` reads.
+_DOCS_TOOLING_TESTS: tuple[str, ...] = (
+    "test_doctests.py",
+    "test_docs_figures_golden.py",
+    "test_viz_gallery.py",
+    "test_catalogue_dynamics.py",
+)
+
+#: Repo-root files the doctest gate reads: ``test_doctests.py::_COUNTED_FILES``
+#: checks the catalogue counts in their prose against the live registry, and the
+#: ``mkdocs.yml`` guards parse its ``exclude_docs`` block.  They are **not**
+#: ignorable, which is why they are absent from :data:`_IGNORE_FILES`.
+_DOCS_GATE_FILES: frozenset[str] = frozenset({"README.md", "CLAUDE.md", "mkdocs.yml"})
+
+
+def _docs_gate_tests(path: str) -> tuple[str, ...] | None:
+    """Test files a **documentation** path can break, or ``None`` if it is not one.
+
+    Checked *before* :func:`_is_ignored`, because the ignore table is keyed on
+    suffix (``.md``) and prefix (``docs/``) and would otherwise swallow the very
+    paths the doctest gate executes.  ``planning/`` and ``.claude/`` keep their
+    ignore, because no test reads them.
+    """
+    if path.startswith("docs/_tooling/"):
+        return _DOCS_TOOLING_TESTS
+    if path.startswith("docs/"):
+        return _DOCS_GATE_TESTS
+    if "/" not in path and path in _DOCS_GATE_FILES:
+        return _DOCS_GATE_TESTS
+    return None
+
+
 #: Paths with no bearing on the test suite — ignored, never escalate.
+#:
+#: ``docs/``, ``*.md``, ``README.md`` and ``mkdocs.yml`` used to be here.  They
+#: are not ignorable: see :func:`_docs_gate_tests` and this module's
+#: "Documentation is executable" section.  The ``.md`` *suffix* rule stays, so a
+#: stray markdown file outside ``docs/`` (a crate README, a note beside a
+#: benchmark) still costs nothing — the doc-gate check runs first and claims the
+#: pages that are actually executed.
 _IGNORE_PREFIXES: tuple[str, ...] = (
-    "docs/",
-    "benches/",
     "planning/",
     ".claude/",
-    "scripts/",
     ".github/ISSUE_TEMPLATE/",
 )
 _IGNORE_SUFFIXES: tuple[str, ...] = (".md", ".rst", ".txt")
 _IGNORE_FILES: frozenset[str] = frozenset(
     {
         "Makefile",
-        "mkdocs.yml",
         "LICENSE",
         ".gitignore",
         ".pre-commit-config.yaml",
         "CHANGELOG.md",
-        "README.md",
         "CONTRIBUTING.md",
-        "ROADMAP.md",
-        "STREAMS.md",
     }
 )
 
@@ -328,11 +504,18 @@ def classify(changed: set[str] | None) -> Plan:
     system_modules: list[str] = []
     escalate_reasons: list[str] = []
     notes: list[str] = []
-    analysis_or_transform_touched = False
+    analysis_touched = False
 
     for path in files:
         if _is_foundational(path):
             return Plan(full=True, reason=f"foundational change: {path}", changed=files)
+        docs_gate = _docs_gate_tests(path)
+        if docs_gate is not None:
+            # Checked before _is_ignored: the ignore table is keyed on the `.md`
+            # suffix and the `docs/` prefix, and the doctest gate EXECUTES those.
+            selected.update(docs_gate)
+            notes.append(f"docs gate: {path}")
+            continue
         if _is_ignored(path):
             notes.append(f"ignored: {path}")
             continue
@@ -361,14 +544,15 @@ def classify(changed: set[str] | None) -> Plan:
                 escalate_reasons.append(f"unmapped analysis path: {path}")
             else:
                 selected.update(tests)
-                analysis_or_transform_touched = True
+                analysis_touched = True
             continue
-        if path.startswith("src/tsdynamics/transforms/"):
-            selected.update(_TRANSFORM_TESTS)
-            analysis_or_transform_touched = True
+        if path.startswith("benchmarks/"):
+            # The bench harness is imported by path from test_perf_regression.py,
+            # so an edit there selects that gate (not a full run, and not nothing).
+            selected.update(_AREA_TESTS["benchmarks"])
             continue
         if path.startswith("src/tsdynamics/viz/"):
-            selected.update(_VIZ_TESTS)
+            selected.update(viz_tests())
             continue
         # Anything unrecognized: be conservative and run everything.
         escalate_reasons.append(f"unrecognized path: {path}")
@@ -391,7 +575,7 @@ def classify(changed: set[str] | None) -> Plan:
 
     # A one-area edit can break the cross-quantifier "regular vs random" agreement
     # gate and the analysis-pack smoke, which span several areas → always include.
-    if analysis_or_transform_touched:
+    if analysis_touched:
         selected.update(_CROSSCUT_ANALYSIS_TESTS)
 
     selected |= set(_ALWAYS_GUARDS)

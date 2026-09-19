@@ -52,10 +52,15 @@ by that module.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, Literal
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import numpy as np
 
+from tsdynamics.errors import InvalidParameterError
+
+from ..._visibility import listing_dir
+from ...producers import autostyle_enabled, autostyle_line, autostyle_marker
 from ...spec import Annotation, Axis, Colorbar, Layer, PlotKind, PlotSpec
 from ...style import Theme, normalize_style
 from .. import normalize_kind
@@ -69,6 +74,8 @@ if TYPE_CHECKING:
 
 
 __all__ = ["KIND_PRESETS", "MARK_DISPATCH", "render"]
+
+__dir__ = listing_dir(__all__)
 
 
 # ---------------------------------------------------------------------------
@@ -129,7 +136,6 @@ KIND_PRESETS: dict[PlotKind, _KindPreset] = {
     PlotKind.BASINS_IMAGE: _KindPreset(aspect="equal", cmap="tab20"),
     PlotKind.IMAGE: _KindPreset(cmap="viridis"),
     PlotKind.SPACETIME: _KindPreset(cmap="viridis"),
-    PlotKind.SPECTROGRAM: _KindPreset(cmap="magma", norm="log"),
     # a 2-D spatial field is a viridis heatmap (its equal aspect rides on the
     # spec, set by the producer for the 2-D case only); a 1-D field is a plain
     # auto-aspect line, which ignores the cmap.  See stream VIZ-SPATIAL-FIELD.
@@ -205,9 +211,55 @@ def _apply_theme_to_figure(fig: Any, ax: Any, theme: Theme) -> None:
             ax.title.set_color(theme.foreground)
 
 
-def _apply_theme_color_cycle(ax: Any, theme: Theme) -> None:
-    """Set the axes color cycle from the theme's palette."""
-    ax.set_prop_cycle(color=list(theme.palette))
+#: Colours tried, in order, for an unstyled curve drawn ON TOP OF a field layer.
+#: White then black covers a dark and a light backdrop; the remaining two give a
+#: second and third curve something distinguishable.  Deliberately not palette
+#: colours: a palette is chosen to separate curves *from each other*, which says
+#: nothing about separating them from an image underneath.
+_ON_FIELD_CYCLE: tuple[str, ...] = ("#ffffff", "#000000", "#ff3b30", "#ffcc00")
+
+
+def _apply_theme_color_cycle(ax: Any, theme: Theme, spec: PlotSpec | None = None) -> None:
+    """Set the axes colour cycle, avoiding a collision with a field layer.
+
+    Normally the cycle is the theme's palette.  But when the spec draws a curve or
+    markers *over* a field (a basin image, a recurrence plot, a spacetime image),
+    the palette is the wrong source: ``basins_image`` renders through ``tab20``,
+    whose first swatch is ``#1f77b4`` — byte-identical to the default palette's
+    first colour.  An unstyled trajectory over basin 0 was therefore drawn in
+    exactly the basin's own colour and was invisible, which is what the flagship
+    composition call produces if nothing intervenes.
+
+    So when a field layer is present the cycle switches to :data:`_ON_FIELD_CYCLE`,
+    chosen for contrast against an arbitrary image rather than against other
+    curves.  An explicit per-layer ``color`` always wins over either cycle, so this
+    only ever decides what an *unstyled* overlay looks like.
+    """
+    palette = list(theme.palette)
+    if spec is not None and _draws_over_a_field(spec):
+        palette = [*_ON_FIELD_CYCLE, *palette]
+    ax.set_prop_cycle(color=palette)
+
+
+#: Layer *marks* that paint a backdrop the rest of the figure is drawn on top of.
+#: Note this is a mark test, not a semantic-kind test: ``Layer.kind`` holds the
+#: mark (``image``), while ``PlotSpec.kind`` holds the semantic kind
+#: (``basins_image``), and a hand-built or composed spec may carry an image layer
+#: under any semantic kind at all.
+#:
+#: ``QUIVER`` is deliberately **not** here.  A quiver paints no backdrop — the
+#: page shows through between the arrows — so switching to the contrast cycle
+#: makes an unstyled overlay **white on white**: the host orbit of
+#: ``phase_portrait_field`` was drawn in ``#ffffff`` and was invisible on every
+#: light page, legend entry and all.  The cycle exists for an image's colormap,
+#: which is a thing a quiver does not have.
+_FIELD_MARKS: frozenset[PlotKind] = frozenset({PlotKind.IMAGE})
+
+
+def _draws_over_a_field(spec: PlotSpec) -> bool:
+    """Report whether ``spec`` has a field layer AND something drawn on top of it."""
+    marks = {layer.kind for layer in spec.layers}
+    return bool(marks & _FIELD_MARKS) and bool(marks - _FIELD_MARKS)
 
 
 def _apply_theme_grid(ax: Any, spec: PlotSpec, theme: Theme) -> None:
@@ -244,11 +296,113 @@ def _apply_theme_grid(ax: Any, spec: PlotSpec, theme: Theme) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Figure construction (the one place a Figure is built)
+# ---------------------------------------------------------------------------
+
+#: The matplotlib layout engine every figure this backend produces is built with.
+#:
+#: Without one, matplotlib places axes on a fixed fractional grid and simply lets
+#: decorations overflow: a 2x2 composite collides row-2 titles into row-1 tick
+#: labels and **clips the row-1 x-axis labels off the artifact entirely** — the
+#: label is not merely cramped, it is absent from the saved PNG.  A single-panel
+#: figure with a long y-label or a colorbar loses text the same way.
+#: ``"constrained"`` solves the layout instead of assuming it, and (unlike
+#: ``tight_layout``) works with shared axes, 3-D axes and colorbars.
+_LAYOUT_ENGINE: Literal["constrained", "compressed", "tight"] | None = "constrained"
+
+#: Extensions that ``render(path=...)`` routes to an animation's own writer
+#: (ffmpeg / pillow) rather than to ``Figure.savefig``.
+_MOVIE_EXTENSIONS: frozenset[str] = frozenset({".mp4", ".gif", ".webm", ".mov", ".m4v", ".apng"})
+
+
+def new_figure(
+    figsize: tuple[float, float] | None = None,
+    dpi: float | None = None,
+    layout: Literal["constrained", "compressed", "tight"] | None = None,
+) -> Figure:
+    """Build the backend's :class:`~matplotlib.figure.Figure` (Agg, constrained).
+
+    Every figure this backend returns — single panel, 3-D, composite, animated —
+    is built here, so the Agg canvas attachment and the :data:`_LAYOUT_ENGINE`
+    are applied exactly once and cannot be forgotten at a new construction site.
+    Uses matplotlib's object-oriented API only (no ``pyplot``).
+
+    Parameters
+    ----------
+    figsize, dpi : optional
+        Already-resolved geometry (see :func:`figure_geometry`); ``None`` leaves
+        matplotlib's own default.
+    layout : {"constrained", "compressed", "tight"}, optional
+        The layout engine; ``None`` uses :data:`_LAYOUT_ENGINE`.
+    """
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.figure import Figure as _Figure
+
+    fig = _Figure(figsize=figsize, dpi=dpi, layout=layout if layout is not None else _LAYOUT_ENGINE)
+    FigureCanvasAgg(fig)
+    return fig
+
+
+def figure_geometry(
+    spec: PlotSpec,
+    figsize: tuple[float, float] | None = None,
+    *,
+    theme: Theme | None = None,
+) -> tuple[
+    tuple[float, float] | None, float | None, Literal["constrained", "compressed", "tight"] | None
+]:
+    """Resolve ``(figsize, dpi, layout_engine)`` for ``spec``, honouring the theme.
+
+    Precedence, most specific first:
+
+    1. the explicit ``figsize=`` render keyword,
+    2. ``spec.meta["figsize"]`` / ``spec.meta["dpi"]`` (what ``spec.size(...)``
+       and ``save(size=..., dpi=...)`` write),
+    3. the resolved :class:`~tsdynamics.viz.style.Theme`'s :attr:`~tsdynamics.viz.style.Theme.figsize`
+       / :attr:`~tsdynamics.viz.style.Theme.dpi` / :attr:`~tsdynamics.viz.style.Theme.layout_engine`,
+    4. matplotlib's own defaults.
+
+    Step 3 is the point of this helper.  ``Theme`` grew those three fields
+    precisely so a theme could carry its output geometry — the ``"publication"``
+    theme declares ``figsize=(5.0, 3.5)`` at ``dpi=300`` — but nothing read them,
+    so ``spec.theme("publication").render()`` still produced matplotlib's default
+    6.4x4.8 in at 100 dpi.  A documented theme field that silently does nothing is
+    the failure mode this layer exists to eliminate, so every figure the backend
+    builds resolves its geometry here.
+    """
+    theme = theme if theme is not None else _resolve_theme(spec)
+    meta = spec.meta if isinstance(spec.meta, dict) else {}
+
+    if figsize is None:
+        meta_figsize = meta.get("figsize")
+        if meta_figsize is not None:
+            w, h = meta_figsize
+            if w is not None and h is not None:
+                figsize = (float(w), float(h))
+    if figsize is None and theme.figsize is not None:
+        figsize = (float(theme.figsize[0]), float(theme.figsize[1]))
+
+    dpi: float | None = None
+    if "dpi" in meta and meta["dpi"] is not None:
+        dpi = float(meta["dpi"])
+    elif theme.dpi is not None:
+        dpi = float(theme.dpi)
+
+    return figsize, dpi, theme.layout_engine
+
+
+# ---------------------------------------------------------------------------
 # Style coercion helpers
 # ---------------------------------------------------------------------------
 
 
-def _canon_style(layer: Layer, theme: Theme) -> dict[str, Any]:
+def _canon_style(
+    layer: Layer,
+    theme: Theme,
+    *,
+    n: int | None = None,
+    autostyle: bool = True,
+) -> dict[str, Any]:
     """Return a dict of mpl-ready style kwargs from the layer's canonical style + theme defaults.
 
     Calls ``normalize_style(warn=False)`` on the layer's raw style dict (the
@@ -261,6 +415,16 @@ def _canon_style(layer: Layer, theme: Theme) -> dict[str, Any]:
     layer : Layer
     theme : Theme
         The resolved theme (provides default line_width / marker_size).
+    n : int, optional
+        Sample count of the curve being drawn.  When given, the theme's
+        ``line_width`` / full opacity defaults are resolved through
+        :func:`~tsdynamics.viz.producers.autostyle_line` so a dense trajectory
+        gets a thinner, slightly translucent stroke instead of a solid blob.
+        **Only the defaults** are affected — an explicit ``linewidth`` / ``alpha``
+        on the layer always wins.
+    autostyle : bool, optional
+        Whether density-aware resolution applies (the
+        ``spec.meta["autostyle"] = False`` escape hatch).  Default ``True``.
 
     Returns
     -------
@@ -270,11 +434,18 @@ def _canon_style(layer: Layer, theme: Theme) -> dict[str, Any]:
     """
     canon = normalize_style(layer.style, warn=False)
     kw: dict[str, Any] = {}
+    auto_lw, auto_alpha = (
+        autostyle_line(n, line_width=theme.line_width, enabled=autostyle)
+        if n is not None
+        else (theme.line_width, None)
+    )
 
     if "color" in canon:
         kw["color"] = canon["color"]
     if "alpha" in canon:
         kw["alpha"] = float(canon["alpha"])
+    elif auto_alpha is not None:
+        kw["alpha"] = auto_alpha
     if "zorder" in canon:
         kw["zorder"] = int(canon["zorder"])
     # NOTE: ``fill`` / ``fillalpha`` are AREA/ENSEMBLE_FAN-only knobs and are
@@ -283,11 +454,11 @@ def _canon_style(layer: Layer, theme: Theme) -> dict[str, Any]:
     # ``PathCollection`` (``ax.scatter``) both reject a ``fill=`` kwarg, so
     # leaking it crashes a fully-styled LINE/SCATTER layer.
 
-    # linewidth: canonical key → mpl "linewidth"
+    # linewidth: canonical key → mpl "linewidth" (density-resolved default)
     if "linewidth" in canon:
         kw["linewidth"] = float(canon["linewidth"])
-    elif theme.line_width is not None:
-        kw["linewidth"] = float(theme.line_width)
+    elif auto_lw is not None:
+        kw["linewidth"] = float(auto_lw)
 
     # linestyle: canonical → mpl spelling
     if "linestyle" in canon:
@@ -296,6 +467,10 @@ def _canon_style(layer: Layer, theme: Theme) -> dict[str, Any]:
     # marker: canonical → mpl spelling
     if "marker" in canon:
         kw["marker"] = _MARKER_MPL.get(str(canon["marker"]), canon["marker"])
+        # ``filled=False`` → a hollow marker on a Line2D (the scatter path spells
+        # the same thing with facecolors/edgecolors; see ``_draw_scatter``).
+        if canon.get("filled") is False:
+            kw["markerfacecolor"] = "none"
 
     # markersize: canonical key → mpl "markersize"
     if "markersize" in canon:
@@ -306,9 +481,11 @@ def _canon_style(layer: Layer, theme: Theme) -> dict[str, Any]:
     return kw
 
 
-def _line_kwargs(layer: Layer, theme: Theme) -> dict[str, Any]:
+def _line_kwargs(
+    layer: Layer, theme: Theme, *, n: int | None = None, autostyle: bool = True
+) -> dict[str, Any]:
     """Collect matplotlib line kwargs from a layer's style + theme defaults."""
-    kw = _canon_style(layer, theme)
+    kw = _canon_style(layer, theme, n=n, autostyle=autostyle)
     if layer.label is not None:
         kw["label"] = layer.label
     return kw
@@ -383,7 +560,7 @@ def _draw_line(
     c = _channel(layer, "c")
     if c is not None and c.size == y.size and y.size >= 2:
         return _draw_colored_line(ax, x, y, c, spec, layer, preset, theme)
-    kw = _line_kwargs(layer, theme)
+    kw = _line_kwargs(layer, theme, n=int(y.size), autostyle=autostyle_enabled(spec))
     ax.plot(x, y, **kw)
     return None
 
@@ -410,18 +587,65 @@ def _draw_colored_line(
     lc = LineCollection(list(segments), cmap=cmap, norm=norm)
     lc.set_array(c[:-1])
     canon = normalize_style(layer.style, warn=False)
-    lw = canon.get("linewidth") or (theme.line_width if theme.line_width is not None else None)
+    auto_lw, auto_alpha = autostyle_line(
+        int(y.size), line_width=theme.line_width, enabled=autostyle_enabled(spec)
+    )
+    lw = canon.get("linewidth") or auto_lw
     if lw is not None:
         lc.set_linewidth(float(lw))
     if "zorder" in canon:
         lc.set_zorder(int(canon["zorder"]))
     if "alpha" in canon:
         lc.set_alpha(float(canon["alpha"]))
+    elif auto_alpha is not None:
+        lc.set_alpha(auto_alpha)
     if layer.label is not None:
         lc.set_label(layer.label)
     ax.add_collection(lc)
     ax.autoscale_view()
     return lc
+
+
+#: A marker cloud denser than this fraction of the figure's pixels cannot be
+#: read: the markers overlap, and what you see is the *envelope*, not the data.
+_SATURATION_FRACTION = 0.25
+
+
+def _warn_if_recurrence_cannot_fit(ax: Axes, spec: PlotSpec, n_points: int) -> None:
+    """Say so when a recurrence plot has more points than the figure has pixels.
+
+    Measured: a 1501x1501 matrix at a **verified 5% density** draws 112 060
+    markers into ~137 000 device pixels and renders as a near-solid black block —
+    destroying exactly the diagonal-line structure DET / L_max / ENTR measure.
+    The recurrence plot *is* the deliverable in RQA work, so silently handing
+    back a picture that misrepresents a matrix whose density the caller has
+    already checked is a wrong answer, not a cosmetic one.
+
+    Restricted to :data:`~tsdynamics.viz.spec.PlotKind.RECURRENCE_PLOT`
+    deliberately: an orbit diagram is *meant* to saturate (its black bands are
+    the chaotic bands), so the same warning there would be noise.
+    """
+    import warnings
+
+    if normalize_kind(spec.kind) is not PlotKind.RECURRENCE_PLOT:
+        return
+    fig = ax.get_figure(root=True)
+    if fig is None:  # pragma: no cover - an axes always has a figure here
+        return
+    width, height = fig.get_size_inches()
+    pixels = float(width) * float(height) * float(fig.dpi) ** 2
+    if n_points < _SATURATION_FRACTION * pixels:
+        return
+    from ..caps import VisualizationDegraded
+
+    warnings.warn(
+        f"this recurrence plot draws {n_points:,} markers into about {int(pixels):,} device "
+        "pixels, so they overlap and the diagonal structure is lost. Draw it as an image "
+        "(ts.plot(traj, 'recurrence')), raise the resolution (p.size(w, h) / dpi= at save), "
+        "or shorten/decimate the series.",
+        VisualizationDegraded,
+        stacklevel=3,
+    )
 
 
 def _draw_scatter(
@@ -434,6 +658,7 @@ def _draw_scatter(
     x = _channel(layer, "x")
     if x is None:
         x = np.arange(y.size, dtype=float)
+    _warn_if_recurrence_cannot_fit(ax, spec, int(np.size(y)))
     c = _channel(layer, "c")
     size = _channel(layer, "size")
     canon = normalize_style(layer.style, warn=False)
@@ -453,14 +678,32 @@ def _draw_scatter(
     # the diameter so a canonical markersize matches a Line2D marker of that size.
     elif "markersize" in canon:
         kw["s"] = float(canon["markersize"]) ** 2
-    elif theme.marker_size is not None:
-        kw["s"] = float(theme.marker_size) ** 2
+    else:
+        # Density-aware, exactly as the LINE path is: the theme's constant marker
+        # is right for a hundred points and renders a hundred thousand as one
+        # solid blob.  An explicit ``markersize``/``size`` never reaches here.
+        auto = autostyle_marker(
+            int(np.size(y)),
+            marker_size=theme.marker_size,
+            enabled=autostyle_enabled(spec),
+        )
+        if auto is not None:
+            kw["s"] = float(auto) ** 2
     if c is not None:
         kw["c"] = c
         kw["cmap"] = _resolve_cmap(spec, layer, preset)
         kw["norm"] = _make_norm(_resolve_norm(spec, preset), spec.clim)
         return ax.scatter(x, y, **kw)
-    if "color" in canon:
+    # ``filled=False`` draws a hollow/open marker — the textbook unstable-fixed-point
+    # convention.  matplotlib spells it "no facecolor, ink in the edge", so the
+    # layer's colour has to move from ``color`` to ``edgecolors``: passing both
+    # ``color`` and ``facecolors`` to ``scatter`` is a conflict it silently resolves
+    # in favour of ``color``, which would fill the marker anyway.
+    if canon.get("filled") is False:
+        kw["facecolors"] = "none"
+        kw["edgecolors"] = canon.get("color", theme.foreground or "C0")
+        kw.setdefault("linewidths", 1.2)
+    elif "color" in canon:
         kw["color"] = canon["color"]
     ax.scatter(x, y, **kw)
     return None
@@ -687,14 +930,23 @@ def _draw_area(
     kw: dict[str, Any] = {"alpha": float(fill_alpha)}
     if "color" in canon:
         kw["color"] = canon["color"]
-    if layer.label is not None:
+    # A band and the line through it are ONE series, so exactly one of the two
+    # artists carries the legend label.  Both did, and matplotlib legends every
+    # labelled artist: measured, a 2-attractor continuation produced FOUR
+    # entries reading "attractor 1 · attractor 1 · attractor 2 · attractor 2",
+    # which says there are four things when there are two.  The LINE takes it
+    # when there is one — its swatch is the solid colour, where the band's is
+    # the same colour at alpha 0.3 and reads as a different series.
+    centre = y if (y is not None and "lo" in layer.data) else None
+    if layer.label is not None and centre is None:
         kw["label"] = layer.label
     if show_fill:
         ax.fill_between(x, lo, hi, **kw)
-    if y is not None and "lo" in layer.data:
-        # A central line through a fan/band, when a distinct ``y`` is supplied.
-        line_kw = {k: v for k, v in kw.items() if k in ("color", "label")}
-        ax.plot(x, y, **line_kw)
+    if centre is not None:
+        line_kw: dict[str, Any] = {k: v for k, v in kw.items() if k == "color"}
+        if layer.label is not None:
+            line_kw["label"] = layer.label
+        ax.plot(x, centre, **line_kw)
     return None
 
 
@@ -880,20 +1132,34 @@ def _apply_axis(ax: Axes, axis: Axis, which: Literal["x", "y"], theme: Theme) ->
             ax.spines["right"].set_edgecolor(ink)
 
 
+def apply_title(ax: Axes, spec: PlotSpec, theme: Theme) -> None:
+    """Set the axes title **in the theme's ink, size and family**.
+
+    Shared with the animation renderer rather than re-derived there, because the
+    copy that path grew was a plain ``ax.set_title(spec.title)``: the theme's
+    foreground reached a title only through :func:`_apply_theme_to_figure`, which
+    colours it *if it already exists*, and the animator sets it afterwards.  So
+    one spec rendered ``#e6e6e6`` as a ``.png`` and near-black as the same
+    frame of a ``.gif`` — a talk slide and a paper figure that do not match.
+    """
+    if not spec.title:
+        return
+    title_kw: dict[str, Any] = {}
+    if theme.foreground is not None:
+        title_kw["color"] = theme.foreground
+    eff_title_size = theme.title_size if theme.title_size is not None else theme.font_size
+    if eff_title_size is not None:
+        title_kw["fontsize"] = float(eff_title_size)
+    if theme.font_family is not None:
+        title_kw["fontfamily"] = theme.font_family
+    ax.set_title(spec.title, **title_kw)
+
+
 def _apply_axes(ax: Axes, spec: PlotSpec, preset: _KindPreset, theme: Theme) -> None:
     """Apply both axes, the title, and the aspect ratio to ``ax``."""
     _apply_axis(ax, spec.x, "x", theme)
     _apply_axis(ax, spec.y, "y", theme)
-    if spec.title:
-        title_kw: dict[str, Any] = {}
-        if theme.foreground is not None:
-            title_kw["color"] = theme.foreground
-        eff_title_size = theme.title_size if theme.title_size is not None else theme.font_size
-        if eff_title_size is not None:
-            title_kw["fontsize"] = float(eff_title_size)
-        if theme.font_family is not None:
-            title_kw["fontfamily"] = theme.font_family
-        ax.set_title(spec.title, **title_kw)
+    apply_title(ax, spec, theme)
     aspect = spec.aspect if spec.aspect != "auto" else preset.aspect
     if aspect == "equal":
         ax.set_aspect("equal", adjustable="box")
@@ -901,16 +1167,128 @@ def _apply_axes(ax: Axes, spec: PlotSpec, preset: _KindPreset, theme: Theme) -> 
         ax.set_axis_off()
 
 
+def _aspect_matched_cax(ax: Axes, location: str | None) -> Axes | None:
+    """Return a colorbar axes **tied to an aspect-locked axes' drawn box**, or ``None``.
+
+    Measured on a basin image over ``x in [-3, 3]``, ``y in [-0.6, 0.6]``: the
+    colorbar came out roughly **three times the height of the picture**, with
+    the picture squashed into the middle third — the figure looked broken, and
+    it is one of the library's headline outputs.  ``Figure.colorbar(..., ax=ax)``
+    sizes the bar from the axes' *rectangle*, but an equal-aspect image with
+    ``adjustable="box"`` draws inside a smaller box than its rectangle, and the
+    rectangle itself is re-laid-out afterwards — so no single-pass ``shrink=``
+    can be exact.  ``axes_grid1``'s divider positions the bar through the parent's
+    own locator, which is evaluated *after* ``apply_aspect``, so the two heights
+    agree by construction (measured: 93.1 px vs 93.1 px).
+
+    The bar is an **inset in axes coordinates**, which are the drawn box after
+    ``apply_aspect`` by definition — so it tracks the picture under constrained
+    layout too (``axes_grid1``'s divider does not).
+
+    Returns ``None`` — leaving matplotlib's own sizing, with the
+    :func:`_aspect_shrink` correction — for a 3-D axes, a free-aspect axes, a
+    top/bottom bar (whose tick labels need layout space an inset cannot reserve),
+    and, deliberately, **whenever the mismatch is small**: confining the change
+    to the figures that were visibly broken leaves every currently-fine figure
+    byte-identical.
+    """
+    if getattr(ax, "name", "") == "3d" or ax.get_adjustable() != "box":
+        return None
+    if str(location or "right") not in ("right", "left"):
+        return None
+    try:
+        float(ax.get_aspect())
+    except (TypeError, ValueError):  # "auto" — nothing to match
+        return None
+    if _aspect_shrink(ax, location) > _ASPECT_MISMATCH_FLOOR:
+        return None
+    x0 = 1.03 if str(location or "right") == "right" else -0.10
+    return ax.inset_axes((x0, 0.0, 0.04, 1.0), transform=ax.transAxes)
+
+
+#: How far the drawn box may fall short of its cell before the colorbar is
+#: re-anchored to the picture.  Above it the two are close enough that
+#: matplotlib's own placement reads correctly, and moving it would rewrite
+#: figures that were never wrong.
+_ASPECT_MISMATCH_FLOOR = 0.75
+
+
+def _aspect_shrink(ax: Axes, location: str | None) -> float:
+    """Return the colorbar ``shrink`` that matches an aspect-locked axes' drawn box.
+
+    ``fig.colorbar(..., ax=ax)`` sizes the bar from the axes' *rectangle*, but an
+    equal-aspect image with ``adjustable="box"`` draws inside a **smaller** box
+    than its rectangle.  Measured on a basin image over ``x in [-3, 3]``,
+    ``y in [-0.6, 0.6]``: the colorbar came out roughly **three times the height
+    of the picture**, with the picture squashed into the middle third — the
+    figure looked broken, and it is one of the library's headline outputs.
+
+    Returns 1.0 (matplotlib's own default, so nothing moves) whenever the axes is
+    free to fill its rectangle.
+    """
+    if ax.get_adjustable() != "box":
+        return 1.0
+    try:
+        ratio = float(ax.get_aspect())
+    except (TypeError, ValueError):  # "auto"
+        return 1.0
+    figure = ax.get_figure(root=True)
+    if figure is None:  # pragma: no cover - an axes always has a figure here
+        return 1.0
+    fig_w, fig_h = figure.get_size_inches()
+    # ``original=True`` is load-bearing: ``Figure.colorbar(..., ax=ax)`` sizes the
+    # bar from the axes' ORIGINAL rectangle, and the active position may or may
+    # not have been shrunk by ``apply_aspect`` yet depending on whether anything
+    # has drawn.  Reading the same rectangle the colorbar does makes the ratio
+    # correct either way.
+    box = ax.get_position(original=True)
+    rect_w, rect_h = float(box.width) * float(fig_w), float(box.height) * float(fig_h)
+    x0, x1 = ax.get_xlim()
+    y0, y1 = ax.get_ylim()
+    data_w, data_h = abs(float(x1) - float(x0)), abs(float(y1) - float(y0)) * ratio
+    if not (data_w > 0.0 and data_h > 0.0 and rect_w > 0.0 and rect_h > 0.0):
+        return 1.0
+    along_x = str(location) in ("top", "bottom")
+    if along_x:
+        drawn = min(rect_w, rect_h * data_w / data_h)
+        return float(np.clip(drawn / rect_w, 0.05, 1.0))
+    drawn = min(rect_h, rect_w * data_h / data_w)
+    return float(np.clip(drawn / rect_h, 0.05, 1.0))
+
+
 def _apply_colorbar(
-    fig: Figure, ax: Axes, mappable: ScalarMappable | None, colorbar: Colorbar | None
+    fig: Figure,
+    ax: Axes,
+    mappable: ScalarMappable | None,
+    colorbar: Colorbar | None,
+    meta: dict[str, Any] | None = None,
 ) -> None:
     """Attach a colorbar for ``mappable`` honouring a :class:`Colorbar` spec.
 
-    Now also honors ``colorbar.label_size`` (the new enriched field).
+    Honors ``colorbar.label_size``, and — for a **discrete** (categorical)
+    colorbar — turns the numeric ramp into a genuine categorical legend: one tick
+    at the centre of each swatch, labelled with the category's own name.
+
+    A basin diagram is the motivating case.  Its colour channel is an *attractor
+    id*, not a quantity, but the colorbar read ``0.5 / 1.5 / 2.5`` — the
+    :class:`~matplotlib.colors.BoundaryNorm` bin edges — which names nothing and
+    implies an ordering the data does not have.  The category names come from
+    ``spec.meta["category_labels"]`` (``{value: label}``), which the emitter
+    records alongside the ``palette_index`` mapping it already carries; absent
+    that, the integer value itself is the label.
     """
     if mappable is None or colorbar is None or not colorbar.show:
         return
-    cb = fig.colorbar(mappable, ax=ax, location=colorbar.location)
+    cax = _aspect_matched_cax(ax, colorbar.location)
+    if cax is not None:
+        cb = fig.colorbar(mappable, cax=cax, location=colorbar.location)
+    else:
+        cb = fig.colorbar(
+            mappable,
+            ax=ax,
+            location=colorbar.location,
+            shrink=_aspect_shrink(ax, colorbar.location),
+        )
     if colorbar.label:
         label_kw: dict[str, Any] = {}
         if colorbar.label_size is not None:
@@ -918,6 +1296,8 @@ def _apply_colorbar(
         cb.set_label(colorbar.label, **label_kw)
     if colorbar.ticks is not None:
         cb.set_ticks(list(colorbar.ticks))
+    elif colorbar.discrete:
+        _apply_categorical_ticks(cb, mappable, meta)
     if colorbar.tickformat is not None:
         import matplotlib.ticker as mticker
 
@@ -928,6 +1308,40 @@ def _apply_colorbar(
             cb.ax.yaxis.set_major_formatter(mticker.FormatStrFormatter(fmt_str))
     if colorbar.label_size is not None:
         cb.ax.tick_params(labelsize=float(colorbar.label_size))
+
+
+def _apply_categorical_ticks(
+    cb: Any, mappable: ScalarMappable, meta: dict[str, Any] | None
+) -> None:
+    """Tick a discrete colorbar once per swatch, labelled by category name.
+
+    Reads the :class:`~matplotlib.colors.BoundaryNorm` the discrete image built
+    (:func:`_make_discrete_cmap_norm`): its boundaries are ``value ± 0.5``, so the
+    swatch centres are the integer category values themselves.  Labels come from
+    ``meta["category_labels"]`` when the emitter supplied them.
+    """
+    import matplotlib.colors as mcolors
+
+    norm = getattr(mappable, "norm", None)
+    if not isinstance(norm, mcolors.BoundaryNorm):
+        return
+    bounds = np.asarray(norm.boundaries, dtype=float)
+    if bounds.size < 2:
+        return
+    centres = 0.5 * (bounds[:-1] + bounds[1:])
+    # ``_make_discrete_cmap_norm`` builds the boundaries as ``value + 0.5`` per
+    # unique value, so bin ``i`` represents ``bounds[i + 1] - 0.5``.  Recover the
+    # category from the *upper* edge, not from the bin centre: with
+    # non-contiguous labels (a basin field of ``[-1, 1, 2]``) the bins are uneven
+    # and a centre rounds to the wrong value (0.5 -> "0" instead of "1").
+    values = [int(round(float(b) - 0.5)) for b in bounds[1:]]
+    labels_map: dict[int, str] = {}
+    if meta:
+        raw = meta.get("category_labels")
+        if isinstance(raw, dict):
+            labels_map = {int(k): str(v) for k, v in raw.items()}
+    cb.set_ticks(list(centres))
+    cb.set_ticklabels([labels_map.get(v, str(v)) for v in values])
 
 
 def _apply_legend(ax: Axes, spec: PlotSpec, theme: Theme) -> None:
@@ -1030,8 +1444,13 @@ def _apply_annotations(ax: Axes, annotations: list[Annotation]) -> None:
 
 
 def render(
-    spec: PlotSpec, *, figsize: tuple[float, float] | None = None, **_kw: Any
-) -> Figure | FuncAnimation:
+    spec: PlotSpec,
+    *,
+    figsize: tuple[float, float] | None = None,
+    path: str | Path | None = None,
+    ax: Axes | None = None,
+    **_kw: Any,
+) -> Figure | FuncAnimation | Path:
     """Render a 2-D :class:`~tsdynamics.viz.spec.PlotSpec` to a matplotlib Figure.
 
     Builds a :class:`~matplotlib.figure.Figure` with the Agg canvas (no
@@ -1051,52 +1470,150 @@ def render(
         honours the tweaks.
     figsize : tuple of float, optional
         ``(width, height)`` in inches; matplotlib's default when ``None``.
+    path : str or Path, optional
+        Write the artifact here and return the :class:`~pathlib.Path` instead of
+        the figure — the same ``render(path=...)`` contract the plotly and data
+        backends already honored.  matplotlib is the **default** backend, so
+        without this ``spec.render(path=...)`` (and therefore
+        ``result.plot(path=...)``, whose keyword table blesses ``path``) accepted
+        the request, returned a Figure and wrote **nothing**.  A raster / vector
+        extension goes through ``Figure.savefig``; ``.mp4`` / ``.gif`` on an
+        animated spec go through the animation's own writer.
+    ax : matplotlib.axes.Axes, optional
+        Draw into an axes **you** own instead of building a figure — the escape
+        hatch for "put this plot in my paper figure"::
+
+            fig, axs = plt.subplots(1, 2)
+            ts.viz.plot(duffing_basins).render(ax=axs[0])
+            traj.plot(ax=axs[1])
+
+        The single-panel drawing body already worked on any axes (it is what the
+        composite renderer calls per panel); only the plumbing was missing.  The
+        spec's theme is still applied **figure-locally** to your figure, and the
+        return value is that figure, so ``ax=`` composes with the rest of your
+        matplotlib code rather than replacing it.
+
+        A 3-D spec needs a 3-D axes (``subplot_kw={"projection": "3d"}``); an
+        animated or composite spec drives a whole figure and so cannot be given
+        one axes.  Both raise rather than drawing something misleading.
+
+        .. versionadded:: 6.0
     **_kw
         Forwarded but unused backend keywords (kept for a uniform renderer
         signature).
 
     Returns
     -------
-    matplotlib.figure.Figure
-        The rendered figure (a single axes), ready to ``savefig`` / embed.  A
-        3-D spec (``ndim == 3`` / a ``z`` axis / a ``LINE3D`` / ``SURFACE3D``
-        mark) is dispatched to the :mod:`._threed` renderer.
-    """
-    from matplotlib.backends.backend_agg import FigureCanvasAgg
-    from matplotlib.figure import Figure
+    matplotlib.figure.Figure or pathlib.Path
+        The rendered figure (a single axes), ready to ``savefig`` / embed — or
+        the written ``path`` when one was given.  A 3-D spec (``ndim == 3`` / a
+        ``z`` axis / a ``LINE3D`` / ``SURFACE3D`` mark) is dispatched to the
+        :mod:`._threed` renderer.  With ``ax=``, the axes' own figure.
 
+    Raises
+    ------
+    tsdynamics.errors.InvalidParameterError
+        If ``ax`` is given for an animated or composite spec, or for a 3-D spec
+        on a 2-D axes (or vice versa).
+    """
     from . import _threed
 
+    if ax is not None:
+        return _render_into(spec, ax, path)
+
+    result: Figure | FuncAnimation
     if spec.is_animated:
         from . import _anim
 
-        return _anim.render_animation(spec, figsize=figsize)
+        result = _anim.render_animation(spec, figsize=figsize)
+    elif spec.is_composite:
+        result = _render_composite(spec, figsize=figsize)
+    elif _threed.is_three_d(spec):
+        result = _threed.render_3d(spec, figsize=figsize)
+    else:
+        figsize, dpi, layout = figure_geometry(spec, figsize)
+        fig = new_figure(figsize, dpi, layout)
+        ax = fig.add_subplot(1, 1, 1)
+        _draw_2d_panel(fig, ax, spec)
+        result = fig
+    if path is None:
+        return result
+    return _write(result, path)
 
+
+def _render_into(spec: PlotSpec, ax: Axes, path: str | Path | None) -> Figure | Path:
+    """Draw ``spec`` into a caller-owned ``ax`` and return its figure (or ``path``).
+
+    The ``render(ax=...)`` body.  Everything it refuses, it refuses because the
+    alternative is a plausible-looking wrong picture: an animation and a composite
+    each drive a *figure* (many axes / a frame loop), and a 3-D spec on a 2-D axes
+    would silently drop the depth coordinate.
+    """
+    from . import _threed
+
+    if spec.is_animated:
+        raise InvalidParameterError(
+            "ax= cannot render an animated spec: an animation drives a whole figure "
+            "(it owns the frame loop). Render it without ax= and use the returned "
+            "FuncAnimation, or drop the animation with spec.animation = None."
+        )
     if spec.is_composite:
-        return _render_composite(spec, figsize=figsize)
+        raise InvalidParameterError(
+            "ax= cannot render a COMPOSITE spec: it needs one axes per panel. "
+            "Render a single panel into your axes — spec.panels[i].render(ax=ax)."
+        )
+    is_3d_axes = getattr(ax, "name", "") == "3d"
+    if _threed.is_three_d(spec) and not is_3d_axes:
+        raise InvalidParameterError(
+            "ax= got a 2-D axes for a 3-D spec; the depth coordinate would be "
+            'dropped. Create one with plt.subplots(subplot_kw={"projection": "3d"}).'
+        )
+    if is_3d_axes and not _threed.is_three_d(spec):
+        raise InvalidParameterError(
+            "ax= got a 3-D axes for a 2-D spec. Create a plain axes with plt.subplots()."
+        )
 
-    if _threed.is_three_d(spec):
-        return _threed.render_3d(spec, figsize=figsize)
-
-    # Resolve meta figsize / dpi
-    meta_figsize = spec.meta.get("figsize") if isinstance(spec.meta, dict) else None
-    if figsize is None and meta_figsize is not None:
-        w, h = meta_figsize
-        if w is not None and h is not None:
-            figsize = (float(w), float(h))
-
-    dpi: float | None = None
-    if isinstance(spec.meta, dict) and "dpi" in spec.meta:
-        dpi = float(spec.meta["dpi"])
-
-    fig = Figure(figsize=figsize, dpi=dpi)
-    FigureCanvasAgg(fig)
-    ax = fig.add_subplot(1, 1, 1)
-    _draw_2d_panel(fig, ax, spec)
-    return fig
+    figure = cast("Figure", ax.get_figure())
+    if is_3d_axes:
+        _threed._draw_3d_panel(figure, ax, spec)
+    else:
+        _draw_2d_panel(figure, ax, spec)
+    if path is None:
+        return figure
+    return _write(figure, path)
 
 
-def _draw_2d_panel(fig: Figure, ax: Axes, spec: PlotSpec, theme: Theme | None = None) -> None:
+def _write(result: Figure | FuncAnimation, path: str | Path) -> Path:
+    """Write a rendered figure / animation to ``path`` and return it.
+
+    A ``FuncAnimation`` (uniquely carrying ``to_jshtml``) writes a movie through
+    its own ``save`` when the extension is one; anything else is a still of the
+    animation's underlying figure.  Raises rather than silently producing an
+    empty file for an extension matplotlib cannot write.
+    """
+    out = Path(path)
+    ext = out.suffix.lower()
+    if hasattr(result, "to_jshtml") and ext in _MOVIE_EXTENSIONS:
+        # ``result`` is a union here and only the animation arm has ``save``;
+        # the ``hasattr`` above is the real guard.  Reaching the attribute through
+        # ``getattr`` states that to the type checker on every stub version,
+        # rather than a ``type: ignore`` that one of them calls unused.
+        saver: Any = getattr(result, "save")  # noqa: B009
+        saver(str(out))
+        return out
+    figure = getattr(result, "_fig", None) or getattr(result, "figure", result)
+    savefig = getattr(figure, "savefig", None)
+    if savefig is None:  # pragma: no cover - defensive
+        raise InvalidParameterError(
+            f"the matplotlib backend cannot write {out.name}: no savable figure was produced."
+        )
+    savefig(str(out))
+    return out
+
+
+def _draw_2d_panel(
+    fig: Figure, ax: Axes, spec: PlotSpec, theme: Theme | None = None, *, colorbar: bool = True
+) -> ScalarMappable | None:
     """Draw one 2-D spec's layers + axes/colorbar/legend/annotations onto ``ax``.
 
     The single-panel body of :func:`render`, factored out so the composite
@@ -1109,13 +1626,24 @@ def _draw_2d_panel(fig: Figure, ax: Axes, spec: PlotSpec, theme: Theme | None = 
     ``theme`` lets the composite renderer pass an *inherited* theme (its own) for a
     panel that has none, **without mutating the panel spec** — when ``None`` the
     panel's own resolved theme is used.
+
+    ``colorbar=False`` skips step 3's colorbar and returns the mappable instead,
+    so a ``share_color=True`` composite can attach **one** bar spanning every
+    panel at the figure edge rather than inside whichever panel happened to keep
+    it (which, on a 2x2, landed the "figure-level" bar between panels 1 and 2 of
+    the top row).
+
+    Returns
+    -------
+    ScalarMappable or None
+        The colour-mapped artist this panel drew, if any.
     """
     theme = theme if theme is not None else _resolve_theme(spec)
     preset = _preset_for(normalize_kind(spec.kind))
 
     # Step 1: apply theme presentation
     _apply_theme_to_figure(fig, ax, theme)
-    _apply_theme_color_cycle(ax, theme)
+    _apply_theme_color_cycle(ax, theme, spec)
 
     # Step 2: draw layers
     mappable: ScalarMappable | None = None
@@ -1130,9 +1658,56 @@ def _draw_2d_panel(fig: Figure, ax: Axes, spec: PlotSpec, theme: Theme | None = 
     # Step 3: apply axes (grid, labels, ticks, tickformat, …), colorbar, legend, annotations
     _apply_theme_grid(ax, spec, theme)
     _apply_axes(ax, spec, preset, theme)
-    _apply_colorbar(fig, ax, mappable, spec.colorbar)
+    if colorbar:
+        _apply_colorbar(fig, ax, mappable, spec.colorbar, spec.meta)
     _apply_legend(ax, spec, theme)
     _apply_annotations(ax, spec.annotations)
+    return mappable
+
+
+def _apply_shared_colorbar(
+    fig: Figure, axes: list[Axes], mappable: ScalarMappable, colorbar: Colorbar
+) -> None:
+    """Attach **one** colorbar spanning every panel, at the figure edge.
+
+    ``share_color=True`` unifies the colour range in the IR
+    (:func:`~tsdynamics.viz.compose._unify_colour`) and leaves the
+    :class:`~tsdynamics.viz.spec.Colorbar` on the first colour-bearing panel,
+    which a per-panel renderer draws *inside that panel* — so the "one
+    figure-level colorbar" of a 2x2 landed between panels 1 and 2 of the top
+    row, which is not a layout anyone would put in a paper.  Handing ``ax=`` the
+    whole axes list makes matplotlib steal space from all of them and put the bar
+    on the figure's edge, which is what the keyword promises.
+    """
+    if not colorbar.show:
+        return
+    bar = fig.colorbar(mappable, ax=axes, location=colorbar.location or "right")
+    if colorbar.label:
+        bar.set_label(colorbar.label)
+    if colorbar.ticks is not None:
+        bar.set_ticks(list(colorbar.ticks))
+
+
+def _hide_inner_tick_labels(axes: list[Axes], *, share_x: bool, share_y: bool) -> None:
+    """Strip the redundant inner tick labels of a shared-axis grid.
+
+    ``sharex=``/``sharey=`` link the *limits*; matplotlib only hides the inner
+    labels when you go through ``plt.subplots(...)``, which this renderer does
+    not (it builds axes one at a time so a 3-D panel can sit beside a 2-D one).
+    So ``share_x=True`` produced a stack with the x tick labels repeated under
+    every panel — and removing that repetition is the main reason to ask for
+    shared axes in a paper figure.
+    """
+    for ax in axes:
+        spec = getattr(ax, "get_subplotspec", lambda: None)()
+        if spec is None or getattr(ax, "name", "") == "3d":
+            continue
+        if share_x and not spec.is_last_row():
+            ax.tick_params(labelbottom=False)
+            ax.set_xlabel("")
+        if share_y and not spec.is_first_col():
+            ax.tick_params(labelleft=False)
+            ax.set_ylabel("")
 
 
 def _composite_grid(layout: Any, n: int) -> tuple[int, int]:
@@ -1151,6 +1726,105 @@ def _composite_grid(layout: Any, n: int) -> tuple[int, int]:
     return n, 1  # "stack" (default): one column
 
 
+def _leaf_extent(spec: PlotSpec) -> tuple[int, int]:
+    """Return ``(rows, cols)`` of a nested composite measured in LEAF panels.
+
+    The default figure size is ``(cols * 5.0, rows * 3.2)``; reading that off the
+    *top-level* grid of a nested tree sizes a 2x2 built as ``(a|b)/(c|d)`` — whose
+    top-level grid is 2x1 — as a two-row single-column page, so every panel is
+    drawn squeezed into half the width it needs.  Measuring the leaves gives the
+    2x2 the page a 2x2 wants.
+    """
+    if not spec.is_composite:
+        return (1, 1)
+    rows, cols = _composite_grid(spec.layout, len(spec.panels))
+    extents = [_leaf_extent(p) for p in spec.panels]
+    heights = [
+        max((extents[i][0] for i in range(len(extents)) if i // cols == r), default=1)
+        for r in range(rows)
+    ]
+    widths = [
+        max((extents[i][1] for i in range(len(extents)) if i % cols == c), default=1)
+        for c in range(cols)
+    ]
+    return (sum(heights), sum(widths))
+
+
+def _place_composite(
+    fig: Figure,
+    cell: Any,
+    spec: PlotSpec,
+    inherited_theme: Theme,
+) -> list[Axes]:
+    """Draw one composite level into ``cell``, recursing into nested composites.
+
+    ``cell`` is the enclosing :class:`~matplotlib.gridspec.SubplotSpec` this
+    arrangement occupies, or ``None`` for the whole figure.  A panel that is
+    itself a composite gets its cell subdivided
+    (``cell.subgridspec(rows, cols)``) and is placed by a recursive call, which
+    is what makes the parentheses a user typed the layout they get: in
+    ``(a|b)/c`` the outer stack is 2x1, its first cell holds a 1x2 row, and ``c``
+    occupies the whole second cell — **spanning the full width**, as a single
+    panel on a row of its own should.
+
+    ``share_x`` / ``share_y`` / ``share_color`` are honoured **per arrangement**:
+    each composite shares within its own subtree, against its own anchor, because
+    that is the arrangement the caller asked the question of.
+
+    Returns
+    -------
+    list of Axes
+        Every drawable axes created for this subtree, in layout order.
+    """
+    from . import _threed
+
+    theme = spec._theme if spec._theme is not None else inherited_theme
+    panels = spec.panels
+    layout = spec.layout
+    rows, cols = _composite_grid(layout, len(panels))
+    gs = fig.add_gridspec(rows, cols) if cell is None else cell.subgridspec(rows, cols)
+
+    share_x = bool(getattr(layout, "share_x", False))
+    share_y = bool(getattr(layout, "share_y", False))
+    share_color = bool(getattr(layout, "share_color", False))
+    anchor: Axes | None = None
+    flat: list[Axes] = []
+    shared_mappable: ScalarMappable | None = None
+    shared_colorbar: Colorbar | None = None
+    for i, panel in enumerate(panels):
+        # Resolve the effective theme LOCALLY (panel theme > composite theme).
+        # Do NOT write it back onto the panel spec — rendering must never mutate
+        # its input, so a re-render under a different composite theme stays
+        # correct and a caller's ``panel._theme is None`` survives the render.
+        effective_theme = panel._theme if panel._theme is not None else theme
+        sub = gs[i // cols, i % cols]
+        if panel.is_composite:
+            flat.extend(_place_composite(fig, sub, panel, effective_theme))
+            continue
+        threed = _threed.is_three_d(panel)
+        sub_kw: dict[str, Any] = {}
+        if not threed and anchor is not None:
+            if share_x:
+                sub_kw["sharex"] = anchor
+            if share_y:
+                sub_kw["sharey"] = anchor
+        ax = fig.add_subplot(sub, projection=("3d" if threed else None), **sub_kw)
+        flat.append(ax)
+        if threed:
+            _threed._draw_3d_panel(fig, ax, panel, effective_theme)
+        else:
+            produced = _draw_2d_panel(fig, ax, panel, effective_theme, colorbar=not share_color)
+            if share_color and panel.colorbar is not None and produced is not None:
+                shared_mappable = shared_mappable or produced
+                shared_colorbar = shared_colorbar or panel.colorbar
+            if anchor is None:
+                anchor = ax
+    if share_color and shared_mappable is not None and shared_colorbar is not None:
+        _apply_shared_colorbar(fig, flat, shared_mappable, shared_colorbar)
+    _hide_inner_tick_labels(flat, share_x=share_x, share_y=share_y)
+    return flat
+
+
 def _render_composite(spec: PlotSpec, *, figsize: tuple[float, float] | None) -> Figure:
     """Tile a ``COMPOSITE`` spec's ``panels`` into one figure per its ``layout``.
 
@@ -1161,62 +1835,38 @@ def _render_composite(spec: PlotSpec, *, figsize: tuple[float, float] | None) ->
     A composite spec may carry its own ``theme``; each panel inherits it when the
     panel has no theme of its own (``panel.theme or composite.theme or get_theme()``).
     """
-    from matplotlib.backends.backend_agg import FigureCanvasAgg
-    from matplotlib.figure import Figure
     from mpl_toolkits import mplot3d  # noqa: F401 — registers the "3d" projection
-
-    from . import _threed
 
     # Inherit composite theme onto panels that have no own theme
     composite_theme = _resolve_theme(spec)
 
     panels = spec.panels
-    layout = spec.layout
     if not panels:
-        # A composite with no panels is degenerate; emit a valid (empty) figure.
-        fig = Figure(figsize=figsize)
-        FigureCanvasAgg(fig)
-        fig.add_subplot(1, 1, 1)
-        return fig
-    rows, cols = _composite_grid(layout, len(panels))
+        # A 0-panel COMPOSITE used to render as a blank figure — a silent no-op
+        # that told the caller nothing while looking like a successful plot (it
+        # is what ``__plot_spec__(kind="composite")`` produced, discarding the
+        # trajectory).  Fail loudly instead.  ``PlotSpec`` enforces the
+        # COMPOSITE <=> panels invariant at construction, so this is a backstop.
+        raise InvalidParameterError(
+            "cannot render a COMPOSITE spec with no panels: build it with "
+            "tsdynamics.viz.plot(..., layout=...), which always attaches panels."
+        )
+    rows, cols = _leaf_extent(spec)
+    # Explicit figsize > spec.meta["figsize"] > theme.figsize > the grid-derived
+    # default.  (A theme's figsize is a *panel-independent* page size, so it is
+    # deliberately allowed to win over the grid heuristic but not over an
+    # explicit request.)
+    figsize, dpi, layout_engine = figure_geometry(spec, figsize, theme=composite_theme)
     if figsize is None:
         figsize = (cols * 5.0, rows * 3.2)
 
-    # Composite-level dpi
-    dpi: float | None = None
-    if isinstance(spec.meta, dict) and "dpi" in spec.meta:
-        dpi = float(spec.meta["dpi"])
-
-    fig = Figure(figsize=figsize, dpi=dpi)
-    FigureCanvasAgg(fig)
+    fig = new_figure(figsize, dpi, layout_engine)
 
     # Apply composite-level background to the figure
     if composite_theme.background is not None:
         fig.patch.set_facecolor(composite_theme.background)
 
-    share_x = bool(getattr(layout, "share_x", False))
-    share_y = bool(getattr(layout, "share_y", False))
-    anchor: Axes | None = None
-    for i, panel in enumerate(panels):
-        # Resolve the effective theme LOCALLY (panel theme > composite theme).
-        # Do NOT write it back onto the panel spec — rendering must never mutate
-        # its input, so a re-render under a different composite theme stays
-        # correct and a caller's ``panel._theme is None`` survives the render.
-        effective_theme = panel._theme if panel._theme is not None else composite_theme
-        threed = _threed.is_three_d(panel)
-        sub_kw: dict[str, Any] = {}
-        if not threed and anchor is not None:
-            if share_x:
-                sub_kw["sharex"] = anchor
-            if share_y:
-                sub_kw["sharey"] = anchor
-        ax = fig.add_subplot(rows, cols, i + 1, projection=("3d" if threed else None), **sub_kw)
-        if threed:
-            _threed._draw_3d_panel(fig, ax, panel, effective_theme)
-        else:
-            _draw_2d_panel(fig, ax, panel, effective_theme)
-            if anchor is None:
-                anchor = ax
+    _place_composite(fig, None, spec, composite_theme)
     if spec.title:
         title_kw: dict[str, Any] = {}
         if composite_theme.foreground is not None:

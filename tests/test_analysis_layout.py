@@ -7,8 +7,8 @@ Covers the stream's acceptance:
   ``tsdynamics.analysis`` re-exports are unchanged objects);
 * the new per-stream subpackages exist and the old flat module paths are gone;
 * the canonical (definition-site) paths the docs reference resolve; and
-* the ``tsdynamics.analyses`` / ``tsdynamics.transforms`` plugin kinds now have a
-  consumer — an out-of-tree plugin is discovered into the generic registries.
+* the ``tsdynamics.analyses`` plugin kind now has a consumer — an out-of-tree
+  plugin is discovered into the generic registry.
 
 The out-of-tree tests are hermetic: they synthesize a fake installed
 distribution on a temporary ``sys.path`` entry and let the real
@@ -25,42 +25,58 @@ from pathlib import Path
 import pytest
 
 import tsdynamics as ts
-from tsdynamics import analysis, plugins, registry, transforms
+from tsdynamics import analysis, plugins, registry
 
 # ── public API preservation ─────────────────────────────────────────────────────
 
+#: The analyses A-LAYOUT moved.  In v6 they live at ONE address —
+#: ``ts.analysis.<name>`` — because the top level is 17 names (CONTRACT §2.1).
 _PUBLIC = [
     "lyapunov_spectrum",
-    "max_lyapunov",
     "kaplan_yorke_dimension",
     "fixed_points",
-    "FixedPoint",
     "orbit_diagram",
-    "OrbitDiagram",
     "poincare_section",
-    # entropy & complexity (stream A-ENT)
-    "entropy",
-    "permutation_entropy",
-    "weighted_permutation_entropy",
-    "dispersion_entropy",
-    "sample_entropy",
-    "approximate_entropy",
-    "multiscale_entropy",
-    "lz76_complexity",
-    "lz76_entropy",
+    # chaos indicators (stream A-CHAOS)
+    "gali",
+    "zero_one_test",
+    "expansion_entropy",
+    # recurrence & RQA (stream A-RQA)
+    "recurrence_matrix",
+    "rqa",
+    "windowed_rqa",
 ]
+
+#: Result classes A-LAYOUT moved.  They are reachable on ``ts.analysis`` and
+#: listed at ``ts.analysis.results`` — never on the tab surface (C2: a type you
+#: only ever get *back*).
+_PUBLIC_RESULTS = ["FixedPoint", "OrbitDiagram"]
 
 
 @pytest.mark.parametrize("name", _PUBLIC)
-def test_top_level_reexports_unchanged(name):
-    """Every analysis symbol is importable from the top level and from analysis."""
-    assert hasattr(ts, name), f"tsdynamics.{name} disappeared"
-    assert getattr(ts, name) is getattr(analysis, name)
+def test_the_analysis_survived_the_move_at_its_one_address(name):
+    """Every analysis symbol resolves on ``ts.analysis`` and is on its tab surface."""
+    assert hasattr(analysis, name), f"tsdynamics.analysis.{name} disappeared"
+    assert name in analysis.__all__
+
+
+@pytest.mark.parametrize("name", _PUBLIC + _PUBLIC_RESULTS)
+def test_the_demoted_name_redirects_from_the_top_level(name):
+    """``ts.<name>`` is gone, and the error names the address that replaced it."""
+    with pytest.raises((AttributeError, ImportError)) as err:
+        getattr(ts, name)
+    assert "ts.analysis" in str(err.value)
+
+
+@pytest.mark.parametrize("name", _PUBLIC_RESULTS)
+def test_a_result_class_is_reachable_but_off_the_tab_surface(name):
+    assert getattr(analysis, name) is getattr(analysis.results, name)
+    assert name not in analysis.__all__
 
 
 def test_analysis_all_is_stable():
     # The A-LAYOUT public surface must remain exported; analysis streams (A-DIM,
-    # A-ENT, …) append to __all__, so this is a subset check, not equality.
+    # A-CHAOS, …) append to __all__, so this is a subset check, not equality.
     assert set(_PUBLIC) <= set(analysis.__all__)
 
 
@@ -74,9 +90,8 @@ _SUBPACKAGES = [
     "basins",
     "dimensions",
     "embedding",
-    "entropy",
     "recurrence",
-    "surrogate",
+    "sampling",
 ]
 
 
@@ -117,19 +132,17 @@ def test_canonical_symbols_live_at_definition_sites():
     from tsdynamics.analysis.lyapunov import (
         kaplan_yorke_dimension,
         lyapunov_spectrum,
-        max_lyapunov,
     )
     from tsdynamics.analysis.orbits.orbit_diagram import OrbitDiagram, orbit_diagram
     from tsdynamics.analysis.orbits.poincare import poincare_section
 
-    assert fixed_points is ts.fixed_points
-    assert FixedPoint is ts.FixedPoint
-    assert lyapunov_spectrum is ts.lyapunov_spectrum
-    assert max_lyapunov is ts.max_lyapunov
-    assert kaplan_yorke_dimension is ts.kaplan_yorke_dimension
-    assert orbit_diagram is ts.orbit_diagram
-    assert OrbitDiagram is ts.OrbitDiagram
-    assert poincare_section is ts.poincare_section
+    assert fixed_points is ts.analysis.fixed_points
+    assert FixedPoint is ts.analysis.FixedPoint
+    assert lyapunov_spectrum is ts.analysis.lyapunov_spectrum
+    assert kaplan_yorke_dimension is ts.analysis.kaplan_yorke_dimension
+    assert orbit_diagram is ts.analysis.orbit_diagram
+    assert OrbitDiagram is ts.analysis.OrbitDiagram
+    assert poincare_section is ts.analysis.poincare_section
 
 
 @pytest.mark.parametrize(
@@ -145,21 +158,31 @@ def test_old_flat_module_paths_are_gone(old_path):
         importlib.import_module(old_path)
 
 
-# ── analyses / transforms plugin discovery (the new consumers) ──────────────────
+# ── analyses plugin discovery (the new consumer) ───────────────────────────────
 
 
 @pytest.fixture
 def clean_generic_registries():
-    """Snapshot the generic analyses/transforms registries; restore afterwards."""
-    before = {
-        "analyses": set(registry.analyses.names()),
-        "transforms": set(registry.transforms.names()),
-    }
+    """Snapshot the generic analyses registry; restore afterwards.
+
+    ``discover_plugins`` does **two** things — it registers into
+    ``registry.analyses`` *and* it binds the name onto ``tsdynamics.analysis``
+    and rebuilds ``__all__`` (``_refresh_surface``).  Undoing only the first half
+    leaves the plugin in ``ts.analysis.__all__`` for the rest of the worker's
+    session, which is a live cross-file leak: measured, it fails three
+    ``tests/test_api_contract.py`` listing gates with ``toy_count`` whenever the
+    two files share an xdist worker.  Restore both halves.
+    """
+    before = set(registry.analyses.names())
     yield
-    for reg, kind in ((registry.analyses, "analyses"), (registry.transforms, "transforms")):
-        for name in list(reg.names()):
-            if name not in before[kind]:
-                reg.unregister(name)
+    leaked = [n for n in registry.analyses.names() if n not in before]
+    for name in leaked:
+        registry.analyses.unregister(name)
+    if leaked:
+        for name in leaked:
+            if getattr(analysis, name, None) is not None:
+                delattr(analysis, name)
+        analysis._refresh_surface()
 
 
 def _write_fake_distribution(
@@ -198,31 +221,6 @@ def test_analysis_discover_plugins_registers_out_of_tree(
         assert analysis.discover_plugins(strict=True) == []
     finally:
         sys.modules.pop("toy_analysis_pkg", None)
-        importlib.invalidate_caches()
-
-
-def test_transforms_discover_plugins_registers_out_of_tree(
-    tmp_path, monkeypatch, clean_generic_registries
-):
-    site = tmp_path / "site"
-    _write_fake_distribution(
-        site,
-        dist="toy-transform",
-        module="toy_transform_pkg",
-        group=plugins.TRANSFORMS_GROUP,
-        ep_name="toy_double",
-        target="toy_transform_pkg:transform",
-        body="def transform(x):\n    return [2 * v for v in x]\n",
-    )
-    monkeypatch.syspath_prepend(str(site))
-    importlib.invalidate_caches()
-    try:
-        newly = transforms.discover_plugins(strict=True)
-        assert "toy_double" in newly
-        assert "toy_double" in registry.transforms
-        assert registry.transforms.get("toy_double")([1, 2, 3]) == [2, 4, 6]
-    finally:
-        sys.modules.pop("toy_transform_pkg", None)
         importlib.invalidate_caches()
 
 

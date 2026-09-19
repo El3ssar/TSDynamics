@@ -1,7 +1,7 @@
 """Generate the Visualization-page showcase figures by dogfooding ``ts.viz``.
 
 Every figure on this page is built through the **real** visualization API — the
-``Trajectory.to_plot_spec`` / ``system.to_plot_spec`` front door, the
+``Trajectory.__plot_spec__`` / ``system.__plot_spec__`` seam, the
 ``ts.viz.plot`` composition seam, the fluent ``PlotSpec`` tweaks, the ``Theme``
 system, and the ``Animation`` modifier — never raw matplotlib.  That keeps the
 docs honest: the pictures are produced by the code the page teaches.
@@ -217,9 +217,9 @@ def fig_kind_time_series(plt, out_path):
     from tsdynamics.viz.producers import time_series
 
     ros = ts.systems.Rossler()
-    traj = ros.integrate(final_time=120.0, dt=0.02, ic=[1.0, 1.0, 0.0]).after(20.0)
+    traj = ros.run(final_time=120.0, dt=0.02, ic=[1.0, 1.0, 0.0]).after(20.0)
 
-    # The front door `to_plot_spec` auto-dispatches on component COUNT, so three
+    # The front door auto-dispatches on component COUNT, so three
     # components would give a 3-D portrait. To overlay the three components as lines
     # over t, name the TIME_SERIES kind explicitly via the producer (one LINE per
     # component, palette-coloured, with a legend).
@@ -235,9 +235,9 @@ def fig_kind_phase_2d(plt, out_path):
 
     ros = ts.systems.Rossler()
     # A coarser dt keeps the colour-per-segment SVG light while tracing the orbit.
-    traj = ros.integrate(final_time=180.0, dt=0.06, ic=[1.0, 1.0, 0.0]).after(20.0)
+    traj = ros.run(final_time=180.0, dt=0.06, ic=[1.0, 1.0, 0.0]).after(20.0)
 
-    # The parameterised producer takes `color_by=` (which the fixed to_plot_spec
+    # The parameterised producer takes `color_by=` (which the fixed seam
     # signature cannot) — colour the curve by elapsed time along the orbit.
     spec = phase_portrait(traj, components=["x", "y"], color_by="time")
     spec.style(lw=0.7).colorize(colorbar=True).size(5.6, 4.6)
@@ -252,12 +252,12 @@ def fig_kind_phase_3d(plt, out_path):
     import tsdynamics as ts
 
     lor = ts.systems.Lorenz()
-    traj = lor.integrate(final_time=60.0, dt=0.005, ic=[1.0, 1.0, 1.0]).after(5.0)
+    traj = lor.run(final_time=60.0, dt=0.005, ic=[1.0, 1.0, 1.0]).after(5.0)
 
     # 3 components -> PHASE_PORTRAIT_3D (a LINE3D). Hide the axes for a clean
     # "attractor floating in space" look via the figure-level style(axes=False).
     spec = (
-        traj.to_plot_spec(components=["x", "y", "z"])
+        traj.__plot_spec__(components=["x", "y", "z"])
         .style(lw=0.35, alpha=0.85, axes=False)
         .recolor(INDIGO)
         .camera(elev=22, azim=-60)
@@ -277,10 +277,10 @@ def fig_kind_spacetime(plt, out_path):
     # Break the symmetric fixed point with a small bump on site 0 (pinned IC).
     ic = 0.01 * np.ones(l96.dim)
     ic[0] += 1.0
-    traj = l96.integrate(final_time=30.0, dt=0.05, ic=ic).after(5.0)
+    traj = l96.run(final_time=30.0, dt=0.05, ic=ic).after(5.0)
 
     # 4+ components -> SPACETIME (an IMAGE), never a misleading 3-D portrait.
-    spec = traj.to_plot_spec().style(cmap="viridis").size(6.6, 3.4)
+    spec = traj.__plot_spec__().style(cmap="viridis").size(6.6, 3.4)
     spec.colorbar.label = "$x_i$"
     spec.relabel(x="time", y="site index $i$", title="")
     _save_svg(spec, out_path)
@@ -293,7 +293,7 @@ def fig_kind_delay(plt, out_path):
     import tsdynamics as ts
 
     mg = ts.systems.MackeyGlass()
-    traj = mg.integrate(
+    traj = mg.run(
         final_time=600.0,
         dt=0.5,
         history=lambda s: [1.0 + 0.1 * np.sin(0.2 * s)],
@@ -301,7 +301,7 @@ def fig_kind_delay(plt, out_path):
 
     # kind="delay" is a recipe: x(t) vs x(t - tau); tau is in TIME units (converted
     # to a sample lag via meta["dt"]). It routes to a PHASE_PORTRAIT_2D.
-    spec = traj.to_plot_spec(kind="delay", components="x", tau=17.0)
+    spec = traj.__plot_spec__(kind="delay", components="x", delay_time=17.0)
     spec.style(lw=0.5, alpha=0.85).recolor(TEAL).size(4.8, 4.6)
     spec.relabel(title="")
     _save_svg(spec, out_path)
@@ -318,14 +318,14 @@ def fig_themes(plt, out_path):
     from tsdynamics.viz import get_theme, plot
 
     lor = ts.systems.Lorenz()
-    traj = lor.integrate(final_time=40.0, dt=0.01, ic=[1.0, 1.0, 1.0]).after(5.0)
+    traj = lor.run(final_time=40.0, dt=0.01, ic=[1.0, 1.0, 1.0]).after(5.0)
 
     # Build the SAME (x, z) portrait four times, each pinned to a built-in theme,
     # then tile them into a 2x2 grid with the composition seam. Each panel keeps
     # its own theme (panel theme wins over the composite / global default).
     panels = []
     for name in ("default", "dark", "minimal", "publication"):
-        p = traj.to_plot_spec(components=["x", "z"]).theme(get_theme(name))
+        p = traj.__plot_spec__(components=["x", "z"]).theme(get_theme(name))
         p.style(lw=0.5).relabel(title=name)
         panels.append(p)
 
@@ -346,17 +346,17 @@ def fig_styling(plt, out_path):
     from tsdynamics.viz import plot
 
     lor = ts.systems.Lorenz()
-    traj = lor.integrate(final_time=40.0, dt=0.01, ic=[1.0, 1.0, 1.0]).after(5.0)
+    traj = lor.run(final_time=40.0, dt=0.01, ic=[1.0, 1.0, 1.0]).after(5.0)
 
     # LEFT: the bare spec (brand default look).
-    before = traj.to_plot_spec(components=["x", "z"]).style(lw=0.5)
+    before = traj.__plot_spec__(components=["x", "z"]).style(lw=0.5)
     before.relabel(title="before")
 
     # RIGHT: the same data, restyled with the chainable tweaks — a heavier indigo
     # line, a soft grid, and a light panel background. Each tweak mutates + returns
     # self, so they compose in one expression.
     after = (
-        traj.to_plot_spec(components=["x", "z"])
+        traj.__plot_spec__(components=["x", "z"])
         .recolor(INDIGO)
         .style(lw=1.1, alpha=0.9)
         .grid(True, color="#b9b4ec", alpha=0.5)
@@ -380,10 +380,10 @@ def fig_compose_overlay(plt, out_path):
 
     # Two Rössler variants — a small limit cycle (c=2.3) and the wide chaotic band
     # (c=5.7): clearly separated so the overlay reads at a glance.
-    cycle = ts.Rossler(params={"c": 2.3})
-    chaos = ts.Rossler(params={"c": 5.7})
-    t1 = cycle.integrate(final_time=300.0, dt=0.02, ic=[1.0, 1.0, 0.0]).after(60.0)
-    t2 = chaos.integrate(final_time=300.0, dt=0.02, ic=[1.0, 1.0, 0.0]).after(60.0)
+    cycle = ts.systems.Rossler(params={"c": 2.3})
+    chaos = ts.systems.Rossler(params={"c": 5.7})
+    t1 = cycle.run(final_time=300.0, dt=0.02, ic=[1.0, 1.0, 0.0]).after(60.0)
+    t2 = chaos.run(final_time=300.0, dt=0.02, ic=[1.0, 1.0, 0.0]).after(60.0)
 
     # layout="overlay" merges compatible single-panel specs onto one axes and
     # disambiguates the legend by source title. Titles seed the legend labels.
@@ -401,7 +401,7 @@ def fig_compose_grid(plt, out_path):
     from tsdynamics.viz import plot
 
     # Lorenz / Rössler declare named variables; Halvorsen / Thomas do not, so those
-    # select components by integer index (both spellings work through to_plot_spec).
+    # select components by integer index (both spellings work through the seam).
     specs = []
     for name, ic, comps, color in (
         ("Lorenz", [1.0, 1.0, 1.0], ["x", "z"], INDIGO),
@@ -411,8 +411,8 @@ def fig_compose_grid(plt, out_path):
     ):
         sys = getattr(ts.systems, name)()
         # A coarser dt keeps each panel's SVG light while still tracing the attractor.
-        traj = sys.integrate(final_time=160.0, dt=0.02, ic=ic).after(30.0)
-        p = traj.to_plot_spec(components=comps).recolor(color).style(lw=0.4, alpha=0.85)
+        traj = sys.run(final_time=160.0, dt=0.02, ic=ic).after(30.0)
+        p = traj.__plot_spec__(components=comps).recolor(color).style(lw=0.4, alpha=0.85)
         p.relabel(title=name)
         specs.append(p)
 
@@ -435,13 +435,13 @@ def fig_animation(plt, out_path):
     import tsdynamics as ts
 
     lor = ts.systems.Lorenz()
-    traj = lor.integrate(final_time=45.0, dt=0.01, ic=[1.0, 1.0, 1.0]).after(3.0)
+    traj = lor.run(final_time=45.0, dt=0.01, ic=[1.0, 1.0, 1.0]).after(3.0)
 
     # Animation is an orthogonal modifier: any spec + an Animation becomes a movie.
     # A reveal comet — head at the current sample, a fading tail reaching back 6
     # time units — over the 3-D butterfly, axes hidden for a clean look.
     spec = (
-        traj.to_plot_spec(components=["x", "y", "z"], animate=True)
+        traj.__plot_spec__(components=["x", "y", "z"], animate=True)
         .animate(n_frames=100, fps=25)
         .trail(("time", 6.0), fade=True)
         .head(size=9.0, color=AMBER)
@@ -467,10 +467,10 @@ def fig_animation_spin(plt, out_path):
 
     # Aizawa declares no named variables, so its components are selected by index.
     aiz = ts.systems.Aizawa()
-    traj = aiz.integrate(final_time=95.0, dt=0.01, ic=[0.1, 0.0, 0.0]).after(15.0)
+    traj = aiz.run(final_time=95.0, dt=0.01, ic=[0.1, 0.0, 0.0]).after(15.0)
 
     spec = (
-        traj.to_plot_spec(components=[0, 1, 2], animate=True)
+        traj.__plot_spec__(components=[0, 1, 2], animate=True)
         .animate(n_frames=100, fps=25)
         .trail(None)  # persistent — the orbit accretes and stays
         .head(size=9.0, color=INDIGO)
@@ -497,12 +497,12 @@ def fig_animation_field(plt, out_path):
     # A 48x48 reaction–diffusion field. GrayScott has a deterministic seeded IC, so
     # the pattern is reproducible; dt=5.0 samples the slow pattern formation.
     gs = ts.systems.GrayScott()
-    gtr = gs.integrate(final_time=4000.0, dt=85.0)
+    gtr = gs.run(final_time=4000.0, dt=85.0)
 
     # kind="field" + animate=True → SPATIAL_FIELD, mode="frames": the activator field
     # replayed frame by frame as an imshow heatmap movie.
     spec = (
-        gtr.to_plot_spec(kind="field", animate=True)
+        gtr.__plot_spec__(kind="field", animate=True)
         .animate(fps=15)
         .style(cmap="viridis")
         .size(4.6, 4.6)
@@ -523,14 +523,14 @@ def fig_animation_delay(plt, out_path):
     import tsdynamics as ts
 
     mg = ts.systems.MackeyGlass()
-    traj = mg.integrate(
+    traj = mg.run(
         final_time=900.0,
         dt=0.5,
         history=lambda s: [1.0 + 0.1 * np.sin(0.2 * s)],
     ).after(150.0)
 
     spec = (
-        traj.to_plot_spec(kind="delay", components="x", tau=17.0, animate=True)
+        traj.__plot_spec__(kind="delay", components="x", delay_time=17.0, animate=True)
         .animate(n_frames=100, fps=25)
         .trail(("time", 120.0), fade=True)
         .head(size=8.0, color=INDIGO)
@@ -555,11 +555,11 @@ def fig_animation_composite(plt, out_path):
     from tsdynamics.viz.spec import Animation
 
     lor = ts.systems.Lorenz()
-    traj = lor.integrate(final_time=42.0, dt=0.01, ic=[1.0, 1.0, 1.0]).after(3.0)
+    traj = lor.run(final_time=42.0, dt=0.01, ic=[1.0, 1.0, 1.0]).after(3.0)
 
     # LEFT: the 3-D butterfly (a reveal comet, indigo, axes hidden).
     portrait = (
-        traj.to_plot_spec(components=["x", "y", "z"])
+        traj.__plot_spec__(components=["x", "y", "z"])
         .style(lw=0.7, axes=False)
         .recolor(INDIGO)
         .camera(elev=22, azim=-60)
@@ -595,8 +595,8 @@ def fig_spatial_field(plt, out_path):
     # LEFT: Gray–Scott — a 48x48 reaction–diffusion field. kind="field" reshapes the
     # final-time state to its (Ny, Nx) grid (an IMAGE heatmap of the activator v).
     gs = ts.systems.GrayScott()
-    gtr = gs.integrate(final_time=1500.0, dt=5.0)
-    left = gtr.to_plot_spec(kind="field").style(cmap="viridis")
+    gtr = gs.run(final_time=1500.0, dt=5.0)
+    left = gtr.__plot_spec__(kind="field").style(cmap="viridis")
     left.relabel(title="Gray–Scott  (2-D field)")
 
     # RIGHT: Kuramoto–Sivashinsky (N=128, L=60) — a 1-D PDE; its space-time diagram is
@@ -605,7 +605,7 @@ def fig_spatial_field(plt, out_path):
     # larger L=60 domain develops the canonical multi-cell spatiotemporal chaos; the
     # zero-mean broadband default IC (seed 0) makes the figure reproducible.
     ks = ts.systems.KuramotoSivashinsky(N=128, L=60)
-    ktr = ks.trajectory(final_time=200, dt=0.2)
+    ktr = ks.run(final_time=200, dt=0.2)
     right = spacetime(ktr, transpose=False).style(cmap="viridis")  # time on x, site index on y
     right.colorbar.label = "$u$"
     right.relabel(x="time", y="site index", title="Kuramoto–Sivashinsky  (1-D field, space–time)")

@@ -1,4 +1,4 @@
-"""Tests for ``to_plot_spec()`` on Trajectory + every result type (stream WS-TOSPEC).
+"""Tests for ``__plot_spec__()`` on Trajectory + every result type (stream WS-TOSPEC).
 
 Covers the acceptance pillars:
 
@@ -9,7 +9,7 @@ Covers the acceptance pillars:
    ``POINCARE_SECTION`` intent (a ``meta["plot_kind"]`` the trajectory's spec
    reads), so a section is never mistaken for a flow.
 3. ``OrbitDiagram / DimensionResult / RecurrenceMatrix / RQAResult /
-   GALIResult / BasinsResult / ReturnMap / LyapunovFromData / SurrogateTest``
+   GALIResult / BasinsResult / ReturnMap / LyapunovFromData``
    each emit a correct :class:`~tsdynamics.viz.spec.PlotSpec`.
 4. Every emitted spec round-trips through ``to_dict`` / ``from_dict``
    (the property the dossier asks a property test to assert).
@@ -34,6 +34,13 @@ from tsdynamics.analysis.basins.basins import BasinsResult
 from tsdynamics.data import Grid, Trajectory
 from tsdynamics.viz.spec import PlotKind, PlotSpec
 
+# matplotlib is an OPTIONAL extra: the base CI job installs the library without
+# it and runs the viz suites in a separate job. Every test here renders, so skip
+# the module rather than fail — a late guard inside the tests does not help when
+# an autouse fixture or a module-level import reaches matplotlib first.
+pytest.importorskip("matplotlib")
+
+
 # ---------------------------------------------------------------------------
 # Shared builders (fast tier)
 # ---------------------------------------------------------------------------
@@ -41,24 +48,33 @@ from tsdynamics.viz.spec import PlotKind, PlotSpec
 
 def _lorenz_traj(final_time: float = 30.0, dt: float = 0.02) -> Trajectory:
     """A short Lorenz trajectory with its transient dropped."""
-    return ts.Lorenz().integrate(final_time=final_time, dt=dt).after(5.0)
+    return ts.systems.Lorenz().run(final_time=final_time, dt=dt).after(5.0)
 
 
 def _result_builders() -> dict[str, object]:
     """One instance of each result type that must emit a spec."""
     traj = _lorenz_traj()
-    rm = ts.recurrence_matrix(traj.y[:200], recurrence_rate=0.05)
+    # `lyapunov_from_data` needs enough record to find a scaling region at all —
+    # its embedding delay, look-ahead and neighbour radius are all read from the
+    # data.  Build its input separately and long enough to be *trusted*
+    # (lambda ~ 0.96 against Lorenz's 0.906) rather than trimming the short
+    # shared trajectory to a length whose neighbours it then has to refuse.
+    lyap_series = ts.systems.Lorenz().run(final_time=120.0, dt=0.02).after(20.0).y[:, 0]
+    rm = ts.analysis.recurrence_matrix(traj.y[:200], recurrence_rate=0.05)
     return {
-        "OrbitDiagram": ts.orbit_diagram(
-            ts.Logistic(), "r", np.linspace(2.8, 4.0, 50), n=40, transient=100
+        "OrbitDiagram": ts.analysis.orbit_diagram(
+            ts.systems.Logistic(),
+            "r",
+            np.linspace(2.8, 4.0, 50),
+            points_per_value=40,
+            transient=100,
         ),
-        "DimensionResult": ts.correlation_dimension(traj),
+        "DimensionResult": ts.analysis.correlation_dimension(traj),
         "RecurrenceMatrix": rm,
-        "RQAResult": ts.rqa(rm),
-        "GALIResult": ts.gali(ts.Lorenz(), k=2, final_time=20.0, dt=0.05),
-        "ReturnMap": ts.return_map(traj, component=2, method="max"),
-        "LyapunovFromData": ts.lyapunov_from_data(traj.y[:1000, 0], dt=0.02),
-        "SurrogateTest": ts.surrogate_test(traj.y[:500, 2], n=9, seed=0),
+        "RQAResult": ts.analysis.rqa(rm),
+        "GALIResult": ts.analysis.gali(ts.systems.Lorenz(), k=2, final_time=20.0, dt=0.05),
+        "ReturnMap": ts.analysis.return_map(traj, components=2, method="max"),
+        "LyapunovFromData": ts.analysis.lyapunov_from_data(lyap_series, dt=0.02),
         "BasinsResult": _synthetic_basins(),
     }
 
@@ -82,7 +98,6 @@ _RESULT_NAMES = (
     "GALIResult",
     "ReturnMap",
     "LyapunovFromData",
-    "SurrogateTest",
     "BasinsResult",
 )
 
@@ -123,7 +138,7 @@ def test_trajectory_kind_dispatches_on_dimensionality(dim, expected):
     t = np.linspace(0.0, 1.0, 32)
     y = np.random.default_rng(0).standard_normal((32, dim))
     traj = Trajectory(t=t, y=y, system=None)
-    spec = traj.to_plot_spec()
+    spec = traj.__plot_spec__()
     assert spec.kind == expected
     # A 3-D phase portrait draws three coordinate channels.
     if expected == PlotKind.PHASE_PORTRAIT_3D:
@@ -137,8 +152,8 @@ def test_trajectory_kind_dispatches_on_dimensionality(dim, expected):
 
 def test_trajectory_kind_override():
     traj = _lorenz_traj()
-    assert traj.to_plot_spec().kind == PlotKind.PHASE_PORTRAIT_3D
-    forced = traj.to_plot_spec(kind="time_series")
+    assert traj.__plot_spec__().kind == PlotKind.PHASE_PORTRAIT_3D
+    forced = traj.__plot_spec__(kind="time_series")
     assert forced.kind == PlotKind.TIME_SERIES
     assert forced.ndim == 1
     # x channel is time for a time series.
@@ -148,7 +163,7 @@ def test_trajectory_kind_override():
 
 def test_trajectory_time_series_uses_named_variable():
     traj = _lorenz_traj()
-    spec = traj.to_plot_spec(kind="time_series")
+    spec = traj.__plot_spec__(kind="time_series")
     assert spec.x.label == "t"
     assert spec.y.label == "x"  # Lorenz declares variables = ("x", "y", "z")
 
@@ -169,14 +184,14 @@ def test_trajectory_time_series_uses_named_variable():
 )
 def test_components_selection_drives_dispatch(components, expected):
     """``components=`` selects channels and the auto kind keys off how many."""
-    spec = _lorenz_traj().to_plot_spec(components=components)
+    spec = _lorenz_traj().__plot_spec__(components=components)
     assert spec.kind == expected
     _assert_roundtrips(spec)
 
 
 def test_components_single_name_is_time_series_of_that_channel():
     traj = _lorenz_traj()
-    spec = traj.to_plot_spec(components="z")
+    spec = traj.__plot_spec__(components="z")
     assert spec.kind == PlotKind.TIME_SERIES
     assert spec.y.label == "z"
     np.testing.assert_allclose(spec.layers[0].data["y"], traj.component("z"))
@@ -186,71 +201,161 @@ def test_unknown_component_raises():
     from tsdynamics.errors import InvalidParameterError
 
     with pytest.raises(InvalidParameterError):
-        _lorenz_traj().to_plot_spec(components="nope")
+        _lorenz_traj().__plot_spec__(components="nope")
 
 
 def test_high_dim_components_triple_is_3d_portrait():
     """Selecting three channels of a high-dim flow yields a 3-D portrait."""
-    tr = ts.Lorenz96(N=8).trajectory(final_time=10.0, dt=0.1)
-    spec = tr.to_plot_spec(components=["y0", "y1", "y2"])
+    tr = ts.systems.Lorenz96(N=8).run(final_time=10.0, dt=0.1)
+    spec = tr.__plot_spec__(components=["y0", "y1", "y2"])
     assert spec.kind == PlotKind.PHASE_PORTRAIT_3D
     _assert_roundtrips(spec)
 
 
-def test_delay_kind_builds_2d_embedding_with_time_units_tau():
-    """kind='delay' builds an x(t) vs x(t - tau) embedding; tau is in time units."""
-    tr = ts.MackeyGlass().integrate(
+def test_delay_kind_builds_2d_embedding_from_delay_time():
+    """kind='delay' builds an x(t) vs x(t - delay); delay_time is in TIME units."""
+    tr = ts.systems.MackeyGlass().run(
         final_time=200.0, dt=0.2, history=lambda s: [1.0 + 0.1 * np.sin(0.2 * s)]
     )
-    spec = tr.to_plot_spec(kind="delay", tau=17.0)  # 17 time units → 85 samples at dt=0.2
+    spec = tr.__plot_spec__(kind="delay", delay_time=17.0)  # 17 t.u. → 85 samples at dt=0.2
     assert spec.kind == PlotKind.PHASE_PORTRAIT_2D
     # 85 samples dropped off each end of the embedded series.
     assert spec.layers[0].data["x"].shape[0] == tr.n_steps - 85
     _assert_roundtrips(spec)
 
 
-def test_delay_requires_tau():
+def test_delay_kind_builds_2d_embedding_from_delay_samples():
+    """The same door takes the lag in SAMPLES under the canonical name ``delay``."""
+    tr = ts.systems.MackeyGlass().run(
+        final_time=200.0, dt=0.2, history=lambda s: [1.0 + 0.1 * np.sin(0.2 * s)]
+    )
+    spec = tr.__plot_spec__(kind="delay", delay=85)
+    assert spec.layers[0].data["x"].shape[0] == tr.n_steps - 85
+    # The DOOR takes samples; the AXIS states a time, because its `t` is a time.
+    # This used to read "(t - 85)" — a count of samples typeset as a time offset,
+    # off by the sampling interval (85 samples x dt=0.2 = 17.0 time units).
+    assert spec.y.label.endswith("(t - 17)")
+
+
+def test_both_delay_doors_agree_on_units():
+    """THE consistency contract: ts.plot(...) and __plot_spec__(...) mean the same thing.
+
+    ``delay`` was samples on one front door and time units on the other under the
+    single name ``tau`` — one concept, two units, silently.  Both spellings now
+    exist on both doors and produce byte-identical geometry.
+    """
+    tr = _lorenz_traj()  # dt = 0.02
+    by_samples = tr.__plot_spec__(kind="delay", delay=6)
+    by_time = tr.__plot_spec__(kind="delay", delay_time=0.12)  # 0.12 / 0.02 = 6 samples
+    front_samples = ts.plot(tr, "delay_embedding", delay=6)
+    front_time = ts.plot(tr, "delay_embedding", delay_time=0.12)
+    for other in (by_time, front_samples, front_time):
+        np.testing.assert_array_equal(by_samples.layers[0].data["x"], other.layers[0].data["x"])
+        np.testing.assert_array_equal(by_samples.layers[0].data["y"], other.layers[0].data["y"])
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda tr: tr.__plot_spec__(kind="delay", tau=0.12),
+        lambda tr: ts.plot(tr, "delay_embedding", tau=0.12),
+        lambda tr: tr.__plot_spec__(kind="delay", tau=7),
+        lambda tr: ts.plot(tr, "delay_embedding", tau=7),
+    ],
+)
+def test_tau_is_refused_on_both_doors_and_names_both_units(call):
+    """``tau`` is gone; the refusal must contain the line to type, on either door."""
     from tsdynamics.errors import InvalidParameterError
 
-    with pytest.raises(InvalidParameterError):
-        _lorenz_traj().to_plot_spec(kind="delay")
+    with pytest.raises(InvalidParameterError) as excinfo:
+        call(_lorenz_traj())
+    message = str(excinfo.value)
+    assert "delay=7" in message and "delay_time=0.12" in message
+    assert "SAMPLES" in message and "TIME UNITS" in message
+
+
+def test_delay_requires_exactly_one_of_the_two_spellings():
+    from tsdynamics.errors import InvalidParameterError
+
+    with pytest.raises(InvalidParameterError, match="exactly one"):
+        _lorenz_traj().__plot_spec__(kind="delay")
+    with pytest.raises(InvalidParameterError, match="exactly one"):
+        _lorenz_traj().__plot_spec__(kind="delay", delay=7, delay_time=0.12)
+
+
+def test_delay_samples_must_be_whole_and_positive():
+    """A float lag under delay= is a unit mistake — say so, and name delay_time."""
+    from tsdynamics.errors import InvalidParameterError
+
+    with pytest.raises(InvalidParameterError, match="delay_time"):
+        _lorenz_traj().__plot_spec__(kind="delay", delay=0.12)
+    with pytest.raises(InvalidParameterError, match="delay_time"):
+        _lorenz_traj().__plot_spec__(kind="delay", delay=0)
 
 
 def test_kind_kw_rejected_for_wrong_kind():
     from tsdynamics.errors import InvalidParameterError
 
     with pytest.raises(InvalidParameterError):
-        _lorenz_traj().to_plot_spec(kind="spacetime", tau=1.0)
+        _lorenz_traj().__plot_spec__(kind="spacetime", delay=1)
     with pytest.raises(InvalidParameterError):
-        _lorenz_traj().to_plot_spec(kind="phase_portrait_3d", transpose=True)
+        _lorenz_traj().__plot_spec__(kind="phase_portrait_3d", transpose=True)
 
 
 def test_spacetime_transpose_swaps_axes():
-    tr = ts.Lorenz96(N=6).trajectory(final_time=8.0, dt=0.1)
-    normal = tr.to_plot_spec(kind="spacetime")
-    swapped = tr.to_plot_spec(kind="spacetime", transpose=True)
+    tr = ts.systems.Lorenz96(N=6).run(final_time=8.0, dt=0.1)
+    normal = tr.__plot_spec__(kind="spacetime")
+    swapped = tr.__plot_spec__(kind="spacetime", transpose=True)
     assert (normal.x.label, normal.y.label) == ("t", "component")
     assert (swapped.x.label, swapped.y.label) == ("component", "t")
 
 
-def test_plot_forwards_spec_shaping_kwargs(monkeypatch):
-    """``plot()`` peels spec-shaping kwargs to to_plot_spec; the rest go to the backend."""
-    captured: dict[str, object] = {}
-
-    def fake_render(self, backend=None, **backend_kw):
-        captured["kind"] = self.kind
-        captured["backend_kw"] = backend_kw
-        return self
-
-    monkeypatch.setattr(PlotSpec, "render", fake_render)
-    _lorenz_traj().plot(kind="time_series", components="x", figsize=(4, 3))
-    assert captured["kind"] == PlotKind.TIME_SERIES
-    assert captured["backend_kw"] == {"figsize": (4, 3)}
+def test_plot_forwards_spec_shaping_kwargs():
+    """``plot()`` peels spec-shaping kwargs to __plot_spec__ and applies tweaks."""
+    spec = _lorenz_traj().plot(kind="time_series", components="x", title="mine")
+    assert isinstance(spec, PlotSpec)
+    assert spec.kind == PlotKind.TIME_SERIES
+    assert spec.title == "mine"
 
 
-def test_system_to_plot_spec_splits_plot_and_integration_kwargs():
+def test_plot_returns_the_spec_on_every_door():
+    """THE consistency contract: one word, one return type.
+
+    ``traj.plot()`` returned a matplotlib Figure while ``ts.plot(traj)`` returned
+    a PlotSpec, so ``traj.plot().save(...)`` raised ``'Figure' object has no
+    attribute 'save'``.  Every spelling now hands back the same kind of thing.
+    """
+    traj = _lorenz_traj()
+    doors = [
+        traj.plot(),
+        ts.plot(traj),
+        ts.systems.Lorenz().plot(final_time=2.0, dt=0.05),
+        traj.plot().tweak(title="chained"),
+        traj.__plot_spec__(),
+    ]
+    assert {type(d) for d in doors} == {PlotSpec}
+
+
+def test_plot_saves_and_renders_from_the_returned_spec(tmp_path):
+    """The crash from the owner's quickstart: ``traj.plot().save(...)``."""
+    pytest.importorskip("matplotlib")
+    out = tmp_path / "fig.png"
+    assert _lorenz_traj().plot().save(str(out)) == str(out)
+    assert out.stat().st_size > 0
+    assert hasattr(_lorenz_traj().plot().render("matplotlib"), "savefig")
+
+
+def test_plot_refuses_a_renderer_keyword_and_names_render():
+    """``plot()`` builds; a renderer option must be told where it belongs."""
+    from tsdynamics.errors import InvalidParameterError
+
+    with pytest.raises(InvalidParameterError, match=r"render\("):
+        _lorenz_traj().plot(figsize=(4, 3))
+
+
+def test_system_plot_spec_splits_plot_and_integration_kwargs():
     """A system splits plot kwargs (components) from integration kwargs (final_time/dt)."""
-    spec = ts.Lorenz().to_plot_spec(components="x", final_time=10.0, dt=0.05)
+    spec = ts.systems.Lorenz().__plot_spec__(components="x", final_time=10.0, dt=0.05)
     assert spec.kind == PlotKind.TIME_SERIES
     assert spec.y.label == "x"
 
@@ -264,12 +369,12 @@ def test_empty_components_selection_raises():
     from tsdynamics.errors import InvalidParameterError
 
     with pytest.raises(InvalidParameterError):
-        _lorenz_traj().to_plot_spec(components=[])
+        _lorenz_traj().__plot_spec__(components=[])
 
 
 def test_delay_default_embeds_first_component_of_multidim():
     """With no components=, kind='delay' embeds the first component (not an error)."""
-    spec = _lorenz_traj().to_plot_spec(kind="delay", tau=0.5)
+    spec = _lorenz_traj().__plot_spec__(kind="delay", delay_time=0.5)
     assert spec.kind == PlotKind.PHASE_PORTRAIT_2D
 
 
@@ -277,23 +382,23 @@ def test_delay_rejects_explicit_multiple_components():
     from tsdynamics.errors import InvalidParameterError
 
     with pytest.raises(InvalidParameterError):
-        _lorenz_traj().to_plot_spec(kind="delay", tau=0.5, components=["x", "y"])
+        _lorenz_traj().__plot_spec__(kind="delay", delay_time=0.5, components=["x", "y"])
 
 
-@pytest.mark.parametrize("bad_tau", [0.0, -1.0, float("inf"), float("nan")])
-def test_delay_rejects_nonpositive_or_nonfinite_tau(bad_tau):
+@pytest.mark.parametrize("bad", [0.0, -1.0, float("inf"), float("nan")])
+def test_delay_time_rejects_nonpositive_or_nonfinite(bad):
     from tsdynamics.errors import InvalidParameterError
 
     with pytest.raises(InvalidParameterError):
-        _lorenz_traj().to_plot_spec(kind="delay", tau=bad_tau)
+        _lorenz_traj().__plot_spec__(kind="delay", delay_time=bad)
 
 
-def test_delay_tau_uses_time_grid_when_meta_dt_absent():
+def test_delay_time_uses_time_grid_when_meta_dt_absent():
     """Without meta['dt'], the time-unit→sample conversion falls back to the grid."""
     t = np.linspace(0.0, 10.0, 501)  # dt = 0.02
     y = np.sin(t)[:, None]
     traj = Trajectory(t=t, y=y, system=None)  # no meta["dt"]
-    spec = traj.to_plot_spec(kind="delay", tau=0.2)  # 0.2 / 0.02 = 10 samples
+    spec = traj.__plot_spec__(kind="delay", delay_time=0.2)  # 0.2 / 0.02 = 10 samples
     assert spec.kind == PlotKind.PHASE_PORTRAIT_2D
     assert spec.layers[0].data["x"].shape[0] == t.size - 10
 
@@ -302,12 +407,12 @@ def test_delay_tau_uses_time_grid_when_meta_dt_absent():
 @pytest.mark.parametrize(
     ("kind", "bad_kw"),
     [
-        ("time_series", {"tau": 1.0}),
+        ("time_series", {"delay": 1}),
         ("time_series", {"transpose": True}),
-        ("phase_portrait_2d", {"tau": 1.0}),
+        ("phase_portrait_2d", {"delay": 1}),
         ("phase_portrait_2d", {"transpose": True}),
         ("phase_portrait_3d", {"transpose": True}),
-        ("spacetime", {"tau": 1.0}),
+        ("spacetime", {"delay": 1}),
         ("spacetime", {"color_by": "time"}),
         ("delay", {"color_by": "time"}),
         ("delay", {"transpose": True}),
@@ -317,7 +422,7 @@ def test_kind_kw_rejection_matrix(kind, bad_kw):
     from tsdynamics.errors import InvalidParameterError
 
     with pytest.raises(InvalidParameterError):
-        _lorenz_traj().to_plot_spec(kind=kind, **bad_kw)
+        _lorenz_traj().__plot_spec__(kind=kind, **bad_kw)
 
 
 # ---------------------------------------------------------------------------
@@ -327,7 +432,7 @@ def test_kind_kw_rejection_matrix(kind, bad_kw):
 
 def test_negative_and_numpy_int_component_selectors():
     traj = _lorenz_traj()
-    spec = traj.to_plot_spec(components=[-1, np.int64(0)])  # z, x
+    spec = traj.__plot_spec__(components=[-1, np.int64(0)])  # z, x
     assert spec.kind == PlotKind.PHASE_PORTRAIT_2D
     assert (spec.x.label, spec.y.label) == ("z", "x")
 
@@ -336,7 +441,7 @@ def test_out_of_range_component_index_raises():
     from tsdynamics.errors import InvalidParameterError
 
     with pytest.raises(InvalidParameterError):
-        _lorenz_traj().to_plot_spec(components=[0, 7])
+        _lorenz_traj().__plot_spec__(components=[0, 7])
 
 
 def test_generated_y_names_resolve_for_unnamed_high_dim():
@@ -344,7 +449,7 @@ def test_generated_y_names_resolve_for_unnamed_high_dim():
     t = np.linspace(0.0, 1.0, 40)
     y = np.random.default_rng(0).standard_normal((40, 6))
     traj = Trajectory(t=t, y=y, system=None)  # no variables
-    spec = traj.to_plot_spec(components=["y0", "y2"])
+    spec = traj.__plot_spec__(components=["y0", "y2"])
     assert spec.kind == PlotKind.PHASE_PORTRAIT_2D
     assert (spec.x.label, spec.y.label) == ("y0", "y2")
 
@@ -355,7 +460,7 @@ def test_generated_y_names_resolve_for_unnamed_high_dim():
 
 
 def test_color_by_time_attaches_colorbar_channel():
-    spec = _lorenz_traj().to_plot_spec(kind="time_series", components="x", color_by="time")
+    spec = _lorenz_traj().__plot_spec__(kind="time_series", components="x", color_by="time")
     assert spec.kind == PlotKind.TIME_SERIES
     assert "c" in spec.layers[0].data
     assert spec.colorbar is not None
@@ -369,18 +474,18 @@ def test_color_by_accepts_array_callable_and_named_fields():
     # An arbitrary per-point array — the case that previously CRASHED on a portrait
     # (the colorbar label did ``color_by == "time"`` on the array).
     energy = np.asarray(traj["x"]) ** 2 + np.asarray(traj["y"]) ** 2 + np.asarray(traj["z"]) ** 2
-    spec = traj.to_plot_spec(components=["x", "z"], color_by=energy)
+    spec = traj.__plot_spec__(components=["x", "z"], color_by=energy)
     assert spec.layers[0].data["c"].shape == (n,)
     assert spec.colorbar is not None and spec.colorbar.label == "value"
 
     # A callable receiving the whole Trajectory (so it can use any named component).
-    spec = traj.to_plot_spec(components=["x", "z"], color_by=lambda tr: np.asarray(tr["z"]))
+    spec = traj.__plot_spec__(components=["x", "z"], color_by=lambda tr: np.asarray(tr["z"]))
     assert spec.layers[0].data["c"].shape == (n,)
     assert spec.colorbar.label == "value"
 
     # Every named field -> a finite per-point channel, labelled by its name.
     for name in ("time", "speed", "sagitta", "curvature", "accel", "arclength", "index"):
-        spec = traj.to_plot_spec(components=["x", "z"], color_by=name)
+        spec = traj.__plot_spec__(components=["x", "z"], color_by=name)
         c = spec.layers[0].data["c"]
         assert c.shape == (n,) and bool(np.all(np.isfinite(c)))
         assert spec.colorbar.label == name
@@ -390,37 +495,30 @@ def test_color_by_invalid_inputs_raise():
     """An unknown name and a wrong-length array both raise ValueError."""
     traj = _lorenz_traj()
     with pytest.raises(ValueError, match="unknown color_by"):
-        traj.to_plot_spec(components=["x", "z"], color_by="nope")
+        traj.__plot_spec__(components=["x", "z"], color_by="nope")
     with pytest.raises(ValueError, match="trajectory has"):
-        traj.to_plot_spec(components=["x", "z"], color_by=np.arange(5.0))
+        traj.__plot_spec__(components=["x", "z"], color_by=np.arange(5.0))
 
 
 def test_poincare_short_circuit_is_overridden_by_components_or_kind():
-    section = ts.poincare_section(ts.Rossler(), plane=(1, 0.0), n=80)
+    section = ts.analysis.poincare_section(ts.systems.Rossler(), plane=(1, 0.0), crossings=80)
     # Default view honours the section intent…
-    assert section.to_plot_spec().kind == PlotKind.POINCARE_SECTION
+    assert section.__plot_spec__().kind == PlotKind.POINCARE_SECTION
     # …but selecting components or forcing a kind opts out of the short-circuit.
-    assert section.to_plot_spec(components=["x", "z"]).kind == PlotKind.PHASE_PORTRAIT_2D
-    assert section.to_plot_spec(kind="time_series").kind == PlotKind.TIME_SERIES
+    assert section.__plot_spec__(components=["x", "z"]).kind == PlotKind.PHASE_PORTRAIT_2D
+    assert section.__plot_spec__(kind="time_series").kind == PlotKind.TIME_SERIES
 
 
-def test_system_plot_forwards_delay_recipe(monkeypatch):
-    """A system's plot()/to_plot_spec route the delay recipe + tau through the split."""
-    spec = ts.Lorenz().to_plot_spec(kind="delay", tau=0.5, final_time=10.0, dt=0.05)
+def test_system_plot_forwards_delay_recipe():
+    """A system's plot()/__plot_spec__ route the delay recipe + delay_time through the split."""
+    spec = ts.systems.Lorenz().__plot_spec__(kind="delay", delay_time=0.5, final_time=10.0, dt=0.05)
     assert spec.kind == PlotKind.PHASE_PORTRAIT_2D
 
-    captured: dict[str, object] = {}
-
-    def fake_render(self, backend=None, **backend_kw):
-        captured["kind"] = self.kind
-        return self
-
-    monkeypatch.setattr(PlotSpec, "render", fake_render)
-    ts.Lorenz().plot(kind="delay", tau=0.5, final_time=10.0, dt=0.05)
-    assert captured["kind"] == PlotKind.PHASE_PORTRAIT_2D
+    via_plot = ts.systems.Lorenz().plot(kind="delay", delay_time=0.5, final_time=10.0, dt=0.05)
+    assert via_plot.kind == PlotKind.PHASE_PORTRAIT_2D
 
 
-def test_trajectory_plot_raises_without_backend(monkeypatch):
+def test_trajectory_render_raises_without_backend(monkeypatch):
     # The matplotlib backend auto-registers on render as of stream VIZ-MPL-CORE;
     # force an empty registry to keep testing the genuine no-backend path.
     from tsdynamics import registry
@@ -432,7 +530,7 @@ def test_trajectory_plot_raises_without_backend(monkeypatch):
     monkeypatch.setattr(render_mod, "register_builtin_renderers", lambda *a, **k: [])
     try:
         with pytest.raises(VisualizationNotInstalled):
-            _lorenz_traj().plot()
+            _lorenz_traj().plot().render()
     finally:
         registry.renderers.clear()
         for entry in saved:
@@ -445,9 +543,9 @@ def test_trajectory_plot_raises_without_backend(monkeypatch):
 
 
 def test_poincare_section_carries_intent_from_system():
-    section = ts.poincare_section(ts.Rossler(), plane=(1, 0.0), n=80)
+    section = ts.analysis.poincare_section(ts.systems.Rossler(), plane=(1, 0.0), crossings=80)
     assert section.meta.get("plot_kind") == "poincare_section"
-    spec = section.to_plot_spec()
+    spec = section.__plot_spec__()
     assert spec.kind == PlotKind.POINCARE_SECTION
     assert spec.ndim == 2
     assert spec.aspect == "equal"
@@ -456,22 +554,22 @@ def test_poincare_section_carries_intent_from_system():
 
 
 def test_poincare_map_trajectory_carries_intent():
-    pmap = ts.PoincareMap(ts.Rossler(), plane=(1, 0.0))
-    section = pmap.trajectory(80)
+    pmap = ts.derived.PoincareMap(ts.systems.Rossler(), plane=(1, 0.0))
+    section = pmap.run(80)
     assert section.meta.get("plot_kind") == "poincare_section"
-    assert section.to_plot_spec().kind == PlotKind.POINCARE_SECTION
+    assert section.__plot_spec__().kind == PlotKind.POINCARE_SECTION
 
 
 def test_poincare_section_from_data_carries_intent():
-    traj = ts.Rossler().integrate(final_time=80.0, dt=0.02)
-    section = ts.poincare_section(traj, plane=(1, 0.0))
+    traj = ts.systems.Rossler().run(final_time=80.0, dt=0.02)
+    section = ts.analysis.poincare_section(traj, plane=(1, 0.0))
     assert section.meta.get("plot_kind") == "poincare_section"
-    assert section.to_plot_spec().kind == PlotKind.POINCARE_SECTION
+    assert section.__plot_spec__().kind == PlotKind.POINCARE_SECTION
 
 
 def test_poincare_section_drops_the_normal_coordinate():
     # plane (1, 0.0) fixes component 1; the in-plane axes must be the other two.
-    section = ts.poincare_section(ts.Rossler(), plane=(1, 0.0), n=80)
+    section = ts.analysis.poincare_section(ts.systems.Rossler(), plane=(1, 0.0), crossings=80)
     i, j = section._section_axes()
     assert 1 not in (i, j)
     assert i != j
@@ -479,9 +577,9 @@ def test_poincare_section_drops_the_normal_coordinate():
 
 def test_ordinary_trajectory_has_no_section_intent():
     # A plain flow must not accidentally carry section intent.
-    traj = ts.Lorenz().integrate(final_time=10.0, dt=0.05)
+    traj = ts.systems.Lorenz().run(final_time=10.0, dt=0.05)
     assert "plot_kind" not in traj.meta
-    assert traj.to_plot_spec().kind == PlotKind.PHASE_PORTRAIT_3D
+    assert traj.__plot_spec__().kind == PlotKind.PHASE_PORTRAIT_3D
 
 
 # ---------------------------------------------------------------------------
@@ -497,7 +595,7 @@ def built_results() -> dict[str, object]:
 @pytest.mark.parametrize("name", _RESULT_NAMES)
 def test_result_emits_roundtrippable_spec(built_results, name):
     result = built_results[name]
-    spec = result.to_plot_spec()
+    spec = result.__plot_spec__()
     assert isinstance(spec, PlotSpec)
     # The spec carries at least one drawable layer with real array data.
     assert spec.layers
@@ -515,16 +613,15 @@ def test_result_specs_have_expected_kinds(built_results):
         "GALIResult": PlotKind.DIAGNOSTIC_CURVE,
         "ReturnMap": PlotKind.RETURN_MAP,
         "LyapunovFromData": PlotKind.SCALING_FIT,
-        "SurrogateTest": PlotKind.HISTOGRAM_NULL,
         "BasinsResult": PlotKind.BASINS_IMAGE,
     }
     for name, kind in expected.items():
-        assert built_results[name].to_plot_spec().kind == kind, name
+        assert built_results[name].__plot_spec__().kind == kind, name
 
 
 def test_result_kind_override(built_results):
     # Every result accepts a kind override (used by the .plot.<kind>() seam).
-    forced = built_results["DimensionResult"].to_plot_spec(kind="diagnostic_curve")
+    forced = built_results["DimensionResult"].__plot_spec__(kind="diagnostic_curve")
     assert forced.kind == PlotKind.DIAGNOSTIC_CURVE
 
 
@@ -533,7 +630,7 @@ def test_result_kind_override(built_results):
 
 def test_dimension_spec_carries_the_loglog_curve(built_results):
     res = built_results["DimensionResult"]
-    spec = res.to_plot_spec()
+    spec = res.__plot_spec__()
     scatter = spec.layers[0]
     np.testing.assert_allclose(scatter.data["x"], np.asarray(res.x, dtype=float))
     np.testing.assert_allclose(scatter.data["y"], np.asarray(res.y, dtype=float))
@@ -541,48 +638,46 @@ def test_dimension_spec_carries_the_loglog_curve(built_results):
     assert spec.layers[-1].kind == PlotKind.LINE
 
 
-def test_recurrence_spec_is_a_sparse_recurrence_plot(built_results):
-    # GAPFILL-F: the recurrence plot is a SPARSE (i, j) scatter of the recurrent
-    # pairs — it is NEVER densified to an (N, N) image (anti-OOM at large N).
+def test_recurrence_spec_is_a_bounded_density_image(built_results):
+    # GAPFILL-F pinned this as a SPARSE (i, j) scatter, guarding one real
+    # property — the matrix is NEVER densified to (N, N) (anti-OOM at large N).
+    # That property is kept here; the scatter is not, because it was a wrong
+    # PICTURE: one marker per recurrence saturates the canvas long before the
+    # memory runs out, destroying the diagonal structure DET / L_max measure.
+    # The field is binned to a bounded side instead, in O(#recurrences), so both
+    # the memory bound and the density survive.
+    from tsdynamics.analysis.recurrence.matrix import MAX_DISPLAY_SIDE
+
     res = built_results["RecurrenceMatrix"]
-    spec = res.to_plot_spec()
+    spec = res.__plot_spec__()
     assert spec.kind == PlotKind.RECURRENCE_PLOT
     assert spec.aspect == "equal"
     layer = spec.layers[0]
-    assert layer.kind == PlotKind.SCATTER
-    nnz = res.matrix.tocoo().nnz
-    assert layer.data["x"].shape == (nnz,)
-    assert layer.data["y"].shape == (nnz,)
-    # No layer carries a dense 2-D (densified) array.
-    for lyr in spec.layers:
-        for arr in lyr.data.values():
-            assert arr.ndim == 1, "recurrence spec must not densify the matrix"
+    assert layer.kind == PlotKind.IMAGE
+    field = layer.data["c"]
+    assert field.ndim == 2
+    # Bounded whatever the record length: never an (N, N) array for large N.
+    assert max(field.shape) <= MAX_DISPLAY_SIDE
+    assert field.shape == (min(res.size, MAX_DISPLAY_SIDE),) * 2
+    # Every pixel is a local recurrence density, so the mean IS the rate (exactly
+    # here, because this fixture fits under the cap and every bin is one cell).
+    assert field.mean() == pytest.approx(float(res.recurrence_rate), rel=1e-2)
 
 
 def test_gali_spec_uses_log_y(built_results):
-    spec = built_results["GALIResult"].to_plot_spec()
+    spec = built_results["GALIResult"].__plot_spec__()
     assert spec.y.scale == "log"
 
 
 def test_return_map_spec_has_diagonal_reference(built_results):
-    spec = built_results["ReturnMap"].to_plot_spec()
+    spec = built_results["ReturnMap"].__plot_spec__()
     kinds = [layer.kind for layer in spec.layers]
     assert PlotKind.SCATTER in kinds
     assert PlotKind.LINE in kinds  # the v_{n+1} = v_n diagonal
 
 
-def test_surrogate_spec_marks_the_data_statistic(built_results):
-    res = built_results["SurrogateTest"]
-    spec = res.to_plot_spec()
-    assert spec.layers[0].kind == PlotKind.HISTOGRAM
-    assert spec.annotations
-    annotation = spec.annotations[0]
-    assert annotation.kind == "vline"
-    assert annotation.x == pytest.approx(float(res.data_statistic))
-
-
 def test_basins_spec_marks_attractor_centres(built_results):
-    spec = built_results["BasinsResult"].to_plot_spec()
+    spec = built_results["BasinsResult"].__plot_spec__()
     assert spec.layers[0].kind == PlotKind.IMAGE
     assert any(layer.kind == PlotKind.MARKERS for layer in spec.layers)
 
@@ -599,18 +694,20 @@ def test_building_specs_imports_no_plot_library():
         "from tsdynamics.analysis.basins.attractors import Attractor, AttractorSet;"
         "from tsdynamics.analysis.basins.basins import BasinsResult;"
         "from tsdynamics.data import Grid;"
-        "traj = ts.Lorenz().integrate(final_time=20.0, dt=0.05).after(5.0);"
-        "traj.to_plot_spec(); traj.to_plot_spec(kind='time_series');"
-        "ts.poincare_section(ts.Rossler(), plane=(1, 0.0), n=40).to_plot_spec();"
-        "rm = ts.recurrence_matrix(traj.y[:150], recurrence_rate=0.05); rm.to_plot_spec();"
-        "ts.rqa(rm).to_plot_spec();"
-        "ts.correlation_dimension(traj).to_plot_spec();"
-        "ts.gali(ts.Lorenz(), k=2, final_time=15.0, dt=0.05).to_plot_spec();"
-        "ts.return_map(traj, component=2, method='max').to_plot_spec();"
-        "ts.lyapunov_from_data(traj.y[:800, 0], dt=0.02).to_plot_spec();"
-        "ts.surrogate_test(traj.y[:400, 2], n=9, seed=0).to_plot_spec();"
+        "traj = ts.systems.Lorenz().run(final_time=20.0, dt=0.05).after(5.0);"
+        # a separate, longer record for the estimator that reads its own
+        # parameters off the data (see `_result_builders`)
+        "lyap = ts.systems.Lorenz().run(final_time=120.0, dt=0.02).after(20.0).y[:, 0];"
+        "traj.__plot_spec__(); traj.__plot_spec__(kind='time_series');"
+        "ts.analysis.poincare_section(ts.systems.Rossler(), plane=(1, 0.0), crossings=40).__plot_spec__();"
+        "rm = ts.analysis.recurrence_matrix(traj.y[:150], recurrence_rate=0.05); rm.__plot_spec__();"
+        "ts.analysis.rqa(rm).__plot_spec__();"
+        "ts.analysis.correlation_dimension(traj).__plot_spec__();"
+        "ts.analysis.gali(ts.systems.Lorenz(), k=2, final_time=15.0, dt=0.05).__plot_spec__();"
+        "ts.analysis.return_map(traj, components=2, method='max').__plot_spec__();"
+        "ts.analysis.lyapunov_from_data(lyap, dt=0.02).__plot_spec__();"
         "a = AttractorSet({1: Attractor(1, np.array([[0.0, 0.0]]), 1)}, 0, 1);"
-        "BasinsResult(np.ones((4, 4), int), Grid([-1, -1], [1, 1], (4, 4)), a).to_plot_spec();"
+        "BasinsResult(np.ones((4, 4), int), Grid([-1, -1], [1, 1], (4, 4)), a).__plot_spec__();"
         "bad = [m for m in sys.modules if m == 'matplotlib' or m.startswith('matplotlib.')"
         " or m == 'plotly' or m.startswith('plotly.')];"
         "assert not bad, bad; print('NO_PLOT_LIBS')"
@@ -622,7 +719,7 @@ def test_building_specs_imports_no_plot_library():
 def test_import_does_not_load_viz_package():
     """``import tsdynamics`` must not import the viz package at all.
 
-    ``Trajectory`` provides ``to_plot_spec``/``.plot`` but imports
+    ``Trajectory`` provides ``__plot_spec__``/``.plot`` but imports
     :mod:`tsdynamics.viz` lazily, so plain ``import tsdynamics`` never runs the
     package's renderer-backend discovery (which would eagerly load an installed
     matplotlib/plotly backend and break the no-backend-on-import contract).
@@ -645,7 +742,7 @@ def test_import_does_not_load_viz_package():
 def test_phase_portrait_2d_override_on_3d_trajectory():
     """Forcing 2-D on a 3-D trajectory yields a consistent 2-D schema (no z)."""
     traj = _lorenz_traj()
-    spec = traj.to_plot_spec(kind="phase_portrait_2d")
+    spec = traj.__plot_spec__(kind="phase_portrait_2d")
     assert spec.kind == PlotKind.PHASE_PORTRAIT_2D
     assert spec.ndim == 2
     assert spec.z is None
@@ -661,7 +758,7 @@ def test_phase_portrait_3d_override_on_2d_trajectory_raises():
     t = np.linspace(0.0, 1.0, 16)
     traj = Trajectory(t=t, y=np.random.default_rng(0).standard_normal((16, 2)), system=None)
     with pytest.raises(InvalidParameterError):
-        traj.to_plot_spec(kind="phase_portrait_3d")
+        traj.__plot_spec__(kind="phase_portrait_3d")
 
 
 # ---------------------------------------------------------------------------
@@ -681,8 +778,80 @@ def test_empty_poincare_section_builds_spec():
         system=None,
         meta={"plot_kind": "poincare_section", "plane": (1, 0.0)},
     )
-    spec = traj.to_plot_spec()
+    spec = traj.__plot_spec__()
     assert spec.kind == PlotKind.POINCARE_SECTION
     assert spec.ndim == 2
     assert spec.layers[0].data["x"].shape == (0,)
     _assert_roundtrips(spec)
+
+
+# ---------------------------------------------------------------------------
+# One door to a plot: the public ``to_plot_spec`` is retired
+# ---------------------------------------------------------------------------
+
+
+def _plot_subjects():
+    """One of each kind of plot subject, with the noun its refusal uses."""
+    traj = _lorenz_traj()
+    return [
+        ("system", ts.systems.Lorenz(), "system"),
+        ("trajectory", traj, "traj"),
+        ("result", ts.analysis.rqa(traj, recurrence_rate=0.05), "result"),
+        ("array-result", ts.analysis.fixed_points(ts.systems.Henon()), "result"),
+        ("derived", ts.systems.Rossler().poincare("y", 0.0), "view"),
+    ]
+
+
+@pytest.mark.parametrize(("label", "subject", "noun"), _plot_subjects(), ids=lambda v: str(v)[:24])
+def test_to_plot_spec_is_retired_and_names_the_doors_that_work(label, subject, noun):
+    """The retired name teaches, in the nouns of whatever you were holding.
+
+    The owner's ruling is that a SECOND way to do something the user already
+    knows how to do is the cost, not the name itself: ``ts.plot(x)`` hands back
+    the ``Plot`` without drawing it, which is the whole job ``to_plot_spec``
+    was doing.  So the method is gone and the message names both survivors.
+    """
+    assert hasattr(subject, "__plot_spec__"), f"{label} lost the plot seam"
+    with pytest.raises(AttributeError) as excinfo:
+        _ = subject.to_plot_spec
+    message = str(excinfo.value)
+    assert f"ts.plot({noun})" in message
+    assert f"{noun}.plot()" in message
+    assert "__plot_spec__" in message
+    # Both offered lines run, on the very object that was held.
+    assert isinstance(ts.plot(subject), PlotSpec)
+    assert isinstance(subject.plot(), PlotSpec)
+
+
+def test_ts_plot_is_the_door_to_a_plot_object_and_draws_nothing():
+    """The capability did not move — it was already ``ts.plot``.
+
+    ``to_plot_spec`` existed to get the description without the picture.  This
+    pins that ``ts.plot`` does exactly that, by counting real
+    ``matplotlib.figure.Figure`` constructions across the whole build-and-tweak
+    path and requiring the count to stay at zero until ``.fig`` is touched.
+    """
+    pytest.importorskip("matplotlib")
+    import matplotlib.figure as mfigure
+    import matplotlib.pyplot as plt
+
+    traj = _lorenz_traj()
+    built: list[int] = []
+    original = mfigure.Figure.__init__
+
+    def counting_init(self, *args, **kwargs):
+        built.append(1)
+        return original(self, *args, **kwargs)
+
+    mfigure.Figure.__init__ = counting_init
+    try:
+        spec = ts.plot(traj)
+        assert isinstance(spec, PlotSpec)
+        spec = spec.style(lw=2).relabel(title="held").limits(x=(-20.0, 20.0))
+        assert isinstance(traj.plot(color="crimson"), PlotSpec)
+        assert not built, f"{len(built)} figure(s) drawn by a call that only describes"
+        assert spec.fig is not None
+        assert built, "touching .fig must actually draw"
+    finally:
+        mfigure.Figure.__init__ = original
+        plt.close("all")

@@ -240,9 +240,11 @@ def test_registered_kinds_include_3d():
     assert PlotKind.PHASE_PORTRAIT_3D in _REGISTERED_KINDS
 
 
-def test_animation_kinds_still_declined():
-    """The animation kinds remain outside the registered set (deferred everywhere)."""
-    caps = _registered_caps()
-    assert PlotKind.TRAJECTORY_ANIMATION not in _REGISTERED_KINDS
-    assert PlotKind.ENSEMBLE_ANIMATION not in _REGISTERED_KINDS
-    assert caps.can_render(PlotKind.TRAJECTORY_ANIMATION) is False
+def test_registered_kinds_are_all_live_vocabulary_members():
+    """Every advertised kind is a real ``PlotKind`` (nothing stale).
+
+    Replaces the old "the animation kinds stay declined" assertion: those two
+    kinds were removed from the vocabulary in v6, so the meaningful invariant is
+    that the registered set never names a kind that no longer exists.
+    """
+    assert set(PlotKind) >= _REGISTERED_KINDS

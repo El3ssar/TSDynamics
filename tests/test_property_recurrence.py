@@ -1,7 +1,7 @@
 """
 Property and known-value tests for the recurrence / RQA layer (stream I-QA).
 
-Targets ``ts.recurrence_matrix`` / ``ts.rqa`` / ``ts.windowed_rqa`` and the
+Targets ``ts.analysis.recurrence_matrix`` / ``ts.analysis.rqa`` / ``ts.analysis.windowed_rqa`` and the
 ``RecurrenceMatrix`` / ``RQAResult`` / ``WindowedRQA`` result types.  The
 recurrence matrix is the symmetric binary relation
 :math:`R_{ij} = \\Theta(\\varepsilon - \\lVert x_i - x_j\\rVert)` (Eckmann,
@@ -53,7 +53,7 @@ def _coords(rm) -> tuple[np.ndarray, np.ndarray]:
 def test_matrix_is_square_symmetric_and_density_bounded(seed, n, dim, eps):
     """The matrix is (N, N), exactly symmetric, and RR lies in [0, 1]."""
     cloud = np.random.default_rng(seed).standard_normal((n, dim))
-    rm = ts.recurrence_matrix(cloud, threshold=eps)
+    rm = ts.analysis.recurrence_matrix(cloud, threshold=eps)
     assert rm.matrix.shape == (n, n)
     assert rm.size == n
     # Symmetric: R == R.T as a sparse predicate (no stored disagreements).
@@ -76,7 +76,7 @@ def test_target_recurrence_rate_is_calibrated(seed, n, target):
     the discreteness of the distance distribution.
     """
     cloud = np.random.default_rng(seed).standard_normal((n, 3))
-    rm = ts.recurrence_matrix(cloud, recurrence_rate=target)
+    rm = ts.analysis.recurrence_matrix(cloud, recurrence_rate=target)
     assert abs(rm.recurrence_rate - target) < 0.05
 
 
@@ -86,7 +86,7 @@ def test_recurrence_rate_monotone_in_threshold(seed, n):
     """A larger threshold can only add recurrence points: RR is non-decreasing."""
     cloud = np.random.default_rng(seed).standard_normal((n, 3))
     thresholds = [0.1, 0.3, 0.6, 1.0, 1.6, 2.5]
-    rates = [ts.recurrence_matrix(cloud, threshold=t).recurrence_rate for t in thresholds]
+    rates = [ts.analysis.recurrence_matrix(cloud, threshold=t).recurrence_rate for t in thresholds]
     # Each successive (larger) threshold has >= the previous density.
     for lo, hi in zip(rates, rates[1:], strict=False):
         assert hi >= lo - 1e-12
@@ -108,8 +108,8 @@ def test_theiler_window_excludes_near_diagonal(seed, n, w):
     # A smooth cloud so that without exclusion there *would* be near-diagonal
     # recurrences (adjacent samples of a flow are spuriously close).
     x = sinusoid(n, freq=0.02)
-    pts = ts.embed(x, _EMB_DIM, _EMB_TAU)
-    rm = ts.recurrence_matrix(pts, recurrence_rate=0.15, theiler=w)
+    pts = ts.analysis.embed(x, _EMB_DIM, _EMB_TAU)
+    rm = ts.analysis.recurrence_matrix(pts, recurrence_rate=0.15, theiler=w)
     rows, cols = _coords(rm)
     if rows.size:
         assert int(np.abs(rows - cols).min()) > w
@@ -119,8 +119,8 @@ def test_theiler_window_excludes_near_diagonal(seed, n, w):
 def test_theiler_window_zero_still_drops_line_of_identity():
     """theiler_window=0 keeps off-diagonal recurrences but never the diagonal."""
     x = sinusoid(300, freq=0.03)
-    pts = ts.embed(x, _EMB_DIM, _EMB_TAU)
-    rm = ts.recurrence_matrix(pts, recurrence_rate=0.2, theiler=0)
+    pts = ts.analysis.embed(x, _EMB_DIM, _EMB_TAU)
+    rm = ts.analysis.recurrence_matrix(pts, recurrence_rate=0.2, theiler=0)
     rows, cols = _coords(rm)
     # The diagonal i == j is never stored.
     assert not np.any(rows == cols)
@@ -130,9 +130,9 @@ def test_matrix_requires_exactly_one_of_threshold_or_rate():
     """Passing neither / both threshold and recurrence_rate is rejected."""
     cloud = np.random.default_rng(0).standard_normal((100, 3))
     with pytest.raises(ValueError):
-        ts.recurrence_matrix(cloud)
+        ts.analysis.recurrence_matrix(cloud)
     with pytest.raises(ValueError):
-        ts.recurrence_matrix(cloud, threshold=0.5, recurrence_rate=0.1)
+        ts.analysis.recurrence_matrix(cloud, threshold=0.5, recurrence_rate=0.1)
 
 
 # ---------------------------------------------------------------------------
@@ -149,7 +149,7 @@ def test_matrix_requires_exactly_one_of_threshold_or_rate():
 def test_rqa_measures_are_bounded(seed, n, target):
     """DET, LAM, RR in [0, 1]; ENTR >= 0; and L_max >= 1 when DET > 0."""
     cloud = np.random.default_rng(seed).standard_normal((n, 3))
-    res = ts.rqa(cloud, recurrence_rate=target)
+    res = ts.analysis.rqa(cloud, recurrence_rate=target)
     assert 0.0 <= res.recurrence_rate <= 1.0
     assert 0.0 <= res.determinism <= 1.0
     assert 0.0 <= res.laminarity <= 1.0
@@ -173,16 +173,16 @@ def test_rqa_measures_are_bounded(seed, n, target):
 def test_rqa_accepts_prebuilt_matrix_unchanged():
     """rqa(RM) reuses the matrix and reproduces its recurrence rate."""
     x = sinusoid(300, freq=0.03)
-    pts = ts.embed(x, _EMB_DIM, _EMB_TAU)
-    rm = ts.recurrence_matrix(pts, recurrence_rate=0.15)
-    res = ts.rqa(rm)
+    pts = ts.analysis.embed(x, _EMB_DIM, _EMB_TAU)
+    rm = ts.analysis.recurrence_matrix(pts, recurrence_rate=0.15, theiler=_EMB_TAU)
+    res = ts.analysis.rqa(rm)
     # Same matrix => identical density and book-keeping.
     assert res.recurrence_rate == pytest.approx(rm.recurrence_rate)
     assert res.size == rm.size
     assert res.epsilon == pytest.approx(rm.epsilon)
     # Passing build args alongside a RecurrenceMatrix is an error.
     with pytest.raises(ValueError):
-        ts.rqa(rm, recurrence_rate=0.1)
+        ts.analysis.rqa(rm, recurrence_rate=0.1)
 
 
 # ---------------------------------------------------------------------------
@@ -206,11 +206,14 @@ def test_periodic_determinism_exceeds_noise(seed, freq):
     has only short, accidental diagonals.  Assert a wide, robust margin.
     """
     n = 400
-    periodic = ts.embed(sinusoid(n, freq=freq), _EMB_DIM, _EMB_TAU)
-    noise = ts.embed(white_noise(n, seed=seed), _EMB_DIM, _EMB_TAU)
+    periodic = ts.analysis.embed(sinusoid(n, freq=freq), _EMB_DIM, _EMB_TAU)
+    noise = ts.analysis.embed(white_noise(n, seed=seed), _EMB_DIM, _EMB_TAU)
     rate = 0.1  # fixed so the comparison is at equal density
-    det_p = ts.rqa(periodic, recurrence_rate=rate).determinism
-    det_n = ts.rqa(noise, recurrence_rate=rate).determinism
+    # A Theiler window is mandatory on a smooth, densely sampled signal: at
+    # theiler=0 the k=1 diagonal is recurrent end to end (tangential motion), so
+    # ``rqa`` rightly warns that L_max/DIV have saturated.
+    det_p = ts.analysis.rqa(periodic, recurrence_rate=rate, theiler=_EMB_TAU).determinism
+    det_n = ts.analysis.rqa(noise, recurrence_rate=rate, theiler=_EMB_TAU).determinism
     assert det_p > 0.9  # clean periodic signal
     # The separation is the primary invariant: noise DET stays ~0.2, so a 0.4
     # margin is robust to the seed and frequency while still meaningful.
@@ -233,10 +236,10 @@ def test_windowed_rqa_window_count_and_bounds(seed, window, step):
     n = 360
     # A regime-mixed series keeps each window non-degenerate.
     x = sinusoid(n, freq=0.03) + 0.4 * white_noise(n, seed=seed)
-    pts = ts.embed(x, _EMB_DIM, _EMB_TAU)
+    pts = ts.analysis.embed(x, _EMB_DIM, _EMB_TAU)
     npts = pts.shape[0]
     assume(window <= npts)
-    w = ts.windowed_rqa(pts, window=window, step=step, recurrence_rate=0.1)
+    w = ts.analysis.windowed_rqa(pts, window=window, step=step, recurrence_rate=0.1)
 
     expected = (npts - window) // step + 1
     assert len(w) == expected
@@ -254,8 +257,8 @@ def test_windowed_rqa_window_count_and_bounds(seed, window, step):
 def test_windowed_centers_are_increasing():
     """Window centres advance by exactly `step` and stay within the series."""
     x = sinusoid(400, freq=0.03)
-    pts = ts.embed(x, _EMB_DIM, _EMB_TAU)
-    w = ts.windowed_rqa(pts, window=100, step=40, recurrence_rate=0.1)
+    pts = ts.analysis.embed(x, _EMB_DIM, _EMB_TAU)
+    w = ts.analysis.windowed_rqa(pts, window=100, step=40, recurrence_rate=0.1, theiler=_EMB_TAU)
     centers = w.centers
     diffs = np.diff(centers)
     # Consecutive windows are `step` apart.

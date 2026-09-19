@@ -1,6 +1,6 @@
 """The M3 migration gate — Rust engine vs v2, swept over the whole catalogue.
 
-ROADMAP stream **I-XVAL** (§9, decision D1).  Before any v2 backend
+stream **I-XVAL** (decision D1).  Before any v2 backend
 (JiTCODE / JiTCDDE / Numba / diffsol) is removed, the shipping Rust engine
 (:mod:`tsdynamics._rust`) must be shown to reproduce the v2 numeric truth across
 *every* registered system.  This module is that gate: registry-driven, so a new
@@ -55,8 +55,8 @@ from xval_harness import RustEngine, ScipyReference, crossvalidate, crossvalidat
 
 import tsdynamics as ts
 from tsdynamics import registry
-from tsdynamics.engine import run
-from tsdynamics.engine.compile import (
+from tsdynamics._engine import run
+from tsdynamics._engine.compile import (
     OP_ADD,
     OP_POWI,
     OP_STATE,
@@ -64,7 +64,7 @@ from tsdynamics.engine.compile import (
     TapeCompileError,
     eval_tape,
 )
-from tsdynamics.engine.problem import map_problem
+from tsdynamics._engine.problem import map_problem
 from tsdynamics.families.discrete import _unwrap_static
 
 _rust = pytest.importorskip("tsdynamics._rust")
@@ -248,7 +248,7 @@ def test_op_powi_is_exercised_by_the_catalogue() -> None:
     Keeps :func:`test_ode_reference_matches_engine` honest: it would still pass if
     no system used the opcode, so assert the catalogue genuinely exercises it.
     """
-    from tsdynamics.engine.problem import build_problem
+    from tsdynamics._engine.problem import build_problem
 
     using_powi = [
         e.name
@@ -269,9 +269,18 @@ def _on_attractor(cls, *, n_warm: int = 60, drop: int = 40, take: int = 5) -> np
     Mirrors ``test_map_engine``: the reference path only returns once the whole
     buffer is finite, so the tail slice sits on the orbit rather than in a
     transient or off-basin escape.
+
+    The seed is passed to ``run``, **not** set on the global ``numpy.random``
+    stream.  A system's random-IC draw comes from its own private ``Generator``
+    (``SystemBase._ic_generator``, seeded from OS entropy precisely so a plain
+    ``run()`` cannot disturb a caller's ``np.random.seed(0)``), so the global
+    reseed this used to do had no effect at all and the "deterministic" in the
+    line above was untrue.  Measured: ``test_map_interp_equals_jit_bit_for_bit``
+    failed on ``Bogdanov`` roughly one run in three, from a draw that escapes to
+    infinity in 12 iterates — the exact trap ``CLAUDE.md`` records for backend A/Bs
+    ("always pin ``ic=`` when timing or diffing"), on a gate that IS a diff.
     """
-    np.random.seed(0)
-    warm = cls().iterate(steps=n_warm, backend="reference")
+    warm = cls().run(steps=n_warm, backend="reference", seed=0)
     finite = warm.y[np.isfinite(warm.y).all(axis=1)]
     if finite.shape[0] < drop + take:
         pytest.skip(f"{cls.__name__}: too few finite warm-up states for a stable sample")
@@ -315,8 +324,8 @@ def test_map_interp_equals_jit_bit_for_bit(map_entry) -> None:
     except TapeCompileError:
         pytest.skip(f"{map_entry.name} does not lower to the straight-line IR")
     ic = _on_attractor(cls, take=1)[0]
-    interp = cls().iterate(steps=20, ic=ic, backend="interp").y
-    jit = cls().iterate(steps=20, ic=ic, backend="jit").y
+    interp = cls().run(steps=20, ic=ic, backend="interp").y
+    jit = cls().run(steps=20, ic=ic, backend="jit").y
     np.testing.assert_array_equal(interp, jit, err_msg=f"{map_entry.name}: interp != jit")
 
 
@@ -336,7 +345,7 @@ def test_dde_engine_path_is_finite(dde_entry) -> None:
     from _sampling import DDE_HISTORIES
 
     history = DDE_HISTORIES[dde_entry.name]
-    traj = dde_entry.cls().integrate(
+    traj = dde_entry.cls().run(
         backend="interp", final_time=10.0, dt=0.1, history=history, rtol=1e-6, atol=1e-8
     )
     assert np.all(np.isfinite(traj.y)), f"{dde_entry.name}: engine produced non-finite states"
@@ -359,8 +368,19 @@ def test_ode_trajectory_matches_reference_early(name) -> None:
     systems.  The comparison window is short: two correct integrators of a chaotic
     flow diverge exponentially, so agreement is only expected before Lyapunov
     amplification dominates (the harness ``window=`` convention).
+
+    ``atol`` was tightened from ``1e-3`` to ``1e-5`` in v6.  The old bound carried
+    ~1300x of unused slack, which made this leg unable to notice a real
+    regression.  Measured worst-case over the whole sample: **7.7e-7**
+    (``Colpitts``) with dense output and **9.1e-7** without it — so the new bound
+    keeps a ~13x margin and would still pass on the pre-v6 numbers.  Note the
+    residual here is dominated by ``rk45@1e-10`` vs ``DOP853@1e-12`` solver
+    disagreement, *not* by output semantics: the two now also agree in *kind*
+    (both produce ``t_eval`` samples by interpolation), which is the structural
+    improvement this leg gains from the change even though the number barely
+    moves.
     """
-    sys = getattr(ts, name)()
+    sys = getattr(ts.systems, name)()
     ic = _resolve_ic(sys, name)
     t_eval = np.arange(0.0, 3.0 + 1e-9, 0.01)
     engine = RustEngine(backend="interp", rtol=1e-10, atol=1e-12)
@@ -372,7 +392,7 @@ def test_ode_trajectory_matches_reference_early(name) -> None:
         ic=ic,
         t_eval=t_eval,
         window=(0.0, 1.0),
-        atol=1e-3,
+        atol=1e-5,
     )
     assert rep.passed, rep.summary()
 
@@ -401,15 +421,17 @@ def test_engine_lyapunov_matches_literature(name) -> None:
     successor to ``jitcode_lyap``.  ``interp`` and ``jit`` must also agree closely
     (the same lowering, integrated by two numerically-identical evaluators).
     """
-    cls = getattr(ts, name)
-    meta = dict(cls().known_lyapunov)
+    cls = getattr(ts.systems, name)
+    meta = dict(cls().info.known_lyapunov)
     expected = np.asarray(meta["spectrum"], dtype=float)
     atol = np.asarray(meta["atol"], dtype=float)
     kwargs = {k: v for k, v in meta.get("kwargs", {}).items() if k != "method"}
     if meta.get("ic") is not None:
         kwargs.setdefault("ic", list(meta["ic"]))
 
-    interp = ts.TangentSystem(cls(), backend="interp").lyapunov_spectrum(**kwargs)
+    interp = ts.analysis.lyapunov_spectrum(
+        ts.derived.TangentSystem(cls(), backend="interp"), **kwargs
+    )
     assert np.all(np.isfinite(interp))
     deviation = np.abs(interp - expected)
     assert np.all(deviation <= atol), (
@@ -422,7 +444,7 @@ def test_engine_lyapunov_matches_literature(name) -> None:
     # integrate + QR + log-norm accumulate) runs in the engine kernel (stream
     # perf/ode-lyapunov-engine) over the *same* lowered tape, driven by two
     # numerically-identical evaluators — so the spectrum agrees to the last bit.
-    jit = ts.TangentSystem(cls(), backend="jit").lyapunov_spectrum(**kwargs)
+    jit = ts.analysis.lyapunov_spectrum(ts.derived.TangentSystem(cls(), backend="jit"), **kwargs)
     np.testing.assert_array_equal(
         interp, jit, err_msg=f"{name}: interp vs jit Lyapunov spectrum (must be bit-for-bit)"
     )
@@ -443,10 +465,10 @@ def test_dde_engine_lyapunov_is_positive_mackeyglass() -> None:
     """Mackey-Glass: the engine DDE-Lyapunov λ₁ is positive (known_lyapunov n_positive=1)."""
     from _sampling import DDE_HISTORIES
 
-    mg = ts.MackeyGlass()
-    ic = mg.integrate(final_time=500.0, dt=0.2, history=DDE_HISTORIES["MackeyGlass"]).y[-1]
-    eng = mg.lyapunov_spectrum(
-        backend="interp", n_exp=1, burn_in=200.0, final_time=2000.0, ic=ic, dt=0.05
+    mg = ts.systems.MackeyGlass()
+    ic = mg.run(final_time=500.0, dt=0.2, history=DDE_HISTORIES["MackeyGlass"]).y[-1]
+    eng = ts.analysis.lyapunov_spectrum(
+        mg, backend="interp", k=1, transient=200.0, final_time=2000.0, ic=ic, dt=0.05
     )
     assert eng[0] > 0.0  # chaotic — matches known_lyapunov n_positive=1
     # Mackey-Glass at τ=17 is weakly chaotic: λ₁ ≈ 0.0086 (Farmer 1982). A loose

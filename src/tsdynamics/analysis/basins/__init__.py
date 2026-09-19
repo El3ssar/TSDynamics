@@ -4,7 +4,7 @@ Attractors & basins — stream **A-BASIN** (the parity moat).
 The global picture of a multistable system: *which* attractors it has, *where*
 each one wins, and how that partition behaves and breaks.
 
-- :func:`find_attractors` / :func:`basins_of_attraction` — locate the attractors
+- :func:`attractors` / :func:`basins` — locate the attractors
   and paint the basin of attraction of each, by following trajectories through a
   cell tessellation until they recurrently revisit cells (Datseris &
   Wagemakers, 2022).
@@ -28,9 +28,10 @@ Every headline function self-registers into
 
 from __future__ import annotations
 
-from ... import registry as _registry
-from .attractors import Attractor, AttractorSet, find_attractors
-from .basins import BasinFractions, BasinsResult, basin_fractions, basins_of_attraction
+from .._discovery import register as _register
+from .._result import CollectionResult, ScalarResult
+from .attractors import Attractor, AttractorSet, attractors
+from .basins import BasinFractions, BasinsResult, basin_fractions, basins
 from .continuation import ContinuationResult, continuation, tipping_points
 from .metrics import (
     BasinEntropy,
@@ -53,30 +54,98 @@ __all__ = [
     "WadaResult",
     "basin_entropy",
     "basin_fractions",
-    "basins_of_attraction",
+    "basins",
     "continuation",
-    "find_attractors",
+    "attractors",
     "resilience",
     "tipping_points",
     "uncertainty_exponent",
     "wada_property",
 ]
 
-# Self-register the headline analyses (D4 / §4e: in-tree analyses register from
-# their own subpackage).  Idempotent across re-imports.
-for _name, _fn, _needs in (
-    ("find_attractors", find_attractors, "system"),
-    ("basins_of_attraction", basins_of_attraction, "system"),
-    ("basin_fractions", basin_fractions, "system"),
-    ("continuation", continuation, "system"),
-    ("basin_entropy", basin_entropy, "basins"),
-    ("uncertainty_exponent", uncertainty_exponent, "basins"),
-    ("wada_property", wada_property, "basins"),
-    ("resilience", resilience, "basins"),
-    ("tipping_points", tipping_points, "continuation"),
-):
-    _registry.analyses.register(_name, _fn, needs=_needs, family="basins")
-del _name, _fn, _needs
+# Self-register the headline analyses: the definition site is the registration
+# site (CONTRACT §7.7), through the public ``ts.analysis.register`` door.
+_register(
+    attractors,
+    subjects=("system",),
+    area="basins",
+    returns=AttractorSet,
+    keywords="multistability coexisting attracting sets recurrence",
+    cite="Datseris & Wagemakers (2022), Chaos 32, 023104",
+    doi="10.1063/5.0076568",
+)
+_register(
+    basins,
+    subjects=("system",),
+    area="basins",
+    returns=BasinsResult,
+    keywords="multistability basin attraction final state riddled",
+    cite="Datseris & Wagemakers (2022), Chaos 32, 023104",
+    doi="10.1063/5.0076568",
+)
+_register(
+    basin_fractions,
+    subjects=("system",),
+    area="basins",
+    returns=BasinFractions,
+    keywords="multistability basin stability menck sampling",
+    cite="Menck, Heitzig, Marwan & Kurths (2013), Nature Physics 9, 89",
+    doi="10.1038/nphys2516",
+)
+_register(
+    continuation,
+    subjects=("system",),
+    area="basins",
+    returns=ContinuationResult,
+    keywords="bifurcation tracking parameter sweep multistability",
+    cite="Datseris, Rossi & Wagemakers (2023), Int. J. Bifurc. Chaos 33, 2330008",
+    doi="10.1142/S0218127423300082",
+)
+_register(
+    basin_entropy,
+    subjects=("BasinsResult",),
+    area="basins",
+    returns=BasinEntropy,
+    keywords="fractal boundary uncertainty daza multistability",
+    cite="Daza, Wagemakers, Georgeot, Guery-Odelin & Sanjuan (2016), Sci. Rep. 6, 31416",
+    doi="10.1038/srep31416",
+)
+_register(
+    uncertainty_exponent,
+    subjects=("BasinsResult",),
+    area="basins",
+    returns=UncertaintyExponent,
+    keywords="fractal boundary predictability final state sensitivity",
+    cite="Grebogi, McDonald, Ott & Yorke (1983), Phys. Lett. A 99, 415",
+    doi="10.1016/0375-9601(83)90945-3",
+)
+_register(
+    wada_property,
+    subjects=("BasinsResult",),
+    area="basins",
+    returns=WadaResult,
+    keywords="wada boundary fractal three basins",
+    cite="Daza, Wagemakers, Sanjuan & Yorke (2015), Sci. Rep. 5, 16579",
+    doi="10.1038/srep16579",
+)
+_register(
+    resilience,
+    subjects=("BasinsResult",),
+    area="basins",
+    returns=ScalarResult,
+    keywords="shock perturbation robustness tipping distance",
+    cite="Halekotte & Feudel (2020), Sci. Rep. 10, 11783",
+    doi="10.1038/s41598-020-68805-6",
+)
+_register(
+    tipping_points,
+    subjects=("ContinuationResult",),
+    area="basins",
+    returns=CollectionResult,
+    keywords="bifurcation tipping catastrophe annihilation multistability",
+    cite="Datseris, Rossi & Wagemakers (2023), Int. J. Bifurc. Chaos 33, 2330008",
+    doi="10.1142/S0218127423300082",
+)
 
 
 def __dir__() -> list[str]:

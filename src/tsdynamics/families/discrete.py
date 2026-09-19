@@ -4,14 +4,34 @@ from __future__ import annotations
 
 import inspect
 import warnings
-from abc import abstractmethod
+from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import numpy as np
 
-from tsdynamics.errors import ConvergenceError, InvalidInputError, InvalidParameterError
+from tsdynamics.errors import (
+    ConvergenceError,
+    InvalidInputError,
+    InvalidParameterError,
+    remedy,
+)
 
-from .base import SystemBase, Trajectory
+from ._kwargs import reject_unknown_run_keywords
+from .base import (
+    Absent,
+    SystemBase,
+    Trajectory,
+    as_lyapunov_result,
+    orbit_peak,
+    resolve_transient,
+)
+
+#: What this module *defines* — see the sibling note in ``continuous.py``.  Ten
+#: of the 22 names ``dir()`` used to offer here were re-exported imports.
+__all__ = ["DiscreteMap"]
+
+#: ``DiscreteMap.run``'s keywords, in signature order.
+_MAP_RUN_KEYWORDS = ("steps", "ic", "transient", "backend", "seed", "max_retries")
 
 if TYPE_CHECKING:
     from .base import ParamSet
@@ -71,21 +91,33 @@ def _positional_param_names(fn: Any) -> list[str] | None:
 # ---------------------------------------------------------------------------
 
 
-class DiscreteMap(SystemBase):
+class DiscreteMap(SystemBase, ABC):
     """
     Base class for discrete maps iterated on the engine.
 
     Subclass contract
     -----------------
     1. Declare ``params = {...}`` and ``dim = N``.
-    2. Implement ``_step`` and ``_jacobian`` as ``@staticmethod`` static methods.
-       Parameters arrive as **positional arguments** in the order they appear
-       in the class-level ``params`` dict.
+    2. Implement ``_step`` as a ``@staticmethod``.  Parameters arrive as
+       **positional arguments** in the order they appear in the class-level
+       ``params`` dict.  It is :func:`abc.abstractmethod` and — since this class
+       is an :class:`abc.ABC`, like every other family base — a subclass that
+       omits it **cannot be instantiated**.  (Before v6 ``DiscreteMap`` was the
+       one family base that was *not* an ABC, so the abstract marker was inert
+       and a missing kernel surfaced far downstream as a mystifying
+       ``TapeCompileError`` from the lowering pass.)
+    3. ``_jacobian`` is **optional**: by default the library differentiates
+       ``_step`` symbolically, exactly as ``ContinuousSystem`` autogenerates its
+       Jacobian from ``_equations``.  Write one only when the step cannot be
+       traced (a Python ``if`` on the state) or when a one-sided slope on a
+       discontinuity is the meaningful answer.  Every catalogue map still ships
+       a hand-written one, which the test suite uses as a cross-check oracle.
 
     Iteration
     ---------
     ``iterate`` lowers ``_step`` to an in-process IR tape and runs the engine's
-    native map loop, with no warmup.  The engine reads the current parameter
+    native map loop, on a tape lowered and JIT-compiled once per system (both
+    memoised).  The engine reads the current parameter
     values live on every run, so a parameter change never triggers a
     re-lowering.
 
@@ -97,11 +129,11 @@ class DiscreteMap(SystemBase):
     Examples
     --------
     >>> h = Henon()
-    >>> traj = h.iterate(steps=10_000)
-    >>> t_idx, X = traj          # tuple-unpack
-    >>> exps = h.lyapunov_spectrum(steps=5_000)
+    >>> traj = h.run(steps=10_000)
+    >>> t_idx, X = traj.unpack()   # the two columns
+    >>> exps = h._lyapunov_spectrum(n=5_000)
     >>> h_variant = h.with_params(a=1.2)
-    >>> traj2 = h_variant.iterate(steps=10_000)
+    >>> traj2 = h_variant.run(steps=10_000)
     """
 
     #: Set to False on maps whose orbit visits discontinuities, where the
@@ -109,9 +141,10 @@ class DiscreteMap(SystemBase):
     _jacobian_fd_check: ClassVar[bool] = True
 
     #: The default runtime backend (see :attr:`SystemBase._default_backend`).
-    #: ``"interp"`` — the Rust engine's native map loop (the sole map backend
-    #: since the M3 migration retired the v2 backends).
-    _default_backend: ClassVar[str] = "interp"
+    #: ``"jit"`` — the Rust engine's native map loop driven by the Cranelift JIT,
+    #: with the compiled-evaluator cache paying the compile once per distinct
+    #: system.  Was ``"interp"`` before v6.
+    _default_backend: ClassVar[str] = "jit"
 
     # Protocol stepping state (instances shadow these class defaults).
     _state_now: np.ndarray | None = None
@@ -127,6 +160,10 @@ class DiscreteMap(SystemBase):
         parameter values (this bit the Circle map once), so it is promoted
         to an import-time ``TypeError``.
         """
+        # Adopt a kernel written as an ordinary method *first*, so the signature
+        # this validates is the corrected one (a stray ``self`` would otherwise
+        # be reported as a parameter-order mismatch).
+        cls._adopt_class_called_kernels()
         # Validate BEFORE super().__init_subclass__ so a failing class is
         # never registered in the system registry.
         declared = list(getattr(cls, "params", {}))
@@ -179,27 +216,103 @@ class DiscreteMap(SystemBase):
         """
         ...
 
-    @staticmethod
-    @abstractmethod
-    def _jacobian(X: np.ndarray, *params: Any) -> Any:
+    def jacobian(self, u: Any, t: float = 0.0) -> np.ndarray:
+        """Return the tangent map ``J = df/dx`` at state ``u``.
+
+        The same verb, the same signature and the same return type as a flow's
+        :meth:`~tsdynamics.families.ContinuousSystem.jacobian` — a map simply
+        has no ``t`` dependence, so the argument is accepted and ignored.
+
+        Parameters
+        ----------
+        u : array-like, shape (dim,)
+            The state to linearise at.
+        t : float, optional
+            Ignored; present so a caller holding *any* system can write
+            ``sys.jacobian(u, t)``.
+
+        Returns
+        -------
+        ndarray, shape (dim, dim)
+
+        Examples
+        --------
+        >>> import tsdynamics as ts
+        >>> ts.systems.Henon().jacobian([0.5, 0.2]).shape
+        (2, 2)
+        """
+        state = np.asarray(u, dtype=float)
+        jac = type(self)._jacobian(state, *cast(Any, self.params).as_tuple())
+        n = int(cast(int, self.dim))
+        return np.asarray(jac, dtype=float).reshape(n, n)
+
+    @classmethod
+    def _jacobian(cls, X: np.ndarray, *params: Any) -> Any:
         """
         Return the (dim × dim) Jacobian at state ``X``.
 
-        Decorate with ``@staticmethod``.  Parameters positional, same order as
-        the class-level ``params`` dict.
+        **Optional.**  By default it is derived symbolically from ``_step`` —
+        the same way :class:`~tsdynamics.families.ContinuousSystem`
+        autogenerates its Jacobian from ``_equations`` — so defining a map means
+        writing ``_step`` and nothing else.
+
+        Override it (as a ``@staticmethod``, parameters positional in the order
+        of the class-level ``params`` dict) when the derivative cannot be taken
+        from the step: a map that branches on the state with a Python ``if``, or
+        one living on a discontinuity where a one-sided slope is the meaningful
+        answer.  A hand-written override always wins, and the test suite
+        cross-checks it against a finite difference of ``_step``
+        (:attr:`_jacobian_fd_check`).
 
         Returns
         -------
         array-like of shape (dim, dim).
         """
-        ...
+        from tsdynamics._engine.compile import map_jacobian_fn
+
+        # ``_jacobian`` is called off the CLASS (``type(sys)._jacobian(x, *params)``),
+        # so a map whose dimension is only fixed per instance has no dimension to
+        # trace against here.  Say so, rather than failing inside the trace.
+        dim = cls.dim
+        if dim is None:
+            raise InvalidInputError(
+                f"{cls.__name__}: cannot autogenerate `_jacobian` because `dim` is set "
+                f"per instance, and the Jacobian is derived off the class. Declare a "
+                f"class-level `dim`, or write the Jacobian yourself:\n"
+                f"    @staticmethod\n"
+                f"    def _jacobian(X, {', '.join(cls.params) or '...'}): ..."
+            )
+        return map_jacobian_fn(cls, params, dim=dim)(X)
 
     # ------------------------------------------------------------------ #
     # System protocol — incremental stepping
     # ------------------------------------------------------------------ #
 
+    #: The one-word family, read by :attr:`SystemBase.family`.
+    _family: ClassVar[str] = "map"
+
+    #: A section is the transversal crossing of a CONTINUOUS trajectory.
+    poincare = Absent(
+        "a section is the transversal crossing of a CONTINUOUS trajectory, and a "
+        "map has no in-between to cross",
+        "ts.analysis.orbit_diagram(system, 'a', values)",
+    )
+
+    #: A map advances in whole iterates; there is no du/dt to evaluate.
+    rhs = Absent(
+        "a map has no vector field — it advances in whole iterates, so the thing "
+        "to evaluate is the next state x_{n+1} = f(x_n), not a rate of change",
+        "system.step(1)   # one iterate from the live state",
+    )
+
+    #: A map's kernel is traced numerically, not held as a symbolic tree.
+    jacobian_sym = Absent(
+        "a map's kernel is traced numerically, not held as a symbolic tree",
+        "system.jacobian(x)",
+    )
+
     @property
-    def is_discrete(self) -> bool:
+    def _is_discrete(self) -> bool:
         """Maps are discrete-time systems."""
         return True
 
@@ -209,19 +322,57 @@ class DiscreteMap(SystemBase):
         *,
         t: float | None = None,
         params: dict[str, Any] | None = None,
+        **unknown: Any,
     ) -> None:
-        """(Re)start stepping from state ``u`` at iteration count ``t``."""
+        """(Re)start stepping from state ``u`` at iteration count ``t``.
+
+        Parameters
+        ----------
+        u : array-like, optional
+            The state to restart from — ``dim`` numbers.  Resolved like ``ic=``
+            on :meth:`run`.
+        t : int, optional
+            The iteration count to restart the clock at, **in iterations** (a
+            map has no time).  Default 0.
+        params : dict, optional
+            Parameter overrides applied to this system **in place** before the
+            restart.  (``with_params`` is the non-mutating spelling.)
+
+        Raises
+        ------
+        InvalidParameterError
+            For any other keyword — refused **by name**.  This used to end in a
+            bare ``TypeError`` from the interpreter, so
+            ``except InvalidParameterError`` caught a typo on a flow and missed
+            the identical typo on a map.
+        """
+        reject_unknown_run_keywords(
+            self,
+            unknown,
+            family="map",
+            accepted=("t", "params"),
+            verb="reinit",
+        )
         if params:
             for k, v in params.items():
                 self.params[k] = v
-        self._state_now = self.resolve_ic(u)
-        self._n_now = int(t) if t is not None else 0
+        # ``resolve_ic`` commits the resolved IC to ``self.ic`` up front, so a
+        # malformed ``u`` (wrong length → a reshape ValueError) or a malformed
+        # ``t`` must not leave a half-applied IC behind (the ``_dispatch`` /
+        # ``iterate`` contract, applied to the stepping entry point).
+        with self._ic_rollback():
+            state = self._resolve_ic(u)
+            n_now = int(t) if t is not None else 0
+        self._state_now = state
+        self._n_now = n_now
 
     def step(self, n_or_dt: int | None = None) -> np.ndarray:
         """
-        Advance ``n`` iterations and return the new state.
+        Advance ``n_or_dt`` iterations and return the new state.
 
-        The first call performs an implicit :meth:`reinit`.
+        ``n_or_dt`` is an **iteration count** here — the one family where it is
+        not a time increment, because a map has no clock.  The first call
+        performs an implicit :meth:`reinit`.
 
         Parameters
         ----------
@@ -285,110 +436,145 @@ class DiscreteMap(SystemBase):
         """Overwrite the current state."""
         self._state_now = np.asarray(u, dtype=float).reshape(self.dim)
 
-    def time(self) -> float:
-        """Return the current iteration count."""
-        return float(self._n_now)
+    def time(self) -> int:
+        """Return the current iteration count — an ``int``, because it counts.
 
-    def trajectory(
-        self,
-        steps: int = 1000,
-        *,
-        transient: int = 0,
-        **kwargs: Any,
-    ) -> Trajectory:
-        """Protocol-uniform trajectory: ``iterate`` plus optional transient drop."""
-        traj = self.iterate(steps=transient + steps, **kwargs)
-        return traj[transient:] if transient > 0 else traj
-
-    # ------------------------------------------------------------------ #
-    # Trajectory production — the canonical ``run`` verb
-    # ------------------------------------------------------------------ #
-
-    def run(
-        self,
-        n: int = 1000,
-        **kwargs: Any,
-    ) -> Trajectory:
+        A flow's clock is a float time; a map's is a whole number of iterates,
+        and reporting ``7.0`` where the docstring promised a count made the two
+        readings of ``time()`` indistinguishable at a call site.
         """
-        Produce a trajectory — the one canonical verb for every family.
+        return int(self._n_now)
 
-        ``run`` is the unified trajectory producer: it answers the same call for
-        flows, maps, DDEs and SDEs, dispatching on :attr:`is_discrete`.  For a
-        discrete map (this family) it iterates the map, so ``run`` is a thin
-        alias of :meth:`iterate`.  The number of iterations is named ``n`` (the
-        canonical step-count keyword), forwarded to :meth:`iterate` as its
-        ``steps`` argument; every other keyword is forwarded unchanged.
+    def _resolve_iteration_count(
+        self, n: int | None, kwargs: dict[str, Any], *, where: str, default: int
+    ) -> int:
+        """Read a map's horizon from ``n`` or its ``steps`` alias, never both.
 
-        Parameters
-        ----------
-        n : int
-            Number of iterations. Default 1000.
-        **kwargs
-            Forwarded verbatim to :meth:`iterate` (``ic``, ``max_retries``,
-            ``backend``).
+        ``iterate`` names the iteration count ``steps`` and ``run`` names it
+        ``n``.  One concept, so **every** map horizon door accepts either word
+        and resolves it here — otherwise ``steps=`` collides with the forward on
+        one door and surfaces as a raw "got multiple values for keyword argument
+        'steps'" ``TypeError``, or (worse) as an "unexpected keyword argument"
+        on a door that simply forgot the alias.
 
-        Returns
-        -------
-        Trajectory
-            Identical to :meth:`iterate` — ``run`` adds no behaviour.
-
-        See Also
-        --------
-        iterate : The family-specific spelling (a permanent alias of ``run``).
-
-        Examples
-        --------
-        >>> Henon().run(n=5000)
-        >>> Lorenz().run(final_time=100, dt=0.01)   # the same verb integrates a flow
+        Each door declares ``n: int | None = None`` and names its default here,
+        so "the user passed both" is always distinguishable from "the user
+        passed neither".  ``kwargs`` is consumed in place: ``steps`` is popped.
         """
-        return self.iterate(steps=n, **kwargs)
+        alias = kwargs.pop("steps", None)
+        if alias is not None and n is not None:
+            raise InvalidParameterError(
+                f"n and steps are the same argument (the iteration count), so pass "
+                f"only one; got n={n!r} and steps={alias!r}."
+                + remedy(f"{type(self).__name__}().{where}(n={default})")
+            )
+        count = n if n is not None else alias
+        return int(default if count is None else count)
 
     # ------------------------------------------------------------------ #
     # Iteration
     # ------------------------------------------------------------------ #
 
-    def iterate(
+    def run(
         self,
         steps: int = 1000,
-        ic: Any | None = None,
-        max_retries: int = 10,
         *,
+        ic: Any | None = None,
+        transient: int = 0,
         backend: str | None = None,
+        seed: int | None = None,
+        max_retries: int = 10,
+        **solver_options: Any,
     ) -> Trajectory:
         """
-        Iterate the map for ``steps`` steps on the engine.
+        Iterate the map and return a :class:`~tsdynamics.families.Trajectory`.
+
+        ``run`` is **the** trajectory verb — one word on flows, maps, delay and
+        stochastic systems.  ``iterate`` and ``trajectory`` were two more names
+        for this method and are gone in v6.
+
+        A map's horizon is ``steps``, a **count of iterations**, because a map
+        has no continuous time; ``final_time`` is refused by name rather than
+        reinterpreted.  The positional form reads the same on both families:
+        ``hen.run(1000)``, ``lor.run(100.0)``.
 
         Parameters
         ----------
         steps : int
-            Number of iterations. Default 1000.
+            How many iterations to **run** — the horizon word for a map, counted
+            in **iterations**.  (A flow measures its horizon in time and takes
+            ``final_time``; a map has no clock, so ``final_time`` is refused by
+            name.)  Default 1000.  The trajectory holds ``steps + 1`` rows: the
+            state it started from, then one per iteration — the same ``N + 1`` a
+            flow returns for ``final_time / dt == N``.
         ic : array-like, optional
-            Initial state. Falls back to ``self.ic``, then random.
+            Initial state — ``dim`` numbers, one per state component.  Falls
+            back to ``self.ic``, then a random draw.  **Passing it here does not
+            change ``self.ic``**: one call, one run.
         max_retries : int
-            Retry with a new random IC if divergence is detected (only when no
-            explicit ``ic`` was given; an explicit ic that diverges raises).
-        backend : str, optional
+            Retry with a new random IC if divergence is detected — only when the
+            initial condition was **not chosen by the user**.  An explicit ``ic``
+            (here *or* on the constructor) that diverges raises instead of being
+            silently swapped for a random one that traces a different orbit.
+        seed : int, optional
+            Seed for the random-IC fallback and for the divergence retries, so an
+            unseeded-IC run is reproducible.  Equivalent to the constructor's
+            ``seed=``, and the same meaning it has on every other family; the
+            resolved seed is recorded on ``traj.meta["ic_seed"]``.
+        backend : {"jit", "interp", "reference"}, optional
             Where the iteration runs.  Defaults to ``_default_backend``
-            (``"interp"``).
+            (``"jit"``).
 
-            - ``"interp"`` (default) / ``"jit"`` — the Rust engine's native
-              map loop (interpreter or Cranelift JIT).  Requires the compiled
-              extension (:mod:`tsdynamics._rust`); until it is built these
-              raise :class:`~tsdynamics.engine.run.EngineNotAvailableError`.
+            - ``"jit"`` (default) — the Rust engine's native map loop driven by
+              the **Cranelift JIT**: the lowered tape compiled to native code and
+              served from a process-wide compiled-evaluator cache, so the compile
+              is paid once per distinct system rather than on every call.
+            - ``"interp"`` — the same native map loop driven by the **SSA-tape
+              interpreter**.  Bit-for-bit identical to the JIT; marginally faster
+              on very small tapes, and the way to skip the one-off compile.
+              Both require the compiled extension (:mod:`tsdynamics._rust`);
+              until it is built they raise
+              :class:`~tsdynamics._engine.run.EngineNotAvailableError`.
             - ``"reference"`` — the lowered next-state tape, iterated in pure
-              Python (the dependency-light oracle the engine is validated
-              against).
+              Python.  Not for production use: it is the dependency-light oracle
+              the engine is validated against.
+
+            .. versionchanged:: 6.0
+                The default moved from ``"interp"`` to ``"jit"``, once the v6
+                compiled-evaluator cache removed the JIT's per-call recompile.
 
             Every backend lowers ``_step`` to the engine IR, so it requires a
             map whose step traces symbolically (see
-            :func:`tsdynamics.engine.compile.lower_map`); piecewise or
+            :func:`tsdynamics._engine.compile.lower_map`); piecewise or
             ``numpy``-ufunc steps raise
-            :class:`~tsdynamics.engine.compile.TapeCompileError`.
+            :class:`~tsdynamics._engine.compile.TapeCompileError`.
+        transient : int, optional
+            Leading stretch of the orbit to discard, in **iterations** (the same
+            unit as ``steps``).  ``transient + steps`` iterations are run and the
+            first ``transient`` dropped, so the returned trajectory still has
+            ``steps`` samples.  One word on every family, in that family's
+            **own horizon unit**: iterations here, **time** on a flow (see
+            :meth:`ContinuousSystem.run`).
+
+            .. versionadded:: 6.0
+                Only the retired ``trajectory`` verb used to accept it, so a
+                user who found ``run`` could not discard a transient at all.
 
         Returns
         -------
         Trajectory
-            ``t`` is ``arange(steps)`` (integer step indices, not float times).
+            ``steps + 1`` rows — **the initial condition first**, then one per
+            iteration — with ``t = arange(steps + 1)`` (integer step indices, not
+            float times), so ``y[k]`` is the state at ``t[k] = k``.
+
+            .. versionchanged:: 6.0
+                The initial condition used to be dropped, so ``t[0] = 0`` labelled
+                :math:`x_1` and ``traj["x"][n]`` was :math:`x_{n+1}` — measured,
+                ``Logistic(r=2.8).run(steps=4, ic=[0.1]).y[0]`` was ``0.252``
+                (:math:`f(0.1)`) while ``Lorenz().run(ic=[1, 2, 3]).y[0]`` was
+                ``[1, 2, 3]``.  Every cobweb therefore started one iterate late,
+                and the two families disagreed about what a trajectory's first
+                row means.  They agree now.
 
         Raises
         ------
@@ -400,14 +586,39 @@ class DiscreteMap(SystemBase):
             (it is not divergence) rather than consuming the retry budget.
         TapeCompileError
             If ``_step`` cannot be lowered to the engine IR (piecewise / ufunc).
+        InvalidParameterError
+            If ``steps < 1``, or an unrecognised keyword is passed — including a
+            *flow* keyword (``final_time`` / ``dt`` / ``method`` / a tolerance),
+            which a map has no meaning for.  ``**kwargs`` exists only to catch
+            those: nothing is silently dropped.
         """
+        reject_unknown_run_keywords(self, solver_options, family="map", accepted=_MAP_RUN_KEYWORDS)
+        steps = int(steps)
+        if steps < 1:
+            raise InvalidParameterError(
+                f"steps is a number of iterations, so it must be >= 1; got {steps}."
+                + remedy(f"{type(self).__name__}().run(steps=1000)")
+            )
+        drop = int(resolve_transient(transient, discrete=True))
         backend = backend if backend is not None else self._default_backend
 
-        # Iterate on the Rust engine.  Preserve the random-IC retry only when no
-        # explicit ``ic`` was given (a random draw can land off-basin); an
-        # explicit ic that diverges raises loudly, the engine's contract.
-        ic_explicit = ic is not None
-        ic_arr = self.resolve_ic(ic)
+        with self._ic_rollback():
+            traj = self._iterate_with_retries(
+                steps=steps + drop, ic=ic, max_retries=max_retries, backend=backend, seed=seed
+            )
+        return traj[drop:] if drop > 0 else traj
+
+    def _iterate_with_retries(
+        self, *, steps: int, ic: Any | None, max_retries: int, backend: str, seed: int | None
+    ) -> Trajectory:
+        """Run :meth:`run`'s retry loop (wrapped by its IC rollback guard)."""
+        # Iterate on the Rust engine.  Preserve the random-IC retry only when the
+        # initial condition was not chosen by the user (a random draw can land
+        # off-basin); a *user* ic — passed here or to the constructor — that
+        # diverges raises loudly, the engine's contract.  ``resolve_ic`` records
+        # which of the two it resolved on ``_ic_explicit``.
+        ic_arr = self._resolve_ic(ic, seed=seed)
+        ic_explicit = ic is not None or bool(self.__dict__.get("_ic_explicit", False))
         for attempt in range(max_retries):
             try:
                 return self._iterate_engine(steps=steps, ic=ic_arr, backend=backend)
@@ -417,26 +628,40 @@ class DiscreteMap(SystemBase):
                 # arithmetic blow-ups (``OverflowError`` / ``FloatingPointError`` /
                 # ``ZeroDivisionError``, all :class:`ArithmeticError`).  A missing /
                 # broken engine surfaces as
-                # :class:`~tsdynamics.engine.run.EngineNotAvailableError` (a
+                # :class:`~tsdynamics._engine.run.EngineNotAvailableError` (a
                 # :class:`~tsdynamics.errors.BackendError`, hence a ``RuntimeError`` but
                 # NOT a ``ConvergenceError``); narrowing the catch lets it — and any
                 # other genuine fault, e.g. a ``backend="jit"`` compile failure —
                 # propagate loudly instead of being mistaken for divergence and
                 # silently burning the whole retry budget.
-                if ic_explicit or attempt == max_retries - 1:
+                if ic_explicit:
+                    # Re-raise the engine seam's own message verbatim (callers pin
+                    # it) and *annotate* why no retry happened: the initial
+                    # condition was chosen by the user — here or on the
+                    # constructor — and an explicit IC is never silently swapped
+                    # for a random one that would trace a different orbit.
+                    exc.add_note(
+                        f"The initial condition {np.array2string(ic_arr, precision=6)} "
+                        f"was supplied explicitly, so {type(self).__name__}.run did "
+                        f"not retry from a random one: pass a different ic=, or omit it "
+                        f"to let the random-IC retry find the attractor."
+                    )
+                    raise
+                if attempt == max_retries - 1:
                     raise
                 # Off-basin random draw diverged; warn (not stdout) and retry from
                 # a fresh random IC. Final exhaustion raises loudly below.
                 warnings.warn(
-                    f"{type(self).__name__}.iterate: {exc} "
+                    f"{type(self).__name__}.run: {exc} "
                     "Retrying from a new random initial condition.",
                     RuntimeWarning,
                     stacklevel=2,
                 )
-                ic_arr = np.random.rand(cast(int, self.dim))
+                ic_arr = self._ic_generator().random(cast(int, self.dim))
                 object.__setattr__(self, "ic", ic_arr.copy())
+                object.__setattr__(self, "_ic_explicit", False)
         raise ConvergenceError(
-            f"{type(self).__name__}.iterate exhausted {max_retries} "
+            f"{type(self).__name__}.run exhausted {max_retries} "
             f"retries without a finite trajectory."
         )
 
@@ -444,47 +669,48 @@ class DiscreteMap(SystemBase):
         """Iterate on the Rust engine (or its pure-Python reference evaluator).
 
         Routes through the shared engine-dispatch seam
-        (:meth:`SystemBase._dispatch` → :func:`tsdynamics.engine.run.integrate`),
+        (:meth:`SystemBase._dispatch` → :func:`tsdynamics._engine.run.integrate`),
         which lowers ``_step`` to the engine IR and runs the native map loop
         (stream E-MAP).  This is the seam that makes a map iterate on the same
         engine as every other family.
 
         Divergence is reported (it is not silently returned and there is no
         random-IC retry — the engine's "diverge loudly" contract); the
-        random-IC retry lives in :meth:`iterate` for the implicit-ic case.
+        random-IC retry lives in :meth:`run` for the implicit-ic case.
+
+        Notes
+        -----
+        There is deliberately **no finiteness scan here**.  Every backend already
+        diverges loudly *before* returning — the Rust map loop raises
+        ``EngineError::Diverged`` → :class:`~tsdynamics.errors.ConvergenceError`
+        at the first non-finite iterate, ``_reference_map`` raises per-iterate,
+        and :func:`tsdynamics._engine._families._run_map` keeps one full
+        ``np.all(np.isfinite(...))`` guard at the engine seam covering *all*
+        callers of the map path.  A second, row-wise
+        ``np.isfinite(traj.y).all(axis=1)`` here was unreachable (no backend has
+        ever reached it) and cost ~12 ms of a 25 ms 1e6-step Hénon run — a 48%
+        Python tax over a 9 ms Rust kernel — so it was removed.  Divergence
+        behaviour is unchanged: the message a caller sees is, as before, the one
+        ``_run_map`` (engine) or ``_reference_map`` (reference) raises, and the
+        random-IC retry in :meth:`run` catches the same
+        :class:`ConvergenceError` type from the same place.
         """
-        traj = self._dispatch(backend=backend, final_time=steps, ic=ic)
-        # Enforce "diverge loudly" at the family boundary so every backend behaves
-        # alike: the Rust engine path raises on a non-finite iterate, but the
-        # pure-Python reference iterator returns the offending rows as-is — catch
-        # those here rather than handing back a quietly poisoned trajectory.
-        finite_rows = np.isfinite(traj.y).all(axis=1)
-        if not finite_rows.all():
-            bad = int(np.argmin(finite_rows))
-            # Report the trajectory's own step-index axis (``traj.t``), which for a
-            # warm-restart problem (n0 > 0) is ``arange(n0, n0 + steps)`` — so the
-            # iteration number is consistent with the trajectory rather than the bare
-            # 0-based row offset ``bad``.
-            iteration = int(traj.t[bad]) if bad < traj.t.size else bad
-            raise ConvergenceError(
-                f"{type(self).__name__}: map diverged at iteration {iteration} "
-                f"(backend={backend!r})."
-            )
-        return traj
+        return self._dispatch(backend=backend, final_time=steps, ic=ic)
 
     # ------------------------------------------------------------------ #
     # Lyapunov spectrum
     # ------------------------------------------------------------------ #
 
-    def lyapunov_spectrum(
+    def _lyapunov_spectrum(
         self,
-        steps: int = 5000,
+        n: int | None = None,
         ic: Any | None = None,
-        n_exp: int | None = None,
+        k: int | None = None,
         reortho_interval: int = 1,
         *,
         backend: str | None = None,
-    ) -> np.ndarray:
+        **kwargs: Any,
+    ) -> Any:
         """
         QR-based Lyapunov spectrum.
 
@@ -494,33 +720,43 @@ class DiscreteMap(SystemBase):
         QR-reorthonormalising every ``reortho_interval`` steps, with a random-IC
         retry on divergence.
 
-        On the compiled-engine backends (``"interp"`` default / ``"jit"``) the whole
+        On the compiled-engine backends (``"jit"`` default / ``"interp"``) the whole
         QR tangent-map iteration runs in one Rust kernel call
-        (:func:`tsdynamics.engine.run.map_lyapunov`) — no per-step Python→FFI
+        (:func:`tsdynamics._engine.run.map_lyapunov`) — no per-step Python→FFI
         round-trip, so it is dramatically faster than the per-step NumPy loop.
         ``backend="reference"`` (and any map whose ``_step`` will not lower to the
         engine IR, or a wheel-free environment) runs the pure-Python QR loop — the
         oracle the engine is validated against.
 
-        Results are stored in ``self.meta['lyapunov_spectrum']``.
+
 
         Parameters
         ----------
-        steps : int
-            Number of iterations. Default 5000.
+        n : int
+            Number of iterations — a map's horizon word, exactly as on
+            :meth:`run`. Default 5000.  ``steps=`` is accepted as its alias
+            here too (:meth:`run` names it that), so the same word works at
+            every map horizon door; passing both raises.
         ic : array-like, optional
             Initial state. Falls back to ``self.ic``, then random.
-        n_exp : int, optional
-            Number of exponents. Defaults to ``dim``.
+        k : int, optional
+            Number of exponents to compute.  Defaults to ``dim``.
+            (Renamed from ``n_exp`` in v4; the old spelling was silently swallowed
+            by ``**integrator_kwargs`` on this method until v6.)
         reortho_interval : int
             Reorthonormalise every this many steps. Default 1.
-        backend : str, optional
-            ``"interp"`` (default, the Rust kernel) / ``"jit"`` (Cranelift) /
-            ``"reference"`` (the pure-Python QR loop).
+        backend : {"jit", "interp", "reference"}, optional
+            ``"jit"`` (default, the Rust kernel on Cranelift-compiled code) /
+            ``"interp"`` (the same kernel on the SSA-tape interpreter,
+            bit-for-bit identical) / ``"reference"`` (the pure-Python QR loop —
+            the oracle, not for production use).
+
+            .. versionchanged:: 6.0
+                Default moved from ``"interp"`` to ``"jit"`` (see :meth:`run`).
 
         Returns
         -------
-        ndarray, shape (n_exp,)
+        ndarray, shape (k,)
             Lyapunov exponents ordered from largest to smallest.
 
         References
@@ -532,7 +768,20 @@ class DiscreteMap(SystemBase):
         """
         from tsdynamics.derived.tangent import TangentSystem
 
-        k = n_exp or self.dim
-        return TangentSystem(self, k=k, backend=backend).lyapunov_spectrum(
-            steps=steps, ic=ic, reortho_interval=reortho_interval
+        n = self._resolve_iteration_count(n, kwargs, where="lyapunov_spectrum", default=5000)
+        k = k or self.dim
+        tangent = TangentSystem(self, k=k, backend=backend)
+        exponents = tangent._lyapunov_spectrum(n=n, ic=ic, reortho_interval=reortho_interval)
+        return as_lyapunov_result(
+            self,
+            exponents,
+            n=n,
+            reortho_interval=reortho_interval,
+            backend=backend,
+            orbit_peak=orbit_peak(tangent),
         )
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

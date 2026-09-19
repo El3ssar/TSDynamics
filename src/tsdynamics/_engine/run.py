@@ -1,0 +1,1264 @@
+"""Run entry points — compile a system, pick a backend, integrate.
+
+This is the top of the engine seam: the functions a user (or the family base
+classes, stream C-FAM) call to actually *run* a system on the Rust engine.
+Each entry point turns a system into a :class:`~tsdynamics._engine.problem.Problem`
+(:mod:`tsdynamics._engine.problem`), resolves a backend, and dispatches.
+
+Backends
+--------
+The two production evaluators behind the frozen ``Evaluator`` seam are selected
+by name:
+
+- ``"jit"`` — the Cranelift native-code evaluator (``tsdyn-jit``).  **The
+  default** since v6: the tape is compiled to native code once per distinct
+  system and served from a process-wide compiled-evaluator cache
+  (:func:`jit_cache_stats`), so the compile is paid once, not per call.
+- ``"interp"`` — the SSA-tape interpreter (``tsdyn-vm``).  Numerically identical
+  to the JIT, bit-for-bit; marginally faster on very small tapes, and the way to
+  avoid the one-off compile altogether.
+- ``"auto"`` — resolves to ``"jit"``, i.e. the same evaluator every concrete
+  family defaults to.
+
+Both run inside the compiled extension :mod:`tsdynamics._rust` (stream E7).
+Until that extension is built, ``"interp"``/``"jit"`` raise
+:class:`EngineNotAvailableError`.  A third backend, ``"reference"``, needs no compiled
+engine: it evaluates the lowered tape in pure Python (the
+:mod:`~tsdynamics._engine.compile` reference evaluator) and delegates ODE
+time-stepping to SciPy — the dependency-light oracle the lowering is validated
+against, and a usable fallback for RHS evaluation and small ODE/map runs.
+
+What this module does *not* own: the solver kernels and the integrate loop
+(those are the Rust ``tsdyn-solvers`` / ``tsdyn-engine`` crates) and the FFI
+marshalling (``tsdyn-core`` → :mod:`tsdynamics._rust`, stream E7).  It owns the
+Python-side orchestration: problem construction, backend resolution, and
+wrapping the engine's output as a :class:`~tsdynamics.families.Trajectory`.
+
+Module layout (the run-split refactor)
+--------------------------------------
+``run.py`` keeps the ``integrate`` / ``ensemble`` orchestration, the pointwise
+``eval_rhs`` / ``eval_jac`` seam, backend resolution (``resolve_backend`` /
+``_engine`` / ``BACKENDS`` / :class:`EngineNotAvailableError`) and the shared
+problem-coercion / naming / provenance helpers.  The rest was split out into
+focused submodules and is **re-exported here** so every name stays reachable at
+its historical path ``tsdynamics._engine.run.<name>``:
+
+- :mod:`~tsdynamics._engine.run_methods` — ``method=`` resolution + auto-stiffness
+  (``_resolve_method_for`` / ``_recommend_method`` / ``_resolve_method_and_prepare``).
+- :mod:`~tsdynamics._engine._families` — the per-family runners (``_run_continuous``
+  / ``_step_continuous`` / ``_run_dde`` / ``_run_map`` / ``_sample_past``) and the
+  low-level ``_engine_*`` FFI shims.
+- :mod:`~tsdynamics._engine.stepper` — the resumable ``OdeStepper`` API
+  (``make_ode_stepper`` / ``step_advance`` / ``step_advance_to_event``).
+- :mod:`~tsdynamics._engine.sde_run` — the SDE dense/ensemble seam
+  (``sde_integrate_dense`` / ``sde_ensemble_final``).
+- :mod:`~tsdynamics._engine.events` — the event subsystem (``crossings`` / ``Event``
+  / ``EventSolution`` / ``integrate_events``).
+- :mod:`~tsdynamics._engine.reference` — the pure-Python reference oracle
+  (``_reference_*`` / ``_scipy_method``).
+"""
+
+from __future__ import annotations
+
+import math
+import os
+from typing import TYPE_CHECKING, Any, cast
+
+import numpy as np
+
+from tsdynamics._utils.grids import make_output_grid
+from tsdynamics._utils.tolerances import BASIN_ATOL, BASIN_RTOL, DEFAULT_ATOL, DEFAULT_RTOL
+from tsdynamics.errors import BackendError, ConvergenceError
+
+if TYPE_CHECKING:
+    from tsdynamics.families import Trajectory
+
+from ._families import (  # noqa: F401
+    _engine_ensemble_final,
+    _engine_integrate_dense,
+    _engine_map_ensemble_final,
+    _run_dde,
+    _run_map,
+    _sample_past,
+)
+
+# The run-split refactor moved the focused concerns out of this module into the
+# submodules below.  Re-export every name they own so all of them stay reachable
+# at their historical path ``tsdynamics._engine.run.<name>`` — a pure move, no
+# public-surface change.  (The split-out modules late-import the shared run-side
+# helpers — ``_engine``/``resolve_backend``/``_name``/``_primary_tape``/… — from
+# this module inside their functions, so these module-level imports do not create
+# an import cycle.)  ``_run_continuous`` / ``_step_continuous`` carry the explicit
+# ``X as X`` re-export spelling because the rest of ``src`` imports them by that
+# private name (``continuous.py`` / ``events.py``) and they are not in ``__all__``,
+# so ``mypy --strict`` (``--no-implicit-reexport``) needs them marked explicit; the
+# names in ``__all__`` (and the test-only privates) are fine under plain ``F401``.
+from ._families import _run_continuous as _run_continuous
+from ._families import _step_continuous as _step_continuous
+from .compile import eval_tape, eval_tape_jac
+
+# Event subsystem (engine/events.py) and the pure-Python reference oracle
+# (engine/reference.py).
+from .events import (  # noqa: F401
+    _DIRECTION_WORDS,
+    _EVENT_ENGINE_METHODS,
+    Event,
+    EventSolution,
+    _engine_events,
+    _event_tape,
+    _normalize_event_direction,
+    _reference_events,
+    _resolve_event_axis,
+    crossings,
+    integrate_events,
+)
+from .problem import (
+    DDEProblem,
+    MapProblem,
+    ODEProblem,
+    Problem,
+    SDEProblem,
+    build_problem,
+)
+from .reference import (  # noqa: F401
+    _SCIPY_METHOD,
+    _reference_ensemble,
+    _reference_map,
+    _reference_map_ensemble,
+    _reference_ode,
+    _scipy_method,
+)
+from .run_methods import (  # noqa: F401
+    _recommend_method,
+    _resolve_method_and_prepare,
+    _resolve_method_for,
+)
+from .sde_run import (  # noqa: F401
+    sde_ensemble_final,
+    sde_integrate_dense,
+)
+from .stepper import (  # noqa: F401
+    make_ode_stepper,
+    step_advance,
+    step_advance_to_event,
+)
+
+__all__ = [
+    "BACKENDS",
+    "EngineNotAvailableError",
+    "Event",
+    "EventSolution",
+    "clear_jit_cache",
+    "crossings",
+    "ensemble",
+    "eval_jac",
+    "eval_rhs",
+    "integrate",
+    "integrate_events",
+    "jit_cache_stats",
+    "make_ode_stepper",
+    "map_lyapunov",
+    "resolve_backend",
+    "sde_ensemble_final",
+    "sde_integrate_dense",
+    "step_advance",
+    "step_advance_to_event",
+]
+
+#: The selectable backend names.  ``"interp"`` / ``"jit"`` run on the compiled
+#: engine; ``"reference"`` is the pure-Python oracle/fallback.
+BACKENDS: frozenset[str] = frozenset({"interp", "jit", "reference"})
+
+#: env var: set truthy to force the pre-v6 land-on-every-output-sample march
+#: process-wide (see :func:`_dense_output_enabled`).
+_DENSE_OUTPUT_ENV = "TSDYNAMICS_NO_DENSE_OUTPUT"
+
+
+def _dense_output_enabled() -> bool:
+    """Whether interior output samples are produced by interpolation.
+
+    Dense output is **on** unless ``TSDYNAMICS_NO_DENSE_OUTPUT`` is truthy,
+    mirroring the ``TSDYNAMICS_NO_TAPE_CACHE`` / ``TSDYNAMICS_NO_JIT_CACHE``
+    bypasses exactly.  The bypass exists so a test can prove WITH-dense ==
+    WITHOUT-dense on the paths that must not move (two-node grids, kernels with
+    no continuous extension).
+
+    It is deliberately an env var and **not** a public keyword: the library has
+    ONE output semantics.  The legitimate per-call need — "bound my internal step
+    at my sampling rate" — is served by ``max_step=``, which is a real numerical
+    knob rather than a second set of semantics to maintain forever.
+
+    Scope, precisely
+    ----------------
+    This flag gates the **grid output** path (``integrate`` / ``run``) only, and
+    there only for a kernel carrying a native continuous extension (``rk45`` /
+    ``tsit5`` / ``dop853``); every other kernel lands on every sample either way.
+
+    It does **not** reach *event refinement*.  A crossing is refined with the
+    kernel's own interpolant whenever the kernel reports ``Caps::dense`` — a Rust
+    property of the kernel, which no environment variable can switch off — so the
+    crossing times reported by ``run(events=...)`` moved in v6 (they became more
+    accurate: measured ~2e-13 against the analytic zeros of a harmonic
+    oscillator, against a cubic-Hermite fallback before) and this bypass will
+    **not** restore the old ones.  To reproduce a pre-v6 crossing exactly, pin a
+    kernel that has no native interpolant.  So: "reproduce pre-v6 numbers" is
+    true of dense grid output, not of the whole v6 change.
+    """
+    return os.environ.get(_DENSE_OUTPUT_ENV, "").strip().lower() not in ("1", "true", "yes", "on")
+
+
+class EngineNotAvailableError(BackendError):
+    """The compiled Rust engine (:mod:`tsdynamics._rust`, stream E7) is not available.
+
+    Raised when an ``"interp"`` / ``"jit"`` run is requested but the extension
+    module is not importable.  Use ``backend="reference"`` for pure-Python ODE/map
+    runs, or reinstall the compiled wheel (``pip install tsdynamics``).
+
+    Subclasses :class:`~tsdynamics.errors.BackendError` (itself a
+    :class:`RuntimeError`), so it joins the documented ``TSDynamicsError``
+    hierarchy while existing ``except RuntimeError`` handlers keep catching it.
+    """
+
+
+def resolve_backend(backend: str) -> str:
+    """Normalise a backend name to one of :data:`BACKENDS`.
+
+    ``"auto"`` resolves to ``"jit"`` — the same evaluator every concrete family
+    uses by default, so ``backend="auto"`` and ``backend=None`` agree.
+
+    .. versionchanged:: 6.0
+        ``"auto"`` resolved to ``"interp"`` before v6.  It follows the family
+        default, which the compiled-evaluator cache moved to ``"jit"``.
+
+    Parameters
+    ----------
+    backend : str
+        ``"interp"``, ``"jit"``, ``"reference"``, or ``"auto"``.
+
+    Returns
+    -------
+    str
+        A canonical name in :data:`BACKENDS`.
+
+    Raises
+    ------
+    InvalidParameterError
+        If ``backend`` is not a recognised name.  Subclasses :class:`ValueError`,
+        so existing ``except ValueError`` handlers keep catching it.
+    """
+    name = str(backend).lower()
+    if name == "auto":
+        return "jit"
+    if name not in BACKENDS:
+        from tsdynamics.errors import invalid_value
+
+        raise invalid_value(
+            "backend",
+            backend,
+            options=[*sorted(BACKENDS), "auto"],
+            hint="'interp'/'jit' run on the Rust engine; 'reference' is the pure-Python oracle.",
+        )
+    return name
+
+
+def _engine() -> Any:
+    """Return the compiled engine module, or raise :class:`EngineNotAvailableError`.
+
+    Indirected through this single accessor so callers (and tests) have one seam
+    to the FFI surface — the engine binding is whatever
+    :mod:`tsdynamics._rust` (stream E7) exposes.
+    """
+    try:
+        from tsdynamics import _rust
+    except ImportError as err:  # pragma: no cover - until E7 builds the wheel
+        raise EngineNotAvailableError(
+            "the Rust engine extension (tsdynamics._rust) is not built; "
+            "use backend='reference' for pure-Python ODE/map evaluation, or "
+            "reinstall the compiled wheel (`pip install tsdynamics`)."
+        ) from err
+    return _rust
+
+
+def jit_cache_stats() -> dict[str, int]:
+    """Return the engine's compiled-evaluator (JIT) cache counters.
+
+    ``backend="jit"`` compiles a tape to native code with Cranelift.  That is a
+    *per-call* cost — ~0.13 ms for Lorenz, ~0.3 s for a Gray–Scott field — so the
+    engine memoises the compiled evaluator on the tape's identity, exactly as
+    :func:`tsdynamics._engine.compile.lower_ode_cached` memoises the tape itself.
+    This is that cache's ``{"hits", "misses", "size", "maxsize"}``.
+
+    Set ``TSDYNAMICS_NO_JIT_CACHE=1`` to bypass the cache process-wide (every
+    call re-compiles); the counters then stay put, since nothing is stored.
+
+    Returns
+    -------
+    dict[str, int]
+        ``{"hits", "misses", "size", "maxsize"}``.
+
+    Raises
+    ------
+    EngineNotAvailableError
+        If the compiled engine is not installed (there is no JIT without it).
+    """
+    return cast("dict[str, int]", _engine().jit_cache_stats())
+
+
+def clear_jit_cache() -> None:
+    """Drop every cached compiled evaluator and reset the counters.
+
+    The twin of :func:`tsdynamics._engine.compile.clear_tape_cache`: the hook that
+    makes a following ``backend="jit"`` call a guaranteed compile (for tests and
+    timings), and the way to release the native code of a large system.
+
+    Raises
+    ------
+    EngineNotAvailableError
+        If the compiled engine is not installed.
+    """
+    _engine().clear_jit_cache()
+
+
+# ---------------------------------------------------------------------------
+# Problem coercion
+# ---------------------------------------------------------------------------
+
+
+def _as_problem(obj: Any, **build_kwargs: Any) -> Problem:
+    """Return ``obj`` if it is already a Problem, else build one from a system."""
+    if isinstance(obj, ODEProblem | MapProblem | DDEProblem | SDEProblem):
+        return obj
+    return build_problem(obj, **build_kwargs)
+
+
+def _primary_tape(problem: Problem) -> Any:
+    """Return the RHS/next-state tape of a problem (the drift tape for an SDE)."""
+    if isinstance(problem, SDEProblem):
+        return problem.drift
+    return problem.tape
+
+
+# ---------------------------------------------------------------------------
+# Pointwise RHS / Jacobian evaluation (runnable today)
+# ---------------------------------------------------------------------------
+
+
+def eval_rhs(
+    system_or_problem: Any,
+    u: Any,
+    t: float = 0.0,
+    *,
+    backend: str = "reference",
+    **build_kwargs: Any,
+) -> np.ndarray:
+    """Evaluate ``du/dt`` (or the next state, for a map) once at ``(u, t)``.
+
+    The strongest, tolerance-tight signal that a system *lowers* correctly — it
+    has no chaotic-divergence caveat.  With ``backend="reference"`` (default)
+    the lowered tape is evaluated in pure Python; with ``"interp"``/``"jit"`` the
+    compiled engine evaluates it (raising :class:`EngineNotAvailableError` until the
+    extension is built).
+
+    Parameters
+    ----------
+    system_or_problem : SystemBase or Problem
+        The system to lower (any extra ``build_kwargs`` go to the Problem
+        factory) or an already-built Problem.
+    u : array-like, shape (dim,)
+        State to evaluate at.  For an SDE this evaluates the drift.
+    t : float, default 0.0
+        Time.
+    backend : str, default "reference"
+        ``"reference"``, ``"interp"``, or ``"jit"``.
+
+    Returns
+    -------
+    ndarray, shape (dim,)
+    """
+    backend = resolve_backend(backend)
+    problem = _as_problem(system_or_problem, **build_kwargs)
+    tape = _primary_tape(problem)
+    if backend == "reference":
+        return eval_tape(tape, u, problem.params_vec(), float(t))
+    eng = _engine()
+    arrays = tape.to_arrays()
+    return np.asarray(
+        eng.eval_rhs(
+            *arrays, np.asarray(u, dtype=np.float64).ravel(), problem.params_vec(), float(t)
+        )
+    )
+
+
+def eval_jac(
+    system_or_problem: Any,
+    u: Any,
+    t: float = 0.0,
+    *,
+    backend: str = "reference",
+    **build_kwargs: Any,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Evaluate ``(du/dt, Jacobian)`` once at ``(u, t)``.
+
+    Requires a Problem whose tape carries a Jacobian (build with
+    ``with_jacobian=True``).  With ``backend="reference"`` the lowered tape is
+    evaluated in pure Python.
+
+    Returns
+    -------
+    (ndarray, ndarray)
+        The derivative ``(dim,)`` and the row-major ``(dim, dim)`` Jacobian.
+    """
+    backend = resolve_backend(backend)
+    problem = _as_problem(system_or_problem, with_jacobian=True, **build_kwargs)
+    tape = _primary_tape(problem)
+    if backend == "reference":
+        return eval_tape_jac(tape, u, problem.params_vec(), float(t))
+    eng = _engine()
+    arrays = tape.to_arrays()
+    d, j = eng.eval_jac(
+        *arrays, np.asarray(u, dtype=np.float64).ravel(), problem.params_vec(), float(t)
+    )
+    return np.asarray(d), np.asarray(j).reshape(tape.dim, tape.dim)
+
+
+# ---------------------------------------------------------------------------
+# Integration
+# ---------------------------------------------------------------------------
+
+
+def integrate(
+    system_or_problem: Any,
+    *,
+    final_time: float = 100.0,
+    dt: float = 0.02,
+    t0: float | None = None,
+    ic: Any = None,
+    method: str = "RK45",
+    rtol: float = DEFAULT_RTOL,
+    atol: float = DEFAULT_ATOL,
+    max_step: float | None = None,
+    backend: str = "jit",
+    history: Any = None,
+    **build_kwargs: Any,
+) -> Trajectory:
+    """Integrate a system on the engine and return a :class:`~tsdynamics.families.Trajectory`.
+
+    The single family-polymorphic engine entry point: every family's engine path
+    (ODE, map and DDE) funnels here, so FFI marshalling, divergence guards and
+    engine-path provenance live in one place rather than being re-implemented per
+    family.  The family is detected from the built :class:`Problem` and dispatched
+    to the matching runner.  Diagonal-Itô **SDEs are the exception** — the generic
+    seam cannot carry their noise seed and step-as-noise-scale, so they are
+    refused here (use :func:`sde_integrate_dense`).
+
+    Parameters
+    ----------
+    system_or_problem : SystemBase or Problem
+        The system (lowered to a Problem here) or a pre-built Problem.
+    final_time : float, default 100.0
+        End of the integration window.  For a map this is the (rounded) number of
+        iterations.
+    dt : float, default 0.02
+        Output sampling interval — the spacing of the returned grid.  **It does
+        not set the integration accuracy:** the internal stepper is adaptive and
+        controlled by ``rtol``/``atol``, and interior samples come from the
+        kernel's own continuous extension.  Use ``max_step`` to bound the
+        internal step.  Ignored for a map.
+
+        .. versionchanged:: 6.0
+            Before v6 the stepper was forced to land on every output sample, so a
+            fine ``dt`` silently bought extra accuracy and a coarse one silently
+            lost it.  It no longer does.  Kernels without a native continuous
+            extension (everything but ``rk45``/``tsit5``/``dop853``) still land on
+            every sample, so their numbers are unchanged.
+    t0 : float, optional
+        Start time; defaults to the Problem's ``t0``.
+    ic : array-like, optional
+        Initial state (only used when building a Problem from a system).
+    method : str, default "RK45"
+        Solver name, resolved by the solver registry (stream C-SOLV).  The
+        special value ``"auto"`` selects a kernel by a-priori auto-stiffness
+        **for ODEs**: the Jacobian spectrum at the start state is probed and an
+        implicit kernel (``bdf``) is used on a stiff RHS, the explicit default
+        (``rk45``) otherwise (:func:`tsdynamics._solvers.recommend`; a one-point
+        heuristic).  The probe reads the Jacobian at the resolved initial state
+        (``problem.ic``) but always at ``t=0.0`` — the ``t0=`` argument is not
+        threaded into it — so a non-autonomous system whose stiffness varies in
+        time is classified by its ``t=0`` spectrum.  This only affects kernel
+        selection, never the integrated trajectory.  For maps (no kernel) and
+        DDEs (explicit method-of-steps, whose instantaneous-Jacobian probe would
+        ignore the delay terms), ``"auto"`` is a no-op resolving to the family
+        default — see :func:`_recommend_method`.
+    rtol, atol : float
+        Solver tolerances — the accuracy knob (see
+        :mod:`tsdynamics._utils.tolerances`).  Default
+        :data:`~tsdynamics._utils.tolerances.DEFAULT_RTOL` /
+        :data:`~tsdynamics._utils.tolerances.DEFAULT_ATOL`.
+
+        .. versionchanged:: 6.0
+            Tightened from ``1e-6``/``1e-9`` to ``1e-9``/``1e-12``.  Now that
+            ``dt`` no longer forces the stepper to land on every sample, ``rtol``
+            is the *only* accuracy knob, so the default had to carry the accuracy
+            the forced landing used to supply for free.  Measured median 1459x
+            more accurate for 1.74x the cost; pass ``rtol=1e-6`` for the old
+            trade.
+    max_step : float, optional
+        Upper bound on any single internal solver step, in time units.  ``None``
+        (default) means no ceiling — the adaptive controller chooses freely from
+        ``rtol``/``atol``.  Use it to stop an adaptive kernel stepping over a
+        narrow feature (a thin resonance, a fast transient) in an otherwise
+        smooth region, or to bound the detection resolution of an event march.
+        Note this is a step *size*; the engine's ``max_steps`` is a step *count*
+        and is not exposed here.  A ``max_step`` far below the tolerance-driven
+        natural step multiplies cost with no accuracy benefit and can trip
+        :class:`~tsdynamics.errors.StepBudgetError`.
+    backend : {"jit", "interp", "reference"}, default "jit"
+        ``"jit"`` (the Cranelift JIT, compiled once per distinct system and served
+        from the process-wide compiled-evaluator cache), ``"interp"`` (the
+        bit-for-bit identical SSA-tape interpreter), or ``"reference"`` (the
+        dependency-light pure-Python/SciPy oracle; ODE and map only, and not
+        intended for production use).
+
+        .. versionchanged:: 6.0
+            Default moved from ``"interp"`` to ``"jit"``, matching every concrete
+            family's ``_default_backend``.  Before v6 the JIT recompiled the tape
+            on every call; the v6 compiled-evaluator cache removed that.
+    history : callable, optional
+        For a DDE only — ``h(s) -> sequence`` defining the past for ``s <= 0``;
+        ``None`` is a constant past equal to the resolved initial state.
+
+    Returns
+    -------
+    Trajectory
+
+    Raises
+    ------
+    InvalidParameterError
+        For an unknown ``backend`` or ``method`` (incl. v2-only names), a
+        non-positive ``dt``, or a non-forward window (``final_time <= t0``).
+        Subclasses :class:`ValueError`.
+    ConvergenceError
+        If the integration diverged or the step collapsed before the final time
+        (a non-finite result).  Subclasses :class:`RuntimeError`.
+    StepBudgetError
+        If the march could not reach ``final_time`` with the state still finite —
+        a *stalled* run, not a divergence, so the remedy is a solver setting.
+        Subclasses :class:`ConvergenceError`.
+
+        .. versionchanged:: 6.0
+            Raised **promptly**.  The only guard used to be the engine's
+            per-segment step *count* (1e8), so a start whose step collapsed was
+            refused correctly but only after the whole budget had been spent —
+            measured at 33 s on ``LorenzBounded`` from a bad initial condition,
+            and multiplied by every bad value in a parameter sweep.  The engine
+            now also derives a step *floor* from the integration span
+            (``tsdyn_engine::HOPELESS_STEPS``) and reads the same condition off
+            the step size in O(1): the same error, with the same advice, in
+            0.41 s.  A genuine blow-up keeps its :class:`ConvergenceError`
+            divergence diagnosis — the floor grants a bounded grace so the
+            escape guard keeps first refusal.
+    EngineNotAvailableError
+        For ``"interp"``/``"jit"`` when :mod:`tsdynamics._rust` is not built.
+    NotImplementedError
+        For ``backend="reference"`` on a DDE or SDE (the reference integrator
+        covers ODEs and maps only), and for any SDE problem (the generic seam
+        cannot carry the noise seed/step — use :func:`sde_integrate_dense`).
+    """
+    from tsdynamics.families import Trajectory
+
+    backend = resolve_backend(backend)
+
+    # Resolve the solver name to a canonical engine kernel (the C-SOLV → C-FAM
+    # wiring), via the shared :func:`_resolve_method_for` contract (so ``"auto"``
+    # behaves identically in :func:`ensemble`).  A literal ``method="auto"``
+    # triggers a-priori **auto-stiffness** selection: the problem is lowered first
+    # so the Jacobian spectrum at the start state can be probed
+    # (``solvers.recommend`` → ``_recommend_method``), picking the implicit ``bdf``
+    # kernel on a stiff RHS and the explicit ``rk45`` otherwise.  Every other name
+    # normalises spellings/aliases (e.g. "RK45" → "rk45", "dopri5" → "rk45") and
+    # rejects unknown or v2-only names (e.g. "LSODA") with a listing error + a
+    # stiff hint pointing at "bdf".  Maps ignore `method` and an SDE problem is
+    # refused below, so resolving is harmless there.
+    problem = _as_problem(system_or_problem, ic=ic, **build_kwargs)
+    # Resolve method= and (for an implicit ODE kernel) rebuild the tape with the
+    # Jacobian, via the one shared contract ensemble() uses too.
+    method, problem = _resolve_method_and_prepare(
+        system_or_problem, problem, method, build_kwargs, ic=ic
+    )
+
+    if isinstance(problem, MapProblem):
+        steps = int(round(final_time))
+        t_arr, y = _run_map(problem, steps, backend)
+        meta = _provenance(
+            problem,
+            backend=backend,
+            steps=steps,
+            ic=np.asarray(problem.ic, dtype=np.float64).copy(),
+        )
+    else:
+        start = problem.t0 if t0 is None else float(t0)
+        t_eval = make_output_grid(start, final_time, dt)
+        t_arr = t_eval
+        if isinstance(problem, DDEProblem):
+            y, ic0 = _run_dde(
+                problem,
+                t_eval,
+                history=history,
+                dt=dt,
+                method=method,
+                rtol=rtol,
+                atol=atol,
+                backend=backend,
+            )
+            meta = _provenance(
+                problem,
+                backend=backend,
+                method=method,
+                dt=dt,
+                rtol=rtol,
+                atol=atol,
+                ic=np.asarray(ic0, dtype=np.float64).copy(),
+                history="callable" if history is not None else "constant",
+            )
+        else:  # ODEProblem (an SDEProblem is rejected inside _run_continuous)
+            ceiling = math.inf if max_step is None else float(max_step)
+            # Dense output is the library's ONE output semantics (bypassable only
+            # by the env var).  The engine additionally gates it on the kernel
+            # carrying a continuous extension and the grid having an interior
+            # point, so this flag is inert for every other kernel/grid.
+            dense = _dense_output_enabled()
+            y = _run_continuous(
+                problem,
+                t_eval,
+                method=method,
+                rtol=rtol,
+                atol=atol,
+                backend=backend,
+                max_step=ceiling,
+                dense=dense,
+            )
+            meta = _provenance(
+                problem,
+                backend=backend,
+                method=method,
+                dt=dt,
+                t0=start,
+                rtol=rtol,
+                atol=atol,
+                max_step=ceiling,
+                dense_output=dense,
+                ic=np.asarray(problem.ic, dtype=np.float64).copy(),
+            )
+
+    return Trajectory(t=t_arr, y=y, system=problem.system, meta=meta)
+
+
+def basin_march(
+    tape_arrays: tuple[Any, ...],
+    params_vec: np.ndarray,
+    grid_lo: np.ndarray,
+    grid_hi: np.ndarray,
+    grid_counts: np.ndarray,
+    seeds: np.ndarray,
+    thresholds: tuple[int, int, int, int, int, int],
+    *,
+    is_discrete: bool,
+    method: str = "rk45",
+    rtol: float = BASIN_RTOL,
+    atol: float = BASIN_ATOL,
+    dt: float = 1.0,
+    jit: bool = False,
+) -> dict[str, Any]:
+    """Run the whole basin recurrence FSM in the Rust engine, for every seed.
+
+    Drives the sequential kernel (``tsdynamics._rust.basin_march_flow`` for a flow,
+    ``basin_march_map`` for a map) over the shared cell tessellation, returning the
+    per-seed labels plus the accumulated ``att_cells`` / ``bas_cells`` /
+    ``att_points`` the basin layer rebuilds its
+    :class:`~tsdynamics.analysis.basins.attractors._AttractorMapper` from.  The
+    per-cell-check numerics are byte-for-byte the released stepping path, so the
+    labels are bit-identical to the pure-Python loop.
+
+    Parameters
+    ----------
+    tape_arrays : tuple
+        The ODE/map tape's engine wire arrays (:meth:`Tape.to_arrays`).
+    params_vec : ndarray
+        Live control parameters (empty for a lowered map).
+    grid_lo, grid_hi : ndarray, shape (dim,)
+        Lower/upper corner of the recurrence cell box.
+    grid_counts : ndarray of int, shape (dim,)
+        Cells per axis.
+    seeds : ndarray, shape (n_seeds, dim)
+        Initial conditions to classify, in order (the order the shared labelling
+        accumulates in — see the kernel note on why it must stay serial).
+    thresholds : tuple of int
+        ``(max_steps, mx_fnd, mx_loc, mx_att, mx_bas, mx_lost)`` — the six FSM
+        thresholds (``consecutive_recurrences`` etc.).
+    is_discrete : bool
+        Whether ``tape_arrays`` is a map (drives the map kernel; ``dt``/``method``/
+        tolerances are then ignored).
+    method, rtol, atol, dt : optional
+        Flow stepper configuration (``method`` registry-canonical; ``dt`` the
+        per-cell-check step).
+    jit : bool, default False
+        Select the Cranelift evaluator.
+
+    Returns
+    -------
+    dict
+        ``{"labels", "att_cells", "bas_cells", "att_points", "dim"}`` where
+        ``att_cells`` / ``bas_cells`` are ``{flat_cell_index: attractor_id}`` and
+        ``att_points`` is ``{attractor_id: (m, dim) ndarray}``.
+
+    Raises
+    ------
+    EngineNotAvailableError
+        If :mod:`tsdynamics._rust` is not built.
+    """
+    eng = _engine()
+    seeds = np.ascontiguousarray(seeds, dtype=np.float64)
+    if seeds.ndim != 2:
+        seeds = seeds.reshape(-1, len(grid_counts))
+    grid_lo = np.ascontiguousarray(grid_lo, dtype=np.float64)
+    grid_hi = np.ascontiguousarray(grid_hi, dtype=np.float64)
+    grid_counts = np.ascontiguousarray(grid_counts, dtype=np.int64)
+    params_vec = np.ascontiguousarray(params_vec, dtype=np.float64)
+    max_steps, mx_fnd, mx_loc, mx_att, mx_bas, mx_lost = (int(x) for x in thresholds)
+
+    if is_discrete:
+        out = eng.basin_march_map(
+            *tape_arrays,
+            params_vec,
+            grid_lo,
+            grid_hi,
+            grid_counts,
+            seeds,
+            max_steps,
+            mx_fnd,
+            mx_loc,
+            mx_att,
+            mx_bas,
+            mx_lost,
+            bool(jit),
+        )
+    else:
+        out = eng.basin_march_flow(
+            *tape_arrays,
+            params_vec,
+            str(method),
+            float(rtol),
+            float(atol),
+            float(dt),
+            grid_lo,
+            grid_hi,
+            grid_counts,
+            seeds,
+            max_steps,
+            mx_fnd,
+            mx_loc,
+            mx_att,
+            mx_bas,
+            mx_lost,
+            bool(jit),
+        )
+    (
+        labels,
+        att_keys,
+        att_ids,
+        bas_keys,
+        bas_ids,
+        point_ids,
+        point_counts,
+        points_flat,
+        dim,
+    ) = out
+    dim = int(dim)
+    att_cells = {int(k): int(v) for k, v in zip(att_keys, att_ids, strict=True)}
+    bas_cells = {int(k): int(v) for k, v in zip(bas_keys, bas_ids, strict=True)}
+    att_points: dict[int, np.ndarray] = {}
+    off = 0
+    points_flat = np.asarray(points_flat, dtype=np.float64)
+    for pid, m in zip(point_ids, point_counts, strict=True):
+        m = int(m)
+        block = points_flat[off * dim : (off + m) * dim].reshape(m, dim)
+        att_points[int(pid)] = np.array(block, dtype=np.float64)
+        off += m
+    return {
+        "labels": np.asarray(labels, dtype=np.int64),
+        "att_cells": att_cells,
+        "bas_cells": bas_cells,
+        "att_points": att_points,
+        "dim": dim,
+    }
+
+
+def map_lyapunov(
+    tape_arrays: tuple[Any, ...],
+    ic: np.ndarray,
+    *,
+    steps: int,
+    k: int,
+    reortho_interval: int = 1,
+    jit: bool = False,
+    name: str = "map",
+) -> tuple[np.ndarray, int]:
+    """Compute a discrete-map Lyapunov spectrum in the Rust engine, in one call.
+
+    Drives the QR tangent-map kernel (``tsdynamics._rust.map_lyapunov_spectrum``):
+    it iterates the lowered map ``f`` while propagating ``k`` deviation vectors
+    through the lowered step Jacobian ``J(x_n)`` (the **pre-image** convention),
+    reorthonormalises every ``reortho_interval`` steps, accumulates
+    ``Σ log|R_ii|``, and returns the time-averaged spectrum (largest first).  The
+    whole iteration runs without a per-step Python→FFI round-trip, so it is
+    dramatically faster than the released per-step :class:`~tsdynamics.derived.tangent.TangentSystem`
+    NumPy loop.  Driven over the same lowered IR tape the interpreter and JIT agree
+    bit-for-bit; against the released Python path it differs only by the lowered-IR
+    vs pure-Python ``_step``/``_jacobian`` float order (the WS-MAPITER caveat) — the
+    same attractor, the same spectrum to tolerance.
+
+    The map tape must carry its Jacobian (lowered ``with_jacobian=True``); a
+    Jacobian-less tape raises :class:`~tsdynamics.errors.InvalidParameterError`.
+
+    Parameters
+    ----------
+    tape_arrays : tuple
+        The map step tape's engine wire arrays (:meth:`Tape.to_arrays`), lowered
+        ``with_jacobian=True``.
+    ic : ndarray, shape (dim,)
+        The state to start the iteration from.
+    steps : int
+        Number of map iterations.
+    k : int
+        Number of exponents (``1 ≤ k ≤ dim``).
+    reortho_interval : int, default 1
+        Reorthonormalise (and accumulate growth) every this many steps.
+    jit : bool, default False
+        Select the Cranelift evaluator (``True``) or the interpreter (``False``).
+    name : str, default "map"
+        System name, used only to prefix a divergence message.
+
+    Returns
+    -------
+    (exponents, intervals) : (ndarray, int)
+        The ``k`` Lyapunov exponents (largest first) and the number of completed
+        reorthonormalisation intervals (so the caller can record ``_elapsed =
+        intervals * reortho_interval``).
+
+    Raises
+    ------
+    ConvergenceError
+        If the iteration diverged (a non-finite iterate / Jacobian / frame) before
+        the step budget was exhausted.  Subclasses :class:`RuntimeError`.
+    EngineNotAvailableError
+        If :mod:`tsdynamics._rust` is not built.
+    """
+    eng = _engine()
+    ic = np.ascontiguousarray(ic, dtype=np.float64)
+    try:
+        exponents, intervals = eng.map_lyapunov_spectrum(
+            *tape_arrays,
+            ic,
+            int(steps),
+            int(k),
+            int(reortho_interval),
+            bool(jit),
+        )
+    except ConvergenceError as exc:
+        # The engine raises EngineError::Diverged → ConvergenceError (mapped in
+        # the bridge) at the first non-finite iterate (the "diverge loudly"
+        # contract).  Re-raise that with the system name; catching the *type*
+        # rather than sniffing the message for "diverg" is what keeps any other
+        # RuntimeError (e.g. a backend="jit" compile failure) propagating
+        # unchanged, not mislabelled as a numerical blow-up.
+        raise ConvergenceError(
+            f"{name}: map Lyapunov iteration diverged or produced a non-finite "
+            f"state before reaching {steps} iterations."
+        ) from exc
+    exponents = np.asarray(exponents, dtype=np.float64)
+    if not np.all(np.isfinite(exponents)):
+        raise ConvergenceError(
+            f"{name}: map Lyapunov spectrum is non-finite after {steps} iterations."
+        )
+    return exponents, int(intervals)
+
+
+# ---------------------------------------------------------------------------
+# Map orbit-diagram parameter sweep (stream perf/param-sweep-kernel)
+# ---------------------------------------------------------------------------
+# The whole `orbit_diagram` parameter sweep of a discrete map in ONE engine call,
+# instead of the WS-MAPITER path's one `iterate` round-trip per parameter value
+# (a 1000-value logistic sweep is ~1000 FFI round-trips otherwise). The map is
+# lowered ONCE keeping the swept parameter as the tape's single runtime `Param`
+# (``engine.compile.lower_map_sweep``), and this kernel varies that input per
+# value. The per-iterate numerics are byte-for-byte the ``iterate`` map loop, so a
+# value swept here lands bit-for-bit where the per-value path with that value baked
+# in would (the logistic map; a chaotic map is the same attractor — the WS-MAPITER
+# IR-vs-NumPy caveat). The orbit-diagram wiring (``analysis.orbits.orbit_diagram``)
+# is the sole consumer.
+
+
+def map_param_sweep(
+    tape_arrays: tuple[Any, ...],
+    base_params: np.ndarray,
+    sweep_index: int,
+    values: np.ndarray,
+    ic: np.ndarray,
+    components: np.ndarray,
+    transient: int,
+    n_record: int,
+    *,
+    carry_state: bool,
+    jit: bool = False,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Run a whole map orbit-diagram parameter sweep on the engine, in one call.
+
+    Drives ``tsdynamics._rust.map_param_sweep`` over a map tape lowered once with
+    the swept parameter kept as its single runtime ``Param`` input (see
+    :func:`tsdynamics._engine.compile.lower_map_sweep`).  For each value the kernel
+    sets that input, runs ``transient + n_record`` iterations (carrying the final
+    state forward across values when ``carry_state``), and records the last
+    ``n_record`` asymptotic states' selected ``components``.
+
+    Parameters
+    ----------
+    tape_arrays : tuple
+        The sweep tape's engine wire arrays (:meth:`Tape.to_arrays`); ``n_param``
+        must be ``1`` (the swept parameter).
+    base_params : ndarray
+        The full runtime parameter vector (length ``n_param``); ``sweep_index`` is
+        overwritten with each swept value.
+    sweep_index : int
+        Which entry of ``base_params`` the swept ``values`` overwrite.
+    values : ndarray
+        Parameter values, in sweep order.
+    ic : ndarray, shape (dim,)
+        The base initial condition.
+    components : ndarray of int
+        State-component indices to record.
+    transient, n_record : int
+        Steps discarded / recorded per value.
+    carry_state : bool
+        Whether each value resumes from the previous value's final state.
+    jit : bool, default False
+        Select the Cranelift evaluator (numerically identical to the interpreter).
+
+    Returns
+    -------
+    (points, status) : (ndarray, ndarray)
+        ``points`` is ``(n_values * n_record, n_components)`` recorded states;
+        ``status`` is ``(n_values,)`` of ``0`` (finite) / ``1`` (diverged — the
+        value's block is zero, dropped to an empty set by the caller).
+
+    Raises
+    ------
+    EngineNotAvailableError
+        If :mod:`tsdynamics._rust` is not built.
+    """
+    eng = _engine()
+    points, status = eng.map_param_sweep(
+        *tape_arrays,
+        np.ascontiguousarray(base_params, dtype=np.float64),
+        int(sweep_index),
+        np.ascontiguousarray(values, dtype=np.float64),
+        np.ascontiguousarray(ic, dtype=np.float64),
+        np.ascontiguousarray(components, dtype=np.int64),
+        int(transient),
+        int(n_record),
+        bool(carry_state),
+        bool(jit),
+    )
+    return np.asarray(points, dtype=np.float64), np.asarray(status, dtype=np.int64)
+
+
+def ensemble(
+    system_or_problem: Any,
+    ics: Any,
+    *,
+    final_time: float = 100.0,
+    dt: float = 0.02,
+    t0: float | None = None,
+    method: str = "RK45",
+    rtol: float = DEFAULT_RTOL,
+    atol: float = DEFAULT_ATOL,
+    max_step: float | None = None,
+    backend: str = "jit",
+    **build_kwargs: Any,
+) -> np.ndarray:
+    """Integrate a batch of initial conditions and return their final states.
+
+    ``ics`` is ``(n, dim)``; each row is integrated from ``t0`` to ``final_time``
+    and its final state returned as a row of the ``(n, dim)`` result.  The
+    compiled engine fans this out over a rayon thread pool (stream E5); the
+    reference backend loops in Python.  A diverging trajectory yields a row of
+    ``NaN`` rather than aborting the batch.
+
+    The same up-front ``method=`` / ``dt`` / window validation as
+    :func:`integrate` runs *before* any per-trajectory work: an unknown or
+    v2-only solver name, a non-positive ``dt``, or a non-forward window
+    (``final_time <= t0``) raises :class:`~tsdynamics.errors.InvalidParameterError`
+    here rather than slipping through to the solver as a silent no-step or
+    backwards run.
+
+    Parameters
+    ----------
+    system_or_problem : SystemBase or Problem
+    ics : array-like, shape (n, dim)
+        The batch of initial conditions.
+    dt : float, default 0.02
+        Integration cadence.  For an adaptive method this seeds the controller's
+        first trial step (it adapts away from it); for the fixed-step ``rk4`` it
+        *is* the step taken for the whole run.  Matching :func:`integrate`'s
+        ``dt`` so a fixed-step method gives the same trajectory through the dense
+        and ensemble paths.  Consumed only by the compiled engine (the reference
+        backend integrates adaptively via SciPy and ignores it).  Must be strictly
+        positive (validated up front for the flow path).
+    final_time, t0, method, rtol, atol, backend
+        As in :func:`integrate`.  ``method="auto"`` selects a kernel by the same
+        a-priori auto-stiffness probe as :func:`integrate`, with one documented
+        caveat: the batch is *not* probed per-row.  The stiffness verdict is read
+        once, at the system's **default** initial condition (``problem.ic``, since
+        ``ensemble`` builds the Problem without a single ``ic=``) and at ``t=0.0``
+        (the start time ``t0`` is not threaded into the probe).  This only ever
+        affects which kernel is chosen — never the integrated results — so a stiff
+        batch whose default IC sits in a non-stiff region should pass an explicit
+        ``method=`` (or the system should declare ``_default_method``).
+
+    Returns
+    -------
+    ndarray, shape (n, dim)
+        Final states (rows of ``NaN`` for diverged trajectories).
+
+    Raises
+    ------
+    InvalidParameterError
+        For an unknown/v2-only ``method``, a non-positive ``dt``, a non-forward
+        window, or an ``ics`` array that is not ``(n, dim)``.  Subclasses
+        :class:`ValueError`.
+    ConvergenceError
+        Never raised for a single diverged trajectory (those become ``NaN``
+        rows); a batch-wide engine failure surfaces through the engine seam.
+    EngineNotAvailableError
+        For ``"interp"``/``"jit"`` when :mod:`tsdynamics._rust` is not built.
+    NotImplementedError
+        For an SDE problem (use :func:`sde_ensemble_final`) or a DDE problem (the
+        engine has no batched method-of-steps path — integrate one IC at a time).
+    """
+    backend = resolve_backend(backend)
+
+    problem = _as_problem(system_or_problem, **build_kwargs)
+
+    # Canonicalise the solver name AND (for an implicit ODE kernel) rebuild the
+    # tape with the Jacobian — the exact same shared contract :func:`integrate`
+    # uses, so an alias ("dopri5" → "rk45"), a v2-only name ("LSODA"), and the
+    # auto-stiffness ``method="auto"`` behave identically across both entry points
+    # (diagnosis #11/#13).  Without the rebuild a stiff ``ensemble(method="auto"/
+    # "bdf")`` would dispatch a Jacobian-less tape and the engine would refuse it.
+    # Maps/SDEs ignore `method` (the rebuild is ODE-only), so resolving is harmless.
+    method, problem = _resolve_method_and_prepare(system_or_problem, problem, method, build_kwargs)
+
+    ics = np.ascontiguousarray(ics, dtype=np.float64)
+    if ics.ndim != 2 or ics.shape[1] != problem.dim:
+        from tsdynamics.errors import invalid_value
+
+        raise invalid_value("ics", ics.shape, rule=f"must be (n, {problem.dim})")
+
+    # Maps and SDEs are dispatched before the (ODE-shaped) start-time logic below:
+    # a MapProblem has no ``t0``, and an SDE batch needs its own seeded entry
+    # point (the generic path would integrate the drift as a deterministic ODE).
+    if isinstance(problem, SDEProblem):
+        raise NotImplementedError(
+            "run.ensemble cannot carry the SDE noise seed/step; use "
+            "StochasticSystem.ensemble(...) for diagonal-Itô SDEs, or "
+            "run.sde_ensemble_final(problem, ics, t0=, t1=, dt=, method=, seed=, backend=)."
+        )
+    if isinstance(problem, DDEProblem):
+        # A DDE batch would need a per-trajectory history buffer; the engine has
+        # no batched method-of-steps path. Refuse rather than fan the (extended,
+        # delay-slot) tape out through the ODE ensemble FFI and return garbage.
+        raise NotImplementedError(
+            "run.ensemble has no DDE path (the engine integrates delay systems one "
+            "trajectory at a time); use DelaySystem.run(backend='interp') per "
+            "initial condition."
+        )
+    if isinstance(problem, MapProblem):
+        steps = int(round(final_time))
+        if backend == "reference":
+            return _reference_map_ensemble(problem, ics, steps)
+        eng = _engine()
+        return np.asarray(
+            _engine_map_ensemble_final(eng, problem, ics, steps, jit=(backend == "jit")),
+            dtype=np.float64,
+        )
+
+    start = problem.t0 if t0 is None else float(t0)
+
+    # Up-front window/dt validation, identical to the checks :func:`integrate`
+    # runs through ``make_output_grid`` for the flow path: a non-positive ``dt``
+    # or a non-forward window is a typed ``InvalidParameterError`` raised here,
+    # before any (per-trajectory) engine work, rather than slipping through to the
+    # solver as a silent no-step / backwards run.  ``make_output_grid`` is the one
+    # validation chokepoint both entry points share; the grid it returns is
+    # discarded (the ensemble engine call needs only ``t0``/``t1``/``first_step``).
+    make_output_grid(start, float(final_time), dt)
+
+    ceiling = math.inf if max_step is None else float(max_step)
+    if backend == "reference":
+        return _reference_ensemble(
+            problem,
+            ics,
+            start,
+            final_time,
+            method=method,
+            rtol=rtol,
+            atol=atol,
+            max_step=ceiling,
+        )
+    eng = _engine()
+    return np.asarray(
+        _engine_ensemble_final(
+            eng,
+            problem,
+            ics,
+            start,
+            float(final_time),
+            first_step=float(dt),
+            method=method,
+            rtol=rtol,
+            atol=atol,
+            max_step=ceiling,
+            jit=(backend == "jit"),
+        ),
+        dtype=np.float64,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Provenance
+# ---------------------------------------------------------------------------
+
+
+def _provenance(problem: Problem, **extra: Any) -> dict[str, Any]:
+    """Build the provenance dict attached to an engine-produced Trajectory.
+
+    The numerical kernel is recorded under **``solver``**, the word the caller
+    typed (``run(solver="dop853")``), with ``method`` kept alongside as the
+    engine-internal spelling.  One concept had three spellings — ``solver=`` at
+    the door, ``meta["method"]`` in the record, ``_default_method`` on the class
+    — which is exactly the drift C3 exists to prevent, and the one a reader hits
+    when they go looking in ``meta`` for what they just passed.
+    """
+    if "method" in extra:
+        extra.setdefault("solver", extra["method"])
+    system = problem.system
+    if system is not None and hasattr(system, "_provenance"):
+        prov = system._provenance(family=problem.family, engine="rust", **extra)
+        return cast("dict[str, Any]", prov)
+    return {"family": problem.family, "engine": "rust", **extra}
+
+
+def _name(problem: Problem) -> str:
+    """Return a readable name for error messages."""
+    return type(problem.system).__name__ if problem.system is not None else problem.family
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)
+
+
+def lyapunov_spectrum_ode(
+    tape_arrays: tuple[Any, ...],
+    params_vec: np.ndarray,
+    z0: np.ndarray,
+    *,
+    dim: int,
+    k: int,
+    t0: float,
+    dt: float,
+    burn_in: float,
+    final_time: float,
+    method: str,
+    rtol: float,
+    atol: float,
+    jit: bool,
+) -> dict[str, Any]:
+    """Run the whole ODE Benettin Lyapunov-spectrum loop in the Rust engine.
+
+    Drives the sequential kernel (``tsdynamics._rust.lyapunov_spectrum_ode``) over
+    the **extended** variational tape: it integrates one ``dt`` chunk at a time,
+    QR-reorthonormalises the ``(dim, k)`` tangent block after each chunk, and
+    accumulates ``Σ log|diag R|`` over the averaging window — so a whole spectrum
+    estimate is **one** Python→FFI round-trip instead of
+    ``(burn_in + final_time)/dt`` per-chunk round-trips each followed by a NumPy
+    ``qr`` (stream ``perf/ode-lyapunov-engine``).  The per-``dt`` integration is
+    byte-for-byte the released :meth:`TangentSystem._step_ode_engine` numerics, so
+    ``interp == jit`` and the spectrum matches the per-chunk Python path to
+    floating-point tolerance (the QR is a hand-rolled modified Gram–Schmidt, whose
+    log-stretch factors equal the NumPy-Householder diagonal of ``|R|`` to
+    tolerance).
+
+    Parameters
+    ----------
+    tape_arrays : tuple
+        The **extended** variational tape's engine wire arrays
+        (:meth:`Tape.to_arrays`) — ``dim*(k+1)`` inputs/outputs.
+    params_vec : ndarray
+        Live control parameters (the base system's, in ``_control_params`` order).
+    z0 : ndarray, shape (dim*(k+1),)
+        Extended initial state: base IC ⊕ the seed tangent frame
+        (``embed_extended``, column-major).
+    dim : int
+        Base system dimension.
+    k : int
+        Number of tangent vectors (``1 ≤ k ≤ dim``).
+    t0 : float
+        Start time.
+    dt : float
+        Renormalisation interval.
+    burn_in : float
+        Discard this much time before accumulating.
+    final_time : float
+        Averaging-window length after burn-in.
+    method : str
+        Solver kernel name (registry-canonical, e.g. ``"rk45"``).
+    rtol, atol : float
+        Adaptive-kernel tolerances.
+    jit : bool
+        Select the Cranelift evaluator.
+
+    Returns
+    -------
+    dict
+        ``{"spectrum", "final_state", "last_growths"}`` — the ``k`` exponents
+        (descending QR order), the final extended state, and the last per-step
+        log-stretch contributions.
+
+    Raises
+    ------
+    EngineNotAvailableError
+        If :mod:`tsdynamics._rust` is not built.
+    ConvergenceError
+        If the extended variational integration diverged.
+    """
+    eng = _engine()
+    spectrum, final_state, last_growths = eng.lyapunov_spectrum_ode(
+        *tape_arrays,
+        np.ascontiguousarray(params_vec, dtype=np.float64),
+        str(method),
+        float(rtol),
+        float(atol),
+        int(dim),
+        int(k),
+        np.ascontiguousarray(z0, dtype=np.float64),
+        float(t0),
+        float(dt),
+        float(burn_in),
+        float(final_time),
+        bool(jit),
+    )
+    return {
+        "spectrum": np.asarray(spectrum, dtype=np.float64),
+        "final_state": np.asarray(final_state, dtype=np.float64),
+        "last_growths": np.asarray(last_growths, dtype=np.float64),
+    }

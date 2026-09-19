@@ -2,7 +2,7 @@
 
 The trajectory side funnels every plot through the parameterised
 :mod:`tsdynamics.viz.producers`; the **analysis** side — the ~two-dozen
-:class:`~tsdynamics.analysis._result.AnalysisResult` ``to_plot_spec`` methods —
+:class:`~tsdynamics.analysis._result.AnalysisResult` ``__plot_spec__`` methods —
 used to each hand-assemble the same ``Layer(...)`` / ``Axis(...)`` /
 ``PlotSpec(...)`` boilerplate inline.  This module is the analysis counterpart of
 the producers: a handful of small, engine-free, backend-free helpers that
@@ -52,6 +52,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "area",
+    "axis_labels",
     "bar",
     "diagonal",
     "errorbar",
@@ -67,6 +68,66 @@ __all__ = [
     "text",
     "vline",
 ]
+
+
+# ---------------------------------------------------------------------------
+# State-space axis labels
+# ---------------------------------------------------------------------------
+
+
+def axis_labels(
+    meta: Mapping[str, Any] | None,
+    indices: Sequence[int],
+    *,
+    fallback: str = "x",
+) -> list[str]:
+    r"""Resolve state-space axis labels for ``indices`` from a result's ``meta``.
+
+    A system that declares ``variables`` knows its coordinates are ``x`` / ``y`` /
+    ``z`` (or ``theta`` / ``omega``, or ``S`` / ``I`` / ``R``); a result plot that
+    labels them ``$x_0$`` / ``$x_1$`` throws that away and leaves the reader to
+    relabel the figure by hand.  This helper reads the ``variables`` tuple a
+    result records in its provenance and falls back to the indexed spelling
+    (``$x_0$``) only when the system genuinely declares no names.
+
+    **A declared name is emitted plain, and that is deliberate.**  A
+    :class:`~tsdynamics.data.Trajectory` labels its axes ``x`` / ``v``, so
+    wrapping the identical name as ``$x$`` here put two typographies in one
+    figure the moment a basin image and an orbit were tiled by
+    :func:`tsdynamics.viz.grid` — which is exactly how these results are used.
+    The wrapping also does not do what it looks like it does: mathtext renders
+    ``$theta$`` as an upright word, not as :math:`\theta`, so the one family of
+    names it was supposed to serve is the one it serves worst.  Only the
+    **indexed fallback** keeps mathtext, because ``x_0`` genuinely wants a
+    subscript and no plain-labelled sibling ever produces it.
+
+    Parameters
+    ----------
+    meta : mapping, optional
+        The result's provenance (``AnalysisResult.meta``).
+    indices : sequence of int
+        The state-vector component indices being plotted, in axis order.
+    fallback : str, optional
+        Symbol used for the indexed fallback spelling.  Default ``"x"``.
+
+    Returns
+    -------
+    list of str
+        One label per requested index, ready for
+        :class:`~tsdynamics.viz.spec.Axis`.
+    """
+    names: Sequence[Any] | None = None
+    if meta is not None:
+        candidate = meta.get("variables")
+        if isinstance(candidate, (list, tuple)) and candidate:
+            names = candidate
+    out: list[str] = []
+    for i in indices:
+        if names is not None and 0 <= i < len(names) and names[i]:
+            out.append(str(names[i]))
+        else:
+            out.append(f"${fallback}_{{{i}}}$")
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -305,7 +366,7 @@ def spec(
     The single "resolve the semantic kind, build the labelled
     :class:`~tsdynamics.viz.spec.Axis` pair (or triple), attach the optional
     legend / colorbar / annotations / clim and copy meta" wrapper every bespoke
-    ``to_plot_spec`` opens and closes with.  ``kind`` is the caller's override (or
+    ``__plot_spec__`` opens and closes with.  ``kind`` is the caller's override (or
     ``None``) and ``default`` the result's natural kind — resolved through the
     closed :class:`~tsdynamics.viz.spec.PlotKind` vocabulary exactly as before.
 
@@ -372,7 +433,7 @@ def scaling_fit(
     a ``MARKERS`` highlight of the fitted scaling region ``x[lo:hi+1]``, and a
     ``LINE`` of the fit of the given ``slope`` drawn across the fit region — the
     schema the fractal-dimension estimators, ``LyapunovFromData`` and the
-    uncertainty exponent all emit, so a single ``result.plot.scaling()`` renders
+    uncertainty exponent all emit, so a single ``result.plot()`` renders
     them identically.
 
     The fit line is given **either** as a ready ``line_y`` array (already evaluated

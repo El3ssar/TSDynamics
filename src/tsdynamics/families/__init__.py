@@ -21,7 +21,7 @@ Internal but accessible for advanced use:
 - :class:`SystemBase` — common base for all families; most users do not need it.
 - :class:`ParamSet` — fixed-key parameter container backing ``system.params``.
 
-All families lower to the shared Rust engine under :mod:`~tsdynamics.engine`.
+All families lower to the shared Rust engine under :mod:`~tsdynamics._engine`.
 """
 
 from .base import MetaStore, ParamSet, SystemBase, Trajectory

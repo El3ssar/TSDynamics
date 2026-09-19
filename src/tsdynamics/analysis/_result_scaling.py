@@ -11,8 +11,24 @@ from typing import Any, ClassVar, cast
 
 import numpy as np
 
+from tsdynamics.analysis._common import RUNAWAY_KEY as _RUNAWAY_KEY
 from tsdynamics.analysis._result_base import AnalysisResult
+from tsdynamics.analysis._result_json import _sig
 from tsdynamics.analysis._result_scalar import _NumericOps
+
+#: Fewest curve points a slope may be read from and still be called *trusted*.
+#: A line through **two** points has :math:`R^2 = 1` and ``stderr = 0`` by
+#: construction — the most reassuring diagnostics in the library, printed for the
+#: least evidence.  Reachable through the public ``min_window=`` keyword on every
+#: dimension estimator, so it is not a theoretical case.
+_MIN_TRUSTWORTHY_FIT = 4
+
+#: Coefficient of determination a fit must clear to be called *trusted*.
+_MIN_TRUSTWORTHY_R2 = 0.98
+
+#: Below this many fit points :math:`R^2` is not reported at all — it is not a
+#: measurement there, it is an identity.
+_MIN_MEANINGFUL_R2_FIT = 3
 
 
 @dataclass(frozen=True, eq=False)
@@ -27,7 +43,7 @@ class ScalingResult(_NumericOps, AnalysisResult):
     false-nearest-neighbour embedding diagnostics all fit this mould.
 
     :class:`ScalingResult` is the *one* schema for that whole family, so a single
-    generic ``result.plot.scaling()`` renders any of them and any consumer can
+    generic ``result.plot()`` renders any of them and any consumer can
     find "the curve" and "the fit" without knowing which estimator produced it.
 
     The number is :attr:`estimate`; ``float(result)`` returns it, and the full
@@ -67,7 +83,7 @@ class ScalingResult(_NumericOps, AnalysisResult):
             estimate=2.05, stderr=0.03,
             abscissa=log_r, ordinate=log_C,
             fit_region=(8, 24), intercept=-1.2,
-            meta=AnalysisResult.build_meta(system, ...),
+            meta=_build_meta(system, ...),
         )
 
     The class is declared ``@dataclass(frozen=True, eq=False)`` so the
@@ -83,6 +99,23 @@ class ScalingResult(_NumericOps, AnalysisResult):
     """
 
     _repr_fields: ClassVar[tuple[str, ...]] = ("estimate", "stderr")
+
+    #: R2 (one quantity, one spelling) plus R1 — see the ``_result_base`` module
+    #: docstring.  ``estimate`` is a *third* name for the number already spelled
+    #: :attr:`value` here and ``dimension`` / ``lyapunov`` / ``entropy`` on the
+    #: subclasses, so the field stays and the listing keeps one.  ``n_fit`` states
+    #: as a count what :attr:`fit_region` states as a range; it stays readable and
+    #: stays in ``to_dict(full=True)``.
+    #: ``estimate`` is hidden as the second spelling of :attr:`value` (rule R2).
+    #:
+    #: ``n_fit`` is **not** hidden, though an earlier pass had it here: the repr
+    #: prints ``(correlation, q=2, 15 fit pts, log r ∈ […], R² = 0.99992)`` — the
+    #: point count and ``r_squared`` in one parenthesis, as the pair a reader
+    #: judges a scaling fit by.  Listing one and hiding the other made the line
+    #: half-completable, and it is the *wrong* half: R² near 1 means nothing
+    #: without knowing it was fitted over 15 points rather than 3.  That is the
+    #: same standard §4.4 applies to a verdict — it must be supported by the data.
+    _HIDDEN_ATTRIBUTES: ClassVar[frozenset[str]] = frozenset({"estimate"})
 
     estimate: float = 0.0
     stderr: float = 0.0
@@ -138,6 +171,20 @@ class ScalingResult(_NumericOps, AnalysisResult):
         — the actual coordinate window of the scaling region (not the index
         bounds).
 
+        Choosing the window yourself
+        ----------------------------
+        Reading this and wanting to *set* it is the usual next step, and the
+        keyword differs by estimator because the window means a different thing
+        in each — so it is named here rather than guessed at:
+
+        * the **dimension** estimators (``correlation_dimension``,
+          ``generalized_dimension``, ``dimension_spectrum``,
+          ``fixed_mass_dimension``) take ``c_lo=`` / ``c_hi=``, which bound the
+          *correlation-sum* fraction the window is drawn from, plus ``flatness=``
+          for how flat the fitted log–log window must be;
+        * :func:`~tsdynamics.analysis.lyapunov_from_data` takes ``fit=(lo, hi)``,
+          index bounds straight into its stretching curve ``S(k)``.
+
         Returns
         -------
         tuple of float
@@ -147,15 +194,179 @@ class ScalingResult(_NumericOps, AnalysisResult):
         x = np.asarray(self.abscissa, dtype=float)
         return float(x[lo]), float(x[hi])
 
-    def _interpretation(self) -> str | None:
-        """Report the estimate with its scaling-window width and point count."""
+    @property
+    def n_fit(self) -> int:
+        """Number of curve points the straight line was fitted over."""
         lo, hi = self.fit_region
-        n_fit = hi - lo + 1
-        return f"estimate = {float(self.estimate):.4g} ± {float(self.stderr):.2g}  (fit over {n_fit} points)"
+        return int(hi) - int(lo) + 1
+
+    @property
+    def r_squared(self) -> float:
+        r"""Coefficient of determination of the line fit over the scaling region.
+
+        :math:`R^2 = 1 - SS_\text{res}/SS_\text{tot}` for the reported line
+        ``intercept + estimate * abscissa`` against :attr:`ordinate`, restricted
+        to :attr:`fit_region`.  It answers the one question a reader has about a
+        slope read off a curve — *was the region actually straight?* — and it is
+        derived from what the result already carries, so no estimator changes.
+        ``nan`` when the region holds fewer than two points or is flat.
+
+        Returns
+        -------
+        float
+        """
+        lo, hi = self.fit_region
+        x = np.asarray(self.abscissa, dtype=float)[lo : hi + 1]
+        y = np.asarray(self.ordinate, dtype=float)[lo : hi + 1]
+        if x.size < 2 or y.size != x.size:
+            return float("nan")
+        residual = y - (float(self.intercept) + float(self.estimate) * x)
+        ss_tot = float(np.sum((y - y.mean()) ** 2))
+        if ss_tot == 0.0:
+            return float("nan")
+        return float(1.0 - np.sum(residual**2) / ss_tot)
+
+    @property
+    def runaway(self) -> str | None:
+        """The escape line when the measured data had left the building, else ``None``.
+
+        Stamped onto ``meta`` by
+        :func:`~tsdynamics.analysis._common.runaway_meta`, which every data-first
+        estimator calls on its coerced input.  It is the **most upstream** way a
+        scaling result can be wrong and the hardest to see from the fit: measured
+        on a Chua orbit that reached ``1.6e9``, ``correlation_dimension``
+        answered ``D_corr = 0.48954`` over ``log r ∈ [8.93, 10.4]`` with
+        ``R² = 0.9976`` — an excellent straight line through the escape itself.
+        So it outranks every other check, and :attr:`trusted` is ``False``
+        whenever it is set, however clean the fit looks.
+
+        Returns
+        -------
+        str or None
+        """
+        if not self.meta:
+            return None
+        line = self.meta.get(_RUNAWAY_KEY)
+        return str(line) if line else None
+
+    @property
+    def trusted(self) -> bool:
+        r"""Whether the reported slope rests on enough straight curve to believe.
+
+        Computed, not asserted: the data was **on an attractor** (see
+        :attr:`runaway`), ``n_fit >= 4`` **and** the fit's :math:`R^2` is finite
+        and at least ``0.98``.  Before v6 ``trusted`` was a constructor flag
+        defaulting to ``True``, so a two-point window printed
+        ``D_corr = 1.8183 ± 0 … R² = 1`` and called itself trusted — a line
+        through two points always has :math:`R^2 = 1`.
+
+        A subclass that carries its own extra check (a Rényi monotonicity test, a
+        plateau search) declares ``trusted`` as a **field** and ANDs this floor in
+        at construction, so the flag can only ever get *stricter*.
+
+        Returns
+        -------
+        bool
+        """
+        return self._fit_is_believable() and self.runaway is None
+
+    def _fit_is_believable(self) -> bool:
+        """Return whether the fit window is long enough and straight enough.
+
+        About the **fit** only — deliberately not about the data, so a subclass
+        naming *why* a result is untrusted can tell a bad fit from a good fit
+        through a blow-up, which call for opposite actions.
+        """
+        r2 = self.r_squared
+        return bool(
+            self.n_fit >= _MIN_TRUSTWORTHY_FIT and np.isfinite(r2) and r2 >= _MIN_TRUSTWORTHY_R2
+        )
+
+    # -- the readout ------------------------------------------------------
+
+    def _fit_quality_clause(self) -> str:
+        """Return the hedge that names *why* the fit does not support the number.
+
+        Lifted here from the two subclasses that had it, so the base and
+        :class:`~tsdynamics.analysis.results.ExpansionEntropyResult` hedge too.
+        A runaway orbit is named **first**: it is the reason the reader can act
+        on, and it is invisible in the fit diagnostics (which look excellent).
+        """
+        if (escape := self.runaway) is not None:
+            return f"⚠ UNTRUSTED — {escape.removeprefix('⚠ unbounded — ')}"
+        if self.n_fit < _MIN_MEANINGFUL_R2_FIT:
+            return f"⚠ UNTRUSTED — {self.n_fit} fit pts is a line through its own endpoints"
+        return "⚠ UNTRUSTED — no clean scaling region"
+
+    def _interpretation(self) -> str | None:
+        """Hedge when the fit does not support the number; stay silent otherwise."""
+        return None if self.trusted else self._fit_quality_clause()
+
+    def _quantity(self) -> str:
+        """Return the symbol the answer is named by (``D_corr``, ``λ_max``, …).
+
+        The fallback is ``value``, not ``estimate``: they are the same number
+        (:attr:`value` is a property over :attr:`estimate`), but ``value`` is the
+        spelling rule R2 kept on the listing, and a repr must print a name its
+        reader can tab-complete.  Every shipped subclass overrides this with its
+        own domain symbol, so the fallback shows only on a bare
+        :class:`ScalingResult` — which is exactly where an unreachable name would
+        have gone unnoticed.
+        """
+        return "value"
+
+    def _unit(self) -> str:
+        """Return the unit the estimate is quoted in (``""`` when dimensionless)."""
+        unit = self.meta.get("unit") if self.meta else None
+        return str(unit) if unit else ""
+
+    def _answer(self) -> str:
+        """Return ``<quantity> = <estimate> ± <stderr> <unit>``."""
+        unit = self._unit()
+        text = f"{self._quantity()} = {_sig(self.estimate, 5)} ± {_sig(self.stderr, 3)}"
+        return text + (f" {unit}" if unit else "")
+
+    def _window_for_repr(self) -> tuple[float, float]:
+        """Return the fitted abscissa span, **clipped**, for the repr only.
+
+        :attr:`scaling_window` indexes ``abscissa`` at the declared
+        ``fit_region``, which raises when a caller builds a result whose region
+        does not fit its curve.  That is the right behaviour for an accessor and
+        the wrong one for a repr, which must never be the thing that raises in a
+        console, so the repr reads a clipped window instead.
+        """
+        x = np.asarray(self.abscissa, dtype=float)
+        if not x.size:
+            return float("nan"), float("nan")
+        lo, hi = self.fit_region
+        lo = int(np.clip(lo, 0, x.size - 1))
+        hi = int(np.clip(hi, 0, x.size - 1))
+        return float(x[lo]), float(x[hi])
+
+    def _details(self) -> tuple[str, ...]:
+        """Return the one line that says whether the fit is believable.
+
+        :math:`R^2` is **suppressed** below :data:`_MIN_MEANINGFUL_R2_FIT`
+        points: there it is an identity, not a measurement, and printing
+        ``R² = 1`` for a two-point window is the most reassuring diagnostic in
+        the library attached to the least evidence.
+        """
+        lo, hi = self._window_for_repr()
+        r2 = self.r_squared
+        bits = [f"{self.n_fit} fit pts", f"x ∈ [{_sig(lo, 3)}, {_sig(hi, 3)}]"]
+        if self.n_fit < _MIN_MEANINGFUL_R2_FIT:
+            bits.append(f"R² undefined ({self.n_fit} fit pts)")
+        elif np.isfinite(r2):
+            bits.append(f"R² = {_sig(r2, 5)}")
+        return (f"({', '.join(bits)})",)
+
+    def _derived(self) -> dict[str, Any]:
+        """Export the fit diagnostics the repr reports (``n_fit`` / ``r_squared``)."""
+        return {"n_fit": self.n_fit, "r_squared": self.r_squared, "trusted": bool(self.trusted)}
 
     # -- visualization ---------------------------------------------------
 
-    def to_plot_spec(self, kind: str | None = None) -> Any:
+    def __plot_spec__(self, kind: str | None = None) -> Any:
         """Describe this scaling result as a backend-agnostic :class:`PlotSpec`.
 
         Builds a ``SCALING_FIT`` spec — the curve as a scatter layer, the fitted
@@ -170,7 +381,7 @@ class ScalingResult(_NumericOps, AnalysisResult):
         kind : str, optional
             An override for the semantic spec kind (the closed
             :class:`~tsdynamics.viz.spec.PlotKind` vocabulary).  ``None`` (the
-            default) uses ``SCALING_FIT``; the ``.plot.scaling()`` seam passes
+            default) uses ``SCALING_FIT``; the ``scaling_fit`` transform passes
             ``"scaling_fit"`` explicitly, which resolves to the same kind.
 
         Returns

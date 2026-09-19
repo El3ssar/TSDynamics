@@ -1,25 +1,25 @@
 ---
-description: Catalogue of the numerical solvers behind integrate() — explicit Runge–Kutta, implicit/stiff kernels and stochastic schemes — with how to pick one, the aliases, and the auto-stiffness helpers.
+description: Catalogue of the numerical solvers behind run() — explicit Runge–Kutta, implicit/stiff kernels and stochastic schemes — with how to pick one, the aliases, and the auto-stiffness helpers.
 ---
 
 <span class="ts-kicker">Theory</span>
 
 # Solvers & methods
 
-Most of the time you never touch this layer. You call `integrate()` and the
+Most of the time you never touch this layer. You call `run()` and the
 default solver does the right thing:
 
 ```python
 import tsdynamics as ts
 
-traj = ts.systems.Lorenz().integrate(final_time=100.0, dt=0.01)
+traj = ts.systems.Lorenz().run(final_time=100.0, dt=0.01)
 ```
 
 When you *do* want to choose — a stiff chemical model, a high-accuracy reference
 run, a fixed-step orbit — you pass a `method=` string:
 
 ```python
-traj = ts.systems.Lorenz().integrate(final_time=100.0, dt=0.01, method="dop853")
+traj = ts.systems.Lorenz().run(final_time=100.0, dt=0.01, solver="dop853")
 ```
 
 This page is the catalogue of those names and a guide to picking one. Every
@@ -31,11 +31,15 @@ against a registry before the engine runs it. For the programmatic registry API
 
 !!! note "`dt` is the output grid, not the step size"
     For every adaptive method, `dt` only sets how densely the returned
-    [`Trajectory`](../analysis/integrate.md) is sampled — the internal stepper
+    [`Trajectory`](../analysis/integration-and-methods.md) is sampled — the internal stepper
     chooses its own steps from `rtol`/`atol`. A coarse `dt` does **not** cost
     accuracy. The two exceptions are `rk4` (a genuinely fixed-step method, where
     `dt` *is* the step) and the stochastic schemes (where `dt` *is* the noise
     increment $\sqrt{\mathrm{d}t}$).
+
+    Since `rtol` is therefore the *only* accuracy knob, v6 tightened its default
+    to `1e-9` (`atol=1e-12`) — see
+    [the tolerance table](../analysis/integration-and-methods.md#the-default-tolerances).
 
 ## The catalogue
 
@@ -74,14 +78,14 @@ All names are case- and punctuation-insensitive and carry common aliases (e.g.
 themselves (see [Programmatic registry](#programmatic-registry)).
 
 <figure markdown>
-![Work–precision diagram for the explicit family and a stiff-problem wall-time comparison](../assets/figures/analysis/solvers.png){ loading=lazy }
+![Work–precision diagram for the explicit family and a stiff-problem wall-time comparison](../assets/figures/analysis/solvers.svg){ loading=lazy }
 <figcaption>Left: on a scalar problem with a known solution the explicit kernels track the requested tolerance, with the order-8 <code>dop853</code> reaching the lowest error at every setting. Right: on stiff van der Pol (μ=1000) all six kernels land on the same final state, but the explicit methods are stability-bound and pay hundreds of times the wall-time of the implicit ones — the practical case for <code>bdf</code>.</figcaption>
 </figure>
 
 ## Explicit Runge–Kutta
 
 These are the workhorses for **smooth, non-stiff** problems, and the same
-kernels drive the [DDE](../systems/delay/index.md) families through the method of
+kernels drive the [DDE](../systems/dde/index.md) families through the method of
 steps. The family spans fixed-step methods from order 1 (`euler`) through the
 order-4 `rk4`/`rk4_38`, the SSP order-3 `ssprk3`, the embedded adaptive pairs
 (`heun_euler`, `bs3`, `rk45`, `rkf45`, `cashkarp`, `tsit5`, `dop853`), and the
@@ -111,7 +115,7 @@ combined `f(u, t)`.)
 
 ```python
 # Fixed-step march: dt IS the integrator step here.
-traj = ts.systems.Lorenz().integrate(final_time=20.0, dt=0.005, method="rk4")
+traj = ts.systems.Lorenz().run(final_time=20.0, dt=0.005, solver="rk4")
 ```
 
 `rk45` is the embedded Dormand–Prince 5(4) pair (Dormand & Prince 1980) and the
@@ -121,10 +125,10 @@ adaptive step controller. Spellings `dopri5` and `RK45` resolve to it.
 
 ```python
 # All four lines integrate with the same kernel.
-ts.systems.Rossler().integrate(final_time=200.0, dt=0.05)                 # default
-ts.systems.Rossler().integrate(final_time=200.0, dt=0.05, method="rk45")
-ts.systems.Rossler().integrate(final_time=200.0, dt=0.05, method="dopri5")
-ts.systems.Rossler().integrate(final_time=200.0, dt=0.05, method="RK45")
+ts.systems.Rossler().run(final_time=200.0, dt=0.05)                 # default
+ts.systems.Rossler().run(final_time=200.0, dt=0.05, solver="rk45")
+ts.systems.Rossler().run(final_time=200.0, dt=0.05, solver="dopri5")
+ts.systems.Rossler().run(final_time=200.0, dt=0.05, solver="RK45")
 ```
 
 `tsit5` is Tsitouras' 5(4) pair (Tsitouras 2011), an explicit RK with
@@ -140,8 +144,8 @@ for comparable work (the left panel above).
 
 ```python
 # High-accuracy reference run.
-traj = ts.systems.Lorenz().integrate(
-    final_time=100.0, dt=0.01, method="dop853", rtol=1e-12, atol=1e-12
+traj = ts.systems.Lorenz().run(
+    final_time=100.0, dt=0.01, solver="dop853", rtol=1e-12, atol=1e-12
 )
 ```
 
@@ -158,7 +162,7 @@ the *same* final state, but the explicit methods run hundreds of times slower.
 Every implicit kernel is adaptive and requires the **analytic Jacobian**
 $\partial f/\partial u$. You never build it: the engine differentiates your
 `_equations` symbolically and lowers a Jacobian-carrying tape automatically
-whenever the resolved method needs one, so `method="bdf"` simply works.
+whenever the resolved kernel needs one, so `solver="bdf"` simply works.
 
 `bdf` is the variable-order (1–5), fixed-leading-coefficient backward
 differentiation formula (Curtiss & Hirschfelder 1952; Shampine & Gordon 1975) —
@@ -196,7 +200,7 @@ Mark a system stiff once and forget it — declare the default method on the cla
 
 ```python
 class MyStiffSystem(ts.ContinuousSystem):
-    _default_method = "bdf"          # every integrate() now uses bdf
+    _default_method = "bdf"          # every run() now uses bdf
     ...
 ```
 
@@ -208,7 +212,7 @@ Belousov–Zhabotinsky model) already do this.
     on resolution, with a hint pointing at the engine's stiff family:
 
     ```python
-    ts.systems.Oregonator().integrate(method="LSODA")
+    ts.systems.Oregonator().run(solver="LSODA")
     # ValueError: unknown solver method 'LSODA'; ...
     #   ('LSODA' is a SciPy/v2 stiff method with no engine kernel;
     #    use 'bdf' or 'trbdf2' for stiff problems.)
@@ -252,10 +256,10 @@ class GBM(ts.StochasticSystem):
     def _diffusion(y, t, *, mu, sigma):
         return [sigma * y(0)]
 
-a = GBM().integrate(final_time=1.0, dt=0.01, ic=[1.0], method="euler_maruyama", seed=0)
-b = GBM().integrate(final_time=1.0, dt=0.01, ic=[1.0], method="euler_maruyama", seed=0)
+a = GBM().run(final_time=1.0, dt=0.01, ic=[1.0], solver="euler_maruyama", seed=0)
+b = GBM().run(final_time=1.0, dt=0.01, ic=[1.0], solver="euler_maruyama", seed=0)
 assert (a.y == b.y).all()          # same seed → identical path
-c = GBM().integrate(final_time=1.0, dt=0.01, ic=[1.0], method="milstein", seed=0)
+c = GBM().run(final_time=1.0, dt=0.01, ic=[1.0], solver="milstein", seed=0)
 ```
 
 An `ensemble(...)` run seeds trajectory $i$ from a per-index derivation of the
@@ -284,7 +288,7 @@ over slowest decay rate) crosses a threshold; `recommend` combines that verdict
 with the policy table and hands back a ready-to-use resolution:
 
 ```python
-from tsdynamics import solvers
+from tsdynamics import _solvers as solvers
 
 solvers.is_stiff(ts.systems.Oregonator(), ic=[1.0, 1.0, 1.0])   # True
 solvers.is_stiff(ts.systems.Lorenz(),     ic=[1.0, 1.0, 1.0])   # False

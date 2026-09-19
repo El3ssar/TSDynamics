@@ -25,10 +25,11 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 
+from ...errors import invalid_value
 from .._result import ArrayResult
 from ._common import _as_channels, _as_series, _delay_columns, _is_trajectory
 
@@ -42,7 +43,7 @@ class Embedding(ArrayResult):
     An :class:`~tsdynamics.analysis._result.ArrayResult`, so it is a drop-in for
     the bare ``(N - (m-1)·τ, m)`` matrix: ``np.asarray(result)``, indexing,
     slicing (``result[:, 0]``), ``result.shape`` and iteration all defer to the
-    wrapped array, while it also carries ``.meta`` / ``.summary()`` / the ``.plot``
+    wrapped array, while it also carries ``.meta`` / the readout ``repr`` / the ``.plot``
     seam.
 
     Attributes
@@ -51,7 +52,28 @@ class Embedding(ArrayResult):
         The embedded delay-vector matrix.  ``np.asarray(result)`` returns it.
     """
 
-    def to_plot_spec(self, kind: str | None = None) -> Any:
+    def _answer(self) -> str:
+        """Return ``<N> points in <m>-D`` — the shape of the reconstruction."""
+        mat = np.atleast_2d(np.asarray(self.values))
+        if not mat.size:
+            return "empty reconstruction"
+        return f"{mat.shape[0]} points in {mat.shape[1]}-D"
+
+    def _context(self) -> str | None:
+        """Return the reconstruction parameters that define the embedding."""
+        m = self.meta.get("dimension") if self.meta else None
+        tau = self.meta.get("delay") if self.meta else None
+        bits = []
+        if m is not None:
+            bits.append(f"m={m}")
+        if tau is not None:
+            bits.append(f"τ={tau} samples")
+        system = self._system_label()
+        if system:
+            bits.append(system)
+        return ", ".join(bits) or None
+
+    def __plot_spec__(self, kind: str | None = None) -> Any:
         r"""Describe the reconstructed attractor as a backend-agnostic :class:`PlotSpec`.
 
         Builds a phase portrait of the delay-coordinate trajectory: a 3-D
@@ -119,35 +141,76 @@ def _as_per_channel(value: int | Sequence[int], n_channels: int, name: str) -> l
     return vals
 
 
+def _as_count(value: Any, name: str) -> Any:
+    """Coerce a single integer-like ``dimension`` / ``delay`` — results included.
+
+    ``operator.index`` is the protocol for "this is an integer": it accepts an
+    ``int``, a numpy integer, and any result that defines ``__index__`` — which
+    is what makes ``embed(x, dimension=embedding_dimension(x))``, the idiom the
+    docstrings teach, work for *both* keywords instead of only one.  A genuine
+    per-channel sequence has no ``__index__`` and is handed straight back for
+    the multivariate path (or for that path's own refusal) to deal with.
+    """
+    import operator
+
+    try:
+        return operator.index(value)
+    except TypeError:
+        pass
+    try:  # a scaling result that is a float in an int's clothing (FNN's m)
+        as_float = float(value)
+    except (TypeError, ValueError):
+        return value
+    if float(as_float).is_integer():
+        return int(as_float)
+    raise invalid_value(
+        name,
+        value,
+        rule="must be a whole number of samples (or, for multivariate input, one per channel)",
+        hint=f"round it, or pass a per-channel sequence, e.g. {name}=[3, 3].",
+    )
+
+
 def embed(
     data: Any,
-    dimension: int | Sequence[int],
-    delay: int | Sequence[int],
+    dimension: int | Sequence[int] | None = None,
+    delay: int | Sequence[int] | None = None,
     *,
-    component: int | str | None = None,
+    components: int | str | None = None,
+    **renamed: Any,
 ) -> Embedding:
     r"""Time-delay embedding of a scalar series (or a multivariate bundle).
 
     Parameters
     ----------
     data : array-like or Trajectory
-        The source signal.  A 1-D series (or a single selected ``component`` of a
+        The source signal.  A 1-D series (or a single selected ``components`` of a
         :class:`~tsdynamics.data.Trajectory` / 2-D array) gives a univariate
         embedding.  Pass a 2-D ``(N, d)`` array, a list of equal-length series, or
-        a multi-component trajectory **without** ``component`` to embed every
+        a multi-component trajectory **without** ``components`` to embed every
         channel jointly (multivariate embedding).
-    dimension : int or sequence of int
+    dimension : int or sequence of int, optional
         Embedding dimension :math:`m`.  A single int applies to every channel; a
         per-channel sequence sets each channel's dimension (multivariate only).
-        Must be ``>= 1``.
-    delay : int or sequence of int
+        Must be ``>= 1``.  **Omit it** and it is estimated with
+        :func:`~tsdynamics.analysis.embedding.embedding_dimension` (Cao's
+        averaged false neighbours) at the resolved ``delay``.
+    delay : int or sequence of int, optional
         Delay :math:`\tau` in samples.  A single int applies to every channel; a
         per-channel sequence sets each channel's delay (multivariate only).  Must
-        be ``>= 1``.
-    component : int or str, optional
+        be ``>= 1``.  **Omit it** and it is estimated with
+        :func:`~tsdynamics.analysis.embedding.optimal_delay` (the first minimum of
+        the time-delayed mutual information).
+    components : int or str, optional
         Select a single channel from a multi-component ``data`` for a univariate
         embedding.  When omitted, a multi-component input is embedded across all
         of its channels.
+    **renamed
+        Not a real parameter: it exists so that a *near-miss* spelling of one of
+        the two above — ``dim=``, ``m=``, ``tau=``, ``lag=``, all of them banned
+        by the naming glossary and all of them the first thing a reader tries —
+        is answered with the canonical name instead of Python's bare
+        ``unexpected keyword argument``.
 
     Returns
     -------
@@ -165,6 +228,9 @@ def embed(
         If ``dimension``/``delay`` are not positive, a per-channel sequence is
         given for a univariate embedding, or the series is too short for the
         requested window.
+    tsdynamics.errors.InvalidParameterError
+        If a keyword is a banned spelling of ``dimension`` / ``delay`` (or is not
+        a parameter at all).
 
     Notes
     -----
@@ -172,6 +238,14 @@ def embed(
     ``correlation_dimension(embed(x, m, tau))`` estimates :math:`D_2` of the
     reconstructed attractor.  Rows are index-ordered with the original sampling,
     so an index-based Theiler window still removes temporally-correlated pairs.
+
+    **Estimated parameters are recorded, never silent.**  ``meta["delay_auto"]``
+    / ``meta["dimension_auto"]`` say which of the two the caller supplied, so a
+    reconstruction always carries how it was parameterised.  Estimating both
+    costs a mutual-information scan and a Cao sweep; pass either one to skip its
+    estimate.  Auto-selection is for the univariate case (one series has one
+    :math:`\tau` and one :math:`m`) — a multivariate bundle needs its per-channel
+    values named.
 
     References
     ----------
@@ -189,18 +263,50 @@ def embed(
     >>> y[0]
     array([0., 2., 4.])
     """
-    # Univariate path: a 1-D series, or an explicitly selected single component.
-    univariate = component is not None or _looks_univariate(data)
-    if univariate:
-        if not isinstance(dimension, (int, np.integer)):
-            raise ValueError("a per-channel `dimension` sequence needs a multivariate input.")
-        if not isinstance(delay, (int, np.integer)):
-            raise ValueError("a per-channel `delay` sequence needs a multivariate input.")
-        series = _as_series(data, component=component)
-        embedded = _embed_single(series, int(dimension), int(delay))
-        return Embedding(values=embedded, meta=_embed_meta(dimension, delay))
+    if renamed:
+        raise _renamed_keyword_error(renamed)
+    auto = {"dimension_auto": dimension is None, "delay_auto": delay is None}
 
-    channels = _as_channels(data)
+    # Univariate path: a 1-D series, or an explicitly selected single component.
+    univariate = components is not None or _looks_univariate(data)
+    if univariate:
+        series = _as_series(data, component=components, analysis="embed")
+        if delay is None or dimension is None:
+            dimension, delay = _estimate_parameters(series, dimension, delay)
+        # ``operator.index`` FIRST: chaining is the documented idiom
+        # (``embed(x, dimension=embedding_dimension(x), delay=optimal_delay(x))``)
+        # and a ``CountResult`` is an ``int`` subclass that ``isinstance(..., int)``
+        # accepts — but a bare ``ScalingResult`` is not, so ``dimension=fnn_result``
+        # was refused with a message about "a per-channel sequence" and
+        # "multivariate input", two concepts the caller never mentioned, while
+        # ``delay=`` (whose result IS an int subclass) sailed through.  The
+        # asymmetry was invisible until it bit.
+        dimension = _as_count(dimension, "dimension")
+        delay = _as_count(delay, "delay")
+        for label, value in (("dimension", dimension), ("delay", delay)):
+            if not isinstance(value, (int, np.integer)):
+                raise ValueError(f"a per-channel `{label}` sequence needs a multivariate input.")
+        m_int, tau_int = int(cast(int, dimension)), int(cast(int, delay))
+        embedded = _embed_single(series, m_int, tau_int)
+        return Embedding(values=embedded, meta={**_embed_meta(dimension, delay), **auto})
+
+    if dimension is None or delay is None:
+        missing = [n for n, v in (("dimension", dimension), ("delay", delay)) if v is None]
+        raise invalid_value(
+            "/".join(missing),
+            None,
+            rule=(
+                "must be given for a multivariate embedding (each channel has its own, so "
+                "there is nothing to estimate from one series)"
+            ),
+            hint=(
+                "pass a per-channel sequence, e.g. embed(data, dimension=[3, 3], "
+                "delay=[7, 5]) — or select one channel with components= to get the "
+                "estimated univariate reconstruction."
+            ),
+        )
+
+    channels = _as_channels(data, analysis="embed")
     n_channels = channels.shape[1]
     dims = _as_per_channel(dimension, n_channels, "dimension")
     delays = _as_per_channel(delay, n_channels, "delay")
@@ -212,7 +318,92 @@ def embed(
 
     blocks = [_embed_single(channels[:, c], dims[c], delays[c])[:rows] for c in range(n_channels)]
     embedded = np.ascontiguousarray(np.hstack(blocks))
-    return Embedding(values=embedded, meta=_embed_meta(dimension, delay))
+    return Embedding(values=embedded, meta={**_embed_meta(dimension, delay), **auto})
+
+
+#: Banned near-miss spellings of :func:`embed`'s two parameters, mapped to the
+#: canonical name.  Straight from the frozen naming glossary (§2) — the point is
+#: that the glossary's decision is *enforced with an explanation* rather than
+#: with Python's bare ``unexpected keyword argument``, which names neither the
+#: right spelling nor the fact that a rule was applied.
+_RENAMED: dict[str, str] = {
+    "dim": "dimension",
+    "m": "dimension",
+    "emb_dim": "dimension",
+    "tau": "delay",
+    "lag": "delay",
+}
+
+
+def _renamed_keyword_error(renamed: dict[str, Any]) -> Exception:
+    """Explain a rejected keyword: the canonical spelling, or that it is not a parameter."""
+    parts = []
+    for key, value in renamed.items():
+        canonical = _RENAMED.get(key)
+        if canonical is not None:
+            parts.append(f"{key}={value!r} → {canonical}={value!r}")
+        else:
+            parts.append(f"{key}= is not a parameter of embed")
+    return invalid_value(
+        "keyword argument",
+        sorted(renamed),
+        rule="is not accepted by embed",
+        hint=(
+            "; ".join(parts)
+            + ". embed(data, dimension, delay, *, components=None) — `dimension` (m) and "
+            "`delay` (tau, in samples) are the canonical spellings, and either may be "
+            "omitted to have it estimated."
+        ),
+    )
+
+
+def _estimate_parameters(
+    series: np.ndarray, dimension: Any, delay: Any
+) -> tuple[int | Sequence[int], int | Sequence[int]]:
+    """Fill in whichever of ``(dimension, delay)`` was not given, from the series itself.
+
+    The delay comes first (the first minimum of the time-delayed mutual
+    information, Fraser & Swinney) because the dimension estimate needs one: Cao's
+    false-neighbour ratio is computed *at* a delay.  Estimating in the other order
+    would evaluate the dimension at an arbitrary lag and then move the lag out
+    from under it.
+
+    A failing *estimator* is re-raised in ``embed``'s own terms.  Its message is
+    written for its own caller and names its own parameters (``max_dim``), which
+    a reader who typed ``embed(x)`` never passed and cannot find in ``embed``'s
+    signature — so the estimator's diagnosis is kept and the advice is the one
+    that applies here: give the numbers instead.
+
+    The advice **follows the diagnosis** rather than assuming it.  An estimator
+    can fail for a reason that has nothing to do with length — a constant series
+    has undefined mutual information at *any* record length — and telling that
+    caller "500 samples is not enough" contradicts, in the same sentence, the
+    reason quoted immediately before it.
+    """
+    from .delay import optimal_delay
+    from .dimension import embedding_dimension
+
+    try:
+        if delay is None:
+            delay = int(optimal_delay(series))
+        if dimension is None:
+            dimension = int(embedding_dimension(series, delay=int(delay)))
+    except ValueError as err:
+        which = "delay" if delay is None else "dimension"
+        too_short = "short" in str(err) or "enough" in str(err)
+        raise invalid_value(
+            which,
+            None,
+            rule=f"could not be estimated from this series ({err})",
+            hint=(
+                (f"{series.size} samples is not enough for the estimator to work with. ")
+                if too_short
+                else ""
+            )
+            + "Pass the value explicitly — e.g. embed(data, dimension=3, delay=1)"
+            + (" — or embed a longer record." if too_short else "."),
+        ) from err
+    return dimension, delay
 
 
 def _as_json_int(value: int | Sequence[int]) -> int | list[int]:

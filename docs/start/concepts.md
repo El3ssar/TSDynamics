@@ -127,15 +127,15 @@ auto-registered system — is on [Defining systems](defining-systems.md).
 
 ## Lower once, sweep for free
 
-A continuous system lowers its equations to the Rust engine in-process, with no
-warmup and nothing cached on disk. Ordinary parameters become *control
-parameters* of the lowered tape — changing them is free:
+A continuous system lowers its equations to the Rust engine in-process, with
+nothing cached on disk and no ahead-of-time build step. Ordinary parameters
+become *control parameters* of the lowered tape — changing them is free:
 
 ```python
 lor = ts.systems.Lorenz()
-lor.integrate(final_time=10)     # runs immediately (no warmup)
+lor.run(final_time=10)     # lowers + compiles once, in milliseconds
 lor.rho = 35.0                   # zero cost
-lor.integrate(final_time=10)     # same tape, new parameter value
+lor.run(final_time=10)     # same tape, new parameter value
 ```
 
 Only *structural* parameters — integer loop bounds that change the *shape* of the
@@ -151,13 +151,15 @@ All four families — and every derived wrapper below — implement the same
 one analysis makes it work on *every* system:
 
 ```python
+# skip-doctest — the protocol surface, not a runnable snippet (`sys` is any system)
+sys.run(...)           # run and return a uniform-grid Trajectory
 sys.step(n_or_dt)      # advance by n iterations / dt of time → new state
 sys.state()            # current state vector (a copy)
-sys.set_state(u)       # overwrite the state (DDEs raise — by design)
+sys.set_state(u)       # overwrite the state (absent on DDEs — by design)
 sys.time()             # current time / iteration count
 sys.reinit(u, t=0.0)   # restart the internal stepper from a fresh state
-sys.trajectory(...)    # run and return a uniform-grid Trajectory
-sys.is_discrete        # True for maps and derived discrete views
+sys.dim                # the state-space dimension (read-only)
+sys.family             # "ode" | "dde" | "map" | "sde"
 ```
 
 Stepping is lazy — the first `step()` on a fresh system performs an implicit
@@ -170,22 +172,28 @@ u1 = lor.step(0.01)          # integrate one dt chunk from the live state
 u2 = lor.step(0.01)          # continue from there
 ```
 
-`integrate` and `iterate` are the convenience verbs on top of this protocol for
-the common "run a whole trajectory" case.
+**`run` is the one-liner over the same machinery**, and the two verbs divide
+cleanly: `run()` is always a *fresh* integration from the initial condition;
+`step()` is the one that continues. Run the same system twice and you get the
+same trajectory twice.
 
-## Backends: `interp`, `jit`, `reference`
+!!! note "`family` replaces `is_discrete`"
+    One name, four answers, and it separates `"dde"` from `"sde"` — which a
+    boolean could not. `sys.family == "map"` is the discreteness test.
+
+## Backends: `jit`, `interp`, `reference`
 
 Orthogonal to *what* a system is is *how* the engine executes its tape. The same
 run works on any of three backends, chosen with `backend=`:
 
 | `backend` | What it is | When to use it |
 | --------- | ---------- | -------------- |
-| `"interp"` | The Rust tape interpreter — the default | Everyday integration; no warmup, no compile step |
-| `"jit"` | The Cranelift JIT, which compiles the tape to native code | Long or repeated runs where the compiled speed pays off; **bit-for-bit identical** to `interp` |
+| `"jit"` | The Cranelift JIT, which compiles the tape to native code — **the default** | Everyday integration. The compile is cached per distinct system, so it is paid once (sub-millisecond for a typical flow) and the runs are ~1.5× faster |
+| `"interp"` | The Rust SSA-tape interpreter | When you want no compile at all — a very short one-shot run, or one of the handful of tiny systems the interpreter wins on; **bit-for-bit identical** to `jit` |
 | `"reference"` | A dependency-light pure-Python oracle (ODEs, SDEs, maps) | Cross-validation and wheel-free environments — the answer key, not the fast path |
 
 ```python
-traj = ts.systems.Lorenz().integrate(final_time=100.0, dt=0.01, backend="jit")
+traj = ts.systems.Lorenz().run(final_time=100.0, dt=0.01, backend="interp")
 ```
 
 `interp` and `jit` lower the *same* tape, so they agree to the last bit.
@@ -200,26 +208,39 @@ rather than silently degrading.
 
 A **derived system** re-presents an existing system through a new lens while
 keeping the protocol intact — so every analysis keeps working on the wrapped
-view. The wrappers live at the top level:
+view, and you `run` it exactly as you ran the original.
+
+Two of them are **verbs on the system**, because they speak the same vocabulary
+as the class you are holding:
 
 ```python
-from tsdynamics import PoincareMap, StroboscopicMap
-
-pmap = PoincareMap(ts.systems.Rossler(), plane=("y", 0.0, "up"))   # flow → discrete map
-smap = StroboscopicMap(ts.systems.Duffing(), period=2 * 3.14159 / 1.4)
+pmap = ts.systems.Rossler().poincare("y", 0.0)        # flow → a discrete map
+strobe = ts.systems.Duffing().poincare(period=4.488)  # ...sampled once per forcing period
+band = ts.systems.Lorenz().ensemble(np.random.rand(100, 3))   # 100 copies, one object
 ```
 
-One `step()` of a `PoincareMap` is one section crossing; one `step()` of a
-`StroboscopicMap` is one forcing period. Because the wrappers *are* discrete
-systems (`is_discrete == True`), every map tool applies to a flow — an
-[orbit diagram](../analysis/orbit-diagrams.md) over a `PoincareMap` **is** a
-bifurcation diagram of the flow. The other wrappers follow the same pattern:
+`poincare` takes **either** a section plane **or** a strobe period — an affine
+surface $g(\mathbf{u}) = \mathbf{n}\cdot\mathbf{u} - c$ and a sampling of the
+phase circle are two different sections of the same flow, so giving both raises
+and names the choice. One `step()` of the result is one section crossing (or one
+forcing period).
 
-- **`TangentSystem`** — the flow plus its variational (tangent) dynamics; the
-  Lyapunov engine.
-- **`EnsembleSystem`** — many initial conditions advanced together as one batch.
-- **`ProjectedSystem`** — the same dynamics observed through a lower-dimensional
-  projection.
+Because the result **is** a discrete system, every map tool applies to a flow —
+an [orbit diagram](../analysis/orbit-diagrams.md) over a Poincaré map **is** a
+bifurcation diagram of the flow.
+
+`band.run(final_time=…)` returns a `TrajectoryBatch` — a list of trajectories
+that also carries `.final`, the `(n, dim)` array of end states.
+
+Two more wrappers are Lyapunov and projection machinery rather than things you
+type every day, so they live at their own address:
+
+```python
+from tsdynamics.derived import TangentSystem, ProjectedSystem
+
+tang = TangentSystem(ts.systems.Lorenz(), k=2)      # flow + variational dynamics
+proj = ProjectedSystem(ts.systems.Lorenz(), (0, 2))  # observe (x, z) only
+```
 
 ## The registry
 
@@ -229,8 +250,8 @@ time** — built-ins and your own classes alike:
 ```python
 from tsdynamics import registry
 
-registry.families()        # {'ode': 136, 'dde': 6, 'sde': 3, 'map': 26}
-registry.get("Lorenz")     # SystemEntry(name='Lorenz', family='ode', ...)
+registry.families()        # {'ode': 142, 'dde': 6, 'sde': 3, 'map': 26}
+registry.get("Lorenz")     # SystemEntry('Lorenz', family='ode', category=..., dim=3)
 ```
 
 Define `class MyODE(ts.ContinuousSystem)` anywhere in your code and it appears in
@@ -244,7 +265,6 @@ tests and its documentation.
 ## See also
 
 - [Defining systems](defining-systems.md) — the four contracts as one worked example
-- [Systems](../systems/index.md) — the catalogue of 171 built-ins
+- [Systems](../systems/index.md) — the catalogue of 177 built-ins
 - [Analysis](../analysis/index.md) — what to do with a system once you have one
 - [Integration & methods](../analysis/integration-and-methods.md) — solvers, tolerances, and the backends in depth
-</content>

@@ -3,7 +3,7 @@ Basins of attraction and basin fractions (basin stability).
 
 Two complementary views of "which attractor wins from where":
 
-- :func:`basins_of_attraction` paints a full grid — every lattice point is
+- :func:`basins` paints a full grid — every lattice point is
   classified, giving the basin *image* (the input to the basin-entropy,
   uncertainty-exponent and Wada quantifiers).
 - :func:`basin_fractions` draws random initial conditions from a region and
@@ -23,25 +23,33 @@ Both reuse the recurrence finder in
 
 from __future__ import annotations
 
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
 
 from ...data import Ball, Box, Grid, grid_points, sampler
-from .._result import AnalysisResult
+from ...errors import InvalidInputError, remedy
+from .._result import AnalysisResult, _build_meta
+from .._result_json import _pct, _sig, _spread
 from ._common import (
     DIVERGED_COLOR,
     PALETTE,
     _apply_merge,
+    _category_labels,
     _palette_indices,
     _recurrence_grid,
+    _region_example,
+    coerce_region,
+    reject_unknown_fsm,
 )
 from .attractors import (
     DIVERGED,
     AttractorSet,
     _AttractorMapper,
     _reject_unsupported,
+    canonical_relabel,
     classify_seeds,
     resolve_merge_tol,
 )
@@ -50,8 +58,45 @@ __all__ = [
     "BasinFractions",
     "BasinsResult",
     "basin_fractions",
-    "basins_of_attraction",
+    "basins",
 ]
+
+
+#: Below this fraction of *labelled* seeds, a basin diagram is not an answer —
+#: it is a report that nothing settled.  Set at 1.0 for the headline case (every
+#: single seed failed), which is what a wrong ``recurrence=`` box produces.
+_ALL_DIVERGED = 1.0
+
+
+def _warn_if_nothing_settled(
+    diverged: int, total: int, *, analysis: str, system: Any, cellgrid: Any
+) -> None:
+    """Say so when no seed reached an attractor, and name the likely cause.
+
+    A 100 %-diverged run is the one place this library could hand back a
+    confident, pretty, **empty** result in silence: measured, an undriven Duffing
+    with its phase axis pinned returned ``0 basins · 100.0% diverged`` in 0.0 s
+    with no warning and plotted a blank image.  Nothing had diverged — the pinned
+    phase advanced straight out of the recurrence box on the first step.
+    """
+    if total <= 0 or diverged < total * _ALL_DIVERGED:
+        return
+    import warnings
+
+    box = ", ".join(
+        f"[{lo:.4g}, {hi:.4g}]" for lo, hi in zip(cellgrid.lo, cellgrid.hi, strict=True)
+    )
+    warnings.warn(
+        f"{analysis}: every one of the {total} seeds left the recurrence box "
+        f"without settling, so this result has 0 basins and is not a measurement "
+        f"of {type(system).__name__}. The usual cause is a recurrence box the "
+        f"dynamics leaves immediately — a monotone component (a drive phase, an "
+        f"unbounded coordinate) has no attractor to recur to. "
+        f"The box searched was {box}. Widen it with recurrence=, or exclude the "
+        f"monotone component from the system.",
+        RuntimeWarning,
+        stacklevel=3,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -93,11 +138,23 @@ class BasinsResult(AnalysisResult):
 
     @property
     def fractions(self) -> dict[int, float]:
-        """Fraction of grid cells in each attractor's basin (diverged cells excluded).
+        """Fraction of grid CELLS in each attractor's basin.
 
-        Keyed by attractor id (``>= 1``); the diverged share is reported separately
-        by :attr:`diverged_fraction` (so this mirrors
-        :attr:`BasinFractions.fractions`).
+        A **census of this image**: every cell of the lattice, counted once, with
+        the diverged/lost share reported separately by :attr:`diverged_fraction`.
+
+        This is *not* the same statistic as :func:`basin_fractions`, despite the
+        shared word, and the two measurably disagree -- on Van der Pol,
+        ``{1: 0.9922}`` here against ``{1: 1.0}`` there.  That function is Monte
+        Carlo **basin stability** (Menck et al. 2013): an estimate, with a
+        standard error, of the share of a *measure* over the region, from
+        randomly drawn initial conditions.  This one is an exact count of a
+        particular grid, so it depends on the grid and carries no error bar --
+        and it includes cells that never settled, which the sampler drops.
+
+        Use this to read off the picture you just drew; use
+        :func:`basin_fractions` to estimate how likely a randomly perturbed state
+        is to end up on each attractor.
         """
         ids, counts = np.unique(self.labels, return_counts=True)
         total = self.labels.size
@@ -108,20 +165,33 @@ class BasinsResult(AnalysisResult):
         """Fraction of cells that diverged / never settled."""
         return float(np.mean(self.labels == DIVERGED))
 
-    def to_plot_spec(self, kind: str | None = None) -> Any:
+    def __array__(self, dtype: Any = None, copy: bool | None = None) -> np.ndarray:
+        """Return the **label image** — the basin diagram is that integer field.
+
+        ``np.asarray(basins(...))`` used to be a 0-d *object* array holding the
+        result, which plots as nothing.
+        """
+        arr = np.asarray(self.labels)
+        if dtype is not None:
+            arr = arr.astype(dtype, copy=bool(copy))
+        elif copy:
+            arr = arr.copy()
+        return arr
+
+    def __plot_spec__(self, kind: str | None = None) -> Any:
         """Describe this basin diagram as a backend-agnostic :class:`PlotSpec`.
 
         Builds a ``BASINS_IMAGE`` spec — the integer label field as an image on
         an ``"equal"`` canvas, the grid axes giving the extent, plus a marker
         layer at the attractor representatives (for a 2-D image).  A **3-D slice**
         (a label cube with one degenerate ``counts == 1`` axis, as
-        :func:`basins_of_attraction` paints when imaging a slice of a
+        :func:`basins` paints when imaging a slice of a
         higher-dimensional flow) is squeezed to its two non-degenerate axes so it
         renders as a 2-D image; a genuinely 3-D label cube keeps all three axes
         on the spec.
 
         The image shares the attractor palette (``tab20``) with
-        :meth:`AttractorSet.to_plot_spec`: the explicit ``{id: swatch index}``
+        :meth:`AttractorSet.__plot_spec__`: the explicit ``{id: swatch index}``
         mapping is recorded in ``meta["palette_index"]`` (identical to the one the
         scatter carries), so a given attractor id is the same colour in both
         views; ``meta["palette"]`` / ``meta["diverged_color"]`` name the colormap
@@ -156,7 +226,20 @@ class BasinsResult(AnalysisResult):
         else:
             axes = list(range(min(labels.ndim, 2)))
 
-        layers = [pb.image(labels, style={"cmap": PALETTE})]
+        # An IMAGE channel is indexed ``[row, column]`` == ``[y, x]`` by every
+        # backend (matplotlib's ``imshow``, plotly's ``Heatmap``), but the label
+        # field is indexed ``[state axis 0, state axis 1]`` — and this spec puts
+        # state axis ``ax0`` on **x** (it is what ``xlimits`` and the attractor
+        # marker layer below both use).  Without the transpose the image is drawn
+        # rotated a quarter turn relative to its own axis labels, limits and
+        # markers: paint attractor 2 over ``x > 0.8`` and the figure shows a band
+        # at ``y > 0.8`` with the attractor-2 star sitting in attractor 1's colour.
+        # The two layers of one plot contradicting each other is the proof; the
+        # defect was invisible while the axes were labelled ``x1`` / ``x2`` and
+        # became publishable-wrong once they carry the system's real variable
+        # names.
+        image = labels.T if labels.ndim == 2 else labels
+        layers = [pb.image(image, style={"cmap": PALETTE})]
 
         # Mark the attractor representatives on a 2-D image, projected onto the
         # two free axes.  Lower-dim grids skip the overlay.
@@ -182,26 +265,69 @@ class BasinsResult(AnalysisResult):
             palette=PALETTE,
             diverged_color=DIVERGED_COLOR,
             palette_index=_palette_indices(self.attractors.ids),
+            # The colour channel is an attractor *id*, not a quantity — name each
+            # swatch so the colorbar reads as a categorical legend rather than a
+            # numeric ramp over BoundaryNorm bin edges (0.5 / 1.5 / 2.5 ...).
+            category_labels=_category_labels(np.asarray(self.labels)),
         )
         return pb.spec(
             kind,
             "basins_image",
             layers=layers,
             aspect="equal",
-            xlabel=f"x{ax0 + 1}",
+            xlabel=pb.axis_labels(self.meta, (ax0, ax1))[0],
             xlimits=x_lim,
-            ylabel=f"x{ax1 + 1}",
+            ylabel=pb.axis_labels(self.meta, (ax0, ax1))[1],
             ylimits=y_lim,
             title=f"basins ({self.n_attractors} attractors)",
             colorbar=Colorbar(label="attractor", cmap=PALETTE, discrete=True),
             meta=meta,
         )
 
-    def __repr__(self) -> str:  # noqa: D105
-        return (
-            f"BasinsResult(shape={self.shape}, n_attractors={self.n_attractors}, "
-            f"diverged={self.diverged_fraction:.3g})"
-        )
+    def _answer(self) -> str:
+        """Return the grid size and every basin's share of it."""
+        labels = np.asarray(self.labels)
+        if not labels.size:
+            return "empty basin image"
+        shape = "×".join(str(int(n)) for n in labels.shape)
+        shares = self.fractions
+        parts = " · ".join(f"#{k} {_pct(v)}" for k, v in sorted(shares.items()) if k >= 1)
+        n = self.n_attractors
+        basins = f"{n} basin" + ("s" if n != 1 else "")
+        body = f"{basins}: {parts}" if parts else basins
+        return f"{shape} grid · {body} · {_pct(self.diverged_fraction)} diverged"
+
+    def _details(self) -> tuple[str, ...]:
+        """Say so when the image is a slice through a higher-dimensional space.
+
+        A degenerate (``counts == 1``) grid axis is a *pinned* coordinate, and
+        the picture is then a 2-D slice of an N-D basin structure, not the whole
+        of it — which changes what the fractions mean.  Nothing else in the
+        result says so.
+        """
+        grid = self.grid
+        counts = getattr(grid, "counts", None)
+        if grid is None or counts is None:
+            return ()
+        pinned = [i for i, c in enumerate(counts) if int(c) == 1]
+        if not pinned:
+            return ()
+        names = self.meta.get("variables") if self.meta else None
+        labels = tuple(names) if names else ()
+
+        def _name(i: int) -> str:
+            return str(labels[i]) if i < len(labels) else f"axis {i}"
+
+        pins = ", ".join(f"{_name(i)} pinned at {_sig(np.asarray(grid.lo)[i], 4)}" for i in pinned)
+        return (f"slice: {pins}",)
+
+    def _derived(self) -> dict[str, Any]:
+        """Export the shares and counts the repr reports."""
+        return {
+            "n_attractors": self.n_attractors,
+            "fractions": self.fractions,
+            "diverged_fraction": self.diverged_fraction,
+        }
 
 
 @dataclass(frozen=True)
@@ -236,10 +362,79 @@ class BasinFractions(AnalysisResult):
         """Id of the attractor with the largest basin (``None`` if all diverged)."""
         return max(self.fractions, key=self.fractions.__getitem__) if self.fractions else None
 
-    def __getitem__(self, key: int) -> float:  # noqa: D105
-        return self.fractions[key]
+    def __len__(self) -> int:
+        """Return how many attractors have a share (contract §4.2 rule 6)."""
+        return len(self.fractions)
 
-    def to_plot_spec(self, kind: str | None = None) -> Any:
+    def __iter__(self) -> Iterator[float]:
+        """Iterate the shares themselves, in ascending id order."""
+        return iter(float(self.fractions[k]) for k in self.ids)
+
+    def __getitem__(self, key: Any) -> Any:
+        """Return the basin fraction at **position** ``key`` (or a list, for a slice).
+
+        Positional, like every other collection in the library (contract §4.2
+        rule 6).  ``[]`` used to be an *id* lookup here — the exact defect v6
+        fixed one file away for
+        :class:`~tsdynamics.analysis.results.AttractorSet` ("ids start at 1, so
+        ``aset[0]`` raised ``KeyError``"), left in place on its sibling: ``bf[0]``
+        raised ``KeyError: 0``, and because there was no ``__iter__`` the legacy
+        sequence protocol made ``list(bf)`` and ``for x in bf`` raise it too.
+        Look a share up by its attractor label with :meth:`by_id`.
+        """
+        ordered = [float(self.fractions[k]) for k in self.ids]
+        return ordered[key]
+
+    def __array__(self, dtype: Any = None, copy: bool | None = None) -> np.ndarray:
+        """Return the shares as a ``(n_attractors,)`` float array, in id order."""
+        arr = np.array([float(self.fractions[k]) for k in self.ids], dtype=float)
+        return arr.astype(dtype, copy=bool(copy)) if dtype is not None else arr
+
+    @property
+    def ids(self) -> list[int]:
+        """Sorted attractor ids — the order ``[]``, iteration and ``np.asarray`` use."""
+        return sorted(self.fractions)
+
+    def to_frame(self) -> Any:
+        """Return a tidy frame: one row per attractor, with its share and error.
+
+        The base :meth:`~tsdynamics.analysis.results.AnalysisResult.to_frame`
+        builds ONE row of the declared fields, and the answer here lives in a
+        ``dict[int, float]``, which a table cell cannot hold — so it was dropped:
+        measured, the frame came back ``(1, 3)`` of ``diverged``/``n``/
+        ``dominant`` with **no fractions**.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Columns ``attractor`` · ``fraction`` · ``stderr`` · ``n`` ·
+            ``diverged``, plus one ``center_<var>`` column per state component.
+        """
+        pd = self._require_pandas()
+        errors = self.standard_error
+        names = self.meta.get("variables") if self.meta else None
+        labels = tuple(str(v) for v in names) if names else None
+        rows: list[dict[str, Any]] = []
+        for gid in self.ids:
+            row: dict[str, Any] = {
+                "attractor": int(gid),
+                "fraction": float(self.fractions[gid]),
+                "stderr": float(errors[gid]),
+                "n": int(self.n),
+                "diverged": float(self.diverged),
+            }
+            try:
+                center = np.asarray(self.attractors.by_id(int(gid)).center, dtype=float)
+            except (KeyError, ValueError, AttributeError):
+                center = np.empty(0)
+            if center.size:
+                row.update(_spread("center", center, labels))
+            rows.append(row)
+        frame = pd.DataFrame(rows)
+        frame.attrs["meta"] = dict(self.meta) if self.meta else {}
+        return frame
+
+    def __plot_spec__(self, kind: str | None = None) -> Any:
         r"""Describe the basin fractions as a backend-agnostic :class:`PlotSpec`.
 
         Builds a ``CATEGORICAL_BAR`` — one ``BAR`` per attractor id (plus a final
@@ -305,9 +500,40 @@ class BasinFractions(AnalysisResult):
             meta=meta,
         )
 
-    def __repr__(self) -> str:  # noqa: D105
-        body = ", ".join(f"{k}:{v:.3g}" for k, v in sorted(self.fractions.items()))
-        return f"BasinFractions({{{body}}}, diverged={self.diverged:.3g}, n={self.n})"
+    def by_id(self, key: int) -> float:
+        """Return the basin fraction of the attractor **labelled** ``key``.
+
+        ``[]`` is positional (the sequence convention every collection here
+        follows); this is the explicit id lookup, the same pairing
+        :class:`~tsdynamics.analysis.results.AttractorSet` uses.  The whole
+        ``{id: share}`` mapping is still :attr:`fractions`.
+
+        Raises
+        ------
+        KeyError
+            If no attractor carries that id.
+        """
+        return float(self.fractions[int(key)])
+
+    def _answer(self) -> str:
+        """Return every attractor's sampled share, with the Monte-Carlo error."""
+        err = self.standard_error
+        parts = " · ".join(
+            f"#{k} {_pct(v)} ± {_pct(err.get(k, 0.0), 1)}"
+            for k, v in sorted(self.fractions.items())
+        )
+        body = parts or "no attractor found"
+        return f"{body} · {_pct(self.diverged)} diverged"
+
+    def _context(self) -> str | None:
+        """Return the subject and how many initial conditions were sampled."""
+        bits = [b for b in (self._system_label(),) if b]
+        bits.append(f"{self.n} samples")
+        return ", ".join(bits)
+
+    def _derived(self) -> dict[str, Any]:
+        """Export the dominant basin and the sampling error the repr reports."""
+        return {"dominant": self.dominant, "standard_error": self.standard_error}
 
 
 # ---------------------------------------------------------------------------
@@ -315,11 +541,11 @@ class BasinFractions(AnalysisResult):
 # ---------------------------------------------------------------------------
 
 
-def basins_of_attraction(
+def basins(
     system: Any,
-    region: Grid,
+    region: Grid | Box | Ball | Sequence[tuple[float, ...]] | None = None,
     *,
-    recurrence: Box | Grid | None = None,
+    recurrence: Box | Grid | Sequence[tuple[float, ...]] | None = None,
     recurrence_resolution: int | tuple[int, ...] = 100,
     seed: int | None = 0,
     dt: float = 1.0,
@@ -356,7 +582,7 @@ def basins_of_attraction(
     recurrence_resolution : int or tuple of int, default 100
         Recurrence cells per axis when ``recurrence`` is a Box.
     seed : int, optional
-        Accepted for signature uniformity with :func:`find_attractors` /
+        Accepted for signature uniformity with :func:`attractors` /
         :func:`basin_fractions`; the full-grid scan is deterministic, so ``seed``
         does not change the labelling (it is recorded in provenance).
     dt : float, default 1.0
@@ -381,17 +607,51 @@ def basins_of_attraction(
         If ``system`` is a delay or stochastic system (unsupported by the
         recurrence finder).
 
+    Warns
+    -----
+    UserWarning
+        When a located set fails the invariance audit and is discarded — the
+        recurrence predicate mistook slow motion for convergence (``dt`` too
+        small for the cell size).  Every located attractor is verified before it
+        is returned; see
+        :func:`~tsdynamics.analysis.basins.attractors.audit_attractors`.
+
     References
     ----------
     G. Datseris and A. Wagemakers, "Effortless estimation of basins of
     attraction", *Chaos* **32**, 023104 (2022).
     """
-    _reject_unsupported(system, "basins_of_attraction")
+    _reject_unsupported(system, "basins")
+    reject_unknown_fsm(fsm, analysis="basins")
+    region = coerce_region(
+        region,
+        analysis="basins",
+        system=system,
+        want_grid=True,
+    )
+    if not isinstance(region, Grid):
+        raise InvalidInputError(
+            f"basins paints one label per lattice point, so region must "
+            f"be a Grid (a {type(region).__name__} carries no resolution)."
+            + remedy(
+                "ts.analysis.basins(system, "
+                f"{_region_example(int(getattr(system, 'dim', 2) or 2), triples=True)})",
+                lead="Say how many initial conditions per axis:",
+            )
+        )
     if recurrence is None:
         # region is a Grid → keeps its own counts (resolution arg is ignored).
         cellgrid = _recurrence_grid(region)
     else:
-        cellgrid = _recurrence_grid(recurrence, recurrence_resolution)
+        cellgrid = _recurrence_grid(
+            coerce_region(
+                recurrence,
+                analysis="basins",
+                system=system,
+                want_grid=False,
+            ),
+            recurrence_resolution,
+        )
     mapper = _AttractorMapper(system, cellgrid, dt=dt, max_steps=max_steps, **fsm)
 
     # Classify every lattice point.  On a supported engine run (an ODE flow / a map
@@ -400,28 +660,41 @@ def basins_of_attraction(
     # and falling back on, the per-point Python loop.  ``grid_points`` order is the
     # classification order, so the shared labelling accumulates exactly as before.
     points = grid_points(region)
-    from ...engine.run import resolve_backend
+    from ..._engine.run import resolve_backend
 
-    backend = resolve_backend(getattr(system, "_default_backend", "interp"))
+    backend = resolve_backend(getattr(system, "_default_backend", "jit"))
     labels = classify_seeds(mapper, points, backend=backend, jit=backend == "jit")
     diverged = int(np.sum(labels == DIVERGED))
 
+    _warn_if_nothing_settled(
+        diverged, points.shape[0], analysis="basins", system=system, cellgrid=cellgrid
+    )
+
     merge = mapper.merge_map(resolve_merge_tol(cellgrid, merge_tol))
-    labels = _apply_merge(labels.reshape(region.shape), merge)
     attractors = mapper.attractor_set(diverged=diverged, seeds=points.shape[0], merge=merge)
+    # Order the colours by WHERE the attractors are, not by the order the seeds
+    # happened to find them — otherwise the same well is #1 in one panel and #2
+    # in the next.  One composed permutation, applied to the image and the set.
+    attractors, merge = canonical_relabel(attractors, merge)
+    labels = _apply_merge(labels.reshape(region.shape), merge)
     return BasinsResult(
         labels=labels,
         grid=region,
         attractors=attractors,
-        meta=AnalysisResult.build_meta(system, analysis="basins_of_attraction", seed=seed),
+        meta=_build_meta(
+            system,
+            analysis="basins",
+            seed=seed,
+            variables=getattr(system, "variables", None),
+        ),
     )
 
 
 def basin_fractions(
     system: Any,
-    region: Box | Ball | Grid,
+    region: Grid | Box | Ball | Sequence[tuple[float, ...]] | None = None,
     *,
-    n: int = 10000,
+    n_seeds: int = 10000,
     resolution: int | tuple[int, ...] = 100,
     seed: int | None = 0,
     dt: float = 1.0,
@@ -437,6 +710,14 @@ def basin_fractions(
     al., 2013).  The estimate is dimension-free — its standard error
     :math:`\sqrt{p(1-p)/n}` depends only on the fraction and ``n``.
 
+    **Not the same statistic as** ``basins(system, region).fractions``, despite
+    the shared word: that is an exact *census* of one grid image (every cell
+    counted once, diverged cells included in the total), this is a Monte Carlo
+    estimate over a *measure* with a standard error.  They measurably disagree —
+    on Van der Pol, ``{1: 1.0}`` here against ``{1: 0.9922}`` there.  Ask this
+    one "how likely is a random perturbation to land here?"; ask that one "what
+    does this picture show?".
+
     Parameters
     ----------
     system : System
@@ -444,8 +725,13 @@ def basin_fractions(
     region : Box, Ball, or Grid
         The measure to sample initial conditions from (uniform over a Box/Ball, or
         a Grid's bounding box).
-    n : int, default 10000
-        Number of random initial conditions.
+    n_seeds : int, default 10000
+        Number of random **initial conditions** drawn from ``region`` — the word
+        ``attractors`` / ``fixed_points`` / ``periodic_orbits`` have always used.
+        (It was ``n`` before v6 round 8, the only door in the family that spelled
+        it differently; ``n=`` now raises, naming this one.)  The standard error
+        of every reported fraction is :math:`\sqrt{p(1-p)/n}`, so this is the
+        accuracy knob.
     resolution : int or tuple of int, default 100
         Recurrence cells per axis (a Grid uses its own ``counts``).
     seed : int, optional
@@ -472,45 +758,60 @@ def basin_fractions(
         If ``system`` is a delay or stochastic system (unsupported by the
         recurrence finder).
 
+    Warns
+    -----
+    UserWarning
+        When a located set fails the invariance audit and is discarded — the
+        recurrence predicate mistook slow motion for convergence (``dt`` too
+        small for the cell size).  Every located attractor is verified before it
+        is returned; see
+        :func:`~tsdynamics.analysis.basins.attractors.audit_attractors`.
+
     References
     ----------
     P. J. Menck, J. Heitzig, N. Marwan and J. Kurths, "How basin stability
     complements the linear-stability paradigm", *Nature Physics* **9**, 89 (2013).
     """
     _reject_unsupported(system, "basin_fractions")
+    reject_unknown_fsm(fsm, analysis="basin_fractions")
+    region = coerce_region(region, analysis="basin_fractions", system=system, want_grid=False)
     cellgrid = _recurrence_grid(region, resolution)
     mapper = _AttractorMapper(system, cellgrid, dt=dt, max_steps=max_steps, **fsm)
     draw = sampler(region, seed=seed)
 
-    n = int(n)
+    n = int(n_seeds)
     # Draw the whole sample up front (the sampler order — and so the labelling
     # order — is unchanged) and march it: one sequential Rust kernel call on a
     # supported engine run, else the per-sample Python loop (the oracle).  This
     # also accelerates :func:`continuation`, which sweeps ``basin_fractions``.
     samples = np.array([draw() for _ in range(n)], dtype=np.float64).reshape(-1, cellgrid.dim)
-    from ...engine.run import resolve_backend
+    from ..._engine.run import resolve_backend
 
-    backend = resolve_backend(getattr(system, "_default_backend", "interp"))
+    backend = resolve_backend(getattr(system, "_default_backend", "jit"))
     labels = classify_seeds(mapper, samples, backend=backend, jit=backend == "jit")
     diverged = int(np.sum(labels == DIVERGED))
+    _warn_if_nothing_settled(
+        diverged, int(n), analysis="basin_fractions", system=system, cellgrid=cellgrid
+    )
     counts: dict[int, int] = {}
     for lab in labels[labels != DIVERGED]:
         counts[int(lab)] = counts.get(int(lab), 0) + 1
 
     merge = mapper.merge_map(resolve_merge_tol(cellgrid, merge_tol))
+    attractors = mapper.attractor_set(diverged=diverged, seeds=n, merge=merge)
+    attractors, merge = canonical_relabel(attractors, merge)
     merged_counts: dict[int, int] = {}
     for k, c in counts.items():
         cid = merge.get(k, k)
         merged_counts[cid] = merged_counts.get(cid, 0) + c
 
     fractions = {k: c / n for k, c in merged_counts.items()}
-    attractors = mapper.attractor_set(diverged=diverged, seeds=n, merge=merge)
     return BasinFractions(
         fractions=fractions,
         diverged=diverged / n,
         n=n,
         attractors=attractors,
-        meta=AnalysisResult.build_meta(system, analysis="basin_fractions"),
+        meta=_build_meta(system, analysis="basin_fractions"),
     )
 
 

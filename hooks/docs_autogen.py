@@ -59,6 +59,7 @@ import catalog as _catalog  # noqa: E402  (docs/_tooling)
 import equations as _equations  # noqa: E402
 import field_movies as _field_movies  # noqa: E402
 import figures as _figures  # noqa: E402
+import gallery as _gallery  # noqa: E402
 import plot_dt as _plot_dt  # noqa: E402  (re-exported for downstream tuning)
 import properties as _properties  # noqa: E402
 import threejs_viewer as _viewer  # noqa: E402
@@ -88,6 +89,11 @@ _VIEWERS: dict[str, str] = {}
 #: (the ``.mp4`` / ``.gif`` movie and its poster PNG — binary blobs registered
 #: from disk, not in-memory strings).
 _FIELD_MOVIE_ASSETS: dict[str, str] = {}
+#: site uri → absolute cached path for every plot-gallery figure (same
+#: registered-from-disk pattern as the field movies).
+_GALLERY_ASSETS: dict[str, str] = {}
+#: The generated body of the plot gallery, substituted into its page's token.
+_GALLERY_BODY = ""
 _VERSION = "?"
 
 
@@ -361,39 +367,82 @@ def _parameter_table(rec) -> list[str]:
 
 
 def _define_block(rec) -> list[str]:
-    """Build a "Define it in TSDynamics" code block using the **real** library API."""
+    """Build a "Use it in TSDynamics" code block using the **real** v6 library API.
+
+    Two spellings are load-bearing here and are gated by
+    :func:`_assert_define_block_uses_the_live_api`, because this block is
+    reproduced on all 177 generated pages and nothing else executes it:
+
+    * ``run`` is the one trajectory verb on every family (``integrate`` /
+      ``iterate`` / ``trajectory`` do not exist);
+    * an analysis is a **free function whose first argument is its subject**
+      (``ts.analysis.lyapunov_spectrum(system)``) — there is no bound method.
+    """
     if rec.family == "map":
-        run = "traj = sys.iterate(steps=10_000)"
+        run = "traj = system.run(steps=10_000)"
     elif rec.family == "dde":
-        run = "traj = sys.integrate(final_time=500.0, dt=0.5)"
+        run = "traj = system.run(final_time=500.0, dt=0.5)"
     else:
-        run = "traj = sys.integrate(final_time=100.0, dt=0.01)"
+        run = "traj = system.run(final_time=100.0, dt=0.01)"
 
     lines = [
-        "## Define it in TSDynamics",
+        "## Use it in TSDynamics",
         "",
         "```python",
         "import tsdynamics as ts",
         "",
-        f"sys = ts.systems.{rec.name}()",
+        f"system = ts.systems.{rec.name}()",
         run,
+        "ts.plot(traj)",
     ]
-    # A Lyapunov line where it is meaningful (flows + maps; not DDE/SDE — those have
-    # their own dedicated estimators, shown elsewhere).
+    # A Lyapunov line where it is meaningful (flows + maps; not SDE — its estimator
+    # is a different object, shown on the stochastic pages).
     if rec.family in ("ode", "map"):
         lines += [
             "",
-            "exps = sys.lyapunov_spectrum()",
-            "ts.kaplan_yorke_dimension(exps)",
+            "spectrum = ts.analysis.lyapunov_spectrum(system)",
+            "ts.analysis.kaplan_yorke_dimension(spectrum)",
         ]
     elif rec.family == "dde":
         lines += [
             "",
             "# DDE Lyapunov uses the infinite-dimensional-history estimator:",
-            "exps = sys.lyapunov_spectrum(n_exp=1, dt=0.5, ic=traj.y[-1])",
+            "spectrum = ts.analysis.lyapunov_spectrum(system, k=1, dt=0.5, ic=traj.y[-1])",
         ]
     lines += ["```", ""]
     return lines
+
+
+#: Spellings that must NOT appear in a generated page's code block.  Each is a
+#: v5 name the v6 API removed; a page that shows one hands the reader a line
+#: that raises.  Checked at build time by
+#: :func:`_assert_define_block_uses_the_live_api`.
+_DEAD_API_SPELLINGS: tuple[str, ...] = (
+    ".integrate(",
+    ".iterate(",
+    ".trajectory(",
+    "sys.lyapunov_spectrum",
+    "system.lyapunov_spectrum",
+    "ts.kaplan_yorke_dimension",
+    "n_exp=",
+)
+
+
+def _assert_define_block_uses_the_live_api(rec, block: str) -> None:
+    """Fail the build if a generated code block uses a name v6 removed.
+
+    The 177 generated pages are the library's largest single body of example
+    code and **no test executes them**, so a renamed verb would ship silently on
+    every one of them.  This turns that into a ``--strict`` build failure naming
+    the system and the dead spelling.
+    """
+    for dead in _DEAD_API_SPELLINGS:
+        if dead in block:
+            raise RuntimeError(
+                f"generated page for {rec.name} uses the removed spelling {dead!r}; "
+                f"hooks/docs_autogen.py::_define_block must use the live v6 API "
+                f"(run / ts.analysis.<name>(subject))"
+            )
 
 
 def _sde_equations_md(rec) -> str:
@@ -498,6 +547,26 @@ def _reference_block(rec) -> list[str]:
     return parts
 
 
+def _assert_doi_is_rendered(rec, block: str) -> None:
+    """Fail the build if a system that HAS a DOI publishes a page without it.
+
+    155 of the 177 built-in systems carry a DOI on the class.  Until v6 the
+    registry entry had no ``doi`` field at all, so :data:`SystemRecord.doi` read
+    ``None`` for every one of them and all 155 links were dropped silently —
+    every page looked correct, just poorer.  A missing link is exactly the kind
+    of defect that has no symptom, so it gets a gate: a record carrying a DOI
+    must publish a resolvable ``doi.org`` link, and ``--strict`` turns a
+    violation into a build failure naming the system.
+    """
+    if not rec.doi or not rec.reference:
+        return
+    if f"https://doi.org/{rec.doi}" not in block:
+        raise RuntimeError(
+            f"generated page for {rec.name} drops its DOI ({rec.doi}); the registry "
+            f"entry carries one, so _reference_block must render a doi.org link"
+        )
+
+
 def _out_rel(from_uri: str, to_root_path: str) -> str:
     """Site-root-relative path as seen from the *rendered* page of ``from_uri``.
 
@@ -580,11 +649,15 @@ def _system_page(
     except Exception as exc:  # noqa: BLE001 — a property card must never break a build
         parts += [f"_Properties unavailable ({type(exc).__name__})._", ""]
 
-    # Define it (real API).
-    parts += _define_block(rec)
+    # Use it (the real v6 API), gated against spellings v6 removed.
+    define = _define_block(rec)
+    _assert_define_block_uses_the_live_api(rec, "\n".join(define))
+    parts += define
 
-    # Reference.
-    parts += _reference_block(rec)
+    # Reference — citation, resolvable DOI link, BibTeX.
+    reference = _reference_block(rec)
+    _assert_doi_is_rendered(rec, "\n".join(reference))
+    parts += reference
 
     return "\n".join(parts)
 
@@ -640,9 +713,9 @@ def _systems_index(catalog) -> str:
         "import tsdynamics as ts",
         "",
         "lorenz = ts.systems.Lorenz()",
-        "traj = lorenz.integrate(final_time=100.0, dt=0.01)   # trajectory → attractor",
-        "exps = lorenz.lyapunov_spectrum()                    # [≈ +0.91, 0, ≈ −14.57]",
-        "ts.kaplan_yorke_dimension(exps)                      # ≈ 2.06",
+        "traj = lorenz.run(final_time=100.0, dt=0.01)             # trajectory → attractor",
+        "exps = ts.analysis.lyapunov_spectrum(lorenz)             # [≈ +0.91, 0, ≈ −14.57]",
+        "ts.analysis.kaplan_yorke_dimension(exps)                 # ≈ 2.06",
         "```",
         "",
         "## Browse by type",
@@ -714,7 +787,7 @@ def _type_define_snippet(family: str) -> list[str]:
             "",
             "# Pick any continuous system and integrate it:",
             "sys = ts.systems.Lorenz()",
-            "traj = sys.integrate(final_time=100.0, dt=0.01)",
+            "traj = sys.run(final_time=100.0, dt=0.01)",
         ]
     if family == "dde":
         return [
@@ -723,7 +796,7 @@ def _type_define_snippet(family: str) -> list[str]:
             "",
             "# A delay system carries its own delay τ; supply a past history:",
             "sys = ts.systems.MackeyGlass()",
-            "traj = sys.integrate(",
+            "traj = sys.run(",
             "    final_time=500.0, dt=0.5,",
             "    history=lambda s: [1.0 + 0.1 * np.sin(0.2 * s)],",
             ")",
@@ -734,7 +807,7 @@ def _type_define_snippet(family: str) -> list[str]:
             "",
             "# A stochastic system integrates with a seeded noise realisation:",
             "sys = ts.systems.OrnsteinUhlenbeck()",
-            "traj = sys.integrate(final_time=100.0, dt=0.01, seed=0)",
+            "traj = sys.run(final_time=100.0, dt=0.01, seed=0)",
         ]
     # map
     return [
@@ -742,8 +815,8 @@ def _type_define_snippet(family: str) -> list[str]:
         "",
         "# Discrete maps iterate — no integration step required:",
         "sys = ts.systems.Henon()",
-        "traj = sys.iterate(steps=10_000)",
-        "exps = sys.lyapunov_spectrum()",
+        "traj = sys.run(steps=10_000)",
+        "exps = ts.analysis.lyapunov_spectrum(sys)",
     ]
 
 
@@ -842,6 +915,36 @@ def _patch_systems_nav(nav: list, subtree: list) -> bool:
 # ===========================================================================
 # MkDocs hooks
 # ===========================================================================
+def _build_gallery():
+    """Render the plot gallery and stash its body + figure assets.
+
+    The gallery is generated from ``registry.plot_transforms``, so it is the one
+    page that cannot drift from the code: a transform that stops rendering shows
+    up here as a failed cell.  Failures are logged through the ``mkdocs`` logger
+    at WARNING, which ``mkdocs build --strict`` turns into a build failure —
+    deliberately louder than the per-system figures, which soft-fail because a
+    catalogue page without a picture is still a useful page, while a *gallery*
+    that quietly drops a plot is exactly the drift this page exists to prevent.
+    """
+    global _GALLERY_BODY
+
+    import logging
+
+    log = logging.getLogger("mkdocs.plugins.docs_autogen")
+    build = _gallery.render_all(figures=WITH_FIGURES)
+    _GALLERY_BODY = _gallery.page(build)
+    _GALLERY_ASSETS.clear()
+    _GALLERY_ASSETS.update(build.assets())
+    rendered = sum(1 for cell in build.cells if not cell.from_cache and cell.filename)
+    print(
+        f"docs_autogen: gallery — {len(build.cells)} cells over "
+        f"{len({c.transform for c in build.cells})} transforms "
+        f"({rendered} rendered, {len(_GALLERY_ASSETS) - rendered} cached)"
+    )
+    for name, primitive, message in build.failures:
+        log.warning("docs_autogen: gallery cell %s.%s failed: %s", name, primitive, message)
+
+
 def on_config(config):
     """Generate every Systems page + its figures/viewers; patch the nav."""
     global _VERSION
@@ -947,6 +1050,9 @@ def on_config(config):
             uri = f"{_SYSTEMS_ROOT}/{slug}/{cat_slug}/index.md"
             _GENERATED[uri] = _subcategory_index(family, category, records, generated_systems)
 
+    # --- the plot gallery (generated from registry.plot_transforms) --------
+    _build_gallery()
+
     # --- nav ---------------------------------------------------------------
     if config.nav is not None:
         subtree = _build_nav(catalog)
@@ -1000,6 +1106,15 @@ def on_files(files, config):
         files.append(
             File.generated(config, uri, abs_src_path=abs_src, inclusion=InclusionLevel.INCLUDED)
         )
+    # Plot-gallery figures — same story: rendered into ``.cache/docs-gallery`` and
+    # registered from there, so the generator never writes into ``docs/``.
+    for uri, abs_src in _GALLERY_ASSETS.items():
+        existing = files.get_file_from_path(uri)
+        if existing is not None:
+            files.remove(existing)
+        files.append(
+            File.generated(config, uri, abs_src_path=abs_src, inclusion=InclusionLevel.INCLUDED)
+        )
     # The viewers import the shared three.js loader from ``_static/`` — a tree
     # ``exclude_docs`` drops, so mkdocs never copies it.  Emit it as a generated
     # file when any viewer shipped, so the iframe import resolves instead of
@@ -1023,5 +1138,8 @@ def on_files(files, config):
 
 
 def on_page_markdown(markdown, page, config, files):
-    """Substitute build-time tokens (the library version)."""
-    return markdown.replace("{{ tsdynamics_version }}", _VERSION)
+    """Substitute build-time tokens (the library version, the generated gallery)."""
+    markdown = markdown.replace("{{ tsdynamics_version }}", _VERSION)
+    if _gallery.TOKEN in markdown:
+        markdown = markdown.replace(_gallery.TOKEN, _GALLERY_BODY)
+    return markdown

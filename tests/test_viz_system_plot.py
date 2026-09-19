@@ -1,8 +1,8 @@
 """System families are Plottable end-to-end (stream VIZ-SYSTEM-PLOT).
 
-``ts.Lorenz().plot()`` must resolve through the visualization seam exactly like
-an analysis result: a system describes itself with ``to_plot_spec()`` (a default
-trajectory delegated to :meth:`tsdynamics.data.Trajectory.to_plot_spec`), and
+``ts.systems.Lorenz().plot()`` must resolve through the visualization seam exactly like
+an analysis result: a system describes itself with ``__plot_spec__()`` (a default
+trajectory delegated to :meth:`tsdynamics.data.Trajectory.__plot_spec__`), and
 ``.plot()`` routes that spec to a backend (raising the documented
 ``VisualizationNotInstalled`` until one registers).  The mixin imports the viz
 package only lazily, so ``import tsdynamics`` stays visualization-free.
@@ -37,24 +37,24 @@ def test_every_family_base_is_plottable():
         assert issubclass(cls, SystemPlottable)
 
 
-def test_continuous_system_to_plot_spec_resolves():
+def test_continuous_system_plot_spec_resolves():
     """A flow integrates a default trajectory and yields a valid spec."""
-    spec = ts.Lorenz().to_plot_spec()
+    spec = ts.systems.Lorenz().__plot_spec__()
     assert isinstance(spec, PlotSpec)
     assert isinstance(spec.kind, PlotKind)
     assert spec.layers
 
 
-def test_discrete_map_to_plot_spec_resolves():
+def test_discrete_map_plot_spec_resolves():
     """A map's default spec resolves too (dispatching on is_discrete)."""
-    spec = ts.Henon().to_plot_spec()
+    spec = ts.systems.Henon().__plot_spec__()
     assert isinstance(spec, PlotSpec)
     assert isinstance(spec.kind, PlotKind)
 
 
-def test_to_plot_spec_forwards_trajectory_kwargs():
-    """to_plot_spec passes integration kwargs through to the family trajectory."""
-    spec = ts.Lorenz().to_plot_spec(final_time=5.0, dt=0.05)
+def test_plot_spec_forwards_trajectory_kwargs():
+    """__plot_spec__ passes integration kwargs through to the family trajectory."""
+    spec = ts.systems.Lorenz().__plot_spec__(final_time=5.0, dt=0.05)
     assert isinstance(spec, PlotSpec)
 
 
@@ -81,15 +81,27 @@ def _no_backend(monkeypatch):
             registry.renderers.register(entry.name, entry.obj, replace=True)
 
 
-def test_plot_raises_without_a_backend(_no_backend):
-    """`.plot()` resolves end-to-end to the render seam (no backend → documented error)."""
+def test_render_raises_without_a_backend(_no_backend):
+    """`.plot().render()` resolves end-to-end to the render seam (no backend → error).
+
+    ``.plot()`` itself is backend-free since v6: it *builds* the
+    :class:`~tsdynamics.viz.spec.PlotSpec` (the same thing ``ts.plot(system)``
+    returns), and ``.render()`` is what needs a backend.
+    """
     with pytest.raises(VisualizationNotInstalled):
-        ts.Lorenz().plot()
+        ts.systems.Lorenz().plot().render()
+
+
+def test_system_plot_returns_a_spec_like_every_other_door(_no_backend):
+    """``system.plot()`` and ``ts.plot(system)`` are the same kind of thing."""
+    from tsdynamics.viz.spec import PlotSpec
+
+    assert isinstance(ts.systems.Lorenz().plot(final_time=2.0, dt=0.05), PlotSpec)
 
 
 def test_repr_mimebundle_is_noop_without_backend(_no_backend):
     """The notebook hook no-ops (returns None) until a backend registers."""
-    assert ts.Lorenz()._repr_mimebundle_() is None
+    assert ts.systems.Lorenz()._repr_mimebundle_() is None
 
 
 def test_import_tsdynamics_stays_viz_free():

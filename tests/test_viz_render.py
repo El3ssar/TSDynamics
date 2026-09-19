@@ -9,7 +9,7 @@ vocabulary on the Agg canvas without error.  This gate freezes that:
 2. **Every semantic kind renders** — a minimal spec of each
    :meth:`PlotKind.semantic_kinds` kind (2-D, 3-D, image, bar, …) renders.
 3. **Registry conformance** — every registered analysis whose result carries a
-   ``to_plot_spec`` produces a spec whose semantic kind and layer marks are real
+   ``__plot_spec__`` produces a spec whose semantic kind and layer marks are real
    :class:`~tsdynamics.viz.spec.PlotKind` members that round-trip through
    ``to_dict`` / ``from_dict`` (engine-free; the synthetic builders live in
    :mod:`tests.test_viz_fake_renderer`).
@@ -84,7 +84,6 @@ _IMAGE_KINDS = frozenset(
         PlotKind.IMAGE,
         PlotKind.BASINS_IMAGE,
         PlotKind.SPACETIME,
-        PlotKind.SPECTROGRAM,
     }
 )
 
@@ -105,13 +104,8 @@ def _spec_for_kind(kind: PlotKind) -> PlotSpec:
     if kind == PlotKind.RECURRENCE_PLOT:
         # Sparse recurrence plot — a scatter, never a dense image (anti-OOM).
         return PlotSpec(kind=kind, aspect="equal", layers=[_layer_for_mark(PlotKind.SCATTER)])
-    if kind in (PlotKind.CATEGORICAL_BAR, PlotKind.FEATURE_BARS, PlotKind.LYAPUNOV_SPECTRUM):
+    if kind in (PlotKind.CATEGORICAL_BAR, PlotKind.LYAPUNOV_SPECTRUM):
         return PlotSpec(kind=kind, layers=[_layer_for_mark(PlotKind.BAR)])
-    if kind == PlotKind.HISTOGRAM_NULL:
-        return PlotSpec(kind=kind, layers=[_layer_for_mark(PlotKind.HISTOGRAM)])
-    if kind in (PlotKind.TRAJECTORY_ANIMATION, PlotKind.ENSEMBLE_ANIMATION):
-        # Animation kinds render their final frame (no animation backend ships).
-        return PlotSpec(kind=kind, layers=[_layer_for_mark(PlotKind.LINE)])
     if kind == PlotKind.COMPOSITE:
         # A composite is a multi-panel figure: it tiles ``panels``, not ``layers``.
         from tsdynamics.viz.spec import Layout
@@ -177,7 +171,7 @@ def test_every_result_spec_is_coercible_and_round_trips():
     for cls, build in builders.items():
         result = build()
         try:
-            spec = result.to_plot_spec()
+            spec = result.__plot_spec__()
         except VisualizationNotInstalled:
             continue  # the documented "nothing to draw" path
         assert isinstance(spec, PlotSpec), cls.__name__
@@ -198,7 +192,7 @@ def test_every_registered_analysis_result_renders_or_is_documented():
     for cls, build in _result_builders().items():
         result = build()
         try:
-            spec = result.to_plot_spec()
+            spec = result.__plot_spec__()
         except VisualizationNotInstalled:
             continue
         fig = spec.render("matplotlib")
@@ -355,3 +349,254 @@ def test_last_resort_prefers_drawing_backend_over_exporter(_isolated_renderers):
     spec = PlotSpec(kind=PlotKind.TIME_SERIES, layers=[_layer_for_mark(PlotKind.LINE)])
     name, _ = select_renderer(spec, backend=None)
     assert name == "plotly"
+
+
+# ---------------------------------------------------------------------------
+# 6 — the honesty contract covers the figure-geometry theme fields
+# ---------------------------------------------------------------------------
+#
+# ``Theme`` grew ``figsize`` / ``dpi`` / ``layout_engine`` / ``autostyle`` in this
+# phase, but ``style_honoring_gaps`` did not learn about them: it returned ``[]``
+# for matplotlib *and* plotly, and for threejs named only the six pre-existing
+# theme fields.  Three of the four were therefore accepted and dropped in silence
+# by two backends — a documented knob that does nothing, which is the precise
+# failure the honoring contract exists to make loud.
+#
+# Each assertion below is checked against the *rendered artifact*, not just the
+# gap table, so an overclaim ("we honor it") cannot ship green.
+
+
+def _geometry_spec(**theme_kw):
+    spec = PlotSpec(kind=PlotKind.TIME_SERIES, layers=[_layer_for_mark(PlotKind.LINE)])
+    return spec.theme("default", **theme_kw)
+
+
+def test_matplotlib_honors_all_four_geometry_fields_so_reports_no_gap():
+    """matplotlib applies figsize / dpi / layout_engine / autostyle — no gap claimed."""
+    from tsdynamics.viz.render.caps import style_honoring_gaps
+
+    spec = _geometry_spec(
+        figsize=(5.0, 3.5), dpi=300.0, layout_engine="constrained", autostyle=False
+    )
+    assert style_honoring_gaps(spec, "matplotlib") == []
+    # ... and the artifact proves the claim.
+    fig = spec.render("matplotlib")
+    assert tuple(fig.get_size_inches()) == (5.0, 3.5)
+    assert fig.get_dpi() == 300.0
+    assert type(fig.get_layout_engine()).__name__ == "ConstrainedLayoutEngine"
+    assert fig.axes[0].lines[0].get_linewidth() == 1.5  # autostyle off -> theme width
+
+
+def test_plotly_reports_the_three_geometry_fields_it_ignores():
+    """plotly honors ``autostyle`` only; the other three are declared gaps."""
+    pytest.importorskip("plotly")
+    from tsdynamics.viz.render.caps import style_honoring_gaps
+
+    spec = _geometry_spec(figsize=(5.0, 3.5), dpi=300.0, layout_engine="constrained")
+    from tsdynamics.viz.render.caps import VisualizationDegraded
+
+    assert style_honoring_gaps(spec, "plotly") == ["dpi", "figsize", "layout_engine"]
+    # The artifact confirms the gap is real (plotly sizes from layout.width/height),
+    # and the user is told about it exactly once.
+    with pytest.warns(VisualizationDegraded, match="dpi, figsize, layout_engine"):
+        layout = spec.render("plotly").to_plotly_json()["layout"]
+    assert layout.get("width") is None and layout.get("height") is None
+
+    # autostyle IS honored, so it must NOT be claimed as a gap...
+    auto_off = _geometry_spec(autostyle=False)
+    assert "autostyle" not in style_honoring_gaps(auto_off, "plotly")
+    # ... and the trace proves it (density-aware width is switched off).
+    trace = auto_off.render("plotly").to_plotly_json()["data"][0]
+    assert trace["line"]["width"] == 1.5
+
+
+def test_threejs_reports_all_four_geometry_fields():
+    """three.js honors none of the four; ``autostyle`` only when actually set off."""
+    from tsdynamics.viz.render.caps import style_honoring_gaps
+
+    spec = _geometry_spec(
+        figsize=(5.0, 3.5), dpi=300.0, layout_engine="constrained", autostyle=False
+    )
+    from tsdynamics.viz.render.caps import VisualizationDegraded
+
+    gaps = style_honoring_gaps(spec, "threejs")
+    assert {"figsize", "dpi", "layout_engine", "autostyle"} <= set(gaps)
+    # The payload confirms it: the exported theme block carries background/palette
+    # only, so no geometry field can have reached the loader.
+    with pytest.warns(VisualizationDegraded):
+        payload = spec.render("threejs").payload
+    theme_block = payload["metadata"]["theme"]
+    assert set(theme_block) <= {"background", "palette"}
+
+
+def test_untouched_geometry_defaults_are_not_reported_as_gaps():
+    """Only knobs actually *set* are reported — an untouched default is not noise."""
+    from tsdynamics.viz.render.caps import style_honoring_gaps
+
+    plain = PlotSpec(kind=PlotKind.TIME_SERIES, layers=[_layer_for_mark(PlotKind.LINE)])
+    for backend in ("matplotlib", "plotly", "threejs"):
+        gaps = style_honoring_gaps(plain, backend)
+        assert not ({"figsize", "dpi", "layout_engine", "autostyle"} & set(gaps)), backend
+
+
+def test_geometry_gap_is_also_seen_via_spec_size():
+    """``spec.size(...)`` writes ``meta``, not the theme — both must be checked."""
+    from tsdynamics.viz.render.caps import style_honoring_gaps
+
+    spec = PlotSpec(kind=PlotKind.TIME_SERIES, layers=[_layer_for_mark(PlotKind.LINE)])
+    spec.size(5.0, 3.5, dpi=200.0)
+    gaps = style_honoring_gaps(spec, "threejs")
+    assert "figsize" in gaps and "dpi" in gaps
+
+
+def test_the_geometry_gaps_reach_the_user_as_one_warning():
+    """The dispatcher's consolidated VisualizationDegraded names the ignored knobs."""
+    from tsdynamics.viz.render.caps import VisualizationDegraded
+
+    spec = _geometry_spec(figsize=(5.0, 3.5), dpi=300.0)
+    with pytest.warns(VisualizationDegraded, match="figsize"):
+        spec.render("threejs")
+
+
+# ---------------------------------------------------------------------------
+# 7 — one definition of "is this spec 3-D"
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "spec_factory",
+    [
+        lambda: PlotSpec(kind=PlotKind.TIME_SERIES, layers=[_layer_for_mark(PlotKind.LINE)]),
+        lambda: _spec_for_kind(PlotKind.PHASE_PORTRAIT_3D),
+        lambda: PlotSpec(
+            kind=PlotKind.TIME_SERIES,
+            layers=[_layer_for_mark(PlotKind.SURFACE3D)],
+            ndim=2,
+        ),
+    ],
+    ids=["2d", "3d", "surface3d_with_ndim2"],
+)
+def test_every_backend_shares_one_three_d_predicate(spec_factory):
+    """The renderers' ``is_three_d`` is the spec's property, not a private copy.
+
+    It lived in three byte-identical copies (the capability check, the matplotlib
+    renderer, the plotly renderer).  A renderer that disagreed with the dispatcher
+    about what "3-D" means routes a spec onto axes it cannot draw on, so the
+    predicate belongs to the spec and the copies are gone.
+    """
+    from tsdynamics.viz.render.mpl import _threed as mpl_threed
+
+    spec = spec_factory()
+    assert mpl_threed.is_three_d(spec) is spec.is_three_d
+    plotly = pytest.importorskip("plotly")  # noqa: F841
+    from tsdynamics.viz.render.plotly import _threed as plotly_threed
+
+    assert plotly_threed.is_three_d(spec) is spec.is_three_d
+
+
+def test_capability_check_uses_the_spec_three_d_property():
+    """A 2-D-only backend declines a 3-D spec through ``PlotSpec.is_three_d``."""
+    from tsdynamics.viz.render.caps import RendererCapabilities
+
+    caps = RendererCapabilities.all_kinds("flat", supports_3d=False)
+    assert not hasattr(RendererCapabilities, "_is_three_d")  # the copy is gone
+    assert caps.can_render_spec(_spec_for_kind(PlotKind.PHASE_PORTRAIT_3D)) is False
+    assert caps.can_render_spec(_spec_for_kind(PlotKind.TIME_SERIES)) is True
+
+
+# ---------------------------------------------------------------------------
+# render(ax=) — drawing into a user-owned Axes (the P0 escape hatch)
+# ---------------------------------------------------------------------------
+
+
+def _ax_pair(**subplot_kw):
+    """Return ``(fig, ax)`` from a user-style ``plt.subplots`` call."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    return plt.subplots(**subplot_kw)
+
+
+def test_render_into_a_user_owned_axes():
+    """``render(ax=...)`` draws into your figure and returns it.
+
+    The single-panel drawing body always worked on an arbitrary axes (it is what
+    the composite renderer calls per panel); only the ``ax=`` plumbing and its
+    keyword blessing were missing, which blocked every "put this in my paper
+    figure" workflow.
+    """
+    fig, axs = _ax_pair(ncols=2)
+    line = _spec_for_kind(PlotKind.TIME_SERIES)
+    returned = line.render("matplotlib", ax=axs[0])
+    assert returned is fig
+    assert len(axs[0].lines) == 1
+    assert len(axs[1].lines) == 0  # only the axes we named was touched
+    assert axs[0].get_xlabel() == line.x.label
+
+
+def test_render_into_a_user_axes_applies_the_axes_and_the_theme():
+    fig, ax = _ax_pair()
+    spec = _spec_for_kind(PlotKind.TIME_SERIES).relabel(x="tau", y="u").limits(x=(0.0, 1.0))
+    spec.render("matplotlib", ax=ax)
+    assert (ax.get_xlabel(), ax.get_ylabel()) == ("tau", "u")
+    assert ax.get_xlim() == (0.0, 1.0)
+
+
+def test_render_into_a_user_owned_3d_axes():
+    fig, ax = _ax_pair(subplot_kw={"projection": "3d"})
+    _spec_for_kind(PlotKind.PHASE_PORTRAIT_3D).render("matplotlib", ax=ax)
+    assert ax.name == "3d"
+    assert len(ax.lines) >= 1
+
+
+def test_render_ax_refuses_a_dimension_mismatch():
+    """A 3-D spec on a 2-D axes would silently drop the depth coordinate."""
+    from tsdynamics.errors import InvalidParameterError
+
+    _, flat = _ax_pair()
+    with pytest.raises(InvalidParameterError, match="projection"):
+        _spec_for_kind(PlotKind.PHASE_PORTRAIT_3D).render("matplotlib", ax=flat)
+
+    _, deep = _ax_pair(subplot_kw={"projection": "3d"})
+    with pytest.raises(InvalidParameterError, match="2-D spec"):
+        _spec_for_kind(PlotKind.TIME_SERIES).render("matplotlib", ax=deep)
+
+
+def test_render_ax_refuses_a_composite_and_an_animation():
+    """Both drive a whole *figure*, so one axes cannot hold them."""
+    from tsdynamics.errors import InvalidParameterError
+
+    _, ax = _ax_pair()
+    panel = _spec_for_kind(PlotKind.TIME_SERIES)
+    composite = PlotSpec(kind=PlotKind.COMPOSITE, panels=[panel, _spec_for_kind(PlotKind.LINE)])
+    with pytest.raises(InvalidParameterError, match="one axes per panel"):
+        composite.render("matplotlib", ax=ax)
+
+    animated = _spec_for_kind(PlotKind.TIME_SERIES)
+    animated.animate(fps=10.0)
+    with pytest.raises(InvalidParameterError, match="frame loop"):
+        animated.render("matplotlib", ax=ax)
+
+
+def test_ax_is_matplotlibs_keyword_alone():
+    """``ax=`` on another backend raises naming that backend's accepted set.
+
+    ``ax`` *is* a matplotlib Axes, so this is the correct answer rather than an
+    oversight — and it comes free from the render-keyword gate.
+    """
+    pytest.importorskip("plotly")
+    from tsdynamics.errors import InvalidParameterError
+
+    _, ax = _ax_pair()
+    with pytest.raises(InvalidParameterError, match="unexpected render keyword"):
+        _spec_for_kind(PlotKind.TIME_SERIES).render("plotly", ax=ax)
+
+
+def test_ax_reaches_the_renderer_through_the_plot_sugar():
+    """``spec.tweak(title=...).render(ax=...)``: tweaks to tweak, backend kwargs to render."""
+    _, ax = _ax_pair()
+    _spec_for_kind(PlotKind.TIME_SERIES).tweak(title="mine").render("matplotlib", ax=ax)
+    assert ax.get_title() == "mine"
+    assert len(ax.lines) == 1

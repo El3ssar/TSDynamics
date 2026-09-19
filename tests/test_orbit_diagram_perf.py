@@ -11,12 +11,20 @@ tests pin the two load-bearing properties:
   path wherever the engine and NumPy agree bit-for-bit (the logistic map, across
   every regime), and records the *same attractor* for a chaotic map whose lowered
   IR differs from NumPy at the ULP level; and
-* **the mechanism** — the engine sweep issues no ``step()`` calls, while flow
-  wrappers (``PoincareMap`` / ``StroboscopicMap``) and engine-less fallbacks keep
-  the per-step protocol path.
+* **the mechanism** — the engine sweep issues no ``step()`` calls, while
+  ``StroboscopicMap`` and engine-less fallbacks keep the per-step protocol path.
+
+A second stream (``perf/poincare-orbit-diagram``) closed the other half of the
+gap: a ``PoincareMap`` sweep — the flagship *bifurcation diagram of a flow* —
+now collects each value's section through ``PoincareMap.run`` (the wired
+Rust event march, WS-CROSSKERNEL) instead of the per-``dt`` ``step()`` loop.
+That path is discretised with the fixed-step ``rk4`` kernel, so it is *not*
+pointwise-equal to the step loop on a chaotic band; what is pinned below is the
+**diagram** (``periods()`` / ``bifurcation_points()``), the point *set* in a
+periodic window, and byte-identity wherever the engine march declines.
 
 The reference is :func:`_old_orbit_diagram`, a faithful copy of the per-step
-algorithm this stream replaced.
+algorithm these streams replaced.
 """
 
 from __future__ import annotations
@@ -30,8 +38,8 @@ import pytest
 pytest.importorskip("tsdynamics._rust")  # engine-marked: routes through the sweep kernel
 
 import tsdynamics as ts
-from tsdynamics.engine.compile import TapeCompileError
-from tsdynamics.engine.run import EngineNotAvailableError
+from tsdynamics._engine.compile import TapeCompileError
+from tsdynamics._engine.run import EngineNotAvailableError
 from tsdynamics.errors import BackendError
 from tsdynamics.families import DiscreteMap
 from tsdynamics.systems import Henon, Logistic
@@ -98,7 +106,9 @@ def _assert_points_equal(new, old, *, exact: bool):
 def test_logistic_600x120_byte_identical():
     """The Logistic 600×120 sweep is byte-identical to the old step-loop path."""
     vals = np.linspace(2.5, 4.0, 600)
-    new = ts.orbit_diagram(Logistic(), "r", vals, n=120, transient=500, ic=[0.3])
+    new = ts.analysis.orbit_diagram(
+        Logistic(), "r", vals, points_per_value=120, transient=500, ic=[0.3]
+    )
     old = _old_orbit_diagram(Logistic(), "r", vals, n=120, transient=500, ic=[0.3])
     _assert_points_equal(new.points, old, exact=True)
 
@@ -106,7 +116,9 @@ def test_logistic_600x120_byte_identical():
 def test_carry_state_byte_identical():
     """``carry_state`` (final row → next IC) propagates byte-identically."""
     vals = np.linspace(2.8, 4.0, 200)
-    new = ts.orbit_diagram(Logistic(), "r", vals, n=64, transient=200, ic=[0.123])
+    new = ts.analysis.orbit_diagram(
+        Logistic(), "r", vals, points_per_value=64, transient=200, ic=[0.123]
+    )
     old = _old_orbit_diagram(Logistic(), "r", vals, n=64, transient=200, ic=[0.123])
     _assert_points_equal(new.points, old, exact=True)
 
@@ -114,7 +126,9 @@ def test_carry_state_byte_identical():
 def test_no_carry_state_byte_identical():
     """With ``carry_state=False`` every value restarts from ``ic`` — still identical."""
     vals = np.linspace(2.8, 3.9, 120)
-    new = ts.orbit_diagram(Logistic(), "r", vals, n=48, transient=150, ic=[0.4], carry_state=False)
+    new = ts.analysis.orbit_diagram(
+        Logistic(), "r", vals, points_per_value=48, transient=150, ic=[0.4], carry_state=False
+    )
     old = _old_orbit_diagram(
         Logistic(), "r", vals, n=48, transient=150, ic=[0.4], carry_state=False
     )
@@ -132,12 +146,13 @@ def test_multidim_convergent_window_agrees():
     so they agree to a tight tolerance on every platform.
     """
     vals = np.linspace(0.05, 0.2, 40)  # stable fixed point across this range (b=0.3)
-    kw = dict(n=60, transient=400)
-    new = ts.orbit_diagram(
-        Henon().with_params(b=0.3), "a", vals, ic=[0.0, 0.0], component=(0, 1), **kw
+    kw = dict(points_per_value=60, transient=400)
+    old_kw = dict(n=60, transient=400)
+    new = ts.analysis.orbit_diagram(
+        Henon().with_params(b=0.3), "a", vals, ic=[0.0, 0.0], components=(0, 1), **kw
     )
     old = _old_orbit_diagram(
-        Henon().with_params(b=0.3), "a", vals, ic=[0.0, 0.0], components=(0, 1), **kw
+        Henon().with_params(b=0.3), "a", vals, ic=[0.0, 0.0], components=(0, 1), **old_kw
     )
     _assert_points_equal(new.points, old, exact=False)
 
@@ -150,7 +165,9 @@ def test_multidim_convergent_window_agrees():
 def test_divergence_records_empty_set_and_warns():
     """A divergent value records an empty set and warns — exactly as before."""
     with pytest.warns(RuntimeWarning, match="diverged"):
-        od = ts.orbit_diagram(Logistic(), "r", [4.5], n=50, transient=50, ic=[0.5])
+        od = ts.analysis.orbit_diagram(
+            Logistic(), "r", [4.5], points_per_value=50, transient=50, ic=[0.5]
+        )
     assert od.points[0].shape == (0, 1)
     assert od.periods()[0] == -1
 
@@ -159,7 +176,9 @@ def test_divergence_then_recovery_byte_identical():
     """A diverged value resets the carry state; the mixed sweep stays identical."""
     vals = [3.7, 4.5, 3.2]  # middle value escapes [0, 1]
     with pytest.warns(RuntimeWarning, match="diverged"):
-        new = ts.orbit_diagram(Logistic(), "r", vals, n=40, transient=80, ic=[0.5])
+        new = ts.analysis.orbit_diagram(
+            Logistic(), "r", vals, points_per_value=40, transient=80, ic=[0.5]
+        )
     old = _old_orbit_diagram(Logistic(), "r", vals, n=40, transient=80, ic=[0.5])
     _assert_points_equal(new.points, old, exact=True)
 
@@ -167,7 +186,9 @@ def test_divergence_then_recovery_byte_identical():
 def test_zero_transient_and_n_records_empty_without_crashing():
     """``transient + n == 0`` records empty sets (regression: a zero-length engine
     iterate must not index ``y[-1]`` and abort the sweep)."""
-    new = ts.orbit_diagram(Logistic(), "r", [3.2, 3.5, 3.8], n=0, transient=0, ic=[0.3])
+    new = ts.analysis.orbit_diagram(
+        Logistic(), "r", [3.2, 3.5, 3.8], points_per_value=0, transient=0, ic=[0.3]
+    )
     old = _old_orbit_diagram(Logistic(), "r", [3.2, 3.5, 3.8], n=0, transient=0, ic=[0.3])
     _assert_points_equal(new.points, old, exact=True)
     assert all(p.shape == (0, 1) for p in new.points)
@@ -187,7 +208,9 @@ def test_chaotic_map_same_attractor():
     invariant set — the support and the occupied region of state space.
     """
     ic = [0.1, 0.2]
-    new = ts.orbit_diagram(Henon(), "a", [1.4], n=4000, transient=2000, ic=ic, component=(0, 1))
+    new = ts.analysis.orbit_diagram(
+        Henon(), "a", [1.4], points_per_value=4000, transient=2000, ic=ic, components=(0, 1)
+    )
     old = _old_orbit_diagram(Henon(), "a", [1.4], n=4000, transient=2000, ic=ic, components=(0, 1))
     a, b = new.points[0], old[0]
     # Same support: matching min/max on each coordinate.
@@ -217,7 +240,9 @@ def test_map_path_issues_no_step_calls(monkeypatch):
         return real_step(self, *a, **k)
 
     monkeypatch.setattr(DiscreteMap, "step", counting_step)
-    ts.orbit_diagram(Logistic(), "r", np.linspace(2.8, 3.9, 50), n=64, transient=200, ic=[0.4])
+    ts.analysis.orbit_diagram(
+        Logistic(), "r", np.linspace(2.8, 3.9, 50), points_per_value=64, transient=200, ic=[0.4]
+    )
     assert calls["n"] == 0
 
 
@@ -229,7 +254,7 @@ def test_map_sweep_is_a_single_engine_call(monkeypatch):
     exactly once for the entire diagram — not once per value (the WS-MAPITER
     path this stream supersedes) and not the per-step protocol loop.
     """
-    from tsdynamics.engine import run as run_mod
+    from tsdynamics._engine import run as run_mod
 
     calls = {"n": 0}
     real_sweep = run_mod.map_param_sweep
@@ -242,22 +267,26 @@ def test_map_sweep_is_a_single_engine_call(monkeypatch):
     # ``map_param_sweep`` inside ``_sweep_via_kernel``), so patching the run module
     # is what the wiring sees.
     monkeypatch.setattr(run_mod, "map_param_sweep", counting_sweep)
-    ts.orbit_diagram(Logistic(), "r", np.linspace(2.5, 4.0, 200), n=64, transient=300, ic=[0.4])
+    ts.analysis.orbit_diagram(
+        Logistic(), "r", np.linspace(2.5, 4.0, 200), points_per_value=64, transient=300, ic=[0.4]
+    )
     assert calls["n"] == 1, f"expected one sweep call for the whole diagram, got {calls['n']}"
 
 
 def test_flow_wrapper_keeps_step_path(monkeypatch):
     """A flow wrapped in StroboscopicMap stays on the per-step protocol path."""
     calls = {"n": 0}
-    real_step = ts.StroboscopicMap.step
+    real_step = ts.derived.StroboscopicMap.step
 
     def counting_step(self, *a, **k):
         calls["n"] += 1
         return real_step(self, *a, **k)
 
-    monkeypatch.setattr(ts.StroboscopicMap, "step", counting_step)
-    strobo = ts.StroboscopicMap(ts.Rossler(), period=2 * np.pi)
-    ts.orbit_diagram(strobo, "c", [5.7], n=10, transient=10, component=0, ic=[1.0, 1.0, 0.0])
+    monkeypatch.setattr(ts.derived.StroboscopicMap, "step", counting_step)
+    strobo = ts.derived.StroboscopicMap(ts.systems.Rossler(), period=2 * np.pi)
+    ts.analysis.orbit_diagram(
+        strobo, "c", [5.7], points_per_value=10, transient=10, components=0, ic=[1.0, 1.0, 0.0]
+    )
     assert calls["n"] > 0
 
 
@@ -281,7 +310,9 @@ def test_engine_unavailable_falls_back_byte_identical(monkeypatch, exc):
 
     monkeypatch.setattr(od_mod, "_sweep_via_kernel", boom)
     vals = np.linspace(2.8, 3.9, 80)
-    new = ts.orbit_diagram(Logistic(), "r", vals, n=48, transient=150, ic=[0.31])
+    new = ts.analysis.orbit_diagram(
+        Logistic(), "r", vals, points_per_value=48, transient=150, ic=[0.31]
+    )
     old = _old_orbit_diagram(Logistic(), "r", vals, n=48, transient=150, ic=[0.31])
     _assert_points_equal(new.points, old, exact=True)
 
@@ -308,7 +339,9 @@ def test_engine_fallback_catches_public_bases(monkeypatch, exc):
 
     monkeypatch.setattr(od_mod, "_sweep_via_kernel", boom)
     vals = np.linspace(2.8, 3.9, 60)
-    new = ts.orbit_diagram(Logistic(), "r", vals, n=40, transient=120, ic=[0.27])
+    new = ts.analysis.orbit_diagram(
+        Logistic(), "r", vals, points_per_value=40, transient=120, ic=[0.27]
+    )
     old = _old_orbit_diagram(Logistic(), "r", vals, n=40, transient=120, ic=[0.27])
     _assert_points_equal(new.points, old, exact=True)
 
@@ -320,17 +353,206 @@ def test_engine_fallback_catches_public_bases(monkeypatch, exc):
 
 
 def test_map_orbit_diagram_is_faster_than_step_loop():
-    """The engine path beats the reconstructed step loop by a wide margin."""
-    vals = np.linspace(2.5, 4.0, 400)
-    kw = dict(n=100, transient=400, ic=[0.3])
+    """The engine path beats the reconstructed step loop by a wide margin.
 
-    ts.orbit_diagram(Logistic(), "r", vals, **kw)  # warm any one-time costs
+    Measured locally at ~370x for this 400x100 Logistic sweep; the gate asks for
+    20x, which is an order of magnitude of headroom against a loaded runner while
+    still failing loudly if the sweep ever falls back to the step loop (which is
+    what the pre-kernel path cost).
+    """
+    vals = np.linspace(2.5, 4.0, 400)
+    kw = dict(points_per_value=100, transient=400, ic=[0.3])
+    old_kw = dict(n=100, transient=400, ic=[0.3])
+
+    ts.analysis.orbit_diagram(Logistic(), "r", vals, **kw)  # warm any one-time costs
     t0 = time.perf_counter()
-    ts.orbit_diagram(Logistic(), "r", vals, **kw)
+    ts.analysis.orbit_diagram(Logistic(), "r", vals, **kw)
     t_new = time.perf_counter() - t0
 
     t0 = time.perf_counter()
-    _old_orbit_diagram(Logistic(), "r", vals, **kw)
+    _old_orbit_diagram(Logistic(), "r", vals, **old_kw)
     t_old = time.perf_counter() - t0
 
-    assert t_old > 2.0 * t_new, f"expected a clear speedup, got {t_old / t_new:.1f}×"
+    assert t_old > 20.0 * t_new, f"expected a clear speedup, got {t_old / t_new:.1f}×"
+
+
+# ---------------------------------------------------------------------------
+# PoincareMap: the bifurcation-diagram-of-a-flow path routes through
+# ``PoincareMap.run`` (the wired Rust event march), not the step loop.
+# ---------------------------------------------------------------------------
+
+
+def _pmap():
+    """A fresh Rössler Poincaré map on the ``y = 0`` upward section."""
+    return ts.derived.PoincareMap(ts.systems.Rossler(), plane=("y", 0.0, "up"))
+
+
+def test_poincare_orbit_diagram_issues_no_step_calls(monkeypatch):
+    """A ``PoincareMap`` sweep collects each section via ``run`` — no ``step()``.
+
+    The mechanism check for this stream: before it, every recorded crossing cost
+    one ``PoincareMap.step()`` (which re-entered the flow integrator once per
+    detection ``dt``); now the whole per-value section is one ``run`` call.
+    """
+    step_calls = {"n": 0}
+    traj_calls = {"n": 0}
+    real_step = ts.derived.PoincareMap.step
+    real_traj = ts.derived.PoincareMap.run
+
+    def counting_step(self, *a, **k):
+        step_calls["n"] += 1
+        return real_step(self, *a, **k)
+
+    def counting_traj(self, *a, **k):
+        traj_calls["n"] += 1
+        return real_traj(self, *a, **k)
+
+    monkeypatch.setattr(ts.derived.PoincareMap, "step", counting_step)
+    monkeypatch.setattr(ts.derived.PoincareMap, "run", counting_traj)
+    ts.analysis.orbit_diagram(
+        _pmap(), "c", [4.0, 5.0], points_per_value=20, transient=20, ic=[1.0, 1.0, 1.0]
+    )
+
+    assert step_calls["n"] == 0, f"expected no step() calls, got {step_calls['n']}"
+    assert traj_calls["n"] == 2, f"expected one run() call per value, got {traj_calls['n']}"
+
+
+def test_poincare_orbit_diagram_reproduces_the_branch_structure():
+    """The cascade's ``periods()`` and ``bifurcation_points()`` are unchanged.
+
+    The engine march is discretised with the fixed-step ``rk4`` kernel at the
+    detection ``dt`` (see :mod:`tsdynamics.derived._crossings`), whereas the step
+    loop drove the flow's adaptive default — so the two are not pointwise equal on
+    a chaotic band.  What must be preserved is the *diagram*: the same asymptotic
+    branch counts at every parameter value and therefore the same detected
+    bifurcation onsets.
+    """
+    vals = np.linspace(2.5, 6.0, 24)
+    kw = dict(points_per_value=60, transient=150, ic=[1.0, 1.0, 1.0])
+    new = ts.analysis.orbit_diagram(_pmap(), "c", vals, **kw)
+    old_points = _old_orbit_diagram(_pmap(), "c", vals, n=60, transient=150, ic=[1.0, 1.0, 1.0])
+    old = od_mod.OrbitDiagram(param="c", values=vals, points=old_points, components=(0,))
+
+    # The period census may disagree at a value that sits ON the clustering
+    # tolerance, and exactly one of these 24 does: at c = 2.8043 the section's
+    # two branches are 5.0725 and 5.0559 — a relative spread of 0.0033 against
+    # ``periods(rtol=0.01)``.  Both paths record that same pair (they agree to
+    # 1e-8 above); the classifier is what is knife-edged, so a single flip is a
+    # property of the tolerance, not of the march.  More than one would not be.
+    disagree = np.flatnonzero(new.periods() != old.periods())
+    assert disagree.size <= 1, f"period census differs at {vals[disagree]}"
+
+
+def test_poincare_periodic_window_agrees_pointwise_as_a_set():
+    """In a periodic window the two paths record the *same* point set.
+
+    A period-``p`` window is recorded cyclically, so the two paths may start on a
+    different branch of the cycle — the sequences are phase-shifted.  Comparing the
+    sorted values removes the phase and leaves only the ``rk4``-vs-adaptive
+    discretisation difference, which is ~5e-8 here.
+    """
+    vals = np.linspace(3.0, 3.6, 4)
+    kw = dict(points_per_value=40, transient=200, ic=[1.0, 1.0, 1.0])
+    new = ts.analysis.orbit_diagram(_pmap(), "c", vals, **kw)
+    old = _old_orbit_diagram(_pmap(), "c", vals, n=40, transient=200, ic=[1.0, 1.0, 1.0])
+    for a, b in zip(new.points, old, strict=True):
+        np.testing.assert_allclose(np.sort(a.ravel()), np.sort(b.ravel()), atol=1e-6, rtol=0)
+
+
+def test_non_eligible_poincare_map_is_byte_identical():
+    """A ``PoincareMap`` the engine march declines stays byte-identical.
+
+    A DDE has no ``_rhs_numeric``, so ``run`` falls back to
+    ``_python_trajectory`` — the very ``_advance_to_crossing`` loop ``step()``
+    drives.  The recorded points must therefore match bit-for-bit, including the
+    divergence contract (an empty set for a value with no crossing).
+    """
+    kwargs = dict(plane=(0, 1.0, "up"), dt=0.5, max_time=2000.0)
+    vals = [17.0, 18.0]  # the second value finds no crossing → empty set + warning
+    with pytest.warns(RuntimeWarning, match="diverged"):
+        new = ts.analysis.orbit_diagram(
+            ts.derived.PoincareMap(ts.systems.MackeyGlass(), **kwargs),
+            "tau",
+            vals,
+            points_per_value=8,
+            transient=3,
+            ic=[1.1],
+        )
+    old = _old_orbit_diagram(
+        ts.derived.PoincareMap(ts.systems.MackeyGlass(), **kwargs),
+        "tau",
+        vals,
+        n=8,
+        transient=3,
+        ic=[1.1],
+    )
+    _assert_points_equal(new.points, old, exact=True)
+
+
+def test_zero_n_poincare_keeps_the_step_loop(monkeypatch):
+    """``n == 0`` keeps the step loop, so ``carry_state`` semantics do not drift.
+
+    With nothing recorded, ``run`` cannot leave ``state()`` on the last
+    *discarded* transient crossing the way the step loop does, so the degenerate
+    case is deliberately excluded from the fast path.
+    """
+    calls = {"n": 0}
+    real_step = ts.derived.PoincareMap.step
+
+    def counting_step(self, *a, **k):
+        calls["n"] += 1
+        return real_step(self, *a, **k)
+
+    monkeypatch.setattr(ts.derived.PoincareMap, "step", counting_step)
+    new = ts.analysis.orbit_diagram(
+        _pmap(), "c", [4.0, 5.0], points_per_value=0, transient=3, ic=[1.0, 1.0, 1.0]
+    )
+    monkeypatch.undo()
+    old = _old_orbit_diagram(_pmap(), "c", [4.0, 5.0], n=0, transient=3, ic=[1.0, 1.0, 1.0])
+    assert calls["n"] > 0
+    _assert_points_equal(new.points, old, exact=True)
+
+
+def test_poincare_orbit_diagram_is_faster_than_step_loop():
+    """The flagship "bifurcation diagram of a flow" beats the step loop by ≫10x.
+
+    Measured locally at ~72x for this 8-value Rössler sweep (7.2 s → 0.10 s); the
+    gate asks for 10x, leaving a 7x margin against a loaded runner while still
+    failing if the sweep regresses to the per-``dt`` step loop.
+    """
+    vals = np.linspace(3.0, 6.0, 8)
+    kw = dict(points_per_value=60, transient=100, ic=[1.0, 1.0, 1.0])
+
+    ts.analysis.orbit_diagram(_pmap(), "c", vals, **kw)  # warm any one-time costs
+    t0 = time.perf_counter()
+    ts.analysis.orbit_diagram(_pmap(), "c", vals, **kw)
+    t_new = time.perf_counter() - t0
+
+    t0 = time.perf_counter()
+    _old_orbit_diagram(_pmap(), "c", vals, n=60, transient=100, ic=[1.0, 1.0, 1.0])
+    t_old = time.perf_counter() - t0
+
+    assert t_old > 10.0 * t_new, f"expected a clear speedup, got {t_old / t_new:.1f}×"
+
+
+def test_poincare_sweep_into_a_stiff_regime_fails_loudly():
+    """A value the fixed-step ``rk4`` march cannot hold is loud, never silently wrong.
+
+    ``rk4`` has a bounded stability region (``|λh| ≲ 2.785``), so a parameter value
+    that makes the flow stiff relative to the detection ``dt`` blows the engine
+    march up where the old adaptive ``step()`` loop would simply have shrunk its
+    step.  That is an accepted cost of routing through ``trajectory`` — but it must
+    stay *visible*: the sweep has to record an empty point set and warn for that
+    value rather than emit points from a diverged march.  On the Rössler
+    ``c``-sweep at ``dt=0.01`` the threshold is ``c ≈ 200`` (measured); ``c=1e6``
+    is far past it.
+    """
+    vals = [5.7, 1.0e6]
+    with pytest.warns(RuntimeWarning, match="diverged"):
+        od = ts.analysis.orbit_diagram(
+            _pmap(), "c", vals, points_per_value=5, transient=5, ic=[1.0, 1.0, 1.0]
+        )
+
+    assert od.points[0].shape == (5, 1)  # the ordinary value is unaffected
+    assert od.points[1].size == 0  # the stiff value records nothing, loudly
+    assert np.all(np.isfinite(od.points[0]))

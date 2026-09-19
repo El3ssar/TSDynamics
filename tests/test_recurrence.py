@@ -31,6 +31,57 @@ from tsdynamics.data import Trajectory
 # ── data generators (self-contained, no engine) ─────────────────────────────────
 
 
+def _dense_vertical_runs(dense: np.ndarray) -> list[int]:
+    """Every vertical run length of a dense boolean matrix, by explicit scan.
+
+    The independent reference for the vectorised sparse extractor: one plain
+    Python loop per column, no sparse structure, no library helper.
+    """
+    out: list[int] = []
+    n = dense.shape[0]
+    for j in range(n):
+        run = 0
+        for i in range(n):
+            if dense[i, j]:
+                run += 1
+            elif run:
+                out.append(run)
+                run = 0
+        if run:
+            out.append(run)
+    return out
+
+
+def _reference_matrix(series: np.ndarray, eps: float, theiler: int) -> np.ndarray:
+    r"""The recurrence matrix of a 1-D series, built dense from the definition.
+
+    :math:`R_{ij} = \Theta(\varepsilon - |x_i - x_j|)` with the Theiler band
+    :math:`|i - j| \le w` removed.  At ``w = 0`` that band is exactly the line of
+    identity, and :math:`R_{ii} = 1` holds *by definition*, so the textbook
+    matrix is the unfiltered one; at ``w > 0`` the caller has excluded the band
+    the line of identity sits in, so it goes with it.
+    """
+    x = np.asarray(series, dtype=float).ravel()
+    n = x.size
+    dense = np.abs(x[:, None] - x[None, :]) <= eps
+    if theiler > 0:
+        i, j = np.indices((n, n))
+        dense = dense & (np.abs(i - j) > theiler)
+    return dense
+
+
+def _reference_vertical_measures(
+    dense: np.ndarray, min_vertical: int = 2
+) -> tuple[float, float, int]:
+    """``(LAM, TT, V_max)`` from a dense matrix — the independent RQA reference."""
+    runs = np.asarray(_dense_vertical_runs(dense), dtype=int)
+    total = float(runs.sum())
+    long = runs[runs >= min_vertical]
+    lam = float(long.sum()) / total if total else 0.0
+    tt = float(long.mean()) if long.size else 0.0
+    return lam, tt, int(runs.max()) if runs.size else 0
+
+
 def _logistic(r: float, n: int = 2000, transient: int = 1000, x0: float = 0.4) -> np.ndarray:
     x = x0
     for _ in range(transient):
@@ -80,7 +131,7 @@ def test_threshold_mode_density_increases_with_eps(noise):
 
 
 def test_theiler_window_removes_near_diagonal(sine):
-    emb = ts.embed(sine, dimension=2, delay=10)
+    emb = ts.analysis.embed(sine, dimension=2, delay=10)
     rm = rec.recurrence_matrix(emb, threshold=0.3, theiler=15)
     arr = rm.toarray()
     # every recurrence sits outside the |i - j| <= 15 band.
@@ -151,7 +202,9 @@ def test_rqa_chaotic_logistic_is_less_deterministic():
 
 
 def test_rqa_sine_vs_noise(sine, noise):
-    det_sine = rec.rqa(ts.embed(sine, dimension=2, delay=10), recurrence_rate=0.05).determinism
+    det_sine = rec.rqa(
+        ts.analysis.embed(sine, dimension=2, delay=10), recurrence_rate=0.05
+    ).determinism
     det_noise = rec.rqa(noise, recurrence_rate=0.05).determinism
     assert det_sine > 0.95
     assert det_noise < 0.3
@@ -199,6 +252,9 @@ def test_rqa_empty_matrix_is_well_defined():
     assert res.max_diagonal_length == 0
     assert res.diagonal_entropy == 0.0
     assert res.divergence == float("inf")
+    # V_max is 1, not 0: R_ii = 1 is itself a (trivial) length-1 vertical line.
+    assert res.max_vertical_length == 1
+    assert res.trapping_time == 0.0
 
 
 def _isolated_recurrence_matrix(n: int, pairs: list[tuple[int, int]]) -> rec.RecurrenceMatrix:
@@ -240,6 +296,179 @@ def test_rqa_lmax_ignores_min_length():
     assert res.divergence == pytest.approx(1.0)
 
 
+# ── the whole RQA family pinned to arithmetic ───────────────────────────────────
+#
+# A hand-built 8x8 recurrence matrix, small enough that every measure is computed
+# on paper.  Upper-triangle recurrent pairs (i < j), grouped by diagonal
+# ``k = j - i``:
+#
+#   k=1: (4,5), (5,6)            -> one diagonal line, length 2
+#   k=2: (3,5), (4,6)            -> one diagonal line, length 2
+#   k=3: (0,3), (1,4), (2,5)     -> one diagonal line, length 3
+#   k=5: (0,5)                   -> length 1
+#   k=6: (1,7)                   -> length 1
+#
+# Diagonal histogram [2, 2, 3, 1, 1] (sum 9 = the pair count).  With
+# ``min_diagonal=2``: DET = (2+2+3)/9 = 7/9, L = 7/3, L_max = 3, DIV = 1/3,
+# ENTR = -(2/3 ln 2/3 + 1/3 ln 1/3) (two lines of length 2, one of length 3).
+#
+# Vertical lines are maximal runs of consecutive rows within one column of the
+# **symmetric matrix carrying R_ii = 1** (Marwan et al. 2007 §3.5).  Column j's
+# recurrent rows, self included:
+#
+#   0: {0,3,5}      1: {1,4,7}      2: {2,5}        3: {0,3,5}
+#   4: {1,4,5,6}    5: {0,2,3,4,5,6}  6: {4,5,6}    7: {1,7}
+#
+# -> runs [1]*15 + [3, 3, 5], total 26 = 2*9 + 8 points.  With ``min_vertical=2``:
+# LAM = (3+3+5)/26 = 11/26, TT = 11/3, V_max = 5.
+_HAND_PAIRS = [(0, 3), (1, 4), (2, 5), (0, 5), (1, 7), (3, 5), (4, 6), (4, 5), (5, 6)]
+
+
+def test_rqa_measures_match_a_hand_computed_matrix():
+    """Every RQA measure equals its closed form on the 8x8 matrix above."""
+    rm = _isolated_recurrence_matrix(8, _HAND_PAIRS)
+    res = rec.rqa(rm)
+
+    assert sorted(res.diagonal_lengths.tolist()) == [1, 1, 2, 2, 3]
+    assert res.determinism == pytest.approx(7.0 / 9.0)
+    assert res.avg_diagonal_length == pytest.approx(7.0 / 3.0)
+    assert res.max_diagonal_length == 3
+    assert res.divergence == pytest.approx(1.0 / 3.0)
+    assert res.diagonal_entropy == pytest.approx(
+        -(2.0 / 3.0 * np.log(2.0 / 3.0) + 1.0 / 3.0 * np.log(1.0 / 3.0))
+    )
+
+    assert sorted(res.vertical_lengths.tolist()) == [1] * 15 + [3, 3, 5]
+    assert res.laminarity == pytest.approx(11.0 / 26.0)
+    assert res.trapping_time == pytest.approx(11.0 / 3.0)
+    assert res.max_vertical_length == 5
+
+    # RR is the density of the stored (line-of-identity-free) matrix: 2*9 / 8^2.
+    assert res.recurrence_rate == pytest.approx(18.0 / 64.0)
+
+
+def test_trapping_time_of_an_analytic_laminar_signal():
+    r"""``TT`` equals the sojourn length of a block-constant signal, exactly.
+
+    Four blocks of five identical samples, blocks far apart: every state is
+    trapped for exactly five samples, so each of the 20 columns carries **one**
+    vertical line of length 5 — ``TT = V_max = 5`` and ``LAM = 1`` in closed form.
+
+    This is the regression for the line-of-identity bisection: reading vertical
+    runs off the matrix *without* :math:`R_{ii}` splits every column into the two
+    stubs either side of the diagonal (lengths ``[4, 1, 3, 2, 2, 3, 1, 4]`` per
+    block), giving ``TT = 3.0``, ``V_max = 3`` and ``LAM = 0.9`` — about 40% low
+    on the headline laminarity measure.
+    """
+    sig = np.repeat(np.array([0.0, 100.0, 200.0, 300.0]), 5)[:, None]
+    res = rec.rqa(sig, threshold=1e-9)
+    assert res.trapping_time == pytest.approx(5.0)
+    assert res.max_vertical_length == 5
+    assert res.laminarity == pytest.approx(1.0)
+    # every one of the 20 columns is a single length-5 line
+    assert sorted(res.vertical_lengths.tolist()) == [5] * 20
+
+    # ... and the bisected (LOI-free) convention is what it is not.  Computed
+    # here from the stored matrix directly (not through a helper flag), so the
+    # comparison stays an independent statement about the two conventions.
+    rm = rec.recurrence_matrix(sig, threshold=1e-9)
+    bisected = _dense_vertical_runs(rm.matrix.toarray().astype(bool))
+    assert sorted(bisected) == sorted([4, 1, 3, 2, 2, 3, 1, 4] * 4)
+
+
+def test_vertical_lines_are_not_bisected_by_the_line_of_identity():
+    """60 identical states then 140 separated ones: ``TT = V_max = 60`` exactly.
+
+    Closed form: columns 0..59 each carry one vertical line spanning the whole
+    identical block (length 60); the 140 separated states each carry the trivial
+    length-1 line :math:`R_{ii}`.  So ``V_max = 60``, ``TT = 60`` and
+    ``LAM = 3600 / (3600 + 140)``.
+    """
+    pts = np.concatenate([np.zeros(60), np.arange(1, 141) * 10.0])[:, None]
+    res = rec.rqa(pts, threshold=1e-9)
+    assert res.max_vertical_length == 60
+    assert res.trapping_time == pytest.approx(60.0)
+    assert res.laminarity == pytest.approx(3600.0 / 3740.0)
+    assert sorted(res.vertical_lengths.tolist()) == [1] * 140 + [60] * 60
+
+
+# ── L_max saturation guard ──────────────────────────────────────────────────────
+
+
+def test_rqa_warns_when_lmax_saturates(sine):
+    """A fully recurrent shortest diagonal makes ``L_max``/``DIV`` meaningless.
+
+    A constant series recurs everywhere, so diagonal ``k = theiler + 1`` runs
+    from end to end and ``L_max == N - theiler - 1`` — the largest value the
+    matrix can express.  Returning that silently is the trap this warns about
+    (it is the default outcome for a densely sampled flow at ``theiler=0``).
+    """
+    # Not exactly constant -- a flat series is refused up front now (its whole
+    # recurrence plot is ones, so DET / LAM / ENTR are vacuous) -- but well inside
+    # the threshold, which is what saturates L_max.
+    const = np.linspace(0.0, 1e-12, 50).reshape(50, 1)
+    with pytest.warns(UserWarning, match="saturated"):
+        res = rec.rqa(const, threshold=1e-9)
+    assert res.max_diagonal_length == 49  # == N - 0 - 1
+
+    with pytest.warns(UserWarning, match=r"L_max = 44"):
+        rec.rqa(const, threshold=1e-9, theiler=5)
+
+
+def test_rqa_does_not_warn_for_an_unsaturated_lmax(noise):
+    """A well-conditioned matrix leaves ``L_max`` far below ``N - theiler - 1``."""
+    import warnings as _w
+
+    with _w.catch_warnings():
+        _w.simplefilter("error")
+        res = rec.rqa(noise[:800], recurrence_rate=0.05, theiler=1)
+    assert 0 < res.max_diagonal_length < 800 - 1 - 1
+
+
+def test_lmax_guard_survives_a_single_break_in_the_band_diagonal():
+    """One non-recurrent link must not silence the tangential-motion guard.
+
+    A monotone ramp sampled far finer than :math:`\\varepsilon` is recurrent with
+    its own neighbours end to end, which is the tangential-motion pathology.  Put
+    **one** jump in it and ``L_max`` drops to 249 of a possible 399 — no longer
+    equal to ``N - theiler - 1``, so a guard testing for that exact equality goes
+    quiet while ``DIV = 1/249`` is just as much an artefact of the sampling as
+    ``1/399`` was.  Measured on the real thing: Lorenz at ``dt=0.01``,
+    ``N=3001``, ``RR=0.05`` gives ``L_max = 2962`` — 98.7 % saturated, and
+    silent under the equality test.
+
+    The guard therefore asks *which diagonal carries the longest line*: here it
+    is ``k = 1``, the one next to the excluded band.
+    """
+    ramp = np.linspace(0.0, 1.0, 400)[:, None]
+    ramp[250] += 5.0  # one break, splitting the k=1 diagonal into 249 + 148
+    rm = rec.recurrence_matrix(ramp, threshold=0.01)
+    assert rm.matrix.shape == (400, 400)
+    with pytest.warns(UserWarning, match="tangential motion"):
+        res = rec.rqa(rm)
+    assert res.max_diagonal_length == 249  # NOT the ceiling of 399
+
+
+def test_lmax_guard_stays_quiet_for_a_genuinely_periodic_long_line():
+    """A period-``p`` signal legitimately reaches ``L_max = N - p``; do not warn.
+
+    This is the other side of the guard, and why it cannot be a plain threshold
+    on ``L_max``: an exactly periodic signal (period 10, ``N = 400``) has its
+    period diagonal recurrent end to end, so ``L_max = 390`` — 97.7 % of the
+    ceiling, *higher* than the 98.7 %-saturated Lorenz case is above the 50 %
+    trigger — yet ``DIV -> 0`` is the correct answer for a signal with zero
+    Lyapunov exponent.  Consecutive samples are far apart here, so the longest
+    line sits on ``k = 10``, not on the band diagonal, and nothing warns.
+    """
+    import warnings as _w
+
+    per = np.tile(np.sin(2.0 * np.pi * np.arange(10) / 10.0), 40)[:, None]
+    with _w.catch_warnings():
+        _w.simplefilter("error")
+        res = rec.rqa(per, threshold=0.1)
+    assert res.max_diagonal_length == 390  # == N - period, and legitimate
+
+
 def test_rqa_diagonal_entropy_periodic_below_random(noise):
     """A single dominant line length (periodic) is lower-entropy than noise's spread."""
     periodic = rec.rqa(_logistic(3.5), recurrence_rate=0.05, theiler=1)
@@ -259,7 +488,7 @@ def transition_embedding():
     periodic = np.sin(2.0 * np.pi * 1.0 * t)
     stochastic = rng.standard_normal(2000)
     sig = np.concatenate([periodic, stochastic])
-    return ts.embed(sig, dimension=3, delay=5)
+    return ts.analysis.embed(sig, dimension=3, delay=5)
 
 
 def test_windowed_rqa_detects_transition(transition_embedding):
@@ -312,11 +541,11 @@ def test_windowed_guards(transition_embedding):
 
 def test_repr_strings(noise):
     rm = rec.recurrence_matrix(noise[:300], recurrence_rate=0.05)
-    assert "RecurrenceMatrix" in repr(rm) and "RR=" in repr(rm)
+    assert "RecurrenceMatrix" in repr(rm) and "RR = " in repr(rm)
     res = rec.rqa(rm)
-    assert "RQAResult" in repr(res) and "DET=" in repr(res)
+    assert "RQAResult" in repr(res) and "DET = " in repr(res)
     w = rec.windowed_rqa(noise[:600], window=200, recurrence_rate=0.05)
-    assert "WindowedRQA" in repr(w) and "n_windows=" in repr(w)
+    assert "WindowedRQA" in repr(w) and "3 windows of 200 samples" in repr(w)
 
 
 # ── registry integration & public API ───────────────────────────────────────────
@@ -326,7 +555,7 @@ def test_repr_strings(noise):
 def test_estimators_self_register(name):
     assert name in registry.analyses
     assert registry.analyses.get(name) is getattr(rec, name)
-    assert registry.analyses.entry(name).metadata["family"] == "recurrence"
+    assert registry.analyses.entry(name).metadata["area"] == "recurrence"
 
 
 @pytest.mark.parametrize(
@@ -341,8 +570,79 @@ def test_estimators_self_register(name):
     ],
 )
 def test_public_api_reexported(name):
-    assert getattr(ts, name) is getattr(rec, name)
-    assert name in ts.analysis.__all__
+    assert getattr(ts.analysis, name) is getattr(rec, name)
+    # C2 — a type you only ever get *back* is reachable but off the tab surface.
+    if name[:1].isupper():
+        assert name in ts.analysis.results.__all__
+    else:
+        assert name in ts.analysis.__all__
     # v4 (WS-NAMESPACE): the curated top-level ``__all__`` carries only headline
     # names; demoted analysis names stay reachable as flat re-exports.
-    assert hasattr(ts, name)
+    assert hasattr(ts.analysis, name)
+
+
+# ── the Theiler window and the vertical measures ────────────────────────────────
+
+
+def test_vertical_measures_at_theiler_zero_match_the_dense_textbook_matrix():
+    r"""``theiler=0``: LAM / TT / V_max are those of the matrix **with** :math:`R_{ii}`.
+
+    Two blocks of five identical states, blocks 10 apart at ``eps = 1``: the
+    textbook matrix is block-diagonal (two 5x5 all-ones), so every one of the ten
+    columns carries a single vertical line of length 5 — ``LAM = 1``, ``TT = 5``,
+    ``V_max = 5`` in closed form (Marwan et al. 2007, §3.5).  Checked against an
+    independent dense scan as well as the hand-computed numbers.
+    """
+    series = np.array([0.0] * 5 + [10.0] * 5)
+    res = rec.rqa(series, threshold=1.0, theiler=0)
+
+    assert (res.laminarity, res.trapping_time, res.max_vertical_length) == (1.0, 5.0, 5)
+    ref = _reference_vertical_measures(_reference_matrix(series, 1.0, 0))
+    assert (res.laminarity, res.trapping_time, res.max_vertical_length) == pytest.approx(ref)
+
+
+def test_vertical_measures_at_theiler_gt_zero_do_not_fabricate_the_line_of_identity():
+    r"""``theiler > 0``: the excluded band contains :math:`R_{ii}`, so it stays out.
+
+    Same series at ``theiler=2``.  The surviving pairs inside each five-state
+    block are exactly ``(0,3), (0,4), (1,4)`` and their transposes, i.e. per
+    block the columns hold rows ``{3,4} / {4} / {} / {0} / {0,1}`` — vertical
+    lines ``2, 1, 1, 2``.  Over both blocks that is ``sum = 12`` recurrence
+    points on verticals, ``8`` of them on lines of length >= 2:
+
+        LAM = 8/12 = 2/3,   TT = 2,   V_max = 2.
+
+    Re-inserting :math:`R_{ii}` (the pre-fix behaviour) instead fabricates one
+    isolated point per column *inside the band the caller excluded*, giving
+    lines ``[1,2 / 1,1 / 1 / 1,1 / 2,1]`` per block and ``LAM = 4/11 = 0.364``
+    — a number belonging to no recurrence matrix at all.
+    """
+    series = np.array([0.0] * 5 + [10.0] * 5)
+    res = rec.rqa(series, threshold=1.0, theiler=2)
+
+    assert res.laminarity == pytest.approx(8.0 / 12.0)
+    assert res.trapping_time == pytest.approx(2.0)
+    assert res.max_vertical_length == 2
+    assert sorted(res.vertical_lengths.tolist()) == [1, 1, 1, 1, 2, 2, 2, 2]
+    # and it is NOT the hybrid the fabricated line of identity produced
+    assert res.laminarity != pytest.approx(4.0 / 11.0)
+
+    ref = _reference_vertical_measures(_reference_matrix(series, 1.0, 2))
+    assert (res.laminarity, res.trapping_time, res.max_vertical_length) == pytest.approx(ref)
+
+
+@pytest.mark.parametrize("theiler", [0, 1, 3, 7])
+def test_vertical_measures_track_a_dense_reference_at_every_theiler(theiler):
+    """LAM / TT / V_max equal an independent dense scan for every Theiler width.
+
+    The sparse extractor and the convention it applies are checked together
+    against a matrix built straight from the definition and scanned column by
+    column in plain Python — so a future change to either the storage or the
+    line-of-identity rule has to move both, or this fails.
+    """
+    series = _logistic(4.0, n=200)
+    rm = rec.recurrence_matrix(series, recurrence_rate=0.05, theiler=theiler)
+    res = rec.rqa(rm)
+
+    ref = _reference_vertical_measures(_reference_matrix(series, rm.epsilon, theiler))
+    assert (res.laminarity, res.trapping_time, res.max_vertical_length) == pytest.approx(ref)
