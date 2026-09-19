@@ -110,11 +110,13 @@ src/tsdynamics/
 │   ├── export.py             # the JSON envelope: to_json/from_json + to_dict_envelope/from_dict_envelope + SCHEMA_VERSION (all off ts.viz.spec's listing; the round trip a user drives is Plot.to_dict/to_json + ts.viz.load)
 │   └── _visibility.py        # the viz half of the §11 visibility ruling: the curated __dir__ tables
 ├── systems/
+│   ├── _declared_params.py   # merge_declared_params: the ONE parameter merge every VARIABLE-DIMENSION system's custom __init__ performs (v6.0.1)
 │   ├── continuous/           # 9 ODE category modules (+ spatial_fields.py 2-D PDEs) + delayed_systems.py (DDEs!)
 │   └── discrete/             # 5 map category modules
 └── _utils/                    # the LEAF package: values both families/ and engine/ must agree on
     ├── escape.py             # Unbounded + detect_unbounded (the runaway-orbit verdict Trajectory.unbounded reports)
-    ├── grids.py              # make_output_grid (the single hoisted output-grid builder; sagitta tooling moved to analysis/sampling/)
+    ├── grids.py              # make_output_grid (the single hoisted output-grid builder) + validate_max_step (the one max_step guard, shared by the reference integrator and the event seam); sagitta tooling moved to analysis/sampling/
+    ├── lookup.py             # is_hashable — the guard in front of every `value in <set/dict>` over user input; see "A closed vocabulary is checked with `in`"
     ├── plot_namespace.py     # subject.plot as a callable NAMESPACE (bound on Trajectory + SystemBase) + the retired-`to_plot_spec` message
     └── tolerances.py         # the single hoisted rtol/atol defaults (DEFAULT_/DDE_/DDE_LYAPUNOV_/BASIN_); see "Solver tolerances"
 
@@ -405,11 +407,18 @@ subpackages (the A-* streams).
 `.plot_transforms` / `.plot_primitives` (the last added in v6). **A declared group
 is a promise, and a promise nothing loads is a lie**: `SYSTEMS_GROUP` has been
 advertised since F2 with no consumer, so a third-party system package declaring
-against it was silently ignored. Gate:
-`tests/test_registry.py::test_every_declared_plugin_group_has_a_consumer`, which
-matches the group *constant* rather than the group string (the string
-`"tsdynamics.systems"` appears in every module path under `systems/`, which is how
-the dead group passed unnoticed).
+against it was silently ignored. `PLOT_PRIMITIVES_GROUP` was the second such
+dead door and is **live since v6.0.1** (`viz.discover_plugins` loads it via
+`viz/__init__.py::_register_primitive_entry_points`) — it mattered more than it
+looks, because `ts.viz.transforms.allow` is the *only* route a custom primitive
+has into a shipped transform, so the dead group made the two viz extension doors
+unusable together. `SYSTEMS_GROUP` is still open (tracked as a `strict` xfail).
+Gate: `tests/test_registry.py::test_every_declared_plugin_group_has_a_consumer`,
+which since v6.0.1 requires an actual **loader call** (`load_plugins` /
+`register_entry_points`) applied to the group under any local alias — a bare
+*mention* of the constant used to satisfy it, so the fix could have been faked —
+and never the group string alone (`"tsdynamics.systems"` appears in every module
+path under `systems/`, which is how the first dead group passed unnoticed).
 There is **no `transforms` registry / entry-point group** — it was removed in v6
 along with the generic time-series layer (see the scope boundary above). Do not
 re-add one; a companion library's integration surface will be designed when that
@@ -487,7 +496,31 @@ itself (every `SystemEntry.reference` / `.known_lyapunov` was `None`, so the doc
 rendered no citation and `test_known_values.py` skipped rather than asserted) and
 `analysis/planar.py::window_for`, whose pilot-orbit branch is gated on
 `default_ic` and so quietly fell back to a *wrong auto window* for every model
-plot. If you add a reader, read `_<name>`.
+plot. If you add a reader, read `_<name>` — or, outside the package,
+`registry._classvar(cls, name)`, which knows both spellings.
+
+**Four more readers were found in `docs/_tooling/` in v6.0.1**, every one silent
+for the same reason (`None` is legal for all five fields), and together they are
+the largest measured instance of this defect in the repo:
+
+| reader | saw | truth |
+|---|---|---|
+| `make_bibliography.py` (`cls.reference` / `cls.doi`) | **0** / 177 | 172 refs, 155 DOIs |
+| `properties.py` (`entry.cls.known_lyapunov`) | **0** / 177 | 21 |
+| `plot_dt.py` (`type(sys).default_ic`) | **0** / 177 | 53 |
+| `catalog.py` (`cls.field_labels`) | **0** / 177 | 1 |
+
+So the whole References page was being generated from zero citations. Note the
+right fix differs by site: `field_labels` / `doi` are **`SystemEntry` fields**
+(the record already resolves both spellings), so read them off `entry`; the rest
+go through `registry._classvar`. Gates (`tests/test_analysis_discovery.py::TestNoRemovedNameIsReadAsAString`):
+`test_the_docs_tooling_does_not_read_a_removed_name_as_a_string` sweeps the
+directory, `test_the_docs_tooling_actually_receives_the_catalogue_metadata`
+*counts what arrives* — a spelling can be right and still be wired to the wrong
+object — and `test_no_module_reaches_for_a_removed_accessor_by_attribute` covers
+the **attribute** shape (`system.resolve_ic(...)`), which the `getattr`-string
+sweep cannot see and which hid eight live call sites. `docs/_tooling/**` selects
+that file (`tests/_changed_select.py::_DOCS_TOOLING_TESTS`).
 
 ---
 
@@ -768,6 +801,52 @@ six decades.
   evaluations on a 1001-point grid 6001 -> 805 and now **independent of the output
   resolution** (pinned by a counting test, which cannot flake). `dop853` at
   `dt=0.001`: 126.7 -> 17.5 ms.
+
+### A closed vocabulary is checked with `in` — so guard the hash (v6.0.1)
+
+A keyword whose domain is a closed set is validated as `if value not in <set>:
+raise InvalidParameterError(...)`, which is correct for every value a caller
+might *mean* and wrong for every value they might mistype as a container: **`in`
+hashes its left operand first**, so the call died with the interpreter's words
+about a private table one line before the typed error would have named the
+spellings. Measured on v6.0.0 at **six** doors — `force=` (the one filed),
+`theme=`, `primitive=`, `layout=`, `backend=` and `kind=`, the last two being far
+more commonly typed than the first. Two of the six hashed *again* further in (the
+`_invalid_primitive_message` builder, and `Registry.get`, which is shared by all
+six registries), so the guard is needed at the lookup **and** at the message.
+
+`_utils/lookup.py::is_hashable` is the one spelling; ask it before any
+membership test over caller input. Two sibling traps live in the same doors and
+are guarded the same way: a **numpy** value makes `==` elementwise (so
+`mode == "overlay"` raises *"truth value of an array is ambiguous"*), and
+`difflib.get_close_matches` requires a `str`. Gate:
+`tests/test_viz_frictions.py::test_an_unhashable_value_is_refused_by_name_at_every_closed_vocabulary_door`
+(6 doors x 4 value types) plus its `..._is_untouched` twin, which proves the
+guard never costs a legal call.
+
+### A variable-dimension system's `__init__` is not a second front door (v6.0.1)
+
+Five catalogue systems resolve their own `dim` from a structural parameter —
+`GrayScott` / `SwiftHohenberg` / `KuramotoSivashinsky` from `N`, `Lorenz96` from
+`N`, `MultiChua` from `n_circuits` — so each needs a custom `__init__`. Every
+hand-rolled copy had drifted into being *laxer* than `SystemBase.__init__`, in
+two ways, and **all five** were affected (the review named only the field
+systems; a `with_params` sweep over the registry found the other two):
+
+- **a parameter given twice was silently preferred, not refused** — the merge
+  happened *before* `super()`, so the base never saw the duplication and
+  `KuramotoSivashinsky(L=40.0, params={"L": 22.0})` built at `L = 40.0` in
+  silence;
+- **`dim=` / `field_shape=` were rejected as unknown parameters** — `with_params`
+  and `copy` forward both on every rebuild, a free `**param_kwargs` swallowed
+  them, and so re-parametrising any of the five raised, breaking continuation,
+  orbit diagrams and every parameter sweep over them.
+
+`systems/_declared_params.py::merge_declared_params` is the one merge; a custom
+`__init__` binds `dim`/`field_shape` explicitly and discards them (they are
+derived). Gates: `test_families_fixes.py::TestAFieldSystemRefusesAParameterGivenTwice`
+(7 cases) and `::test_no_catalogue_system_raises_on_reparametrisation`, which is
+registry-driven, so a sixth such system cannot ship broken.
 
 ### Solver tolerances (v6, `_utils/tolerances.py`)
 
@@ -3020,7 +3099,10 @@ Two layers now cover them:
 | `result.plot.scaling()` / `.phase()` / `.section()` | The eight kind-forcing methods are gone — they relabelled the spec without redrawing it. `result.plot()` is this result's own view; `result.plot.<TAB>` lists the transforms that draw it (`result.plot.scaling_fit()`), and it takes the same style/figure vocabulary as every other plotting door. |
 | `WrappedSystem(initial=…)` | `ic=`, the word every other family uses. Refused by name. |
 | A docs fence calls `.show()` | `show()` warns on a windowless backend, and the doctest gate pins matplotlib to `Agg`, so a fence that displays fails under `filterwarnings=error`. Build the plot in the fence; teach `.show()` in prose or a `# skip-doctest` block. |
-| A tool reads `cls.default_ic` / `cls.reference` / `cls.known_lyapunov` | Those ClassVars are underscored since v6. Read them through `registry._classvar(cls, name)`, which knows both spellings — `docs/_tooling/figures.py` named the public one and drew **every** IC-declaring system's figure from the wrong start. |
+| A tool reads `cls.default_ic` / `cls.reference` / `cls.known_lyapunov` | Those ClassVars are underscored since v6. Read them through `registry._classvar(cls, name)`, which knows both spellings — `docs/_tooling/figures.py` named the public one and drew **every** IC-declaring system's figure from the wrong start, and four more readers in `docs/_tooling/` were found in v6.0.1 (the bibliography was generating from **0 of 177** citations). If the value is a `SystemEntry` field (`reference` / `doi` / `field_labels` / `known_lyapunov`), read it off the **entry**. |
+| You add a `value in <closed set>` check on a keyword | Guard it: `if not is_hashable(value) or value not in …`. `in` hashes first, so `kind=["x"]` died naming a private table instead of the valid kinds — at six doors on v6.0.0. `_utils/lookup.py` is the one spelling. Watch the two siblings: a numpy value makes `==` elementwise, and `difflib` needs a `str`. |
+| `with_params` / `copy` raises on a system that sizes itself from a parameter | Fixed in v6.0.1 for all five (`GrayScott`, `SwiftHohenberg`, `KuramotoSivashinsky`, `Lorenz96`, `MultiChua`). A custom `__init__` must **bind and discard** `dim=` / `field_shape=` — `with_params` forwards them on every rebuild — and merge its parameters through `systems/_declared_params.py::merge_declared_params`, which also refuses a parameter given twice instead of silently preferring one. |
+| A map's `run(seed=…)` gave a different orbit each call | Only when the first attempt diverged: `_resolve_ic` reaches the seeded generator on just one of its branches, so a map with a declared `_default_ic` (Hénon) drew its **retries** from OS entropy. Fixed in v6.0.1; a retrying seeded run is reproducible now. Pin `ic=` (or `seed=`) whenever you time or diff — an unpinned draw compares different work, and it is what made `test_map_iterate_shape_and_finiteness[Bogdanov]` a ~1-in-1000 flake. |
 | A movie renders differently from its still, or you suspect the blitting | `TSDYNAMICS_NO_BLIT=1` writes every frame the unoptimised way; if that changes the picture it is a bug, not a setting — the compositor bit-compares probe frames and disables itself on any difference. |
 | A new animated artist is mutated per frame | Declare it on the `_LayerDriver` that mutates it, at the same site. An undeclared artist freezes at its first frame (it lands in the cached background); a declared one that the drivers do *not* mutate only costs a redraw. And the driver must be a pure function of the frame index — the compositor restores the frame it calibrated on, and `pingpong`/`loop` replay frame 0. |
 | `set_state` on a DDE | **Does not exist** (v6) — the state is a history function; use `reinit(u)` for a constant past or `run(history=...)`. |
@@ -3117,7 +3199,8 @@ ts.viz.transforms.names(); ts.viz.compatibility()      # what can this draw?
 # DDE (integrate first, then Lyapunov from the end state)
 mg = ts.systems.MackeyGlass()
 traj = mg.run(final_time=500.0, dt=0.5, history=lambda s: [1.0 + 0.1 * np.sin(0.2 * s)])
-exps = mg.lyapunov_spectrum(k=1, dt=0.5, ic=traj.y[-1])
+# ...an analysis is a FREE FUNCTION (A2) — the bound method was removed in v6
+exps = ts.analysis.lyapunov_spectrum(mg, k=1, dt=0.5, ic=traj.y[-1])
 
 # Registry
 from tsdynamics import registry

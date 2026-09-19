@@ -79,15 +79,18 @@ def test_absurd_map_step_count_raises_instead_of_killing_the_process(steps, what
     proc = _run_isolated(
         f"""
         import resource
-        # Best-effort: macOS refuses to LOWER RLIMIT_AS from a soft limit it
-        # reports as unlimited ("current limit exceeds maximum limit").  Without
-        # the cap the child still raises MemoryError from the engine's own
-        # checked allocation — which is the behaviour under test; the cap only
-        # makes the failure cheap.
+        # The cap is LOAD-BEARING, not a convenience.  An earlier attempt made it
+        # best-effort on the reasoning that "the engine's checked allocation
+        # raises MemoryError anyway" — macOS refuted that: uncapped, the absurd
+        # request is not refused, it is SIGKILLed (returncode -9).  So where the
+        # mechanism is unavailable the test cannot prove what it exists to prove,
+        # and says so instead of passing or dying.  macOS will not lower
+        # RLIMIT_AS from a soft limit it reports as unlimited.
         try:
             resource.setrlimit(resource.RLIMIT_AS, (4 * 1024**3, 4 * 1024**3))
         except (ValueError, OSError):
-            pass
+            print("NOCAP")
+            raise SystemExit(0)
         import tsdynamics as ts
 
         try:
@@ -103,6 +106,12 @@ def test_absurd_map_step_count_raises_instead_of_killing_the_process(steps, what
         f"the {what} request killed the interpreter "
         f"(returncode {proc.returncode}): {proc.stderr[-2000:]}"
     )
+    if "NOCAP" in proc.stdout:
+        pytest.skip(
+            "this platform will not lower RLIMIT_AS, and the cap is what makes an "
+            "unservable request fail cheaply rather than be SIGKILLed — the Linux "
+            "jobs prove the behaviour"
+        )
     assert "RAISED" in proc.stdout, proc.stdout + proc.stderr
 
 
@@ -111,6 +120,17 @@ def test_absurd_map_step_count_raises_instead_of_killing_the_process(steps, what
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skipif(
+    sys.platform == "darwin",
+    reason=(
+        "macOS forbids fork() without exec() once a threaded runtime has "
+        "initialised: the child is killed by SIGTRAP (waitpid status 5) before it "
+        "reaches the engine at all. That is the platform refusing the call, not "
+        "the pool deadlocking — and it is why CPython defaults multiprocessing to "
+        "'spawn' here, which cannot inherit a poisoned pool in the first place. "
+        "The Linux jobs prove the behaviour this test exists for."
+    ),
+)
 @pytest.mark.skipif(not hasattr(os, "fork"), reason="fork() is POSIX-only")
 def test_fork_after_a_parallel_call_does_not_deadlock_the_child():
     """A ``multiprocessing`` child must survive its parent's rayon pool.
@@ -145,6 +165,67 @@ def test_fork_after_a_parallel_call_does_not_deadlock_the_child():
                 # The rebuilt pool must give the SAME answer: the parallel ==
                 # serial determinism contract does not care which pool ran it.
                 os._exit(0 if np.array_equal(child, parent) else 3)
+            except BaseException:
+                os._exit(2)
+
+        _, status = os.waitpid(pid, 0)
+        assert status == 0, f"child exited with status {status}"
+        print("CHILD OK")
+        """,
+        timeout=180.0,
+    )
+    assert proc.returncode == 0, (
+        f"the forked child did not complete (returncode {proc.returncode}); "
+        f"a hang here is the deadlock this test exists for: {proc.stderr[-2000:]}"
+    )
+    assert "CHILD OK" in proc.stdout, proc.stdout + proc.stderr
+
+
+@pytest.mark.skipif(
+    sys.platform == "darwin",
+    reason=(
+        "macOS forbids fork() without exec() once a threaded runtime has "
+        "initialised: the child is killed by SIGTRAP (waitpid status 5) before it "
+        "reaches the engine at all. That is the platform refusing the call, not "
+        "the pool deadlocking — and it is why CPython defaults multiprocessing to "
+        "'spawn' here, which cannot inherit a poisoned pool in the first place. "
+        "The Linux jobs prove the behaviour this test exists for."
+    ),
+)
+def test_fork_after_a_jit_compile_does_not_deadlock_the_child():
+    """A child forked after a JIT compile can use the inherited cache.
+
+    The JIT cache is a process-wide ``Mutex`` and is inherited across ``fork()``
+    exactly as the rayon pool is.  Unlike the pool there is nothing to repair in
+    the child — the compiled pages are valid there — so the child must both
+    *hit* the inherited entry and *compile* a fresh one.  A regression hangs,
+    and the subprocess timeout is the assertion.
+    """
+    proc = _run_isolated(
+        """
+        import os
+        import warnings
+
+        import numpy as np
+
+        import tsdynamics as ts
+        from tsdynamics._engine import run as engine_run
+
+        warnings.simplefilter("ignore")  # CPython's fork-in-a-thread notice
+
+        lor = ts.systems.Lorenz()
+        lor.run(final_time=1.0, dt=0.01, ic=[1.0, 1.0, 1.0], backend="jit")
+
+        pid = os.fork()
+        if pid == 0:
+            try:
+                # A hit on the inherited entry...
+                lor.run(final_time=1.0, dt=0.01, ic=[1.0, 1.0, 1.0], backend="jit")
+                # ...and a fresh compile, which takes the same lock.
+                ts.systems.Rossler().run(
+                    final_time=1.0, dt=0.01, ic=[1.0, 1.0, 1.0], backend="jit"
+                )
+                os._exit(0 if engine_run.jit_cache_stats()["size"] >= 1 else 3)
             except BaseException:
                 os._exit(2)
 
@@ -395,15 +476,18 @@ def test_an_absurd_orbit_diagram_raises_instead_of_killing_the_process():
     proc = _run_isolated(
         """
         import resource
-        # Best-effort: macOS refuses to LOWER RLIMIT_AS from a soft limit it
-        # reports as unlimited ("current limit exceeds maximum limit").  Without
-        # the cap the child still raises MemoryError from the engine's own
-        # checked allocation — which is the behaviour under test; the cap only
-        # makes the failure cheap.
+        # The cap is LOAD-BEARING, not a convenience.  An earlier attempt made it
+        # best-effort on the reasoning that "the engine's checked allocation
+        # raises MemoryError anyway" — macOS refuted that: uncapped, the absurd
+        # request is not refused, it is SIGKILLed (returncode -9).  So where the
+        # mechanism is unavailable the test cannot prove what it exists to prove,
+        # and says so instead of passing or dying.  macOS will not lower
+        # RLIMIT_AS from a soft limit it reports as unlimited.
         try:
             resource.setrlimit(resource.RLIMIT_AS, (4 * 1024**3, 4 * 1024**3))
         except (ValueError, OSError):
-            pass
+            print("NOCAP")
+            raise SystemExit(0)
 
         import numpy as np
         import tsdynamics as ts
@@ -420,6 +504,12 @@ def test_an_absurd_orbit_diagram_raises_instead_of_killing_the_process():
             raise AssertionError("an impossible allocation must not succeed")
         """
     )
+    if "NOCAP" in proc.stdout:
+        pytest.skip(
+            "this platform will not lower RLIMIT_AS, and the cap is what makes an "
+            "unservable request fail cheaply rather than be SIGKILLed — the Linux "
+            "jobs prove the behaviour"
+        )
     assert proc.returncode == 0, (
         f"the sweep killed the interpreter (returncode {proc.returncode}): {proc.stderr[-2000:]}"
     )

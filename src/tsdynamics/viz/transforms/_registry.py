@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from ... import registry as _registry
+from ..._utils.lookup import is_hashable
 from .._frames import FrameSpace, OverlayRole, space_arity
 from .._visibility import INHERITED_DICT_METHODS, dir_without, listing_dir
 from ..spec import Plot, PlotKind
@@ -815,6 +816,10 @@ def validate_primitive(
     if primitive is None:
         fallback = geometry.chosen_primitive if geometry is not None else None
         primitive = fallback if fallback is not None else transform.default_primitive
+    # Both membership tests hash ``primitive``, so an unhashable primitive= died
+    # as a raw TypeError before either typed error below could name the valid set.
+    if not is_hashable(primitive):
+        raise InvalidParameterError(_invalid_primitive_message(transform, primitive))
     if primitive in allowed:
         return primitive
     if primitive in transform.primitives:
@@ -839,7 +844,9 @@ def _invalid_primitive_message(transform: PlotTransform, primitive: str) -> str:
     """
     valid = ", ".join(sorted(transform.primitives))
     text = f"primitive {primitive!r} is not valid for transform {transform.name!r}; valid: {valid}."
-    if primitive not in PRIMITIVES:
+    # ``primitive not in PRIMITIVES`` hashes it, and this is the MESSAGE builder —
+    # an unhashable primitive= must not die while being told it is invalid.
+    if not is_hashable(primitive) or primitive not in PRIMITIVES:
         return (
             f"{text} ({primitive!r} is not a registered primitive at all; the registered "
             f"ones are {list(primitive_names())}.)"

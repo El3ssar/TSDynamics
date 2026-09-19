@@ -128,7 +128,13 @@ def _jacobian_at(system: Any, point: Any) -> tuple[np.ndarray, bool]:
     from tsdynamics.analysis._tangent import flow_fns, map_fns
 
     x = np.asarray(point, dtype=float).ravel()
-    if bool(getattr(system, "is_discrete", False)):
+    # ``is_discrete`` was removed in v6 and is answered only by the compat shim in
+    # ``SystemBase.__getattr__``; a *derived* wrapper has no such shim, so reading
+    # it called a ``PoincareMap`` continuous (measured) and then reached for the
+    # ``_rhs_numeric`` a map does not have.  ``family``, with the private flag as
+    # the wrapper fallback, is the one reading that is right for both (the same
+    # form as ``analysis/basins/attractors.py::_is_discrete``).
+    if bool(getattr(system, "family", None) == "map" or getattr(system, "_is_discrete", False)):
         _, jac = map_fns(system)
         return np.asarray(jac(x), dtype=float), False
     _, jac = flow_fns(system)

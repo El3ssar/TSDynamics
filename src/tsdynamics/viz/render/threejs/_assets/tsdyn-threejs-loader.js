@@ -929,8 +929,12 @@ function buildPointsComet(geom, anim, palette, index) {
   const positions = geom.positions;
   function seek(headVertex, trailVertices) {
     const hv = Math.max(0, Math.min(nVerts - 1, headVertex | 0));
-    // Swarm window: [lo, hv] in vertex units. trailVertices == null ⇒ persistent.
-    const lo = trailVertices == null ? 0 : Math.max(0, hv - trailVertices);
+    // Swarm window: [lo, hv] INCLUSIVE, in vertex units, so it must hold exactly
+    // `trailVertices` samples — hence the `+ 1` in the lower bound, matching the
+    // line comet's `from = hv - win + 1` above. Subtracting the full count and
+    // then counting inclusively drew one sample too many.
+    // trailVertices == null ⇒ persistent.
+    const lo = trailVertices == null ? 0 : Math.max(0, hv - trailVertices + 1);
     swarm.geometry.setDrawRange(lo, Math.max(0, hv - lo + 1));
     if (head) {
       const p = head.geometry.getAttribute("position");

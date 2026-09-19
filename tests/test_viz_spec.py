@@ -1142,3 +1142,53 @@ class TestShowActuallyDisplays:
         with pytest.warns(VisualizationDegraded, match="has no window"):
             plot.show()
         plt.close("all")
+
+
+class TestAnExplicitGridMustHoldItsPanels:
+    """``Layout.grid`` promised ``rows * cols >= n_panels`` and did not check it.
+
+    An explicit ``rows=``/``cols=`` pair was returned unchanged, so an undersized
+    grid reached the renderer and surfaced as a raw ``IndexError`` from inside
+    matplotlib's ``GridSpec`` — a library type the caller never named, in a
+    traceback with no remedy.
+    """
+
+    @pytest.mark.parametrize(("rows", "cols", "n"), [(1, 1, 3), (1, 1, 4), (2, 2, 9)])
+    def test_an_undersized_explicit_grid_is_refused_naming_its_capacity(self, rows, cols, n):
+        from tsdynamics.viz.spec import Layout
+
+        with pytest.raises(InvalidParameterError) as err:
+            Layout(mode="grid", rows=rows, cols=cols).grid(n)
+        text = str(err.value)
+        assert str(rows * cols) in text and str(n) in text
+
+    @pytest.mark.parametrize(("rows", "cols", "n"), [(2, 3, 6), (2, 2, 3), (4, 1, 4)])
+    def test_a_grid_that_fits_is_returned_as_given(self, rows, cols, n):
+        from tsdynamics.viz.spec import Layout
+
+        assert Layout(mode="grid", rows=rows, cols=cols).grid(n) == (rows, cols)
+
+    def test_the_arithmetic_always_holds_its_panels(self):
+        """The docstring's promise, over every shape it resolves itself."""
+        from tsdynamics.viz.spec import Layout
+
+        for mode in ("stack", "row", "grid"):
+            for n in range(1, 12):
+                for rows, cols in ((None, None), (None, 3), (2, None)):
+                    r, c = Layout(mode=mode, rows=rows, cols=cols).grid(n)
+                    assert r * c >= n, (mode, rows, cols, n, r, c)
+
+    def test_a_composite_sized_too_small_says_so_instead_of_an_index_error(self, tmp_path):
+        """The user-facing path: three panels into a one-cell grid."""
+        # This one SAVES, so it needs the optional plotting extra; the base CI
+        # job has none. Its three siblings above check the arithmetic and run
+        # everywhere.
+        pytest.importorskip("matplotlib")
+        import matplotlib.pyplot as plt
+
+        traj = ts.systems.Lorenz().run(final_time=1.0, dt=0.05, ic=[1.0, 1.0, 1.0])
+        with pytest.raises(InvalidParameterError):
+            ts.viz.plot(traj, traj, traj, layout="grid", rows=1, cols=1).save(
+                str(tmp_path / "undersized.png")
+            )
+        plt.close("all")

@@ -213,7 +213,11 @@ def _resolve_ic(sys_obj: Any, override: Any):
             return 0.1 * np.ones(sys_obj.dim)
         if override is not None:
             return np.asarray(override, dtype=float)
-        default_ic = getattr(type(sys_obj), "default_ic", None)
+        from tsdynamics import registry
+
+        # Underscored since v6 — the bare spelling read None for all 53 systems
+        # that declare one, so this fallback silently returned "no IC".
+        default_ic = registry._classvar(type(sys_obj), "default_ic")
         if default_ic is not None:
             return np.asarray(default_ic, dtype=float).reshape(sys_obj.dim)
         return None

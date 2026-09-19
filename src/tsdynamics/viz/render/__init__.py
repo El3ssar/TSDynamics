@@ -260,7 +260,13 @@ def select_renderer(spec: PlotSpec, backend: str | None = None) -> tuple[str, An
             from tsdynamics.errors import InvalidParameterError, remedy
 
             available = renderers.names()
-            usable = [n for n in available if n != backend] or ["matplotlib"]
+            # ``n != backend`` is ELEMENTWISE when backend is an array, and the
+            # resulting array has no truth value — so a numpy backend= died with
+            # numpy's words while being told which backends exist.  A name that
+            # is not a string never equals one of these anyway.
+            usable = [n for n in available if not isinstance(backend, str) or n != backend] or [
+                "matplotlib"
+            ]
             raise InvalidParameterError(
                 f"no rendering backend named {backend!r}. Installed backends: {available}."
                 + remedy(f"spec.render({usable[0]!r})")

@@ -638,6 +638,189 @@ class TestNoRemovedNameIsReadAsAString:
             offenders
         )
 
+    #: The ClassVars v6 moved behind an underscore, read under the OLD spelling.
+    #: Same defect, same silence: ``None`` is legal for every one of them.
+    REMOVED_CLASSVARS = {
+        "reference": "_reference (or registry._classvar(cls, 'reference'))",
+        "doi": "_doi",
+        "known_lyapunov": "_known_lyapunov",
+        "field_labels": "_field_labels",
+        "to_plot_spec": "__plot_spec__",
+        "max_lyapunov": "lyapunov_spectrum(k=1)",
+        "stroboscope": "poincare(period=...)",
+    }
+
+    #: ``path:name`` reads that are NOT this defect, each with its reason.  The
+    #: table may only SHRINK — a row that stops matching fails the sweep below,
+    #: so a fixed site cannot be left recorded as an exemption.
+    NOT_A_SYSTEM_READ = {
+        # ``GALIResult`` declares ``is_discrete`` as its own dataclass field, so
+        # this reads the RESULT's flag, not a system's removed accessor.
+        "viz/transforms/spectra.py:is_discrete": "GALIResult's own field",
+    }
+
+    def test_no_module_in_the_library_reads_a_removed_name_as_a_string(self):
+        """The same sweep, over the whole package — ``analysis/`` was never alone.
+
+        Scoped to :mod:`tsdynamics.analysis`, the sweep above could not see
+        ``viz/transforms/stability.py``, which read ``getattr(system,
+        "is_discrete", False)`` to choose between the map and the flow Jacobian
+        and was answered only by the ``_INTERNAL_ALIASES`` compat shim.
+        """
+        import ast
+        import pathlib
+
+        import tsdynamics
+
+        names = {**self.REMOVED, **self.REMOVED_CLASSVARS}
+        root = pathlib.Path(tsdynamics.__file__).parent
+        offenders: list[str] = []
+        matched: set[str] = set()
+        for path in sorted(root.rglob("*.py")):
+            rel = path.relative_to(root).as_posix()
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                if not (
+                    isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Name)
+                    and node.func.id == "getattr"
+                    and len(node.args) >= 2
+                    and isinstance(node.args[1], ast.Constant)
+                    and node.args[1].value in names
+                ):
+                    continue
+                key = f"{rel}:{node.args[1].value}"
+                if key in self.NOT_A_SYSTEM_READ:
+                    matched.add(key)
+                    continue
+                offenders.append(
+                    f"{rel}:{node.lineno} getattr(..., {node.args[1].value!r}) "
+                    f"-> read {names[node.args[1].value]}"
+                )
+        assert not offenders, "removed names read as strings:\n  " + "\n  ".join(offenders)
+        assert matched == set(self.NOT_A_SYSTEM_READ), (
+            "an exemption stopped matching - delete its row: "
+            f"{set(self.NOT_A_SYSTEM_READ) - matched}"
+        )
+
+    #: The removed names that are unambiguously **accessors on a system** — no
+    #: record, result or dataclass in the library carries one as a field — so an
+    #: ``obj.<name>`` anywhere is a read of the removed spelling.  The five
+    #: catalogue ClassVars are deliberately NOT here: ``SystemEntry`` exposes
+    #: ``reference`` / ``doi`` / ``known_lyapunov`` / ``field_labels`` as genuine
+    #: record fields, so the attribute shape cannot tell the two apart.
+    REMOVED_ACCESSORS = {
+        "resolve_ic": "_resolve_ic",
+        "ic_generator": "_ic_generator",
+    }
+
+    def test_no_module_reaches_for_a_removed_accessor_by_attribute(self):
+        """The *attribute* shape, which the ``getattr`` sweep above cannot see.
+
+        ``system.resolve_ic(ic)`` is answered only by the ``_INTERNAL_ALIASES``
+        compat shim in ``SystemBase.__getattr__``, whose own comment says to
+        delete a row once its call sites are updated.  Eight live sites were
+        still reading it — four in ``_engine/problem.py``, and one each in
+        ``_solvers/select.py``, ``derived/tangent.py`` (x2) and
+        ``families/_dde_lyapunov.py`` — so the shim could not be retired and
+        the rename would have broken them silently at the moment it was.
+        """
+        import ast
+        import pathlib
+
+        import tsdynamics
+
+        root = pathlib.Path(tsdynamics.__file__).parent
+        offenders: list[str] = []
+        for path in sorted(root.rglob("*.py")):
+            rel = path.relative_to(root).as_posix()
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                if not (isinstance(node, ast.Attribute) and node.attr in self.REMOVED_ACCESSORS):
+                    continue
+                offenders.append(
+                    f"{rel}:{node.lineno} .{node.attr} -> {self.REMOVED_ACCESSORS[node.attr]}"
+                )
+        assert not offenders, "removed accessors read by attribute:\n  " + "\n  ".join(offenders)
+
+    def test_the_docs_tooling_does_not_read_a_removed_name_as_a_string(self):
+        """The docs build reads the catalogue too, and it was reading it wrong.
+
+        ``docs/_tooling`` is code the test suite imports, and it is where this
+        defect cost the most: measured on v6.0.0, ``make_bibliography`` saw **0
+        of 177** citations against a truth of 172 references / 155 DOIs,
+        ``properties`` 0 of 21 ``known_lyapunov`` cards, ``catalog`` 0 of 1
+        ``field_labels``, and ``plot_dt`` 0 of 53 declared ICs — every one of
+        them silently, because ``None`` is a legal value for all five.
+        """
+        import ast
+        import pathlib
+
+        names = {**self.REMOVED, **self.REMOVED_CLASSVARS}
+        root = pathlib.Path(__file__).resolve().parent.parent / "docs" / "_tooling"
+        assert root.is_dir(), root
+        offenders: list[str] = []
+        for path in sorted(root.rglob("*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                if not (
+                    isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Name)
+                    and node.func.id == "getattr"
+                    and len(node.args) >= 2
+                    and isinstance(node.args[1], ast.Constant)
+                    and node.args[1].value in names
+                ):
+                    continue
+                # Reading these off the registry RECORD is the sanctioned source
+                # and is the fix, not the defect: ``SystemEntry`` carries
+                # ``reference`` / ``doi`` / ``field_labels`` / ``known_lyapunov``
+                # as real fields, resolved by ``registry._classvar`` under both
+                # spellings.  The defect is reading them off a *class*.
+                if isinstance(node.args[0], ast.Name) and node.args[0].id == "entry":
+                    continue
+                offenders.append(
+                    f"{path.name}:{node.lineno} getattr(..., {node.args[1].value!r}) "
+                    f"-> read {names[node.args[1].value]} (or registry._classvar)"
+                )
+        assert not offenders, "docs tooling reads removed names:\n  " + "\n  ".join(offenders)
+
+    def test_the_docs_tooling_actually_receives_the_catalogue_metadata(self):
+        """The structural sweep above cannot prove the values ARRIVE — this does.
+
+        A read can be spelled correctly and still be wired to the wrong object,
+        and ``None`` is a legal value for every one of these, so the only honest
+        check is to count what the docs build sees against what the registry
+        holds.  Measured on v6.0.0 the left-hand side of every one of these was
+        **zero**.
+        """
+        import pathlib
+        import sys
+
+        root = pathlib.Path(__file__).resolve().parent.parent / "docs" / "_tooling"
+        sys.path.insert(0, str(root))
+        try:
+            import catalog
+            import make_bibliography
+            import properties
+        finally:
+            sys.path.remove(str(root))
+
+        entries = list(registry.all_systems())
+        _, n_systems, n_papers, n_without = make_bibliography._collect_systems(registry)
+        # 172 of the 177 carry a reference, so at most 5 may be uncited.
+        assert n_systems == len(entries)
+        assert n_without == sum(e.reference is None for e in entries)
+        assert n_papers > 100, f"the bibliography grouped {n_papers} papers (was 0)"
+
+        known = sum(properties._known_lyapunov(e) is not None for e in entries)
+        assert known == sum(e.known_lyapunov is not None for e in entries) > 0
+
+        labelled = [e for e in entries if e.field_labels]
+        assert labelled, "expected at least one system declaring field labels"
+        for entry in labelled:
+            assert catalog._merge_record(entry, {}).field_labels == tuple(entry.field_labels)
+
 
 class TestFindMatchesIntentNotOnlyWords:
     """A question asked in the reader's words must still land.

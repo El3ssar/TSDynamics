@@ -16,8 +16,9 @@ import math
 
 import numpy as np
 
-from tsdynamics.errors import ConvergenceError, InvalidParameterError
+from tsdynamics.errors import ConvergenceError
 
+from .._utils.grids import validate_max_step
 from .compile import eval_tape
 from .problem import MapProblem, ODEProblem, Problem
 
@@ -62,10 +63,7 @@ def _reference_ode(
     """
     from scipy.integrate import solve_ivp
 
-    if math.isnan(max_step) or max_step <= 0.0:
-        raise InvalidParameterError(
-            f"max_step must be positive (or infinite for no ceiling); got {max_step}"
-        )
+    validate_max_step(max_step)
     t_eval = np.ascontiguousarray(t_eval, dtype=np.float64)
     if t_eval.size == 0:
         return np.empty((0, problem.dim), dtype=np.float64)

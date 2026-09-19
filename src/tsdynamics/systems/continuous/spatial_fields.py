@@ -46,8 +46,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from tsdynamics.errors import InvalidParameterError
 from tsdynamics.families import ContinuousSystem
+from tsdynamics.systems._declared_params import merge_declared_params
 
 __all__ = ["GrayScott", "SwiftHohenberg"]
 
@@ -123,32 +123,33 @@ class GrayScott(ContinuousSystem):
         *,
         params: dict[str, float] | None = None,
         ic=None,
+        dim: int | None = None,
+        field_shape: tuple[int, ...] | None = None,
         **param_kwargs: float,
     ):
-        p = dict(type(self).params)
+        # ``dim``/``field_shape`` are accepted and ignored: both are derived from
+        # ``N`` here, and ``SystemBase.with_params``/``copy`` forward them on every
+        # rebuild (so refusing them as unknown parameters — which is what the free
+        # ``**param_kwargs`` did — broke re-parametrisation of every field system).
+        del dim, field_shape
         # ``params=``, the explicit per-parameter arguments and free parameter
         # keywords are all accepted, so this custom ``__init__`` (which exists
         # only to resolve ``dim`` from ``N``) does not shadow the constructor
-        # front door.  Unknown names raise InvalidParameterError, matching
-        # SystemBase, rather than the bare TypeError a fixed signature gives.
-        overrides = {**(params or {}), **param_kwargs}
-        if overrides:
-            unknown = set(overrides) - set(p)
-            if unknown:
-                raise InvalidParameterError(
-                    f"GrayScott: unknown parameter(s) {sorted(unknown)}. Declared: {sorted(p)}"
-                )
-            p.update(overrides)
-        if N is not None:
-            p["N"] = int(N)
-        if Du is not None:
-            p["Du"] = float(Du)
-        if Dv is not None:
-            p["Dv"] = float(Dv)
-        if F is not None:
-            p["F"] = float(F)
-        if k is not None:
-            p["k"] = float(k)
+        # front door: unknown names raise InvalidParameterError and a parameter
+        # given twice is refused exactly as SystemBase refuses it.
+        p = merge_declared_params(
+            "GrayScott",
+            dict(type(self).params),
+            params,
+            param_kwargs,
+            {
+                "N": None if N is None else int(N),
+                "Du": None if Du is None else float(Du),
+                "Dv": None if Dv is None else float(Dv),
+                "F": None if F is None else float(F),
+                "k": None if k is None else float(k),
+            },
+        )
         n_val = int(p["N"])
         if n_val < 3:
             raise ValueError("GrayScott requires N >= 3.")
@@ -289,25 +290,27 @@ class SwiftHohenberg(ContinuousSystem):
         *,
         params: dict[str, float] | None = None,
         ic=None,
+        dim: int | None = None,
+        field_shape: tuple[int, ...] | None = None,
         **param_kwargs: float,
     ):
-        p = dict(type(self).params)
-        # See GrayScott.__init__: free parameter keywords stay reachable and an
-        # unknown name raises InvalidParameterError, not a bare TypeError.
-        overrides = {**(params or {}), **param_kwargs}
-        if overrides:
-            unknown = set(overrides) - set(p)
-            if unknown:
-                raise InvalidParameterError(
-                    f"SwiftHohenberg: unknown parameter(s) {sorted(unknown)}. Declared: {sorted(p)}"
-                )
-            p.update(overrides)
-        if N is not None:
-            p["N"] = int(N)
-        if L is not None:
-            p["L"] = float(L)
-        if r is not None:
-            p["r"] = float(r)
+        # See GrayScott.__init__: both are derived from ``N`` and are accepted
+        # only so ``with_params``/``copy`` can rebuild the system.
+        del dim, field_shape
+        # See GrayScott.__init__: free parameter keywords stay reachable, an
+        # unknown name raises InvalidParameterError rather than a bare TypeError,
+        # and a parameter given twice is refused instead of silently preferred.
+        p = merge_declared_params(
+            "SwiftHohenberg",
+            dict(type(self).params),
+            params,
+            param_kwargs,
+            {
+                "N": None if N is None else int(N),
+                "L": None if L is None else float(L),
+                "r": None if r is None else float(r),
+            },
+        )
         n_val = int(p["N"])
         if n_val < 3:
             raise ValueError("SwiftHohenberg requires N >= 3.")

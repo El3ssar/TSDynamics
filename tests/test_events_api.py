@@ -419,3 +419,30 @@ class TestEventGuards:
         )
         assert isinstance(out, EventSolution)
         assert out.y.shape[1] == 2
+
+
+@pytest.mark.parametrize("backend", ["jit", "interp", "reference"])
+@pytest.mark.parametrize("solver", ["rk45", "bdf"])
+@pytest.mark.parametrize("bad", [-1.0, 0.0, float("nan")])
+def test_an_invalid_max_step_is_refused_identically_on_every_event_path(
+    backend: str, solver: str, bad: float
+) -> None:
+    """A nonsensical ``max_step`` is the same typed refusal on every event path.
+
+    The stiff/implicit solvers and ``backend="reference"`` both route to the
+    SciPy event fallback, which used to accept ``nan`` silently (every
+    ``h > max_step`` comparison is false, so the ceiling never binds) and raise a
+    bare :class:`ValueError` for a non-positive ceiling — so the *default*
+    backend disagreed with itself depending on the solver.
+    """
+    sys_ = _EventsHarmonic()
+    with pytest.raises(InvalidParameterError):
+        sys_.run(
+            final_time=2.0,
+            dt=0.05,
+            ic=(1.0, 0.0),
+            backend=backend,
+            solver=solver,
+            max_step=bad,
+            events=[("x", 0.0, "down")],
+        )

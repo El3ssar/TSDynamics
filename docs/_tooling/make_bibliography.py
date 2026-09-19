@@ -137,8 +137,11 @@ def _collect_systems(registry) -> tuple[dict[str, list[_Paper]], int, int, int]:
     for entry in sorted(registry.all_systems(), key=lambda e: e.name):
         n_systems += 1
         cls = entry.cls
-        ref = getattr(cls, "reference", None)
-        doi = getattr(cls, "doi", None)
+        # These ClassVars are underscored since v6.  Reading the bare spelling
+        # is silent — None is legal for both — so the bibliography saw 0 of 177
+        # citations against a truth of 172 references / 155 DOIs.
+        ref = registry._classvar(cls, "reference")
+        doi = registry._classvar(cls, "doi")
         if not ref:
             n_without += 1
             continue

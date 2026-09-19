@@ -37,6 +37,7 @@ import base64
 import contextlib
 import html as _html
 import json
+import re
 import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -44,6 +45,7 @@ from typing import TYPE_CHECKING, Any
 from tsdynamics.errors import InvalidParameterError
 
 from ..._visibility import listing_dir
+from ..caps import VisualizationDegraded
 
 if TYPE_CHECKING:
     from ...spec import PlotSpec
@@ -79,6 +81,65 @@ _THREE_CDN = f"https://cdn.jsdelivr.net/npm/three@{THREE_VERSION}"
 
 #: The dark stage the viewer paints when the payload's theme names no background.
 _DEFAULT_BACKGROUND = "#0b0f14"
+
+#: A background is a CSS **colour**, not arbitrary CSS, so it is whitelisted rather
+#: than escaped: the value lands in a ``<style>`` rule, where escaping has no
+#: general form (``</style>`` and ``}`` both end things, and CSS has no backslash
+#: string syntax that survives both).  Three shapes are accepted, and every one of
+#: them is injection-safe by construction — a hex literal, a functional notation
+#: whose arguments are numbers, and a bare alphabetic CSS colour name.
+_CSS_COLOR = re.compile(
+    r"""
+    \# (?: [0-9A-Fa-f]{3,4} | [0-9A-Fa-f]{6} | [0-9A-Fa-f]{8} )   # #rgb .. #rrggbbaa
+    | (?: rgb | rgba | hsl | hsla ) \( [0-9eE+\-.,%/\s]+ \)       # numeric functions
+    | [A-Za-z]{3,32}                                              # a named colour
+    """,
+    re.VERBOSE,
+)
+
+
+def _valid_css_color(value: str) -> bool:
+    """Whether ``value`` is a CSS colour this page will interpolate verbatim.
+
+    Anything else — a ``;``, a quote, a brace, an angle bracket, a newline — is
+    refused, because those are exactly the characters that let a background string
+    close the ``<style>`` element (or the JS string literal) it is written into and
+    continue as markup.
+    """
+    return bool(_CSS_COLOR.fullmatch(value.strip()))
+
+
+def _resolve_background(explicit: str | None, themed: str | None) -> str:
+    """Pick the page background, refusing anything that is not a CSS colour.
+
+    The two provenances get different answers on purpose.  An explicit
+    ``background=`` was typed at *this* call, so a bad value is a hard
+    :class:`~tsdynamics.errors.InvalidParameterError` naming the accepted forms —
+    the same shape ``assets=`` already has.  A **theme**-sourced background was
+    registered somewhere else entirely, and failing an export over someone else's
+    theme field is the wrong trade: it degrades to the default with one
+    :class:`~tsdynamics.viz.render.caps.VisualizationDegraded`.
+    """
+    if explicit is not None:
+        if not _valid_css_color(explicit):
+            raise InvalidParameterError(
+                f"threejs page background={explicit!r} is not a CSS colour. Expected "
+                "a hex literal ('#0b0f14'), a numeric rgb()/rgba()/hsl()/hsla(), or a "
+                "colour name ('black'). The value is written into the page's stylesheet, "
+                "so arbitrary text is refused rather than escaped."
+            )
+        return explicit.strip()
+    if themed is not None:
+        if not _valid_css_color(themed):
+            warnings.warn(
+                f"the theme's background={themed!r} is not a CSS colour; the threejs "
+                f"page falls back to {_DEFAULT_BACKGROUND!r}.",
+                VisualizationDegraded,
+                stacklevel=3,
+            )
+            return _DEFAULT_BACKGROUND
+        return themed.strip()
+    return _DEFAULT_BACKGROUND
 
 
 def loader_path() -> Path:
@@ -172,7 +233,7 @@ def render_page(
 
     meta = payload.get("metadata") or {}
     theme = meta.get("theme") or {}
-    bg = background or theme.get("background") or _DEFAULT_BACKGROUND
+    bg = _resolve_background(background, theme.get("background"))
     doc_title = title or payload.get("title") or "TSDynamics attractor"
 
     payload_json = _json_for_html(payload)
@@ -301,7 +362,18 @@ def _boot_script(*, assets: str, loader_url: str, background: str, axes: bool) -
     reveals the poster.
     """
     if assets == "link":
-        import_loader = f'await import("{loader_url}")'
+        # A literal `</script` inside the URL closes the module element early — the
+        # same hazard `_loader_block` checks for the loader source, for the same
+        # reason, so it is checked rather than assumed here too.  `json.dumps` then
+        # writes a *valid JS string literal*, quotes and backslashes escaped, so the
+        # URL cannot break out of it.
+        if "</script" in loader_url.lower():
+            raise InvalidParameterError(
+                f"threejs page loader_url={loader_url!r} contains a literal "
+                "'</script' sequence, which would close the page's module script. "
+                "Point loader_url at the file write_loader_asset() wrote."
+            )
+        import_loader = f"await import({json.dumps(loader_url)})"
     else:
         import_loader = (
             "await import(URL.createObjectURL(new Blob("
@@ -322,7 +394,7 @@ try {{
   const mod = {import_loader};
   const payload = JSON.parse(document.getElementById("tsdyn-payload").textContent);
   mod.renderThreejsPayload(container, payload, {{
-    background: "{background}",
+    background: {json.dumps(background)},
     axes: {"true" if axes else "false"},
   }});
 }} catch (err) {{

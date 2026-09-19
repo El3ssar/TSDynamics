@@ -58,7 +58,14 @@ _STEPS = 200
 @pytest.mark.slow
 def test_map_iterate_shape_and_finiteness(map_entry) -> None:
     m = map_entry.cls()
-    traj = m.run(steps=_STEPS, max_retries=15)
+    # PIN THE IC.  A map with no declared ``_default_ic`` draws a fresh random
+    # start on every call, so this swept assertion was a dice roll over a finite
+    # basin: ``Bogdanov`` (eps=0, mu=0) failed here roughly once in a thousand
+    # runs, on a diff that had not touched it.  Seeding makes the sweep a
+    # property of the map rather than of the draw — and it is only *reliable*
+    # because ``run(seed=)`` now seeds the divergence RETRIES too (qodo #5);
+    # before that fix the retry draws still came from OS entropy.
+    traj = m.run(steps=_STEPS, max_retries=15, seed=0)
     # ``steps=N`` yields N + 1 rows: the initial condition, then N iterates —
     # exactly as a flow returns its ``ic`` at ``t0``.  Before v6 a map returned N
     # rows starting at f(ic), so ``t[0] = 0`` was labelling x_1, ``traj["x"][n]``
@@ -113,3 +120,34 @@ def test_map_lyapunov_partial_spectrum(map_entry) -> None:
     exps = ts.analysis.lyapunov_spectrum(m, n=300, k=1)
     assert exps.shape == (1,)
     assert np.isfinite(exps[0])
+
+
+def test_a_seeded_map_run_is_reproducible_across_divergence_retries() -> None:
+    """``run(seed=...)`` fixes the retry initial conditions, not only the first one.
+
+    ``_resolve_ic`` reaches the seeded generator only on the branch where it draws
+    the *first* IC at random.  A map that starts from a declared ``_default_ic``
+    (Hénon does) never took that branch, so the random-IC retries drew from a
+    fresh OS-entropy generator and two ``run(seed=7)`` calls that diverged once
+    traced different orbits — on exactly the runs the seed is there to pin (qodo
+    #5).
+    """
+    from tsdynamics.errors import ConvergenceError
+
+    def retry_ics(seed: int) -> list[np.ndarray]:
+        system = ts.systems.Henon()
+        seen: list[np.ndarray] = []
+
+        def always_diverges(*, steps: int, ic: object, backend: str) -> None:
+            seen.append(np.asarray(ic).copy())
+            raise ConvergenceError("forced divergence")
+
+        system._iterate_engine = always_diverges  # type: ignore[method-assign]
+        with pytest.warns(RuntimeWarning, match="Retrying"), pytest.raises(ConvergenceError):
+            system.run(20, seed=seed, max_retries=4)
+        return seen
+
+    first, second, other = retry_ics(7), retry_ics(7), retry_ics(8)
+    assert len(first) == 4  # the default IC plus three retry draws
+    assert all(np.array_equal(a, b) for a, b in zip(first, second, strict=True))
+    assert not np.array_equal(first[1], other[1])

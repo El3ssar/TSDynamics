@@ -328,7 +328,7 @@ class TangentSystem(DerivedSystem):
         if params:
             for key, value in params.items():
                 self.params[key] = value
-        ic_arr = self.system.resolve_ic(u)
+        ic_arr = self.system._resolve_ic(u)
         t0 = float(t) if t is not None else 0.0
         self._t = t0
         self._method = kwargs.pop("method", None)
@@ -906,7 +906,7 @@ class TangentSystem(DerivedSystem):
 
         ic_explicit = ic is not None
         for attempt in range(max_retries):
-            use_ic = sys.resolve_ic(ic if attempt == 0 else None)
+            use_ic = sys._resolve_ic(ic if attempt == 0 else None)
             try:
                 exponents, intervals = run.map_lyapunov(
                     tape_arrays,

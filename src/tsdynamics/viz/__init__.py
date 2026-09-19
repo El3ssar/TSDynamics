@@ -68,8 +68,9 @@ shouting: the 18 IR nouns live at :mod:`ts.viz.spec <tsdynamics.viz.spec>`, and 
 name that moved says where it went instead of raising a bare ``AttributeError``.
 
 Out-of-tree renderers register through the ``tsdynamics.renderers`` entry-point
-group and out-of-tree plot transforms through ``tsdynamics.plot_transforms``;
-:func:`discover_plugins` loads both at import.
+group, out-of-tree plot transforms through ``tsdynamics.plot_transforms`` and
+out-of-tree plot primitives through ``tsdynamics.plot_primitives``;
+:func:`discover_plugins` loads all three at import.
 """
 
 import os as _os
@@ -78,7 +79,9 @@ from typing import TYPE_CHECKING as _TYPE_CHECKING
 from typing import Any as _Any
 
 from .. import registry as _registry
+from ..plugins import PLOT_PRIMITIVES_GROUP as _PLOT_PRIMITIVES_GROUP
 from ..plugins import PLOT_TRANSFORMS_GROUP as _PLOT_TRANSFORMS_GROUP
+from ..plugins import load_plugins as _load_plugins
 from ..plugins import register_entry_points as _register_entry_points
 from ._visibility import listing_dir as _listing_dir
 
@@ -330,6 +333,12 @@ RENDERERS_GROUP = "tsdynamics.renderers"
 #:     my_plot = "my_pkg.transforms:MY_TRANSFORM"
 TRANSFORMS_GROUP = _PLOT_TRANSFORMS_GROUP
 
+#: The entry-point group out-of-tree **plot primitives** declare against::
+#:
+#:     [project.entry-points."tsdynamics.plot_primitives"]
+#:     stem = "my_pkg.primitives:stem"
+PRIMITIVES_GROUP = _PLOT_PRIMITIVES_GROUP
+
 #: Names bound here but kept **off** ``__all__`` / ``dir()``.  Each stays
 #: reachable — ``ts.viz.SCHEMA_VERSION``, ``from tsdynamics.viz import
 #: normalize_style`` — it is only the tab surface that is curated.  The IR nouns
@@ -361,8 +370,9 @@ _INTERNAL_NAMES: tuple[str, ...] = (
     "PlotTransform",
     "Plottable",
     "Presentation",
-    # The two entry-point group constants a plugin author declares against.  They
-    # are strings in a ``pyproject.toml``, not names anyone types in Python.
+    # The three entry-point group constants a plugin author declares against.
+    # They are strings in a ``pyproject.toml``, not names anyone types in Python.
+    "PRIMITIVES_GROUP",
     "RENDERERS_GROUP",
     "SCHEMA_VERSION",
     "STYLE_KEYS",
@@ -572,14 +582,68 @@ def load(source: str | _os.PathLike[str]) -> Plot:
     return from_json(text)
 
 
-def discover_plugins(*, strict: bool = False) -> list[str]:
-    """Load out-of-tree renderer **and plot-transform** plugins.
+def _register_primitive_entry_points(*, strict: bool = False) -> list[str]:
+    """Load the ``tsdynamics.plot_primitives`` group into the primitive registry.
 
-    Walks the ``tsdynamics.renderers`` and ``tsdynamics.plot_transforms``
-    entry-point groups and registers each loaded object under its entry-point
-    name (see :func:`tsdynamics.plugins.register_entry_points`).  Called once at
-    import; safe to re-invoke after installing a plugin.  Names already taken are
-    left untouched.
+    Primitives cannot go through :func:`tsdynamics.plugins.register_entry_points`
+    the way renderers and transforms do: a primitive is not registered *verbatim*
+    under its name, it is registered together with the channels it ``requires``
+    and the marks it emits.  Two shapes are accepted, and the first is the one a
+    plugin author writes:
+
+    1. the entry point names a function whose module already applied
+       ``@ts.viz.primitives.register(...)`` — loading it imports that module, so
+       the primitive is simply *there* afterwards and nothing more is done;
+    2. the entry point names a bare ``build`` callable — it is registered under
+       the entry point's own name, reading its declaration off the attributes
+       ``requires`` / ``marks`` / ``frames`` / ``options`` / ``emits_frame``.
+
+    A name already registered is left untouched, exactly as for the other groups.
+    """
+    from .transforms import primitive_names, register_primitive
+
+    before = set(primitive_names())
+    for name, obj in _load_plugins(PRIMITIVES_GROUP, strict=strict).items():
+        if name in set(primitive_names()):
+            continue
+        try:
+            register_primitive(
+                name,
+                requires=getattr(obj, "requires", ()),
+                marks=getattr(obj, "marks", ()),
+                frames=getattr(obj, "frames", None),
+                options=getattr(obj, "options", ()),
+                emits_frame=getattr(obj, "emits_frame", None),
+            )(obj)
+        except Exception as exc:  # noqa: BLE001 — isolate third-party failures
+            if strict:
+                raise
+            import warnings
+
+            warnings.warn(
+                f"failed to register plot primitive {name!r} from group "
+                f"{PRIMITIVES_GROUP!r}: {exc}",
+                stacklevel=2,
+            )
+    return sorted(set(primitive_names()) - before)
+
+
+def discover_plugins(*, strict: bool = False) -> list[str]:
+    """Load out-of-tree renderer, plot-transform **and plot-primitive** plugins.
+
+    Walks the ``tsdynamics.renderers``, ``tsdynamics.plot_transforms`` and
+    ``tsdynamics.plot_primitives`` entry-point groups and registers each loaded
+    object under its entry-point name (see
+    :func:`tsdynamics.plugins.register_entry_points`).  Called once at import;
+    safe to re-invoke after installing a plugin.  Names already taken are left
+    untouched.
+
+    .. versionchanged:: 6.0.1
+        ``tsdynamics.plot_primitives`` is loaded.  It had been advertised in
+        :data:`tsdynamics.plugins.ALL_GROUPS` with no consumer, so a third-party
+        primitive published under the documented group was silently dropped —
+        and with it the *only* route a custom primitive has into a shipped
+        transform, :func:`ts.viz.transforms.allow`.
 
     Parameters
     ----------
@@ -589,10 +653,12 @@ def discover_plugins(*, strict: bool = False) -> list[str]:
     Returns
     -------
     list[str]
-        The names newly registered by this call (renderers first, then transforms).
+        The names newly registered by this call (renderers, then transforms,
+        then primitives).
     """
     found = _register_entry_points(_registry.renderers, RENDERERS_GROUP, strict=strict)
     found += _register_entry_points(_registry.plot_transforms, TRANSFORMS_GROUP, strict=strict)
+    found += _register_primitive_entry_points(strict=strict)
     return found
 
 

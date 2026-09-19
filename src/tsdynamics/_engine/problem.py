@@ -251,7 +251,7 @@ def ode_problem(
         Lower the analytic Jacobian alongside the RHS (for stiff solvers).
     """
     tape = lower_ode_cached(system, with_jacobian=with_jacobian)
-    ic_arr = system.resolve_ic(ic)
+    ic_arr = system._resolve_ic(ic)
     return ODEProblem(tape=tape, ic=ic_arr, t0=float(t0), system=system)
 
 
@@ -282,7 +282,7 @@ def map_problem(
         :func:`tsdynamics._engine.compile.lower_map`).
     """
     tape = lower_map_cached(system, with_jacobian=with_jacobian)
-    ic_arr = system.resolve_ic(ic)
+    ic_arr = system._resolve_ic(ic)
     return MapProblem(tape=tape, ic=ic_arr, n0=int(n0), system=system)
 
 
@@ -310,7 +310,7 @@ def dde_problem(
         :func:`tsdynamics._engine.compile.lower_dde`).
     """
     tape, slots = lower_dde_cached(system)
-    ic_arr = system.resolve_ic(ic)
+    ic_arr = system._resolve_ic(ic)
     return DDEProblem(tape=tape, delay_slots=slots, ic=ic_arr, t0=float(t0), system=system)
 
 
@@ -338,7 +338,7 @@ def sde_problem(
         Lower ``∂g/∂u`` into the diffusion tape (required by Milstein).
     """
     lowered: LoweredSDE = lower_sde_cached(system, with_diffusion_jacobian=with_diffusion_jacobian)
-    ic_arr = system.resolve_ic(ic)
+    ic_arr = system._resolve_ic(ic)
     return SDEProblem(
         drift=lowered.drift,
         diffusion=lowered.diffusion,

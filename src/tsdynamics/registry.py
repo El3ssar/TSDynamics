@@ -422,14 +422,26 @@ class Registry:
 
     def get(self, name: str) -> Any:
         """Return the object registered under ``name`` (raises ``KeyError`` with hints)."""
-        entry = self._entries.get(name)
+        # Both the lookup and the suggester below assume ``name`` is a hashable
+        # string.  It is whatever the caller typed: ``render(backend=["mpl"])``
+        # reached here and died as ``TypeError: cannot use 'list' as a dict key``,
+        # naming this private table instead of the registered renderers.  An
+        # unhashable (or non-string) name is simply a name nothing is registered
+        # under, so it falls through to the typed error that was always waiting.
+        from tsdynamics._utils.lookup import is_hashable
+
+        entry = self._entries.get(name) if is_hashable(name) else None
         if entry is not None:
             return entry.obj
         import difflib
 
         from tsdynamics.errors import InvalidParameterError
 
-        close = difflib.get_close_matches(name, list(self._entries), n=1, cutoff=0.6)
+        close = (
+            difflib.get_close_matches(name, list(self._entries), n=1, cutoff=0.6)
+            if isinstance(name, str)
+            else []
+        )
         hint = f" Did you mean {close[0]!r}?" if close else ""
         # [M44] The four viz registries and this one answer a miss the SAME way.
         # ``get`` used to raise a bare ``KeyError`` here while ``themes.use``

@@ -94,17 +94,24 @@ jobs:
           python-version: "3.12"
 
       - name: Install PyYAML
-        run: python -m pip install --disable-pip-version-check pyyaml
+        run: python -m pip install --disable-pip-version-check "pyyaml==6.0.3"
 
       - name: Parse and structurally validate every workflow
         run: |
           python - <<'PY'
           import pathlib
+          import re
           import sys
 
           import yaml
 
           bad = []
+          # Every `uses:` must name a 40-hex commit SHA.  A mutable tag (`@stable`,
+          # `@v5`) lets whoever controls that ref change what CI executes — and
+          # `release.yml` hands one of these actions `secrets.CODECOV_TOKEN`.
+          # Asserted here, in the job that already parses every workflow, so the
+          # pinning cannot silently erode again.
+          USES = re.compile(r"^\s*-?\s*uses:\s*(?P<ref>\S+)", re.MULTILINE)
           # Both suffixes: the paths-filter that gates this job is
           # `.github/workflows/**`, so a `.yaml` workflow must be linted too.
           workflows = pathlib.Path(".github/workflows")
@@ -132,6 +139,16 @@ jobs:
                       bad.append(f"{path}: job `{name}` is not a mapping")
                   elif "runs-on" not in job and "uses" not in job:
                       bad.append(f"{path}: job `{name}` has neither `runs-on` nor `uses`")
+              for match in USES.finditer(path.read_text()):
+                  ref = match.group("ref")
+                  # A local composite action (`./.github/actions/x`) has no ref.
+                  if ref.startswith("./"):
+                      continue
+                  if not re.fullmatch(r"[^@]+@[0-9a-f]{40}", ref):
+                      bad.append(
+                          f"{path}: `uses: {ref}` is not pinned to a commit SHA "
+                          "(append `# vX.Y.Z` after the SHA for readability)"
+                      )
               print(f"OK  {path} ({len(jobs)} job(s))")
           if bad:
               print("\n".join(f"::error::{line}" for line in bad))
