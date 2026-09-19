@@ -120,6 +120,17 @@ def test_absurd_map_step_count_raises_instead_of_killing_the_process(steps, what
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skipif(
+    sys.platform == "darwin",
+    reason=(
+        "macOS forbids fork() without exec() once a threaded runtime has "
+        "initialised: the child is killed by SIGTRAP (waitpid status 5) before it "
+        "reaches the engine at all. That is the platform refusing the call, not "
+        "the pool deadlocking — and it is why CPython defaults multiprocessing to "
+        "'spawn' here, which cannot inherit a poisoned pool in the first place. "
+        "The Linux jobs prove the behaviour this test exists for."
+    ),
+)
 @pytest.mark.skipif(not hasattr(os, "fork"), reason="fork() is POSIX-only")
 def test_fork_after_a_parallel_call_does_not_deadlock_the_child():
     """A ``multiprocessing`` child must survive its parent's rayon pool.
@@ -170,6 +181,17 @@ def test_fork_after_a_parallel_call_does_not_deadlock_the_child():
     assert "CHILD OK" in proc.stdout, proc.stdout + proc.stderr
 
 
+@pytest.mark.skipif(
+    sys.platform == "darwin",
+    reason=(
+        "macOS forbids fork() without exec() once a threaded runtime has "
+        "initialised: the child is killed by SIGTRAP (waitpid status 5) before it "
+        "reaches the engine at all. That is the platform refusing the call, not "
+        "the pool deadlocking — and it is why CPython defaults multiprocessing to "
+        "'spawn' here, which cannot inherit a poisoned pool in the first place. "
+        "The Linux jobs prove the behaviour this test exists for."
+    ),
+)
 def test_fork_after_a_jit_compile_does_not_deadlock_the_child():
     """A child forked after a JIT compile can use the inherited cache.
 
