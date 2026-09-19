@@ -67,7 +67,7 @@ jobs:
       # Restore the figure + field-movie caches (both content-addressed by class
       # source + tooling), so only new/changed systems ever re-render.
       - name: Restore figure cache
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .cache/docs-figures
           key: docs-figures-${{ hashFiles('src/tsdynamics/systems/**', 'docs/_tooling/**') }}
@@ -75,7 +75,7 @@ jobs:
             docs-figures-
 
       - name: Restore field-movie cache
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .cache/docs-field-movies
           key: docs-field-movies-${{ hashFiles('src/tsdynamics/systems/**', 'docs/_tooling/field_movies.py', 'src/tsdynamics/viz/render/mpl/**') }}
