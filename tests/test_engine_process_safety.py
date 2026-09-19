@@ -79,15 +79,18 @@ def test_absurd_map_step_count_raises_instead_of_killing_the_process(steps, what
     proc = _run_isolated(
         f"""
         import resource
-        # Best-effort: macOS refuses to LOWER RLIMIT_AS from a soft limit it
-        # reports as unlimited ("current limit exceeds maximum limit").  Without
-        # the cap the child still raises MemoryError from the engine's own
-        # checked allocation — which is the behaviour under test; the cap only
-        # makes the failure cheap.
+        # The cap is LOAD-BEARING, not a convenience.  An earlier attempt made it
+        # best-effort on the reasoning that "the engine's checked allocation
+        # raises MemoryError anyway" — macOS refuted that: uncapped, the absurd
+        # request is not refused, it is SIGKILLed (returncode -9).  So where the
+        # mechanism is unavailable the test cannot prove what it exists to prove,
+        # and says so instead of passing or dying.  macOS will not lower
+        # RLIMIT_AS from a soft limit it reports as unlimited.
         try:
             resource.setrlimit(resource.RLIMIT_AS, (4 * 1024**3, 4 * 1024**3))
         except (ValueError, OSError):
-            pass
+            print("NOCAP")
+            raise SystemExit(0)
         import tsdynamics as ts
 
         try:
@@ -103,6 +106,12 @@ def test_absurd_map_step_count_raises_instead_of_killing_the_process(steps, what
         f"the {what} request killed the interpreter "
         f"(returncode {proc.returncode}): {proc.stderr[-2000:]}"
     )
+    if "NOCAP" in proc.stdout:
+        pytest.skip(
+            "this platform will not lower RLIMIT_AS, and the cap is what makes an "
+            "unservable request fail cheaply rather than be SIGKILLed — the Linux "
+            "jobs prove the behaviour"
+        )
     assert "RAISED" in proc.stdout, proc.stdout + proc.stderr
 
 
@@ -445,15 +454,18 @@ def test_an_absurd_orbit_diagram_raises_instead_of_killing_the_process():
     proc = _run_isolated(
         """
         import resource
-        # Best-effort: macOS refuses to LOWER RLIMIT_AS from a soft limit it
-        # reports as unlimited ("current limit exceeds maximum limit").  Without
-        # the cap the child still raises MemoryError from the engine's own
-        # checked allocation — which is the behaviour under test; the cap only
-        # makes the failure cheap.
+        # The cap is LOAD-BEARING, not a convenience.  An earlier attempt made it
+        # best-effort on the reasoning that "the engine's checked allocation
+        # raises MemoryError anyway" — macOS refuted that: uncapped, the absurd
+        # request is not refused, it is SIGKILLed (returncode -9).  So where the
+        # mechanism is unavailable the test cannot prove what it exists to prove,
+        # and says so instead of passing or dying.  macOS will not lower
+        # RLIMIT_AS from a soft limit it reports as unlimited.
         try:
             resource.setrlimit(resource.RLIMIT_AS, (4 * 1024**3, 4 * 1024**3))
         except (ValueError, OSError):
-            pass
+            print("NOCAP")
+            raise SystemExit(0)
 
         import numpy as np
         import tsdynamics as ts
@@ -470,6 +482,12 @@ def test_an_absurd_orbit_diagram_raises_instead_of_killing_the_process():
             raise AssertionError("an impossible allocation must not succeed")
         """
     )
+    if "NOCAP" in proc.stdout:
+        pytest.skip(
+            "this platform will not lower RLIMIT_AS, and the cap is what makes an "
+            "unservable request fail cheaply rather than be SIGKILLed — the Linux "
+            "jobs prove the behaviour"
+        )
     assert proc.returncode == 0, (
         f"the sweep killed the interpreter (returncode {proc.returncode}): {proc.stderr[-2000:]}"
     )

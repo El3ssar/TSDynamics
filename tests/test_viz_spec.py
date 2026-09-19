@@ -1180,6 +1180,10 @@ class TestAnExplicitGridMustHoldItsPanels:
 
     def test_a_composite_sized_too_small_says_so_instead_of_an_index_error(self, tmp_path):
         """The user-facing path: three panels into a one-cell grid."""
+        # This one SAVES, so it needs the optional plotting extra; the base CI
+        # job has none. Its three siblings above check the arithmetic and run
+        # everywhere.
+        pytest.importorskip("matplotlib")
         import matplotlib.pyplot as plt
 
         traj = ts.systems.Lorenz().run(final_time=1.0, dt=0.05, ic=[1.0, 1.0, 1.0])
