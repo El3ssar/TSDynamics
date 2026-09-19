@@ -2587,6 +2587,10 @@ def test_plotspec_show_displays_and_says_so_when_it_cannot(monkeypatch) -> None:
     call would otherwise be a silent no-op, so it warns and names the two ways
     out.
     """
+
+    # matplotlib is an optional extra; this asserts the windowless warning.
+
+    pytest.importorskip("matplotlib")
     import matplotlib.pyplot as plt
 
     from tsdynamics.viz import spec as spec_mod
@@ -2602,6 +2606,10 @@ def test_plotspec_show_displays_and_says_so_when_it_cannot(monkeypatch) -> None:
 
 def test_plotspec_show_displays_on_an_interactive_backend(monkeypatch) -> None:
     """On a backend that *can* open a window, the display call actually happens."""
+
+    # matplotlib is an optional extra; this asserts what it DISPLAYS.
+
+    pytest.importorskip("matplotlib")
     import matplotlib.pyplot as plt
 
     from tsdynamics.viz import spec as spec_mod

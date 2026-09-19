@@ -25,6 +25,13 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
+# matplotlib is an OPTIONAL extra: the base test job installs the library
+# without it and runs the viz suites in a separate job. Skip the whole module
+# rather than fail collection — an ImportError here reddens the entire run.
+pytest.importorskip("matplotlib")
+
 import matplotlib
 import numpy as np
 import pytest

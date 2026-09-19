@@ -973,7 +973,16 @@ def test_the_figure_vocabulary_is_derived_and_has_seventeen_names() -> None:
     ],
 )
 def test_save_picks_the_backend_from_the_extension(name: str, backend: str) -> None:
-    """``.png`` / ``.html`` / ``.json`` each route to the backend that writes them."""
+    """``.png`` / ``.html`` / ``.json`` each route to the backend that writes them.
+
+    The skip has to be about the EXPECTED backend, not about whether *some*
+    backend answered.  ``.html`` is written by plotly AND by three.js, so with
+    plotly absent the resolver correctly returns ``"threejs"`` — not ``None`` —
+    and a "nothing was chosen" guard never fires.  Measured on the base CI job,
+    that read as a routing bug when it was an uninstalled extra.
+    """
+    if backend in {"plotly", "matplotlib"}:
+        pytest.importorskip(backend)
     chosen = _panel()._preferred_save_backend(name)
     if chosen is None:  # that backend is not installed in this environment
         pytest.skip(f"{backend} not installed")

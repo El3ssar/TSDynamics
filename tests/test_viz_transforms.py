@@ -41,6 +41,12 @@ from tsdynamics.viz.transforms import (
     transforms,
 )
 
+# matplotlib is an OPTIONAL extra: the base CI job installs the library without
+# it and runs the viz suites in a separate job. Every test here renders, so skip
+# the module rather than fail — a late guard inside the tests does not help when
+# an autouse fixture or a module-level import reaches matplotlib first.
+pytest.importorskip("matplotlib")
+
 
 class _DemoSystem:
     """A stand-in carrying ``family`` — the v6 spelling a real system has.

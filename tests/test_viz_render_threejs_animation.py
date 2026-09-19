@@ -191,6 +191,10 @@ def test_the_written_page_is_self_contained_and_playable(tmp_path, traj):
     This is the artifact that was loaded in a real browser: it drew a WebGL canvas
     and advanced its progress readout with no same-origin request.
     """
+
+    # the page embeds a matplotlib POSTER, so its size floor assumes the extra.
+
+    pytest.importorskip("matplotlib")
     out = tmp_path / "attractor.html"
     ts.plot(traj, animate=True).trail(("time", 2.0)).head(size=8).save(str(out), backend="threejs")
     text = out.read_text(encoding="utf-8")

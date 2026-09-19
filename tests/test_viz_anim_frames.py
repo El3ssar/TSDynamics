@@ -38,7 +38,14 @@ import dataclasses
 
 import numpy as np
 import pytest
-from matplotlib.animation import FuncAnimation
+
+# matplotlib is an OPTIONAL extra: the base test job installs the library without
+# it and runs the viz suites in a separate job.  The per-test `importorskip` calls
+# below are too LATE — a module-level matplotlib import fails at COLLECTION, which
+# reddens the whole run before a single test is reached.  Guard here.
+pytest.importorskip("matplotlib")
+
+from matplotlib.animation import FuncAnimation  # noqa: E402
 
 import tsdynamics as ts
 from tsdynamics.errors import InvalidParameterError

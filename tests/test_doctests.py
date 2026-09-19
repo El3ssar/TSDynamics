@@ -40,6 +40,7 @@ from pathlib import Path
 
 import pytest
 from _doctest_select import (
+    DOCS_DIR,
     EXEMPT_MODULES,
     EXEMPT_PAGES,
     SLOW_MODULES,
@@ -97,8 +98,45 @@ def _scratch_cwd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.mark.usefixtures("_scratch_cwd")
 @pytest.mark.parametrize("page", gated_pages())
 def test_doc_page_fences(page: str) -> None:
-    """Every ```python``` fence in a gated doc page executes without raising."""
+    """Every ```python``` fence in a gated doc page executes without raising.
+
+    A page that draws needs matplotlib, which is an OPTIONAL extra: the base CI
+    job runs without it and the viz job runs with it, so the same page is
+    skipped in one and executed in the other.  Without this the eight
+    visualization pages failed the base job for a dependency they are entitled
+    to assume — while the gate that matters (does this page's code still run?)
+    is answered in full by the viz job.
+    """
+    for module in _page_requires(page):
+        pytest.importorskip(module)
     run_page_fences(page)
+
+
+#: Optional extras a doc page can need, as ``module -> markers in the page text``.
+#: A predicate over the page's own text rather than a hand-listed set of pages, so
+#: a new page is covered the day it is written and a page that stops needing an
+#: extra stops being exempt — the same self-cleaning discipline as EXEMPT_PAGES.
+_PAGE_REQUIREMENTS: dict[str, tuple[str, ...]] = {
+    "matplotlib": ("ts.plot(", ".plot(", "ts.viz", "matplotlib", "plt.", ".save("),
+    "plotly": ('backend="plotly"', "backend='plotly'", "plotly"),
+    "hilbertplot": ("hilbertplot", "curve=", "hilbert_"),
+    "pandas": ("to_frame(", "pandas"),
+}
+
+
+def _page_requires(page: str) -> list[str]:
+    """Optional modules ``page`` needs in order for its fences to run.
+
+    These are EXTRAS, not dependencies: the base CI job installs none of them and
+    the viz job installs the plotting ones, so the same page skips in one place
+    and executes in the other.  Without this the eight visualization pages failed
+    the base job for a dependency they are entitled to assume — and
+    ``visualization/hilbert.md`` passed or failed according to whether
+    ``hilbertplot`` happened to be installed, which is a flake across CI cells
+    rather than a gate.
+    """
+    text = (DOCS_DIR / page).read_text(encoding="utf-8")
+    return [mod for mod, markers in _PAGE_REQUIREMENTS.items() if any(m in text for m in markers)]
 
 
 @pytest.mark.full

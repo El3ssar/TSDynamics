@@ -43,6 +43,13 @@ dependencies = [
   # autogen the Jacobian, render docs LaTeX) — not a v2 integration backend.
   "symengine>=0.13,<1.0",
   "sympy>=1.13,<2.0",
+  # Marching squares for `ts.analysis.nullclines` — a PUBLIC analysis, usable with
+  # no plotting installed. The call sites call contourpy "a matplotlib hard
+  # dependency, so no new dependency", which holds for the viz layer (matplotlib
+  # is there by definition) and NOT for the analysis layer: measured on the base
+  # CI job, `nullclines` raised ModuleNotFoundError because contourpy only ever
+  # arrived through matplotlib. A core analysis declares what it needs.
+  "contourpy>=1.2,<2.0",
 ]
 
 [project.urls]

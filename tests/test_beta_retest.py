@@ -241,6 +241,10 @@ class TestAFieldCanBeDrawnOverOneBoxAndFramedOverAnother:
     """Finding 7 — the warning taught a combination the next call refused."""
 
     def test_domain_and_xlim_may_be_given_together(self) -> None:
+
+        # matplotlib is an optional extra; this one RENDERS to compare the two windows.
+
+        pytest.importorskip("matplotlib")
         import matplotlib.pyplot as plt
 
         vdp = ts.systems.VanDerPol()
@@ -266,6 +270,10 @@ class TestTheCobwebShowsTheMapItIsDrawnToTeach:
     """Finding 8 — the staircase covered the parabola and the diagonal solid."""
 
     def test_the_default_staircase_is_short_enough_to_see_through(self) -> None:
+
+        # matplotlib is an optional extra; this one measures the drawn staircase.
+
+        pytest.importorskip("matplotlib")
         import matplotlib.pyplot as plt
 
         plot = ts.plot(ts.systems.Logistic(), "cobweb")

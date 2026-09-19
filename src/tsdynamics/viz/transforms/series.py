@@ -214,7 +214,7 @@ def _require(values: np.ndarray, minimum: int, what: str) -> np.ndarray:
     if values.size < minimum:
         raise InvalidInputError(f"{what} needs at least {minimum} samples, got {values.size}.")
     if not np.isfinite(values).all():
-        finite = values[np.isfinite(values)]
+        finite: np.ndarray = values[np.isfinite(values)]
         if finite.size < minimum:
             raise InvalidInputError(
                 f"{what} needs at least {minimum} finite samples, got {finite.size}."

@@ -408,7 +408,10 @@ class _FrameCompositor:
     def arm(self) -> None:
         """Take over the figure's ``draw`` (no-op when the compositor is off)."""
         if self.enabled and not self._armed:
-            self._fig.draw = self._draw  # type: ignore[method-assign]
+            # ``setattr`` rather than a direct assignment: replacing a bound
+            # method is the point here, and going through the builtin keeps it
+            # out of the type checker's method-assignment rule on every version.
+            setattr(self._fig, "draw", self._draw)  # noqa: B010
             self._armed = True
 
     def prepare(self) -> None:
@@ -664,7 +667,8 @@ def _make_animation(
         animation._tsd_compositor = _FrameCompositor(fig, dynamic, probe, _probe_schedule(n_steps))
     elif freeze_layout:
         animation._tsd_freeze = _LayoutFreeze(fig)
-    return animation  # type: ignore[no-any-return]
+    built: FuncAnimation = animation
+    return built
 
 
 def _probe_schedule(n_steps: int) -> list[int]:

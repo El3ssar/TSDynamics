@@ -236,6 +236,8 @@ def test_headline_is_a_value_not_a_bound_method():
 
 def test_to_frame_uses_the_declared_variable_names():
     """A pendulum declaring ``("theta", "omega")`` tabulated as ``x0`` / ``x1``."""
+    # pandas is not a dependency — `to_frame()` raises a message naming it.
+    pytest.importorskip("pandas")
 
     class Pendulum(ts.ContinuousSystem):
         params = {"b": 0.2}

@@ -48,6 +48,8 @@ class TestTheBracketHasOneGrammar:
 
     def test_the_selection_names_its_own_columns(self) -> None:
         """The measured silent-wrong-answer: ``sel('x','z')['y']`` returned ``z``."""
+        # pandas is not a dependency; `to_frame()` names it when absent.
+        pytest.importorskip("pandas")
         tr = _lorenz_traj()
         xz = tr["x", "z"]
         assert xz.variables == ("x", "z")
@@ -93,6 +95,8 @@ class TestEveryTrajectoryNamesEveryComponent:
     ``to_frame`` and on its plot, then refused ``traj["y0"]``."""
 
     def test_measured_data_answers_its_generated_names(self) -> None:
+        # pandas is not a dependency; `to_frame()` names it when absent.
+        pytest.importorskip("pandas")
         bare = as_trajectory(np.random.default_rng(0).random((20, 2)))
         assert bare.variables == ("y0", "y1")
         assert list(bare.to_frame().columns) == ["y0", "y1"]

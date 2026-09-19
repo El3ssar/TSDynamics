@@ -24,6 +24,7 @@ Three clusters, worst first:
 from __future__ import annotations
 
 import re
+import sys
 import warnings
 
 import numpy as np
@@ -35,14 +36,28 @@ from tsdynamics.errors import InvalidInputError, InvalidParameterError
 from tsdynamics.viz.render.caps import VisualizationDegraded
 from tsdynamics.viz.spec import Colorbar, Legend, PlotKind
 
+# matplotlib is an OPTIONAL extra: the base CI job installs the library without
+# it and runs the viz suites in a separate job. Every test here renders, so skip
+# the module rather than fail — a late guard inside the tests does not help when
+# an autouse fixture or a module-level import reaches matplotlib first.
+pytest.importorskip("matplotlib")
+
 
 @pytest.fixture(autouse=True)
 def _close_figures():
-    """Close every figure this module opens (the machine has been OOM-killed)."""
-    yield
-    import matplotlib.pyplot as plt
+    """Close every figure this module opens (the machine has been OOM-killed).
 
-    plt.close("all")
+    Read from ``sys.modules`` rather than importing: matplotlib is an OPTIONAL
+    extra, and an autouse TEARDOWN runs even for a test that skipped, so an
+    unconditional import here raised ``ModuleNotFoundError`` twelve times on the
+    base CI job — errors *after* the tests themselves had passed, which is the
+    confusing half of that failure. If nothing imported pyplot there is also
+    nothing to close.
+    """
+    yield
+    plt = sys.modules.get("matplotlib.pyplot")
+    if plt is not None:
+        plt.close("all")
 
 
 def _lorenz(final_time: float = 10.0, dt: float = 0.02):

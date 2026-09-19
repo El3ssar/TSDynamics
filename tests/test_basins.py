@@ -925,6 +925,8 @@ class TestAnAttractorIsNamedByWhereItIs:
         assert list(order) == sorted(order), "ids must ascend lexicographically by centre"
 
     def test_the_location_is_in_the_repr_and_in_the_table(self):
+        # pandas is not a dependency; `to_frame()` names it when absent.
+        pytest.importorskip("pandas")
         d = DuffingTwoWell()
         found = bas.attractors(d, [(-2.0, 2.0, 30), (-2.0, 2.0, 30)], n_seeds=60, seed=0)
         assert "at [" in repr(found), "the printout must say WHERE, not only #n"

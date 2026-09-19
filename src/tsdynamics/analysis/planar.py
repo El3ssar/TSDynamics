@@ -1591,7 +1591,8 @@ def _escape_predicate(
     def by_window(states: np.ndarray) -> np.ndarray:
         x, y = states[:, i], states[:, j]
         inside = (x >= xlim[0]) & (x <= xlim[1]) & (y >= ylim[0]) & (y <= ylim[1])
-        return ~inside | ~np.isfinite(x) | ~np.isfinite(y)
+        escaped: np.ndarray = ~inside | ~np.isfinite(x) | ~np.isfinite(y)
+        return escaped
 
     return by_window, "left the drawn window (in-plane)"
 

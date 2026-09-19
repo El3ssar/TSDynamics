@@ -29,6 +29,13 @@ from tsdynamics.viz.render import (
 )
 from tsdynamics.viz.spec import Layer, PlotKind, PlotSpec
 
+# matplotlib is an OPTIONAL extra: the base CI job installs the library without
+# it and runs the viz suites in a separate job. Every test here renders, so skip
+# the module rather than fail — a late guard inside the tests does not help when
+# an autouse fixture or a module-level import reaches matplotlib first.
+pytest.importorskip("matplotlib")
+
+
 # ---------------------------------------------------------------------------
 # Fixtures / fakes
 # ---------------------------------------------------------------------------

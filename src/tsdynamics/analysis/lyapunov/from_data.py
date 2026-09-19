@@ -1086,13 +1086,17 @@ def lyapunov_from_data(
         # k-ahead image exists — exactly the inner break-loop, expressed as a
         # masked argmax. ``argmax`` returns the first True (the break target);
         # rows with no valid candidate are dropped (``any`` over the row is False).
-        rows = idx_all[: last + 1, 1:]  # drop column 0 (the point itself)
-        ref_grid = np.arange(last + 1, dtype=np.intp)[:, None]
-        valid = (rows <= last) & (np.abs(rows - ref_grid) > theiler)
+        # ``candidates``, not ``rows``: ``rows`` already means the COUNT of usable
+        # reference rows in this function (bound far above), and rebinding it to
+        # the candidate-neighbour INDEX ARRAY gave one name two types — which is
+        # what the type checker was objecting to, and is worth not doing anyway.
+        candidates: np.ndarray = idx_all[: last + 1, 1:]  # drop column 0 (the point itself)
+        ref_grid: np.ndarray = np.arange(last + 1, dtype=np.intp)[:, None]
+        valid = (candidates <= last) & (np.abs(candidates - ref_grid) > theiler)
         has_neighbour = valid.any(axis=1)
         first_col = valid.argmax(axis=1)  # first valid column per row (0 if none)
         ref_arr = ref_grid[:, 0][has_neighbour]
-        nn_arr = rows[ref_arr, first_col[has_neighbour]].astype(np.intp)
+        nn_arr = candidates[ref_arr, first_col[has_neighbour]].astype(np.intp)
         if ref_arr.size == 0:
             raise ConvergenceError(
                 "no nearest neighbour outside the Theiler window was found; "

@@ -1594,7 +1594,12 @@ def _write(result: Figure | FuncAnimation, path: str | Path) -> Path:
     out = Path(path)
     ext = out.suffix.lower()
     if hasattr(result, "to_jshtml") and ext in _MOVIE_EXTENSIONS:
-        result.save(str(out))  # type: ignore[union-attr]
+        # ``result`` is a union here and only the animation arm has ``save``;
+        # the ``hasattr`` above is the real guard.  Reaching the attribute through
+        # ``getattr`` states that to the type checker on every stub version,
+        # rather than a ``type: ignore`` that one of them calls unused.
+        saver: Any = getattr(result, "save")  # noqa: B009
+        saver(str(out))
         return out
     figure = getattr(result, "_fig", None) or getattr(result, "figure", result)
     savefig = getattr(figure, "savefig", None)

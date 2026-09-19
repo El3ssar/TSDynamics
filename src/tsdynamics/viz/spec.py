@@ -4759,7 +4759,11 @@ def _mpl_backend_is_interactive() -> bool:
     try:
         from matplotlib.backends.registry import BackendFilter, backend_registry
 
-        gui: Any = backend_registry.list_builtin(BackendFilter.INTERACTIVE)  # type: ignore[no-untyped-call]
+        # Bound through an ``Any`` first: calling an ``Any`` is never an untyped
+        # call, so this needs no per-version ``type: ignore`` (matplotlib's stubs
+        # annotate ``list_builtin`` on some releases and not others).
+        list_builtin: Any = backend_registry.list_builtin
+        gui: Any = list_builtin(BackendFilter.INTERACTIVE)
         return name in {str(b).lower() for b in gui}
     except Exception:  # pragma: no cover - older/odd matplotlib: fall back to the set
         return name not in _NON_INTERACTIVE_MPL
@@ -4892,7 +4896,9 @@ def _notebook_mimebundle(draw: Any, include: Any, exclude: Any) -> Any:
         from IPython.core.getipython import get_ipython
     except Exception:  # pragma: no cover - IPython not installed
         return None
-    shell: Any = get_ipython()  # type: ignore[no-untyped-call]
+    # As above: IPython ships annotations on some versions only.
+    get_shell: Any = get_ipython
+    shell: Any = get_shell()
     if shell is None:  # a plain console / script: nothing to display into
         return None
     try:
