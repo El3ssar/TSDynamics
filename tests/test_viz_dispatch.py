@@ -570,12 +570,24 @@ def test_writes_is_split_into_static_and_animated_because_savefig_disagrees() ->
 def test_every_extension_matplotlib_declares_statically_can_actually_be_written(
     tmp_path, ext: str
 ) -> None:
-    """The declaration and the writer must agree — in both directions."""
+    """The declaration and the writer must agree — in both directions.
+
+    ``.pgf`` is the one extension whose writer needs something outside Python: a
+    working TeX installation (``xelatex`` by default).  matplotlib declares the
+    format regardless, and so does this library, which is correct — the format IS
+    supported, the *toolchain* may be absent.  Measured on the CI viz runner,
+    saving one raised ``RuntimeError: 'xelatex' not found``, which says nothing
+    about whether the declaration and the writer agree.
+    """
     pytest.importorskip("matplotlib")
+    import shutil
     import warnings as _w
 
     import matplotlib.pyplot as plt
     import numpy as np
+
+    if ext == ".pgf" and shutil.which("xelatex") is None:
+        pytest.skip("`.pgf` needs a TeX installation; none on this machine")
 
     t = np.linspace(0.0, 1.0, 8)
     spec = PlotSpec(kind=PlotKind.TIME_SERIES, layers=[Layer(PlotKind.LINE, {"x": t, "y": t})])

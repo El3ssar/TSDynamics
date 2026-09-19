@@ -79,9 +79,15 @@ def test_absurd_map_step_count_raises_instead_of_killing_the_process(steps, what
     proc = _run_isolated(
         f"""
         import resource
-        # Cap the address space so an unservable request fails fast rather than
-        # sending the machine swapping.
-        resource.setrlimit(resource.RLIMIT_AS, (4 * 1024**3, 4 * 1024**3))
+        # Best-effort: macOS refuses to LOWER RLIMIT_AS from a soft limit it
+        # reports as unlimited ("current limit exceeds maximum limit").  Without
+        # the cap the child still raises MemoryError from the engine's own
+        # checked allocation — which is the behaviour under test; the cap only
+        # makes the failure cheap.
+        try:
+            resource.setrlimit(resource.RLIMIT_AS, (4 * 1024**3, 4 * 1024**3))
+        except (ValueError, OSError):
+            pass
         import tsdynamics as ts
 
         try:
@@ -389,7 +395,15 @@ def test_an_absurd_orbit_diagram_raises_instead_of_killing_the_process():
     proc = _run_isolated(
         """
         import resource
-        resource.setrlimit(resource.RLIMIT_AS, (4 * 1024**3, 4 * 1024**3))
+        # Best-effort: macOS refuses to LOWER RLIMIT_AS from a soft limit it
+        # reports as unlimited ("current limit exceeds maximum limit").  Without
+        # the cap the child still raises MemoryError from the engine's own
+        # checked allocation — which is the behaviour under test; the cap only
+        # makes the failure cheap.
+        try:
+            resource.setrlimit(resource.RLIMIT_AS, (4 * 1024**3, 4 * 1024**3))
+        except (ValueError, OSError):
+            pass
 
         import numpy as np
         import tsdynamics as ts
