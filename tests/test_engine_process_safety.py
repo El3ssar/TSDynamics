@@ -161,6 +161,56 @@ def test_fork_after_a_parallel_call_does_not_deadlock_the_child():
     assert "CHILD OK" in proc.stdout, proc.stdout + proc.stderr
 
 
+def test_fork_after_a_jit_compile_does_not_deadlock_the_child():
+    """A child forked after a JIT compile can use the inherited cache.
+
+    The JIT cache is a process-wide ``Mutex`` and is inherited across ``fork()``
+    exactly as the rayon pool is.  Unlike the pool there is nothing to repair in
+    the child — the compiled pages are valid there — so the child must both
+    *hit* the inherited entry and *compile* a fresh one.  A regression hangs,
+    and the subprocess timeout is the assertion.
+    """
+    proc = _run_isolated(
+        """
+        import os
+        import warnings
+
+        import numpy as np
+
+        import tsdynamics as ts
+        from tsdynamics._engine import run as engine_run
+
+        warnings.simplefilter("ignore")  # CPython's fork-in-a-thread notice
+
+        lor = ts.systems.Lorenz()
+        lor.run(final_time=1.0, dt=0.01, ic=[1.0, 1.0, 1.0], backend="jit")
+
+        pid = os.fork()
+        if pid == 0:
+            try:
+                # A hit on the inherited entry...
+                lor.run(final_time=1.0, dt=0.01, ic=[1.0, 1.0, 1.0], backend="jit")
+                # ...and a fresh compile, which takes the same lock.
+                ts.systems.Rossler().run(
+                    final_time=1.0, dt=0.01, ic=[1.0, 1.0, 1.0], backend="jit"
+                )
+                os._exit(0 if engine_run.jit_cache_stats()["size"] >= 1 else 3)
+            except BaseException:
+                os._exit(2)
+
+        _, status = os.waitpid(pid, 0)
+        assert status == 0, f"child exited with status {status}"
+        print("CHILD OK")
+        """,
+        timeout=180.0,
+    )
+    assert proc.returncode == 0, (
+        f"the forked child did not complete (returncode {proc.returncode}); "
+        f"a hang here is the deadlock this test exists for: {proc.stderr[-2000:]}"
+    )
+    assert "CHILD OK" in proc.stdout, proc.stdout + proc.stderr
+
+
 # ---------------------------------------------------------------------------
 # 3. Ctrl-C during a long engine call
 # ---------------------------------------------------------------------------

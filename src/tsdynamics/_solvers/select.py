@@ -538,7 +538,7 @@ def _jacobian_eigenvalues(system: Any, *, ic: Any, t: float) -> np.ndarray | Non
     try:
         from .._engine.run import eval_jac
 
-        u = system.resolve_ic() if ic is None else np.asarray(ic, dtype=float)
+        u = system._resolve_ic() if ic is None else np.asarray(ic, dtype=float)
         _deriv, jac = eval_jac(system, u, float(t), backend="reference")
         jac = np.asarray(jac, dtype=float)
         if jac.ndim != 2 or jac.shape[0] != jac.shape[1] or jac.size == 0:

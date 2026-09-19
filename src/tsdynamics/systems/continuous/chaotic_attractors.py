@@ -3,8 +3,8 @@ from typing import ClassVar
 import numpy as np
 from symengine import cos, exp, sign, sin
 
-from tsdynamics.errors import InvalidParameterError
 from tsdynamics.families import ContinuousSystem
+from tsdynamics.systems._declared_params import merge_declared_params
 
 
 class Lorenz(ContinuousSystem):
@@ -175,20 +175,25 @@ class Lorenz96(ContinuousSystem):
         *,
         params: dict[str, float] | None = None,
         ic=None,
+        dim: int | None = None,
+        field_shape: tuple[int, ...] | None = None,
         **param_kwargs: float,
     ):
-        p = dict(type(self).params)
+        # Both are DERIVED from ``N`` here.  They are bound (and discarded) only
+        # so ``with_params``/``copy``, which forward them on every rebuild, do
+        # not have them swallowed by ``**param_kwargs`` and refused as unknown
+        # parameters — which is what broke re-parametrising this system at all.
+        del dim, field_shape
         # ``params=``, the explicit ``N``/``f`` arguments and free parameter
-        # keywords are all accepted; super().__init__ validates unknown names
-        # (InvalidParameterError, naming the declared ones).
-        if params:
-            p.update(params)
-        if param_kwargs:
-            p.update(param_kwargs)
-        if N is not None:
-            p["N"] = int(N)
-        if f is not None:
-            p["f"] = float(f)
+        # keywords are all accepted; a name given through two of those channels
+        # is refused exactly as ``SystemBase.__init__`` refuses it.
+        p = merge_declared_params(
+            "Lorenz96",
+            dict(type(self).params),
+            params,
+            param_kwargs,
+            {"N": None if N is None else int(N), "f": None if f is None else float(f)},
+        )
         super().__init__(dim=int(p["N"]), params=p, ic=ic)
 
     @staticmethod
@@ -395,27 +400,23 @@ class KuramotoSivashinsky(ContinuousSystem):
         *,
         params: dict[str, float] | None = None,
         ic=None,
+        dim: int | None = None,
+        field_shape: tuple[int, ...] | None = None,
         **param_kwargs: float,
     ):
-        p = dict(type(self).params)
-        overrides = {**(params or {}), **param_kwargs}
-        if overrides:
-            # Validate before the N>=7 / IC-build steps below so an unknown
-            # parameter surfaces first (super().__init__ would also reject it,
-            # but only after those steps). Raise the project error type to match
-            # SystemBase.__init__ (InvalidParameterError, a ValueError subclass)
-            # rather than the bare TypeError a fixed signature would give.
-            unknown = set(overrides) - set(p)
-            if unknown:
-                raise InvalidParameterError(
-                    f"KuramotoSivashinsky: unknown parameter(s) {sorted(unknown)}. "
-                    f"Declared: {sorted(p)}"
-                )
-            p.update(overrides)
-        if N is not None:
-            p["N"] = int(N)
-        if L is not None:
-            p["L"] = float(L)
+        # See Lorenz96.__init__: derived from ``N``, bound only so with_params /
+        # copy can rebuild this system instead of being refused as unknown.
+        del dim, field_shape
+        # Merged before the N>=7 / IC-build steps below, so an unknown parameter
+        # or one given twice surfaces first (super().__init__ would catch the
+        # unknown name, but only after those steps, and never saw the duplicate).
+        p = merge_declared_params(
+            "KuramotoSivashinsky",
+            dict(type(self).params),
+            params,
+            param_kwargs,
+            {"N": None if N is None else int(N), "L": None if L is None else float(L)},
+        )
         N_val, L_val = int(p["N"]), float(p["L"])
         if N_val < 7:
             raise ValueError("KuramotoSivashinsky requires N >= 7 (uses ±3 stencil).")
@@ -682,20 +683,25 @@ class MultiChua(ContinuousSystem):
         *,
         params: dict[str, float] | None = None,
         ic=None,
+        dim: int | None = None,
+        field_shape: tuple[int, ...] | None = None,
         **param_kwargs: float,
     ):
-        p = dict(type(self).params)
+        # See Lorenz96.__init__: derived from ``n_circuits``, bound only so
+        # with_params / copy can rebuild this system.
+        del dim, field_shape
         # The circuit parameters (alpha, beta, m0, m1, kappa) reach the
         # constructor as plain keywords, like every other system's — this custom
         # ``__init__`` exists only to resolve ``dim`` from ``n_circuits``, so it
-        # must not shadow that front door.  Unknown names are rejected by
-        # ``super().__init__`` (InvalidParameterError, naming the valid ones).
-        if params:
-            p.update(params)
-        if param_kwargs:
-            p.update(param_kwargs)
-        if n_circuits is not None:
-            p["n_circuits"] = int(n_circuits)
+        # must not shadow that front door: unknown names and a parameter given
+        # twice are refused exactly as ``SystemBase.__init__`` refuses them.
+        p = merge_declared_params(
+            "MultiChua",
+            dict(type(self).params),
+            params,
+            param_kwargs,
+            {"n_circuits": None if n_circuits is None else int(n_circuits)},
+        )
         super().__init__(dim=3 * int(p["n_circuits"]), params=p, ic=ic)
         # A finite basin: the random-IC fallback escapes on 4 of 6 draws from
         # U[0,1]^9 at T=150, and the run comes back FINITE, so a bare ``run()``

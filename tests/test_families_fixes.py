@@ -562,3 +562,109 @@ def test_system_plot_accepts_the_in_tree_renderer_keywords() -> None:
     traj_fig = lor.run(final_time=1.0, dt=0.05).plot().render("plotly", html=True)
     sys_fig = lor.plot(final_time=1.0, dt=0.05).render("plotly", html=True)
     assert type(sys_fig) is type(traj_fig)
+
+
+class TestAFieldSystemRefusesAParameterGivenTwice:
+    """A variable-dimension system's custom ``__init__`` obeys the front door.
+
+    ``SystemBase.__init__`` refuses a parameter passed both in ``params=`` and as
+    a keyword — "there is deliberately no precedence rule".  All **five** systems
+    that resolve their own ``dim`` from a structural parameter merged their
+    arguments *before* calling ``super()``, so the base never saw the duplication
+    and a silent precedence applied instead (qodo #9).
+
+    Two of the five are not field systems at all — ``Lorenz96`` and ``MultiChua``
+    size themselves from ``N`` / ``n_circuits`` — which is why the shared merge
+    lives in ``tsdynamics.systems._declared_params`` rather than in the spatial
+    fields module.
+    """
+
+    CASES: ClassVar[list[tuple[str, str, float, float]]] = [
+        ("GrayScott", "Du", 0.20, 0.99),
+        ("GrayScott", "F", 0.03, 0.09),
+        ("SwiftHohenberg", "r", 0.5, 0.9),
+        ("SwiftHohenberg", "L", 20.0, 50.0),
+        ("KuramotoSivashinsky", "L", 40.0, 22.0),
+        ("Lorenz96", "f", 9.0, 8.0),
+        ("MultiChua", "alpha", 16.0, 15.6),
+    ]
+
+    @pytest.mark.parametrize(("cls_name", "name", "v1", "v2"), CASES)
+    def test_the_named_argument_and_params_cannot_both_carry_it(
+        self, cls_name: str, name: str, v1: float, v2: float
+    ) -> None:
+        cls = getattr(ts.systems, cls_name)
+        with pytest.raises(InvalidParameterError, match="given twice"):
+            cls(**{name: v1}, params={name: v2})
+
+    @pytest.mark.parametrize(("cls_name", "name", "v1", "v2"), CASES)
+    def test_a_free_keyword_and_params_cannot_both_carry_it(
+        self, cls_name: str, name: str, v1: float, v2: float
+    ) -> None:
+        cls = getattr(ts.systems, cls_name)
+        with pytest.raises(InvalidParameterError, match="given twice"):
+            cls(params={name: v2}, **{name: v1})
+
+    @pytest.mark.parametrize(("cls_name", "name", "v1", "_v2"), CASES)
+    def test_naming_it_exactly_once_still_works(
+        self, cls_name: str, name: str, v1: float, _v2: float
+    ) -> None:
+        cls = getattr(ts.systems, cls_name)
+        assert cls(**{name: v1}).params[name] == pytest.approx(v1)
+        assert cls(params={name: v1}).params[name] == pytest.approx(v1)
+
+
+@pytest.mark.parametrize(
+    ("cls_name", "name", "value"),
+    [
+        ("GrayScott", "F", 0.07),
+        ("SwiftHohenberg", "r", 0.4),
+        ("KuramotoSivashinsky", "L", 40.0),
+        ("Lorenz96", "f", 9.0),
+        ("MultiChua", "alpha", 16.0),
+    ],
+)
+def test_a_variable_dimension_system_can_be_reparametrised(
+    cls_name: str, name: str, value: float
+) -> None:
+    """``with_params`` / ``copy`` rebuild a system that sizes itself.
+
+    ``SystemBase.with_params`` forwards ``dim=`` and ``field_shape=`` on every
+    rebuild, but these constructors swallowed them into ``**param_kwargs`` and
+    rejected them as unknown parameters — so continuation, orbit diagrams and
+    every other sweep over any of the five raised.  CLAUDE.md states this exact
+    case is supposed to work ("a ``Sys(dim=2)``-constructed system can be
+    re-parametrised").
+    """
+    cls = getattr(ts.systems, cls_name)
+    sys_ = cls()
+    rebuilt = sys_.with_params(**{name: value})
+    assert rebuilt.params[name] == pytest.approx(value)
+    assert rebuilt.dim == sys_.dim
+    assert sys_.copy().dim == sys_.dim
+
+
+def test_no_catalogue_system_raises_on_reparametrisation() -> None:
+    """The sweep that found the three the review did not mention.
+
+    The filed finding (qodo #9) named the field systems.  Driving ``with_params``
+    over the whole registry is what showed the same constructor defect in
+    ``Lorenz96`` and ``MultiChua``, neither of which is a field system.
+    """
+    from tsdynamics import registry
+
+    broken: list[str] = []
+    for entry in registry.all_systems():
+        try:
+            system = entry.cls()
+        except Exception:  # pragma: no cover - construction is not what is tested
+            continue
+        first = next(iter(system.params.items()), None)
+        if first is None:
+            continue
+        try:
+            system.with_params(**{first[0]: first[1]})
+            system.copy()
+        except Exception as exc:  # noqa: BLE001 - the failure IS the finding
+            broken.append(f"{entry.name}: {type(exc).__name__}: {exc}")
+    assert not broken, "with_params/copy raises on:\n  " + "\n  ".join(broken)

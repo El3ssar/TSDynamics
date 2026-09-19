@@ -1134,7 +1134,22 @@ class Layout:
         if self.mode == "row":
             return (1, n)
         if self.rows is not None and self.cols is not None:
-            return (max(1, int(self.rows)), max(1, int(self.cols)))
+            rows, cols = max(1, int(self.rows)), max(1, int(self.cols))
+            # The docstring above promises ``rows * cols >= n_panels`` and this
+            # branch returned the caller's numbers unchecked, so an undersized
+            # explicit grid reached the renderer and surfaced as a raw
+            # ``IndexError`` from inside matplotlib's GridSpec.  Refusing here
+            # names the capacity and the panel count; it does NOT silently grow
+            # the grid, because a caller who sized it explicitly meant it.
+            if rows * cols < n:
+                from tsdynamics.errors import InvalidParameterError
+
+                raise InvalidParameterError(
+                    f"rows={rows}, cols={cols} holds {rows * cols} panel(s) but "
+                    f"{n} were given. Enlarge the grid (rows*cols >= {n}), or pass "
+                    "only one of rows=/cols= and let the other be filled in."
+                )
+            return (rows, cols)
         if self.cols is not None:
             cols = max(1, int(self.cols))
             return (-(-n // cols), cols)

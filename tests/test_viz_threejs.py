@@ -10,6 +10,9 @@ scalar colors / bounds / camera).  Engine-free — no ``tsdynamics._rust`` impor
 from __future__ import annotations
 
 import json
+import re
+import shutil
+import subprocess
 
 import numpy as np
 import pytest
@@ -1516,3 +1519,131 @@ def test_the_viewer_draws_a_labelled_scale_frame_in_a_browser(tmp_path) -> None:
 
     assert coloured.sum() > 1000, "the attractor itself did not render"
     assert grey.sum() > 200, "no axes frame / tick labels were drawn"
+
+
+# --------------------------------------------------------------------------- #
+# Injection: the OPTION channels (finding #3)
+#
+# `test_page_escapes_markup_in_a_title_...` above covers the PAYLOAD channel only
+# — the JSON block, which escapes `<`.  It is NOT coverage of the option channels
+# below: `background=` and `loader_url=` are interpolated into a `<style>` rule
+# and a JavaScript string literal, neither of which the payload escaper touches.
+# That mistake is why the hole shipped.
+# --------------------------------------------------------------------------- #
+
+_BACKGROUND_PAYLOADS = [
+    '#fff";</script><script>alert(1)</script>',
+    "#fff; } </style><script>alert(1)</script><style>{",
+    "red; background-image: url('javascript:alert(1)')",
+    '#fff"\\n; x: y',
+    "#fff\n</style><img src=x onerror=alert(1)>",
+    "';alert(1);'",
+]
+
+
+@pytest.mark.parametrize("payload", _BACKGROUND_PAYLOADS)
+def test_a_background_colour_cannot_smuggle_markup_into_the_saved_page(payload) -> None:
+    """A background is a CSS colour; anything else is refused, never interpolated."""
+    from tsdynamics.errors import InvalidParameterError
+
+    spec = _lorenz_line3d_spec(32)
+    with pytest.raises(InvalidParameterError, match="is not a CSS colour"):
+        _viewer_page(spec, poster=False, background=payload)
+
+
+@pytest.mark.parametrize("payload", _BACKGROUND_PAYLOADS)
+def test_a_themed_background_degrades_instead_of_escaping_into_the_page(payload) -> None:
+    """A theme is registered far from this save, so it degrades — but never leaks."""
+    import warnings
+
+    from tsdynamics.viz.render.threejs import render_page
+    from tsdynamics.viz.render.threejs._lower import lower_spec
+
+    lowered = lower_spec(_lorenz_line3d_spec(32))
+    lowered.setdefault("metadata", {})["theme"] = {"background": payload}
+    with pytest.warns(VisualizationDegraded, match="is not a CSS colour"):
+        page = render_page(lowered, poster=False)
+    # The theme dict also rides in the JSON payload, where `<` is escaped and the
+    # text is inert.  What must not exist is an EXECUTABLE copy: the CSS rule and
+    # the module script are where an unescaped background used to land.
+    assert "<script>alert(1)" not in page
+    assert "<img src=x" not in page
+    assert page.count("</style>") == 1
+    # Exactly the three scripts the page is built from: importmap, payload, module
+    # (plus the inlined loader block).
+    assert page.count("<script") == 4
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")  # a real colour must NOT warn
+        lowered["metadata"]["theme"] = {"background": "#101820"}
+        assert "background: #101820" in render_page(lowered, poster=False)
+
+
+@pytest.mark.parametrize("color", ["#fff", "#0b0f14", "#0b0f14ff", "black", "rgb(1,2,3)"])
+def test_a_real_css_colour_still_reaches_the_page(color) -> None:
+    """The whitelist must be inert on every colour the library actually ships."""
+    page = _viewer_page(_lorenz_line3d_spec(32), poster=False, background=color)
+    assert f"background: {color}" in page
+    assert f"background: {json.dumps(color)}" in page  # the JS sink, as a literal
+
+
+def test_a_loader_url_cannot_escape_its_javascript_string_literal() -> None:
+    """``assets='link'`` writes loader_url into JS — as a literal, never raw."""
+    from tsdynamics.errors import InvalidParameterError
+
+    spec = _lorenz_line3d_spec(32)
+    page = _viewer_page(spec, poster=False, assets="link", loader_url='./a".js\\x')
+    assert 'await import("./a\\".js\\\\x")' in page
+    assert "alert(1)" not in page
+    with pytest.raises(InvalidParameterError, match="</script"):
+        _viewer_page(spec, poster=False, assets="link", loader_url="./x</script><b>")
+
+
+# --------------------------------------------------------------------------- #
+# The comet window (finding #11)
+# --------------------------------------------------------------------------- #
+
+_LINE_COMET_LOWER = re.compile(r"const from = Math\.max\(0, hv - win \+ 1\);")
+_POINTS_COMET_LOWER = re.compile(
+    r"const lo = trailVertices == null \? 0 : Math\.max\(0, hv - trailVertices \+ 1\);"
+)
+
+
+def test_both_comet_types_draw_the_window_they_were_asked_for() -> None:
+    """A trail of N samples is N samples, line or points.
+
+    ``[lo, hv]`` is an INCLUSIVE vertex range, so its lower bound must be
+    ``hv - N + 1``.  The points comet subtracted the full count and then counted
+    inclusively, drawing ``N + 1``; the line comet next to it has always been
+    right.  Structural, so it cannot drift silently: if either line is reshaped
+    the regex fails and this test names it.
+    """
+    from tsdynamics.viz.render.threejs import loader_source
+
+    src = loader_source()
+    assert _LINE_COMET_LOWER.search(src), "the line comet's window formula moved"
+    assert _POINTS_COMET_LOWER.search(src), (
+        "the points comet's window lower bound is not `hv - trailVertices + 1`; "
+        "an inclusive [lo, hv] range built from `hv - trailVertices` draws one "
+        "sample too many"
+    )
+
+
+def test_the_two_comet_window_formulas_agree_when_run() -> None:
+    """Run both formulas in node and compare the counts they produce."""
+    node = shutil.which("node")
+    if node is None:  # pragma: no cover - node is present in CI
+        pytest.skip("node is not installed")
+    script = """
+    const line = (hv, n) => { const from = Math.max(0, hv - n + 1); return hv - from + 1; };
+    const pts  = (hv, n) => { const lo = Math.max(0, hv - n + 1); return Math.max(0, hv - lo + 1); };
+    const bad = [];
+    for (const hv of [0, 1, 7, 700, 900]) for (const n of [1, 2, 60, 600]) {
+      if (line(hv, n) !== pts(hv, n) || pts(hv, n) !== Math.min(n, hv + 1)) bad.push([hv, n, pts(hv, n)]);
+    }
+    console.log(JSON.stringify(bad));
+    """
+    out = subprocess.run(  # noqa: S603
+        [node, "-e", script], capture_output=True, text=True, check=True
+    )
+    assert json.loads(out.stdout) == []

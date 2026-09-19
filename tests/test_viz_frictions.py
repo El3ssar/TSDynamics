@@ -1020,3 +1020,63 @@ def test_a_duration_that_is_not_a_number_names_the_knob_and_its_unit():
     assert "duration" in message
     assert "seconds" in message
     assert "could not convert string to float" not in message
+
+
+# ---------------------------------------------------------------------------
+# A keyword whose vocabulary is a closed set (qodo #14, widened)
+# ---------------------------------------------------------------------------
+
+#: The six doors whose closed vocabulary is checked with ``value in <set/dict>``.
+#: ``in`` hashes its left operand FIRST, so each died with the interpreter's own
+#: words about a private table one line before the library's typed error would
+#: have named the spellings the caller wanted.  Only ``force=`` was filed; the
+#: other five were found by running the same probe at every door that has one,
+#: and ``backend=`` and ``kind=`` are far more commonly typed than ``force=``.
+_CLOSED_VOCABULARY_DOORS = ("theme", "primitive", "layout", "backend", "kind", "force")
+
+
+def _call_door(door, value, traj):
+    """Drive one door with ``value``, by the spelling a user would actually type."""
+    if door == "theme":
+        return ts.plot(traj, theme=value)
+    if door == "primitive":
+        return ts.plot(traj, "phase_portrait", primitive=value)
+    if door == "layout":
+        return ts.viz.plot(ts.plot(traj), ts.plot(traj), layout=value)
+    if door == "backend":
+        return ts.plot(traj).render(backend=value)
+    if door == "kind":
+        return traj.plot(kind=value)
+    return ts.plot(traj, traj, force=value)
+
+
+@pytest.mark.parametrize("door", _CLOSED_VOCABULARY_DOORS)
+@pytest.mark.parametrize("value", [["x"], {"x": 1}, {1, 2}, np.array([1.0, 2.0])])
+def test_an_unhashable_value_is_refused_by_name_at_every_closed_vocabulary_door(door, value):
+    """Whatever you pass, the library names the vocabulary — it never dies mid-lookup.
+
+    Measured on v6.0.0, every one of these raised a raw ``TypeError: cannot use
+    'list' as a set element`` / ``as a dict key``, or — for a numpy value —
+    ``ValueError: The truth value of an array ... is ambiguous``, naming a
+    private table instead of the valid spellings.
+    """
+    traj = ts.systems.Lorenz().run(final_time=2.0, dt=0.05, ic=[1.0, 1.0, 1.0])
+    with pytest.raises(ts.errors.InvalidParameterError):
+        _call_door(door, value, traj)
+
+
+@pytest.mark.parametrize(
+    ("door", "value"),
+    [
+        ("theme", "dark"),
+        ("primitive", "density"),
+        ("layout", "stack"),
+        ("backend", "mpl"),
+        ("kind", "time_series"),
+        ("force", True),
+    ],
+)
+def test_the_valid_spelling_at_each_of_those_doors_is_untouched(door, value):
+    """The guard only ever adds a refusal — it must not cost a legal call."""
+    traj = ts.systems.VanDerPol().run(final_time=2.0, dt=0.05, ic=[1.0, 1.0])
+    assert _call_door(door, value, traj) is not None

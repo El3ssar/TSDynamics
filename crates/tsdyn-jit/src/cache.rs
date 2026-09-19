@@ -36,6 +36,24 @@
 //! retained). Setting [`CACHE_DISABLE_ENV`] truthy turns the cache into a
 //! straight passthrough, which is what lets a test prove WITH-cache ==
 //! WITHOUT-cache.
+//!
+//! [`clear_cache`] is a **barrier**: an evaluator whose compile started before
+//! a clear is handed back to its caller but not retained (the `generation`
+//! counter), so a clear cannot be undone by an in-flight compile landing after
+//! it.
+//!
+//! # Forking
+//!
+//! This cache shares the residual `tsdyn_engine::pool` documents under "The one
+//! case that stays broken (and always will)": forking while another thread
+//! holds this `Mutex` copies it locked, and the child would block on it. The
+//! window here is strictly narrower than the pool's — the lock covers only a
+//! scan of ≤ [`CACHE_MAXSIZE`] entries, never the Cranelift compile — and,
+//! unlike the pool, there is nothing to repair in the child: the inherited
+//! compiled pages are valid there. `fork()` in a multithreaded process is
+//! defined only if the child goes straight to `exec()`, and the case anyone
+//! actually hits (`multiprocessing` forking from an idle parent) is safe; see
+//! `tests/test_engine_process_safety.py`.
 
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -86,6 +104,9 @@ struct Cache {
     hits: u64,
     misses: u64,
     clock: u64,
+    /// Bumped by [`clear_cache`]. A compile that started before a clear must not
+    /// repopulate the cache after it (see `cached_evaluator`).
+    generation: u64,
 }
 
 impl Cache {
@@ -95,6 +116,7 @@ impl Cache {
             hits: 0,
             misses: 0,
             clock: 0,
+            generation: 0,
         }
     }
 
@@ -211,23 +233,33 @@ pub fn cached_evaluator(tape: &Tape) -> Result<Arc<JitEvaluator>, JitError> {
         return Ok(Arc::new(JitEvaluator::new(tape)?));
     }
     let hash = tape_hash(tape);
-    {
+    let generation = {
         let mut cache = lock();
         if let Some(ev) = cache.lookup(hash, tape) {
             cache.hits += 1;
             return Ok(ev);
         }
         cache.misses += 1;
-    }
+        cache.generation
+    };
     // Compile outside the lock: Cranelift takes ~0.1 ms–0.3 s, far too long to
     // hold a process-wide mutex that every engine call passes through.
     let ev = Arc::new(JitEvaluator::new(tape)?);
+    #[cfg(test)]
+    tests::run_compile_window_hook();
     let mut cache = lock();
     // Another thread may have compiled the same tape while we did; prefer its
     // entry so the cache keeps at most one evaluator per tape. Not a "hit" —
     // this call already compiled, and the miss is already counted.
     if let Some(existing) = cache.lookup(hash, tape) {
         return Ok(existing);
+    }
+    // A `clear_cache()` landed while we compiled. Clearing is a barrier — it
+    // promises the cache is empty and that the pages it held are released — so
+    // hand back the evaluator we just built without retaining it, rather than
+    // resurrecting an entry the caller asked to be gone.
+    if cache.generation != generation {
+        return Ok(ev);
     }
     cache.insert(hash, tape.clone(), Arc::clone(&ev));
     Ok(ev)
@@ -244,6 +276,7 @@ pub fn clear_cache() {
     cache.entries.clear();
     cache.hits = 0;
     cache.misses = 0;
+    cache.generation = cache.generation.wrapping_add(1);
 }
 
 /// Snapshot the cache counters.
@@ -262,6 +295,40 @@ mod tests {
     use super::*;
     use std::sync::{Mutex as StdMutex, MutexGuard as StdGuard, OnceLock};
     use tsdyn_ir::TapeBuilder;
+
+    /// Test-only seam: run inside `cached_evaluator`'s compile window — after the
+    /// compile, before the insert lock — so a test can land a `clear_cache()`
+    /// exactly there without racing a sleep.
+    static COMPILE_WINDOW_HOOK: StdMutex<Option<fn()>> = StdMutex::new(None);
+
+    pub(super) fn run_compile_window_hook() {
+        let hook = *COMPILE_WINDOW_HOOK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some(f) = hook {
+            f();
+        }
+    }
+
+    fn set_compile_window_hook(f: Option<fn()>) {
+        *COMPILE_WINDOW_HOOK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = f;
+    }
+
+    #[test]
+    fn a_clear_during_an_in_flight_compile_leaves_the_cache_empty() {
+        let _g = serialize();
+        clear_cache();
+        set_compile_window_hook(Some(clear_cache));
+        let ev = cached_evaluator(&scaled(7.0)).unwrap();
+        set_compile_window_hook(None);
+        // The caller still gets a usable evaluator...
+        assert!(Arc::strong_count(&ev) >= 1);
+        // ...but `clear_cache()` is a barrier: nothing was resurrected behind it.
+        assert_eq!(cache_stats().size, 0);
+        clear_cache();
+    }
 
     /// The cache is process-wide, so the tests that assert on its counters must
     /// not interleave. `cargo test` runs them on threads by default.

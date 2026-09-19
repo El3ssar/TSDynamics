@@ -51,7 +51,9 @@ jobs:
       # The docs import `tsdynamics` (autogen pages, figures), so the build needs
       # the compiled engine; `uv sync` builds it via maturin (needs Rust).
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch, 2026-02
+        with:
+          toolchain: stable
 
       # The spatial-field systems (Gray-Scott / Swift-Hohenberg) render an animated
       # field-movie hero (docs/_tooling/field_movies.py) as an H.264 mp4 via
@@ -90,7 +92,7 @@ jobs:
       # far more reliable than the legacy branch build. Pages source must be set to
       # "GitHub Actions" (build_type: workflow) in the repo settings.
       - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v5
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: site/
 
@@ -116,10 +118,10 @@ jobs:
       # job fails.
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v5
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
         continue-on-error: true
 
       - name: Deploy to GitHub Pages (retry once)
         id: deployment_retry
         if: steps.deployment.outcome == 'failure'
-        uses: actions/deploy-pages@v5
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

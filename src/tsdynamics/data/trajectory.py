@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Any, Literal, NamedTuple, cast
 import numpy as np
 
 from tsdynamics._utils.escape import Unbounded, detect_unbounded
+from tsdynamics._utils.lookup import is_hashable
 from tsdynamics._utils.plot_namespace import plot_namespace as _plot_namespace
 from tsdynamics._utils.plot_namespace import plot_seam_error as _plot_seam_error
 from tsdynamics.errors import InvalidInputError, remedy
@@ -321,7 +322,10 @@ def _reject_unbuildable_kind(kind: str, route: str) -> None:
     """
     from tsdynamics.errors import InvalidParameterError
 
-    if route in _BUILDABLE_ROUTES:
+    # ``route in _BUILDABLE_ROUTES`` hashes ``route``, which is the caller's own
+    # ``kind=`` when it resolved to no alias — so an unhashable kind= died here
+    # rather than in the typed error three lines down.
+    if is_hashable(route) and route in _BUILDABLE_ROUTES:
         return
     accepted = sorted(_BUILDABLE_ROUTES | set(_KIND_ALIASES))
     raise InvalidParameterError(
@@ -1145,7 +1149,10 @@ class Trajectory:
         # Scott's "u"/"v"), not a state component, so it must not be resolved
         # against the per-cell labels.
         if kind is not None:
-            explicit_route = _KIND_ALIASES.get(kind, kind)
+            # ``.get`` hashes ``kind``, so an unhashable kind= died as a raw
+            # TypeError naming the private alias table, one line before
+            # ``_reject_unbuildable_kind`` would have named the kinds that build.
+            explicit_route = _KIND_ALIASES.get(kind, kind) if is_hashable(kind) else kind
             _reject_unbuildable_kind(kind, explicit_route)
             if explicit_route == "spatial_field":
                 self._validate_kind_kw("spatial_field", kind_kw)

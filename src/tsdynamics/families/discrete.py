@@ -617,6 +617,17 @@ class DiscreteMap(SystemBase, ABC):
         # off-basin); a *user* ic — passed here or to the constructor — that
         # diverges raises loudly, the engine's contract.  ``resolve_ic`` records
         # which of the two it resolved on ``_ic_explicit``.
+        if seed is not None:
+            # Install the seeded IC stream BEFORE resolving, so the retry draws
+            # below come from it.  ``_resolve_ic`` only reaches ``_ic_generator``
+            # on the branch where it draws the *first* IC at random; a system that
+            # starts from a declared ``_default_ic`` (or a latched ``self.ic``)
+            # never took that branch, so its retries drew from a fresh OS-entropy
+            # generator and ``run(seed=...)`` was not reproducible the moment the
+            # first attempt diverged — precisely the runs that retry.  Seeding
+            # here is idempotent with ``_resolve_ic(seed=)``: that branch re-seeds
+            # with the same value and draws the same first IC as before.
+            self._ic_generator(seed)
         ic_arr = self._resolve_ic(ic, seed=seed)
         ic_explicit = ic is not None or bool(self.__dict__.get("_ic_explicit", False))
         for attempt in range(max_retries):

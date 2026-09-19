@@ -323,6 +323,12 @@ _DOCS_TOOLING_TESTS: tuple[str, ...] = (
     "test_docs_figures_golden.py",
     "test_viz_gallery.py",
     "test_catalogue_dynamics.py",
+    # The docs tooling reads the CATALOGUE, and v6 moved five of its ClassVars
+    # behind an underscore.  ``TestNoRemovedNameIsReadAsAString`` sweeps
+    # ``docs/_tooling`` for the old spellings and counts what the build actually
+    # receives — measured on v6.0.0, ``make_bibliography`` saw 0 of 177
+    # citations.  ``None`` is legal for all five, so nothing else can catch it.
+    "test_analysis_discovery.py",
 )
 
 #: Repo-root files the doctest gate reads: ``test_doctests.py::_COUNTED_FILES``

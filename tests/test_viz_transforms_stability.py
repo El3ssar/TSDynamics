@@ -658,3 +658,42 @@ def test_shared_keywords_reach_the_estimator_through_the_composition_front_door(
         ts.systems.Lorenz(), "lyapunov_convergence", steps=50, dt=0.2, ic=[1.0, 1.0, 1.0]
     )
     assert spec.meta["steps"] == 50
+
+
+class TestTheStabilityDoorAsksTheFamilyWhetherItIsAMap:
+    """``is_discrete`` left the system object in v6 (CONTRACT §9.4 rule 3).
+
+    ``_jacobian_at`` read it as a **string**, with ``False`` as the default — a
+    legal value — so the read is answered today only by the ``_INTERNAL_ALIASES``
+    compat shim in ``SystemBase.__getattr__``.  Delete that row (which the table's
+    own comment invites) and every map takes the flow branch and reaches for the
+    ``_rhs_numeric`` a map does not have.  The correct reading is ``family``,
+    which is also the only one a derived wrapper answers.
+    """
+
+    def test_a_map_is_still_read_as_a_map_when_the_compat_shim_is_gone(self, monkeypatch):
+        import numpy as np
+
+        import tsdynamics as ts
+        from tsdynamics.families import base as _base
+        from tsdynamics.viz.transforms.stability import _jacobian_at
+
+        aliases = dict(_base._INTERNAL_ALIASES)
+        aliases.pop("is_discrete")
+        monkeypatch.setattr(_base, "_INTERNAL_ALIASES", aliases)
+
+        henon = ts.systems.Henon()
+        assert not hasattr(henon, "is_discrete")  # the row is genuinely gone
+
+        jac, continuous = _jacobian_at(henon, [0.1, 0.1])
+        assert continuous is False
+        expected = np.asarray(type(henon)._jacobian(np.array([0.1, 0.1]), **henon.params), float)
+        assert np.allclose(jac, expected)
+
+    def test_the_source_no_longer_names_the_removed_spelling(self):
+        import pathlib
+
+        import tsdynamics.viz.transforms.stability as mod
+
+        source = pathlib.Path(mod.__file__).read_text(encoding="utf-8")
+        assert 'getattr(system, "is_discrete"' not in source

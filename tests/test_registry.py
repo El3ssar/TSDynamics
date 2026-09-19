@@ -382,9 +382,6 @@ _LOADER_NOT_LANDED = {
     # §7.1: "SYSTEMS_GROUP is advertised and dead ... systems/__init__.py gains
     # the loader."  Owner: C9 · CATALOGUE.
     "SYSTEMS_GROUP": "C9 - CATALOGUE owns systems/__init__.py (contract 7.1)",
-    # §7.4/§6.9: the primitives registry and its entry-point loader.
-    # Owner: C8 · VIZ-REGISTRY / S5 · PLOT-FRONTDOOR.
-    "PLOT_PRIMITIVES_GROUP": "C8 - VIZ-REGISTRY owns the primitives registry (contract 6.9)",
 }
 
 
@@ -405,12 +402,18 @@ _LOADER_NOT_LANDED = {
 def test_every_declared_plugin_group_has_a_consumer(group_name) -> None:
     """Some module must actually *load* each declared group.
 
-    Detected by looking for the group **constant** (``SYSTEMS_GROUP``) or a
-    literal load of the group string in the consumer's source.  Matching the
-    constant rather than the group *string* is load-bearing: the string
-    ``"tsdynamics.systems"`` appears in every module path under
-    ``tsdynamics/systems/``, so a string match would have declared the dead group
-    healthy — which is exactly how it stayed dead.
+    Detected by looking for a **loader call** — ``load_plugins`` /
+    ``register_entry_points`` — applied to the group, named either by its literal
+    string or by any local alias of the group constant (the consumer imports it
+    under an underscored name and re-exports it under a shorter one).  Matching
+    the group *string* alone would be useless: ``"tsdynamics.systems"`` appears in
+    every module path under ``tsdynamics/systems/``.
+
+    .. versionchanged:: 6.0.1
+        A bare **mention** of the constant used to satisfy this gate, so an
+        ``import`` with no loader behind it read as healthy.  That is not why
+        ``PLOT_PRIMITIVES_GROUP`` stayed dead — it was a tracked ``strict`` xfail
+        — but it is why the fix could have been faked.
     """
     import importlib
     import pathlib
@@ -422,12 +425,22 @@ def test_every_declared_plugin_group_has_a_consumer(group_name) -> None:
     consumer = importlib.import_module(_GROUP_CONSUMERS[group_name])
     root = pathlib.Path(consumer.__file__).parent
     sources = "\n".join(p.read_text(encoding="utf-8") for p in root.rglob("*.py"))
-    loads_constant = re.search(rf"\b{group_name}\b", sources) is not None
-    loads_literal = (
-        re.search(rf"""(load_plugins|register_entry_points)\([^)]*{re.escape(group)}""", sources)
-        is not None
-    )
-    assert loads_constant or loads_literal, (
+
+    # Every local spelling of the group: the constant, its import aliases, and
+    # anything assigned from one of those at module level.
+    names = {group_name}
+    for _ in range(3):  # resolve chains (import as _X; Y = _X)
+        for pattern in (
+            rf"\b({'|'.join(names)})\s+as\s+(\w+)",
+            rf"(\w+)\s*=\s*({'|'.join(names)})\b",
+        ):
+            for match in re.finditer(pattern, sources):
+                names.update({match.group(1), match.group(2)})
+    loads = any(
+        re.search(rf"(load_plugins|register_entry_points)\([^)]*\b{name}\b", sources)
+        for name in names
+    ) or re.search(rf"""(load_plugins|register_entry_points)\([^)]*{re.escape(group)}""", sources)
+    assert loads, (
         f"{group_name} ({group!r}) is declared in plugins.ALL_GROUPS but "
         f"{_GROUP_CONSUMERS[group_name]} never loads it — a declared group that "
         "nothing reads silently ignores every plugin that declares against it"
@@ -447,3 +460,80 @@ def test_plot_transform_entry_point_group_is_declared() -> None:
     assert plugins.PLOT_TRANSFORMS_GROUP == "tsdynamics.plot_transforms"
     assert plugins.PLOT_TRANSFORMS_GROUP in plugins.ALL_GROUPS
     assert viz.TRANSFORMS_GROUP == plugins.PLOT_TRANSFORMS_GROUP
+
+
+def test_a_third_party_primitive_published_under_the_advertised_group_registers(
+    tmp_path, monkeypatch
+) -> None:
+    """A primitive installed under ``tsdynamics.plot_primitives`` must arrive.
+
+    The group has been advertised in ``ALL_GROUPS`` since v6 while
+    ``viz.discover_plugins`` loaded only renderers and plot transforms, so a
+    package declaring one was silently ignored — and with it the *only* route a
+    custom primitive has into a shipped transform, ``ts.viz.transforms.allow``.
+
+    The distribution is a hand-built ``.dist-info`` on ``sys.path``:
+    :mod:`importlib.metadata` reads it exactly as an installed one, so this
+    needs no wheel build and no environment mutation.
+    """
+    import sys
+
+    import tsdynamics.viz as viz
+
+    (tmp_path / "tsd_primitive_plugin.py").write_text(
+        "import numpy as np\n"
+        "def stem(part, **options):\n"
+        "    '''A vertical drop to the baseline plus a marker at each point.'''\n"
+        "    x, y = np.asarray(part['x']), np.asarray(part['y'])\n"
+        "    return [{'mark': 'points', 'x': x, 'y': y}]\n"
+        "stem.requires = ('x', 'y')\n"
+        "stem.marks = ('points',)\n"
+    )
+    dist = tmp_path / "tsd_primitive_plugin-0.0.1.dist-info"
+    dist.mkdir()
+    (dist / "METADATA").write_text(
+        "Metadata-Version: 2.1\nName: tsd-primitive-plugin\nVersion: 0.0.1\n"
+    )
+    (dist / "entry_points.txt").write_text(
+        "[tsdynamics.plot_primitives]\ntsd_stem = tsd_primitive_plugin:stem\n"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    from importlib.metadata import MetadataPathFinder
+
+    MetadataPathFinder.invalidate_caches()
+
+    from tsdynamics import registry as _registry
+
+    # ``allow`` RE-REGISTERS the shipped transform with a widened row, and that
+    # outlives this test.  Popping the primitive without restoring the row left
+    # ``time_series.primitives`` naming a primitive no longer in ``PRIMITIVES``,
+    # so every later test that read its option row died with ``KeyError:
+    # 'tsd_stem'`` — 8 of them, in a different FILE, only when this one ran first.
+    original = viz.transforms.get("time_series")
+
+    def _restore_row() -> None:
+        _registry.plot_transforms.register(
+            original.name,
+            original,
+            replace=True,
+            source=original.source,
+            default_primitive=original.default_primitive,
+            requires=original.requires,
+        )
+
+    try:
+        assert "tsd_stem" in viz.discover_plugins()
+        assert "tsd_stem" in viz.primitives.names()
+        # The documented escape hatch: a custom primitive reaches a shipped
+        # transform only through ``allow``, which needs it registered first.
+        widened = viz.transforms.allow("time_series", "tsd_stem")
+        assert "tsd_stem" in widened.primitives
+        assert "tsd_stem" in viz.transforms.get("time_series").primitives
+    finally:
+        from tsdynamics.viz.transforms._primitives import PRIMITIVES
+
+        _restore_row()
+        PRIMITIVES.pop("tsd_stem", None)
+        sys.modules.pop("tsd_primitive_plugin", None)
+
+    assert "tsd_stem" not in viz.transforms.get("time_series").primitives

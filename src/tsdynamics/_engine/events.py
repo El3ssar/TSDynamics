@@ -31,6 +31,7 @@ from tsdynamics._utils.grids import make_output_grid
 from tsdynamics._utils.tolerances import DEFAULT_ATOL, DEFAULT_RTOL
 from tsdynamics.errors import ConvergenceError
 
+from .._utils.grids import validate_max_step
 from .problem import ODEProblem, Problem
 
 #: The event seam's public API.  Everything else in this module is an
@@ -126,6 +127,7 @@ def crossings(
     from .run import _engine, _name, _primary_tape, resolve_backend
 
     name = resolve_backend(backend)
+    validate_max_step(max_step)
     if name == "reference":
         raise NotImplementedError(
             "the crossing engine is compiled-only (no reference backend); the "
@@ -517,6 +519,7 @@ def integrate_events(
     from .run import resolve_backend
 
     backend = resolve_backend(backend)
+    validate_max_step(max_step)
     if not isinstance(problem, ODEProblem):
         raise InvalidInputError(
             f"events= is an ODE feature; got a {problem.family!r} problem. "

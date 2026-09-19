@@ -6,6 +6,11 @@ layer (:mod:`tsdynamics._engine.run`) build the same grid, so it lives here in
 the leaf ``utils`` package (it imports only NumPy) and both layers consume it —
 rather than each carrying a byte-identical private copy that could silently
 drift apart.
+
+It owns the numeric guards over the same march for the same reason:
+:func:`validate_max_step` is consumed by the SciPy-backed reference integrator
+and by the event seam, which would otherwise each carry their own copy of one
+sentence.
 """
 
 from __future__ import annotations
@@ -14,7 +19,38 @@ import math
 
 import numpy as np
 
-__all__ = ["make_output_grid"]
+__all__ = ["make_output_grid", "validate_max_step"]
+
+
+def validate_max_step(max_step: float | None) -> None:
+    """Refuse a ``max_step`` ceiling that cannot bound anything.
+
+    ``None`` and ``inf`` mean "no ceiling" and are inert; ``nan`` and anything
+    ``<= 0`` are refused.
+
+    The engine validates at the FFI boundary, but the *stiff* and
+    ``backend="reference"`` paths route to :func:`scipy.integrate.solve_ivp`,
+    which raises a bare :class:`ValueError` for ``max_step <= 0`` and — worse —
+    **silently accepts** ``nan`` (every ``h > max_step`` comparison is then
+    false, so the ceiling never binds).  Validating here is what makes all three
+    backends reject the same values with the same type, instead of a typo'd
+    ceiling raising on ``interp``/``jit`` and quietly doing nothing on
+    ``reference``.
+
+    Raises
+    ------
+    tsdynamics.errors.InvalidParameterError
+        If ``max_step`` is ``nan`` or non-positive.
+    """
+    from tsdynamics.errors import InvalidParameterError
+
+    if max_step is None:
+        return
+    value = float(max_step)
+    if math.isnan(value) or value <= 0.0:
+        raise InvalidParameterError(
+            f"max_step must be positive (or infinite for no ceiling); got {max_step}"
+        )
 
 
 def make_output_grid(t0: float, tf: float, dt: float) -> np.ndarray:

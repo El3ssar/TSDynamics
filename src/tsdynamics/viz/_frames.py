@@ -89,13 +89,19 @@ def force_requested(on: bool | str | None) -> bool:
     tsdynamics.errors.InvalidParameterError
         If the value is neither a bool, ``None``, nor ``"force"``.
     """
+    from tsdynamics._utils.lookup import is_hashable
     from tsdynamics.errors import InvalidParameterError
 
     if on is None or on is False:
         return False
     if on is True:
         return True
-    if on not in ON_VALUES:
+    # ``on not in ON_VALUES`` HASHES ``on`` first, so an unhashable value died as
+    # ``TypeError: cannot use 'list' as a set element`` — the interpreter's words
+    # about a set the caller never heard of — before the typed error below could
+    # be raised.  Membership is only ever asked of a hashable value now; the
+    # guard is shared with the five other doors that had the same hole.
+    if not is_hashable(on) or on not in ON_VALUES:
         raise InvalidParameterError(
             f"unknown force={on!r}; force= is a bool — force=True overlays a "
             "deliberate frame mismatch with a warning instead of an error."

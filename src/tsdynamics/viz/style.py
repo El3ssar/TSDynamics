@@ -33,6 +33,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, Literal, cast
 
+from .._utils.lookup import is_hashable
 from ._visibility import dir_without, listing_dir
 
 #: The figure layout algorithms a renderer may be asked to apply.  Spelled as a
@@ -806,7 +807,10 @@ def get_theme(name: str | None = None) -> Theme:
 
     if name is None:
         return THEMES[_ACTIVE]
-    if name not in THEMES:
+    # ``name not in THEMES`` hashes ``name`` first, so an unhashable theme= died
+    # as a raw TypeError naming a dict the caller never heard of, one line before
+    # the typed error below would have named the registered themes.
+    if not is_hashable(name) or name not in THEMES:
         raise InvalidParameterError(
             f"unknown theme {name!r}; registered themes are {', '.join(themes())}"
         )

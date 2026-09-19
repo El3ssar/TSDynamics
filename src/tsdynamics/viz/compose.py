@@ -56,6 +56,7 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from .._utils.lookup import is_hashable
 from ._frames import check_overlay, force_requested, role_of
 from ._visibility import listing_dir
 from .spec import (
@@ -233,10 +234,15 @@ def plot(
             key: getattr(layout, key) if layout_kw[key] is None else layout_kw[key]
             for key in layout_kw
         }
-    if mode == "overlay":
+    # ``mode == "overlay"`` is ELEMENTWISE when layout= is an array, and the
+    # result has no truth value — so a numpy layout= died with numpy's words.
+    # A layout is a string; anything else falls through to the typed error.
+    if isinstance(mode, str) and mode == "overlay":
         _reject_layout_kw_for_overlay(layout_kw)
         result = _overlay(specs, force=force)
-    elif mode in _COMPOSITE_MODES:
+    # ``mode in _COMPOSITE_MODES`` hashes ``mode``, so an unhashable layout= died
+    # as a raw TypeError instead of reaching the ``else`` that names the layouts.
+    elif is_hashable(mode) and mode in _COMPOSITE_MODES:
         if force:
             raise InvalidParameterError(
                 "force=True applies to layout='overlay' (one set of axes); panelled "

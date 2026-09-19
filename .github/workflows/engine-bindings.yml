@@ -52,8 +52,9 @@ jobs:
         run: git fetch --no-tags origin "${{ github.event.pull_request.base.ref || 'main' }}"
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch, 2026-02
         with:
+          toolchain: stable
           components: rustfmt, clippy
 
       - name: Cache cargo build

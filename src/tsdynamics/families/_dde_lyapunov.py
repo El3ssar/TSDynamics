@@ -369,7 +369,7 @@ def dde_lyapunov_spectrum(
             stacklevel=2,
         )
 
-    base_ic = np.asarray(system.resolve_ic(ic), dtype=np.float64).ravel()
+    base_ic = np.asarray(system._resolve_ic(ic), dtype=np.float64).ravel()
     base_seg = np.tile(base_ic, (n_seg + 1, 1))
     dev_seg = _seed_deviations(n_seg, k, dim, grid)
 

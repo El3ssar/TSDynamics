@@ -164,3 +164,19 @@ def test_an_axis_mismatch_refusal_names_the_offending_axis():
     text = str(err.value)
     assert "axis 2: z vs y" in text
     assert "components=" in text  # ...and the next move
+
+
+@pytest.mark.parametrize("value", [["x"], {"x": 1}, {1, 2}, bytearray(b"force")])
+def test_an_unhashable_force_value_is_refused_by_name_not_by_a_set_error(value):
+    """``force=`` states the accepted grammar, whatever was passed.
+
+    The check was ``on not in ON_VALUES``, which HASHES the value before the
+    typed error can be raised — so ``ts.plot(a, b, force=["x"])`` died as
+    ``TypeError: cannot use 'list' as a set element (unhashable type: 'list')``,
+    the interpreter's words about a set the caller never heard of.
+    """
+    from tsdynamics.viz._frames import force_requested
+
+    with pytest.raises(InvalidParameterError) as err:
+        force_requested(value)
+    assert "force=" in str(err.value)

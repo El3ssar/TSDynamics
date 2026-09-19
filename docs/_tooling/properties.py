@@ -171,7 +171,10 @@ def _known_lyapunov(entry) -> dict[str, Any] | None:
     - ``{"n_positive": k, ...}`` — only the *count* of positive exponents is
       known: reported as "≥ k positive" with **no fabricated numbers**.
     """
-    kl = getattr(entry.cls, "known_lyapunov", None)
+    from tsdynamics import registry
+
+    # Underscored since v6; the bare spelling silently read None for all 177.
+    kl = registry._classvar(entry.cls, "known_lyapunov")
     if not kl:
         return None
     source = kl.get("source")

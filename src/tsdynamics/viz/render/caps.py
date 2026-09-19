@@ -54,6 +54,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
+from ..._utils.lookup import is_hashable
 from .._visibility import dir_without, listing_dir
 from ..spec import PlotKind, PlotSpec
 
@@ -540,6 +541,11 @@ def _normalize_backend_name(name: str) -> str:
         "json": "json",
         "threejs": "threejs",
     }
+    # ``.get`` hashes ``name``, so an unhashable backend= died here as a raw
+    # TypeError naming this private alias table, rather than reaching the
+    # dispatcher's typed error naming the registered renderers.
+    if not is_hashable(name):
+        return name
     return _MAP.get(name, name)
 
 

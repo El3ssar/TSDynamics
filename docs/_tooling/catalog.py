@@ -345,7 +345,9 @@ def _merge_record(entry: Any, ed: dict[str, Any]) -> SystemRecord:
     variables = _as_str_tuple(getattr(cls, "variables", None))
     field_shape = getattr(cls, "_field_shape", None)
     field_shape = tuple(field_shape) if field_shape is not None else None
-    field_labels = _as_str_tuple(getattr(cls, "field_labels", None))
+    # Underscored since v6.  SystemEntry carries the resolved value (it reads
+    # both spellings), so take it from the record rather than the class.
+    field_labels = _as_str_tuple(getattr(entry, "field_labels", None))
 
     param_roles = ed.get("param_roles") if isinstance(ed.get("param_roles"), dict) else {}
     projection = ed.get("projection")
