@@ -194,33 +194,39 @@ pub fn map_lyapunov(
         for j in 0..k {
             let wcol = &w[j * dim..(j + 1) * dim];
             let pcol = &mut w_prop[j * dim..(j + 1) * dim];
-            let mut underflowed_term = false;
-            let mut nonzero_term = false;
             for r in 0..dim {
                 let jrow = &jac[r * dim..(r + 1) * dim];
                 let mut acc = 0.0;
                 for c in 0..dim {
-                    let term = jrow[c] * wcol[c];
-                    underflowed_term |= term == 0.0 && jrow[c] != 0.0 && wcol[c] != 0.0;
-                    nonzero_term |= term != 0.0;
-                    acc += term;
+                    acc += jrow[c] * wcol[c];
                 }
                 pcol[r] = acc;
             }
-            if underflowed_term && pcol.iter().all(|v| *v == 0.0) {
-                return Err(MapLyapunovError::BadShape(
-                    "map tangent propagation underflowed to zero; reduce reortho_interval \
-                     before interpreting contraction rates"
-                        .to_string(),
-                ));
-            }
-            if nonzero_term && pcol.iter().all(|v| *v == 0.0) {
-                return Err(MapLyapunovError::BadShape(
-                    "map tangent propagation vanished through cancellation; exact rank loss \
-                     cannot be distinguished from roundoff. Reduce reortho_interval or \
-                     rescale the model before interpreting contraction rates"
-                        .to_string(),
-                ));
+            if pcol.iter().all(|v| *v == 0.0) {
+                // Only a vanished column needs to distinguish structural zeros
+                // from lost products or cancellation. Reevaluate its terms in
+                // the same order; ordinary propagation keeps the plain dot loop.
+                let mut nonzero_term = false;
+                for jrow in jac.chunks(dim) {
+                    for (&coefficient, &component) in jrow.iter().zip(wcol) {
+                        let term = coefficient * component;
+                        if term == 0.0 && coefficient != 0.0 && component != 0.0 {
+                            return Err(MapLyapunovError::BadShape(
+                                "map tangent propagation underflowed to zero; reduce reortho_interval \
+                                 before interpreting contraction rates".to_string(),
+                            ));
+                        }
+                        nonzero_term |= term != 0.0;
+                    }
+                }
+                if nonzero_term {
+                    return Err(MapLyapunovError::BadShape(
+                        "map tangent propagation vanished through cancellation; exact rank loss \
+                         cannot be distinguished from roundoff. Reduce reortho_interval or \
+                         rescale the model before interpreting contraction rates"
+                            .to_string(),
+                    ));
+                }
             }
         }
         if !w_prop.iter().all(|v| v.is_finite()) {

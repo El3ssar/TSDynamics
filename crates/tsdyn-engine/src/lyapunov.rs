@@ -122,9 +122,16 @@ pub(crate) fn mgs_renormalise(
                 }
             }
         }
-        let norm = w[i * dim..(i + 1) * dim]
-            .iter()
-            .fold(0.0_f64, |a, v| a.hypot(*v));
+        let column = &w[i * dim..(i + 1) * dim];
+        // Scaling precedes projection, so ordinary residuals can use one square
+        // root. Keep the robust norm near the rank boundary (including squared
+        // underflow), and as a fallback for non-finite intermediate sums.
+        let ordinary = column.iter().map(|v| v * v).sum::<f64>().sqrt();
+        let norm = if ordinary.is_finite() && ordinary > 2.0 * rank_resolution {
+            ordinary
+        } else {
+            column.iter().fold(0.0_f64, |a, v| a.hypot(*v))
+        };
         if !norm.is_finite() {
             return Err(TangentQrError::NonFinite);
         }
@@ -569,6 +576,45 @@ mod tests {
             assert!((growths[0] - expected).abs() < 1e-12);
             assert!((w[0] - 1.0 / 2.0_f64.sqrt()).abs() < 1e-14);
             assert!((w[1] - w[0]).abs() < 1e-14);
+        }
+    }
+
+    #[test]
+    fn scaled_pythagorean_frame_has_known_growth_and_orthogonality() {
+        for scale in [1e-300, 1e-100, 1.0, 1e100, 1e300] {
+            let mut frame = vec![3.0 * scale, 4.0 * scale, -4.0 * scale, 3.0 * scale];
+            let mut growths = vec![0.0; 2];
+            mgs_renormalise(&mut frame, 2, 2, &mut growths).unwrap();
+            let expected = scale.ln() + 5.0_f64.ln();
+            for growth in growths {
+                assert!((growth - expected).abs() < 2e-13);
+            }
+            for (value, expected) in frame.iter().zip([0.6, 0.8, -0.8, 0.6]) {
+                assert!((value - expected).abs() < 1e-14);
+            }
+            assert!((frame[0] * frame[2] + frame[1] * frame[3]).abs() < 1e-14);
+        }
+    }
+
+    #[test]
+    fn rank_boundary_and_underflowed_residuals_keep_their_meaning() {
+        let boundary = 16.0 * f64::EPSILON;
+        for (residual, accepted) in [
+            (1e-200, false),
+            (f64::from_bits(boundary.to_bits() - 1), false),
+            (boundary, false),
+            (f64::from_bits(boundary.to_bits() + 1), true),
+            (4.0 * boundary, true),
+        ] {
+            let mut frame = vec![1.0, 0.0, 1.0, residual];
+            let mut growths = vec![0.0; 2];
+            let result = mgs_renormalise(&mut frame, 2, 2, &mut growths);
+            assert_eq!(result.is_ok(), accepted, "residual={residual}");
+            if accepted {
+                assert!((growths[1] - residual.ln()).abs() < 1e-13);
+            } else {
+                assert_eq!(result.unwrap_err(), TangentQrError::UnresolvedRank);
+            }
         }
     }
 
