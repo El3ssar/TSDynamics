@@ -848,8 +848,8 @@ def map_lyapunov(
     Raises
     ------
     ConvergenceError
-        If the iteration diverged (a non-finite iterate / Jacobian / frame) before
-        the step budget was exhausted.  Subclasses :class:`RuntimeError`.
+        If the state iteration failed before the step budget was exhausted.
+        Tangent-resolution failures raise ``ValueError`` with their remedy.
     EngineNotAvailableError
         If :mod:`tsdynamics._rust` is not built.
     """
@@ -872,11 +872,12 @@ def map_lyapunov(
         # RuntimeError (e.g. a backend="jit" compile failure) propagating
         # unchanged, not mislabelled as a numerical blow-up.
         raise ConvergenceError(
-            f"{name}: map Lyapunov iteration diverged or produced a non-finite "
-            f"state before reaching {steps} iterations."
+            f"{name}: map Lyapunov iteration failed before reaching {steps} iterations: {exc}"
         ) from exc
     exponents = np.asarray(exponents, dtype=np.float64)
-    if not np.all(np.isfinite(exponents)):
+    # Exact zero derivatives can legitimately yield -inf map exponents.
+    # NaN/+inf still indicate an unusable numerical result.
+    if np.any(np.isnan(exponents) | np.isposinf(exponents)):
         raise ConvergenceError(
             f"{name}: map Lyapunov spectrum is non-finite after {steps} iterations."
         )

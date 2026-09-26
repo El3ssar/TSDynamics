@@ -71,8 +71,10 @@ pub fn lyapunov_spectrum_ode_bridge(
     // march); the name is a registry name and the tolerances are validated, so
     // `build_solver` always succeeds.
     let factory = move || -> Box<dyn Solver> { build_solver(name, tol) };
-    lyapunov_spectrum_ode(&*ev, factory, p, dim, k, z0, t0, dt, burn_in, final_time)
-        .map_err(to_engine_err)
+    lyapunov_spectrum_ode(
+        &*ev, factory, p, dim, k, z0, t0, dt, burn_in, final_time, rtol, atol,
+    )
+    .map_err(to_engine_err)
 }
 
 #[cfg(test)]
@@ -81,7 +83,7 @@ mod tests {
     use tsdyn_ir::TapeBuilder;
 
     /// Extended variational tape of `dx = a x, dy = b y` with `k` tangents (the
-    /// Jacobian is the constant `diag(a, b)`). Spectrum is `[max(a,b), min(a,b)]`.
+    /// Jacobian is the constant `diag(a, b)`). Identity-frame rates are `[a, b]`.
     fn linear_extended(a: f64, b: f64, k: usize) -> Tape {
         let dim = 2;
         let mut bld = TapeBuilder::new();

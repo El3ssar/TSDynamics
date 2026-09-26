@@ -13,12 +13,10 @@
 //! norm `|h|·‖e₅‖² / √((‖e₅‖² + 0.01·‖e₃‖²)·n)` — identical to SciPy's, where
 //! `‖·‖` is the per-component-scaled Euclidean norm.
 //!
-//! There is **no propagation FSAL reuse** here: every accepted step recomputes
-//! its 12 propagation stages from scratch (unlike `rk45`/`tsit5`/`bs3`, which
-//! reuse the accepted step's last stage as the next step's first). The 13th
-//! "FSAL" stage that SciPy carries is purely a *dense-output* stage — it has zero
-//! weight in both error estimators and feeds no subsequent propagation step — so
-//! `step` does not compute it; only the 12 propagation stages are needed.
+//! Every trial computes its 12 propagation stages from scratch. The accepted
+//! endpoint derivative has zero weight in both error estimators and is computed
+//! only when interpolation requests it. This implementation does not retain that
+//! extra derivative for reuse as the next step's first stage.
 //!
 //! # Dense output: Hairer's `contd8`
 //!

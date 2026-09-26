@@ -70,73 +70,83 @@ impl core::fmt::Display for LyapunovError {
 
 impl std::error::Error for LyapunovError {}
 
-/// Reorthonormalise the `(dim, k)` tangent block in place by **modified
-/// Gram–Schmidt**, returning each column's `log` stretch factor.
-///
-/// The tangent vectors are stored column-major in `w` (`w[i*dim .. (i+1)*dim]` is
-/// the `i`-th tangent vector, of length `dim`) — the same layout
-/// [`crate::bridge`] marshals to/from the Python `embed_extended` /
-/// `split_extended`. Modified Gram–Schmidt orthonormalises them left-to-right and
-/// records `log(norm_i)` (the `i`-th diagonal of the implicit `R`), with the
-/// `|·|`-free convention (the norm is non-negative by construction) and the same
-/// `tiny`-floor on a vanishing norm the Python `_qr_growths` applies.  Returns
-/// `Err` if a non-finite value appears (divergence surfaced through the QR rather
-/// than as a plausible number).
-fn mgs_renormalise(w: &mut [f64], dim: usize, k: usize, growths: &mut [f64]) -> bool {
-    // The smallest positive normal f64 — the floor the Python `_qr_growths` uses
-    // (`np.finfo(float).tiny`) so a vanishing stretch logs a large-negative
-    // contribution instead of `-inf`.
-    const TINY: f64 = f64::MIN_POSITIVE;
-
-    for i in 0..k {
-        // Orthogonalise column i against the already-normalised columns 0..i
-        // (modified Gram–Schmidt: subtract each projection as soon as it is
-        // computed, using the *updated* column — more stable than the classical
-        // variant).
-        for j in 0..i {
-            // dot = <q_j, w_i>
-            let mut dot = 0.0;
-            for r in 0..dim {
-                dot += w[j * dim + r] * w[i * dim + r];
-            }
-            for r in 0..dim {
-                w[i * dim + r] -= dot * w[j * dim + r];
-            }
-        }
-        // Norm of the orthogonalised column i → its stretch factor.
-        let mut norm2 = 0.0;
-        for r in 0..dim {
-            let v = w[i * dim + r];
-            norm2 += v * v;
-        }
-        let norm = norm2.sqrt();
-        if !norm.is_finite() {
-            return false;
-        }
-        let safe = if norm < TINY { TINY } else { norm };
-        growths[i] = safe.ln();
-        // Normalise the column (divide by the floored norm so we never divide by
-        // zero; the contribution is already recorded).
-        let inv = 1.0 / safe;
-        for r in 0..dim {
-            w[i * dim + r] *= inv;
-            if !w[i * dim + r].is_finite() {
-                return false;
-            }
-        }
-    }
-    true
+/// Failure to resolve the propagated tangent frame without inventing directions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TangentQrError {
+    NonFinite,
+    UnresolvedRank,
 }
 
-/// Advance the extended variational state `z` (length `dim*(k+1)`) one `dt` chunk,
-/// re-seeding a fresh solver — byte-for-byte the per-`dt` `integrate_grid([t,
-/// t+dt])` the released Python `TangentSystem._step_ode_engine` runs.
+pub(crate) const UNRESOLVED_TANGENT_RANK: &str =
+    "tangent frame has dependent or numerically unresolved nonzero columns; reduce \
+     reortho_interval (maps) or dt (flows). General rank-deficient frames are \
+     unsupported; exact zero map columns are retained as -inf growth.";
+
+/// Scaled modified Gram--Schmidt, with logarithmic growth accumulated before
+/// restoring each column's physical scale. Exact zero columns stay zero; an
+/// arbitrary complement would fabricate surviving tangent directions. Nonzero
+/// columns whose independence cannot be resolved are explicitly refused.
+pub(crate) fn mgs_renormalise(
+    w: &mut [f64],
+    dim: usize,
+    k: usize,
+    growths: &mut [f64],
+) -> Result<(), TangentQrError> {
+    if !w.iter().all(|v| v.is_finite()) {
+        return Err(TangentQrError::NonFinite);
+    }
+    // Relative floating-point rank resolution on columns scaled to max|w|=1.
+    // This is not a physical growth floor and is invariant to column scaling.
+    let rank_resolution = 8.0 * dim as f64 * f64::EPSILON;
+    for i in 0..k {
+        let scale = w[i * dim..(i + 1) * dim]
+            .iter()
+            .fold(0.0_f64, |a, v| a.max(v.abs()));
+        if scale == 0.0 {
+            growths[i] = f64::NEG_INFINITY;
+            continue;
+        }
+        for r in 0..dim {
+            w[i * dim + r] /= scale;
+        }
+        // A second pass controls accumulated projection roundoff. All operands
+        // are now on unit scale, avoiding tiny/huge norm and dot-product errors.
+        for _ in 0..2 {
+            for j in 0..i {
+                let mut dot = 0.0;
+                for r in 0..dim {
+                    dot += w[j * dim + r] * w[i * dim + r];
+                }
+                for r in 0..dim {
+                    w[i * dim + r] -= dot * w[j * dim + r];
+                }
+            }
+        }
+        let norm = w[i * dim..(i + 1) * dim]
+            .iter()
+            .fold(0.0_f64, |a, v| a.hypot(*v));
+        if !norm.is_finite() {
+            return Err(TangentQrError::NonFinite);
+        }
+        if norm <= rank_resolution {
+            return Err(TangentQrError::UnresolvedRank);
+        }
+        growths[i] = scale.ln() + norm.ln();
+        for r in 0..dim {
+            w[i * dim + r] /= norm;
+        }
+    }
+    Ok(())
+}
+
+/// Advance the extended variational state `z` to one exact chunk endpoint,
+/// re-seeding a fresh solver as in the Python per-chunk integration path.
 fn advance_chunk<F>(
     ev: &dyn Evaluator,
     solver_factory: &F,
     z: &mut [f64],
     t: f64,
-    dt: f64,
+    tf: f64,
     p: &[f64],
     poll: &mut Poller,
 ) -> Result<(), IntegrateError>
@@ -144,7 +154,6 @@ where
     F: Fn() -> Box<dyn Solver>,
 {
     let n = z.len();
-    let tf = t + dt;
     let t_eval = [t, tf];
     let mut solver = solver_factory();
     // First step is the grid-derived `tf - t` (NOT raw `dt`), matching
@@ -159,12 +168,48 @@ where
     Ok(())
 }
 
+/// Floating-point spacing on the clock's own scale, including subnormal times.
+fn time_spacing(value: f64) -> f64 {
+    let magnitude = value.abs();
+    let next = f64::from_bits(magnitude.to_bits() + 1);
+    if next.is_finite() {
+        next - magnitude
+    } else {
+        magnitude - f64::from_bits(magnitude.to_bits() - 1)
+    }
+}
+
+/// Use origin-anchored chunk targets; do not accumulate step-rounding drift.
+/// A near-endpoint target is snapped, never skipped: even a tiny positive
+/// window must integrate once. The slack matches the shared Python grid rule.
+fn chunk_target(
+    start: f64,
+    end: f64,
+    current: f64,
+    dt: f64,
+    index: usize,
+) -> Result<f64, LyapunovError> {
+    let slack = (0.5 * dt).min(8.0 * time_spacing(start).max(time_spacing(end)));
+    let nominal = start + index as f64 * dt;
+    let target = if nominal >= end || end - nominal <= slack {
+        end
+    } else {
+        nominal
+    };
+    if !target.is_finite() || target <= current {
+        return Err(LyapunovError::BadShape(
+            "dt must produce distinct increasing renormalisation times".to_string(),
+        ));
+    }
+    Ok(target)
+}
+
 /// The result of a Lyapunov run: the spectrum plus the final extended state (so
 /// the Python wrapper can record the end state / deviations exactly as the
 /// released loop left them).
 #[derive(Clone, Debug)]
 pub struct LyapunovOutcome {
-    /// The `k` Lyapunov exponents, in QR (descending-by-construction) order.
+    /// The `k` Lyapunov exponents, in QR column order.
     pub spectrum: Vec<f64>,
     /// The final extended state `z` (length `dim*(k+1)`) — base state ⊕ the
     /// orthonormal tangent frame, after the last QR.
@@ -191,10 +236,12 @@ pub struct LyapunovOutcome {
 ///   tangent frame (`I[:, :k]` column-major), exactly the Python `embed_extended`.
 /// - `t0` — the start time.
 /// - `dt` — the renormalisation interval (the Python `dt`).
-/// - `burn_in` — discard this much time before accumulating (`max(0, burn_in)`).
+/// - `burn_in` — discard this non-negative duration before accumulating.
 /// - `final_time` — the averaging-window length after burn-in.
+/// - `rtol`, `atol` — the tolerances used by `solver_factory`; growth at the
+///   corresponding endpoint error scale is refused before taking it as evidence.
 ///
-/// The chunking matches the released Python loop exactly: the burn-in steps a
+/// The chunking follows the shared Python output-grid convention: the burn-in steps a
 /// (possibly short) last chunk so it lands on `t0 + burn_in`, then the averaging
 /// window steps a (possibly short) last chunk so it lands on `t_burn +
 /// final_time`; each chunk is one `dt` (or the residual), and the QR after every
@@ -212,11 +259,23 @@ pub fn lyapunov_spectrum_ode<F>(
     dt: f64,
     burn_in: f64,
     final_time: f64,
+    rtol: f64,
+    atol: f64,
 ) -> Result<LyapunovOutcome, LyapunovError>
 where
     F: Fn() -> Box<dyn Solver>,
 {
     // --- validation (mirrors the Python guards) ---
+    if !rtol.is_finite()
+        || !atol.is_finite()
+        || rtol < 0.0
+        || atol < 0.0
+        || (rtol == 0.0 && atol == 0.0)
+    {
+        return Err(LyapunovError::BadShape(
+            "rtol and atol must be finite, non-negative and not both zero".to_string(),
+        ));
+    }
     if dim == 0 {
         return Err(LyapunovError::BadShape(
             "system dimension is zero".to_string(),
@@ -257,15 +316,29 @@ where
             "final_time must be finite and positive, got {final_time}"
         )));
     }
+    if !t0.is_finite() || !burn_in.is_finite() || burn_in < 0.0 {
+        return Err(LyapunovError::BadShape(
+            "t0 must be finite and burn_in must be finite and non-negative".to_string(),
+        ));
+    }
+    let t_burn = t0 + burn_in;
+    let t_end = t_burn + final_time;
+    if !t_end.is_finite() || (burn_in > 0.0 && t_burn <= t0) || t_end <= t_burn {
+        return Err(LyapunovError::BadShape(
+            "burn-in and averaging windows must have representable finite endpoints".to_string(),
+        ));
+    }
+    if t0 + dt == t0 || (t_end - dt == t_end && dt < final_time.max(burn_in)) {
+        return Err(LyapunovError::BadShape(
+            "dt must be large enough to advance the floating-point time axis".to_string(),
+        ));
+    }
 
     let mut z = z0.to_vec();
     let mut t = t0;
     let mut growths = vec![0.0; k];
     let mut last_growths = vec![0.0; k];
-
-    // The same end-of-window tolerance the Python loop uses (`while t < t_end -
-    // 1e-12`), so the chunk count / residual-step structure is identical.
-    const EPS: f64 = 1e-12;
+    let mut log_error_floor = vec![0.0; k];
 
     // ONE poller for the whole run — burn-in and averaging window alike — so
     // the polling cadence is one check per `POLL_STRIDE` *solver steps*, not
@@ -273,25 +346,41 @@ where
     let mut poll = Poller::new();
 
     // --- burn-in: advance + QR, no accumulation ---
-    let t_burn = t0 + burn_in.max(0.0);
-    while t < t_burn - EPS {
-        let h = dt.min(t_burn - t);
-        advance_chunk(ev, &solver_factory, &mut z, t, h, p, &mut poll).map_err(classify)?;
-        if !renorm_step(&mut z, dim, k, &mut last_growths)? {
+    let mut chunk = 1;
+    while t < t_burn {
+        let target = chunk_target(t0, t_burn, t, dt, chunk)?;
+        advance_chunk(ev, &solver_factory, &mut z, t, target, p, &mut poll).map_err(classify)?;
+        if !renorm_step(
+            &mut z,
+            dim,
+            k,
+            &mut last_growths,
+            rtol,
+            atol,
+            &mut log_error_floor,
+        )? {
             return Err(LyapunovError::Diverged(
                 "extended variational state went non-finite during burn-in".to_string(),
             ));
         }
-        t += h;
+        t = target;
+        chunk += 1;
     }
 
     // --- averaging window: advance + QR + accumulate ---
-    let mut elapsed = 0.0;
-    let t_end = t + final_time;
-    while t < t_end - EPS {
-        let h = dt.min(t_end - t);
-        advance_chunk(ev, &solver_factory, &mut z, t, h, p, &mut poll).map_err(classify)?;
-        if !renorm_step(&mut z, dim, k, &mut last_growths)? {
+    chunk = 1;
+    while t < t_end {
+        let target = chunk_target(t_burn, t_end, t, dt, chunk)?;
+        advance_chunk(ev, &solver_factory, &mut z, t, target, p, &mut poll).map_err(classify)?;
+        if !renorm_step(
+            &mut z,
+            dim,
+            k,
+            &mut last_growths,
+            rtol,
+            atol,
+            &mut log_error_floor,
+        )? {
             return Err(LyapunovError::Diverged(
                 "extended variational state went non-finite during the averaging window"
                     .to_string(),
@@ -300,15 +389,12 @@ where
         for i in 0..k {
             growths[i] += last_growths[i];
         }
-        t += h;
-        elapsed += h;
+        t = target;
+        chunk += 1;
     }
 
-    let spectrum: Vec<f64> = if elapsed == 0.0 {
-        vec![0.0; k]
-    } else {
-        growths.iter().map(|&g| g / elapsed).collect()
-    };
+    let elapsed = t_end - t_burn;
+    let spectrum: Vec<f64> = growths.iter().map(|&g| g / elapsed).collect();
 
     Ok(LyapunovOutcome {
         spectrum,
@@ -328,13 +414,61 @@ fn renorm_step(
     dim: usize,
     k: usize,
     growths: &mut [f64],
+    rtol: f64,
+    atol: f64,
+    log_error_floor: &mut [f64],
 ) -> Result<bool, LyapunovError> {
     // The base state must be finite too — a diverged flow shows up here.
     if !z[..dim].iter().all(|x| x.is_finite()) {
         return Ok(false);
     }
-    let ok = mgs_renormalise(&mut z[dim..dim + dim * k], dim, k, growths);
-    Ok(ok)
+    let error_pool = 0.5 * (z.len() as f64).ln();
+    let frame = &mut z[dim..dim + dim * k];
+    if frame
+        .chunks(dim)
+        .any(|column| column.iter().all(|v| *v == 0.0))
+    {
+        return Err(LyapunovError::BadShape(
+            "a flow tangent column collapsed to zero during numerical propagation; \
+             reduce dt and tighten rtol/atol before interpreting contraction rates"
+                .to_string(),
+        ));
+    }
+    // sum((error_i/scale_i)^2) <= extended_dim bounds any column's Euclidean
+    // error by sqrt(extended_dim)*max(scale_i). Retain this scale before QR:
+    // projection may leave a tiny residual even when that column is large.
+    // This detects unresolved growth, not accumulated global integration error.
+    for (column, floor) in frame.chunks(dim).zip(log_error_floor.iter_mut()) {
+        let scale = column.iter().fold(0.0_f64, |a, v| a.max(v.abs()));
+        let absolute = atol.ln();
+        let relative = rtol.ln() + scale.ln();
+        let largest = absolute.max(relative);
+        // At least one tolerance is positive and this column is nonzero, so
+        // largest is finite. The log-sum never over/underflows physical units.
+        *floor =
+            largest + ((absolute - largest).exp() + (relative - largest).exp()).ln() + error_pool;
+    }
+    match mgs_renormalise(frame, dim, k, growths) {
+        Ok(()) => {
+            if growths
+                .iter()
+                .zip(log_error_floor)
+                .any(|(growth, floor)| *growth <= *floor)
+            {
+                return Err(LyapunovError::BadShape(
+                    "flow tangent growth is unresolved at the integration error scale; \
+                     reduce dt (reorthonormalize more often) or tighten atol/rtol before \
+                     interpreting contraction rates"
+                        .to_string(),
+                ));
+            }
+            Ok(true)
+        }
+        Err(TangentQrError::NonFinite) => Ok(false),
+        Err(TangentQrError::UnresolvedRank) => {
+            Err(LyapunovError::BadShape(UNRESOLVED_TANGENT_RANK.to_string()))
+        }
+    }
 }
 
 /// Prefix an integrate-loop divergence the way the bridge does, so the Python
@@ -416,7 +550,7 @@ mod tests {
         // column 0 = (2, 0), column 1 = (0, 3) — already orthogonal.
         let mut w = vec![2.0, 0.0, 0.0, 3.0];
         let mut g = vec![0.0; k];
-        assert!(mgs_renormalise(&mut w, dim, k, &mut g));
+        assert!(mgs_renormalise(&mut w, dim, k, &mut g).is_ok());
         assert!((g[0] - 2.0_f64.ln()).abs() < 1e-14);
         assert!((g[1] - 3.0_f64.ln()).abs() < 1e-14);
         // Orthonormal: column norms 1, columns orthogonal.
@@ -426,14 +560,113 @@ mod tests {
     }
 
     #[test]
+    fn scaled_qr_preserves_norms_without_forming_overflowing_squares() {
+        for scale in [1e-300, 1e-200, 1e200, 1e308] {
+            let mut w = vec![scale, scale];
+            let mut growths = vec![0.0];
+            mgs_renormalise(&mut w, 2, 1, &mut growths).unwrap();
+            let expected = scale.ln() + 0.5 * 2.0_f64.ln();
+            assert!((growths[0] - expected).abs() < 1e-12);
+            assert!((w[0] - 1.0 / 2.0_f64.sqrt()).abs() < 1e-14);
+            assert!((w[1] - w[0]).abs() < 1e-14);
+        }
+    }
+
+    #[test]
+    fn flow_collapse_is_not_a_negative_infinite_exponent_claim() {
+        let mut z = vec![0.0, 0.0];
+        let mut growths = vec![0.0];
+        let err = renorm_step(&mut z, 1, 1, &mut growths, 1e-9, 1e-11, &mut [0.0]).unwrap_err();
+        assert!(matches!(err, LyapunovError::BadShape(_)));
+        assert!(err.to_string().contains("flow tangent column collapsed"));
+    }
+
+    #[test]
+    fn integration_floor_does_not_become_a_measured_contraction() {
+        let ev = VmEval::new(linear_extended(-1000.0, -1.0, 2));
+        let z0 = vec![0.0, 0.0, 1.0, 0.0, 0.0, 1.0];
+        let coarse = lyapunov_spectrum_ode(
+            &ev,
+            rk45_factory,
+            &[],
+            2,
+            2,
+            &z0,
+            0.0,
+            0.1,
+            0.0,
+            0.2,
+            1e-9,
+            1e-11,
+        )
+        .unwrap_err();
+        assert!(coarse.to_string().contains("integration error scale"));
+        let fine = lyapunov_spectrum_ode(
+            &ev,
+            rk45_factory,
+            &[],
+            2,
+            2,
+            &z0,
+            0.0,
+            0.001,
+            0.0,
+            0.2,
+            1e-9,
+            1e-11,
+        )
+        .unwrap();
+        assert!((fine.spectrum[0] + 1000.0).abs() < 1e-3);
+        assert!((fine.spectrum[1] + 1.0).abs() < 1e-7);
+        let tight = || -> Box<dyn Solver> { Box::new(Rk45::with_tolerances(1e-9, 1e-60)) };
+        let resolved =
+            lyapunov_spectrum_ode(&ev, tight, &[], 2, 2, &z0, 0.0, 0.1, 0.0, 0.2, 1e-9, 1e-60)
+                .unwrap();
+        assert!((resolved.spectrum[0] + 1000.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn error_scale_is_checked_after_projection_and_in_log_units() {
+        // Both columns are large, but their independent residual is below the
+        // integration scale. Machine-precision rank alone cannot validate it.
+        let mut z = vec![0.0, 0.0, 0.5, 0.5, 0.5, 0.5 + 1e-10];
+        let err = renorm_step(&mut z, 2, 2, &mut [0.0; 2], 1e-9, 1e-12, &mut [0.0; 2]).unwrap_err();
+        assert!(err.to_string().contains("integration error scale"));
+        // One-sided controls and products outside normal floating-point range
+        // must not turn the resolution screen into NaN or a zero threshold.
+        for (scale, rtol, atol, accepted) in [
+            (1e-300, 1e-300, 0.0, true),
+            (1e-300, 0.0, 1e-310, true),
+            (1e300, 1e300, 0.0, false),
+        ] {
+            let mut z = vec![0.0, scale];
+            let result = renorm_step(&mut z, 1, 1, &mut [0.0], rtol, atol, &mut [0.0]);
+            assert_eq!(result.is_ok(), accepted);
+        }
+    }
+
+    #[test]
     fn linear_flow_spectrum_matches_analytic() {
         // dx = 0.5 x, dy = -2 x → exact Lyapunov spectrum [0.5, -2.0].
         let (a, b, k) = (0.5, -2.0, 2);
         let ev = VmEval::new(linear_extended(a, b, k));
         // z0: base (1, 1) ⊕ identity tangent frame (column-major).
         let z0 = vec![1.0, 1.0, /*w0*/ 1.0, 0.0, /*w1*/ 0.0, 1.0];
-        let out =
-            lyapunov_spectrum_ode(&ev, rk45_factory, &[], 2, k, &z0, 0.0, 0.1, 5.0, 50.0).unwrap();
+        let out = lyapunov_spectrum_ode(
+            &ev,
+            rk45_factory,
+            &[],
+            2,
+            k,
+            &z0,
+            0.0,
+            0.1,
+            5.0,
+            50.0,
+            1e-9,
+            1e-11,
+        )
+        .unwrap();
         assert!(
             (out.spectrum[0] - 0.5).abs() < 1e-4,
             "lambda1 = {}",
@@ -449,13 +682,92 @@ mod tests {
     }
 
     #[test]
+    fn linear_flow_rates_are_invariant_under_time_unit_changes() {
+        // The same unit amount of expansion/contraction, measured in different
+        // time units. Tiny physical durations must not become empty windows.
+        for rate in [1e-12, 1.0, 1e12] {
+            let ev = VmEval::new(linear_extended(rate, -rate, 2));
+            let z0 = vec![1.0, 1.0, 1.0, 0.0, 0.0, 1.0];
+            let duration = 1.0 / rate;
+            let out = lyapunov_spectrum_ode(
+                &ev,
+                rk45_factory,
+                &[],
+                2,
+                2,
+                &z0,
+                0.0,
+                duration / 5.0,
+                duration,
+                duration,
+                1e-9,
+                1e-11,
+            )
+            .unwrap();
+            assert!((out.spectrum[0] / rate - 1.0).abs() < 1e-7);
+            assert!((out.spectrum[1] / rate + 1.0).abs() < 1e-7);
+            // Burn-in and production must both run to their exact endpoints.
+            assert!((out.final_state[0] - 2.0_f64.exp()).abs() < 1e-7);
+            assert!((out.final_state[1] - (-2.0_f64).exp()).abs() < 1e-7);
+        }
+    }
+
+    #[test]
+    fn chunk_schedule_preserves_short_windows_and_avoids_roundoff_residuals() {
+        assert_eq!(chunk_target(0.0, 1e-15, 0.0, 0.1, 1).unwrap(), 1e-15);
+        let mut current = 0.0;
+        for i in 1..=10 {
+            current = chunk_target(0.0, 1.0, current, 0.1, i).unwrap();
+        }
+        assert_eq!(current, 1.0);
+        assert!(chunk_target(1e16, 1e16 + 4.0, 1e16, 0.1, 1).is_err());
+    }
+
+    #[test]
+    fn rejects_unrepresentable_averaging_window_instead_of_zero_spectrum() {
+        let ev = VmEval::new(linear_extended(1.0, -1.0, 2));
+        let z0 = vec![1.0, 1.0, 1.0, 0.0, 0.0, 1.0];
+        assert!(matches!(
+            lyapunov_spectrum_ode(
+                &ev,
+                rk45_factory,
+                &[],
+                2,
+                2,
+                &z0,
+                1e16,
+                1.0,
+                0.0,
+                1.0,
+                1e-9,
+                1e-11
+            )
+            .unwrap_err(),
+            LyapunovError::BadShape(_)
+        ));
+    }
+
+    #[test]
     fn partial_spectrum_k_less_than_dim() {
         // Only the leading exponent (k = 1) of the same flow → 0.5.
         let (a, b, k) = (0.5, -2.0, 1);
         let ev = VmEval::new(linear_extended(a, b, k));
         let z0 = vec![1.0, 1.0, 1.0, 0.0];
-        let out =
-            lyapunov_spectrum_ode(&ev, rk45_factory, &[], 2, k, &z0, 0.0, 0.1, 5.0, 50.0).unwrap();
+        let out = lyapunov_spectrum_ode(
+            &ev,
+            rk45_factory,
+            &[],
+            2,
+            k,
+            &z0,
+            0.0,
+            0.1,
+            5.0,
+            50.0,
+            1e-9,
+            1e-11,
+        )
+        .unwrap();
         assert_eq!(out.spectrum.len(), 1);
         assert!((out.spectrum[0] - 0.5).abs() < 1e-4, "{}", out.spectrum[0]);
     }
@@ -466,8 +778,21 @@ mod tests {
         let z0 = vec![1.0, 1.0, 1.0, 0.0, 0.0, 1.0];
         // k out of range.
         assert!(matches!(
-            lyapunov_spectrum_ode(&ev, rk45_factory, &[], 2, 3, &z0, 0.0, 0.1, 1.0, 1.0)
-                .unwrap_err(),
+            lyapunov_spectrum_ode(
+                &ev,
+                rk45_factory,
+                &[],
+                2,
+                3,
+                &z0,
+                0.0,
+                0.1,
+                1.0,
+                1.0,
+                1e-9,
+                1e-11
+            )
+            .unwrap_err(),
             LyapunovError::BadShape(_)
         ));
         // wrong z0 length.
@@ -482,15 +807,30 @@ mod tests {
                 0.0,
                 0.1,
                 1.0,
-                1.0
+                1.0,
+                1e-9,
+                1e-11
             )
             .unwrap_err(),
             LyapunovError::BadShape(_)
         ));
         // non-positive dt.
         assert!(matches!(
-            lyapunov_spectrum_ode(&ev, rk45_factory, &[], 2, 2, &z0, 0.0, 0.0, 1.0, 1.0)
-                .unwrap_err(),
+            lyapunov_spectrum_ode(
+                &ev,
+                rk45_factory,
+                &[],
+                2,
+                2,
+                &z0,
+                0.0,
+                0.0,
+                1.0,
+                1.0,
+                1e-9,
+                1e-11
+            )
+            .unwrap_err(),
             LyapunovError::BadShape(_)
         ));
     }
@@ -514,8 +854,21 @@ mod tests {
         let tape = bld.finish(&[dx, dy, dw0, dw1], &[], 4, 0).unwrap();
         let ev = VmEval::new(Interpreter::new(tape));
         let z0 = vec![1.0, 0.0, 1.0, 0.0];
-        let err = lyapunov_spectrum_ode(&ev, rk45_factory, &[], 2, 1, &z0, 0.0, 0.05, 0.0, 10.0)
-            .unwrap_err();
+        let err = lyapunov_spectrum_ode(
+            &ev,
+            rk45_factory,
+            &[],
+            2,
+            1,
+            &z0,
+            0.0,
+            0.05,
+            0.0,
+            10.0,
+            1e-9,
+            1e-11,
+        )
+        .unwrap_err();
         assert!(matches!(err, LyapunovError::Diverged(_)), "got {err:?}");
     }
 
@@ -537,8 +890,21 @@ mod tests {
         // stride of solver steps.
         let ev = VmEval::new(linear_extended(-0.5, -1.0, 1));
         let z0 = vec![1.0, 1.0, 1.0, 0.0];
-        let err = lyapunov_spectrum_ode(&ev, rk45_factory, &[], 2, 1, &z0, 0.0, 1e-3, 0.0, 1e4)
-            .unwrap_err();
+        let err = lyapunov_spectrum_ode(
+            &ev,
+            rk45_factory,
+            &[],
+            2,
+            1,
+            &z0,
+            0.0,
+            1e-3,
+            0.0,
+            1e4,
+            1e-9,
+            1e-11,
+        )
+        .unwrap_err();
         assert_eq!(err, LyapunovError::Interrupted, "got {err:?}");
     }
 }

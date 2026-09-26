@@ -251,18 +251,34 @@ pub(crate) fn compute_stages(
     a: &[&[f64]],
     work: &mut RkWork,
 ) {
-    let dim = st.u.len();
     // Stage 0 = f(t, u). Distinct fields of `st` (u/p/scratch) and of `work`
     // borrow disjointly, so these &/&mut mixes are accepted by the borrow checker.
     ev.eval(&st.u, &st.p, st.t, &mut st.scratch, &mut work.k[0]);
     for i in 1..c.len() {
         let ai = a[i];
-        for d in 0..dim {
-            let mut acc = 0.0;
-            for (j, &aij) in ai.iter().enumerate() {
-                acc += aij * work.k[j][d];
+        if st.u.len() <= 4 {
+            // Tiny systems fit in registers; the scalar reduction avoids a
+            // separate buffer-initialization and finalization pass.
+            for d in 0..st.u.len() {
+                let mut acc = 0.0;
+                for (j, &aij) in ai.iter().enumerate() {
+                    acc += aij * work.k[j][d];
+                }
+                work.utmp[d] = st.u[d] + h * acc;
             }
-            work.utmp[d] = st.u[d] + h * acc;
+        } else {
+            // Stream each derivative vector contiguously. Each component still
+            // accumulates coefficients in exactly the original order, including
+            // zero products: a non-finite stage must continue to poison the trial.
+            work.utmp.fill(0.0);
+            for (j, &aij) in ai.iter().enumerate() {
+                for (acc, &derivative) in work.utmp.iter_mut().zip(&work.k[j]) {
+                    *acc += aij * derivative;
+                }
+            }
+            for (state, &initial) in work.utmp.iter_mut().zip(&st.u) {
+                *state = initial + h * *state;
+            }
         }
         ev.eval(
             &work.utmp,
@@ -390,6 +406,60 @@ pub(crate) fn fixed_step(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::explicit::testkit::DecayEval;
+
+    #[test]
+    fn contiguous_stage_accumulation_preserves_scalar_operation_bits() {
+        // Preserve the complete old evaluation order for each component,
+        // including h * sum followed by the base addition. Mixed-sign/zero
+        // weights and non-finite states exercise cases algebra alone misses.
+        let c = [0.0, 0.25, 0.5, 0.75, 1.0];
+        let a: &[&[f64]] = &[
+            &[],
+            &[0.25],
+            &[0.0, 0.5],
+            &[0.75, -0.0, -0.25],
+            &[0.0, -0.5, 0.25, 1.25],
+        ];
+        for dim in [1, 3, 4, 20, 127, 128] {
+            let ev = DecayEval { dim };
+            for magnitude in [0.0, -0.0, 1e-200, 0.125, 1e200, f64::INFINITY, f64::NAN] {
+                let initial: Vec<f64> = (0..dim)
+                    .map(|i| if i % 2 == 0 { magnitude } else { -magnitude })
+                    .collect();
+                for h in [1e-6, 0.125, 2.0] {
+                    let mut st = SolverState::for_evaluator(&ev, initial.clone(), 0.0, vec![]);
+                    let mut work = RkWork::new();
+                    work.ensure(c.len(), dim);
+                    let mut expected = vec![vec![0.0; dim]; c.len()];
+                    ev.eval(&initial, &[], 0.0, &mut [], &mut expected[0]);
+                    for i in 1..c.len() {
+                        let mut stage = vec![0.0; dim];
+                        for d in 0..dim {
+                            let mut acc = 0.0;
+                            for (j, &weight) in a[i].iter().enumerate() {
+                                acc += weight * expected[j][d];
+                            }
+                            stage[d] = initial[d] + h * acc;
+                        }
+                        ev.eval(&stage, &[], c[i] * h, &mut [], &mut expected[i]);
+                    }
+                    compute_stages(&ev, &mut st, h, &c, a, &mut work);
+                    for (actual, reference) in
+                        work.k.iter().flatten().zip(expected.iter().flatten())
+                    {
+                        assert_eq!(actual.to_bits(), reference.to_bits(), "dim={dim}, h={h}");
+                    }
+                    assert!(st
+                        .u
+                        .iter()
+                        .zip(&initial)
+                        .all(|(x, y)| x.to_bits() == y.to_bits()));
+                    assert_eq!(st.t, 0.0);
+                }
+            }
+        }
+    }
 
     #[test]
     fn scaled_rms_of_an_empty_system_is_zero() {

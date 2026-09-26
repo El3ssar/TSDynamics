@@ -47,11 +47,11 @@
 use std::hint::black_box;
 use std::time::Duration;
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use tsdyn_ir::{Evaluator, Tape, TapeBuilder};
-use tsdyn_solvers::explicit::Rk45;
+use tsdyn_solvers::explicit::{Dop853, Rk45};
 use tsdyn_solvers::implicit::{BackwardEuler, Sdirk2};
-use tsdyn_solvers::{Solver, SolverState};
+use tsdyn_solvers::{Solver, SolverState, StepOutcome};
 use tsdyn_vm::Interpreter;
 
 /// Adapts the interpreter to the `Evaluator` trait (as `tsdyn-core` does).
@@ -242,12 +242,64 @@ fn bench_sdirk_lu_reuse(c: &mut Criterion) {
     group.finish();
 }
 
+/// Independent diagonal decay makes endpoint accuracy explicit at each state width.
+struct DiagonalDecay {
+    dim: usize,
+}
+impl Evaluator for DiagonalDecay {
+    fn dim(&self) -> usize {
+        self.dim
+    }
+    fn n_param(&self) -> usize {
+        0
+    }
+    fn n_scratch(&self) -> usize {
+        0
+    }
+    fn has_jacobian(&self) -> bool {
+        false
+    }
+    fn eval(&self, u: &[f64], _: &[f64], _: f64, _: &mut [f64], out: &mut [f64]) {
+        for (i, (v, &x)) in out.iter_mut().zip(u).enumerate() {
+            *v = -(0.2 + i as f64 * 0.01) * x;
+        }
+    }
+    fn eval_jac(&self, _: &[f64], _: &[f64], _: f64, _: &mut [f64], _: &mut [f64], _: &mut [f64]) {
+        unreachable!()
+    }
+}
+fn diagonal_steps(ev: &DiagonalDecay) -> Vec<f64> {
+    let mut solver = Dop853::with_tolerances(1e-10, 1e-12);
+    let mut st = SolverState::for_evaluator(ev, vec![1.; ev.dim], 0., vec![]);
+    for _ in 0..100 {
+        assert!(matches!(
+            solver.step(ev, &mut st, 0.01),
+            StepOutcome::Accepted { .. }
+        ));
+    }
+    st.u
+}
+fn bench_stage_traversal(c: &mut Criterion) {
+    let mut group = c.benchmark_group("dop853_stages");
+    for dim in [1, 2, 3, 4, 8, 16, 32, 128] {
+        let ev = DiagonalDecay { dim };
+        let values = diagonal_steps(&ev);
+        for (i, &value) in values.iter().enumerate() {
+            assert!((value - (-(0.2 + i as f64 * 0.01)).exp()).abs() < 1e-12);
+        }
+        group.bench_with_input(BenchmarkId::from_parameter(dim), &ev, |b, ev| {
+            b.iter(|| black_box(diagonal_steps(ev)))
+        });
+    }
+    group.finish();
+}
+
 criterion_group! {
     name = benches;
     config = Criterion::default()
         .sample_size(50)
         .warm_up_time(Duration::from_millis(500))
         .measurement_time(Duration::from_secs(2));
-    targets = bench_fsal, bench_sdirk_lu_reuse
+    targets = bench_fsal, bench_sdirk_lu_reuse, bench_stage_traversal
 }
 criterion_main!(benches);
