@@ -9,6 +9,7 @@ use super::marshal::{build_evaluator_send, EngineError};
 /// Own an immutable evaluator and its code lifetime; each call owns its scratch.
 pub struct PreparedEvaluator {
     evaluator: Box<dyn Evaluator + Send>,
+    state_width: usize,
     input_width: usize,
     jacobian_width: usize,
 }
@@ -35,8 +36,10 @@ impl PreparedEvaluator {
             ));
         }
         let jacobian_width = tape.jac_outputs().len();
+        let state_width = tape.n_state();
         Ok(Self {
             evaluator: build_evaluator_send(tape, jit)?,
+            state_width,
             input_width,
             jacobian_width,
         })
@@ -62,7 +65,7 @@ impl PreparedEvaluator {
                 "prepared evaluator was compiled without a Jacobian".into(),
             ));
         }
-        if self.evaluator.n_state() != self.evaluator.dim() {
+        if self.state_width != self.evaluator.dim() {
             return Err(EngineError::BadShape(
                 "prepared Jacobian evaluation requires equal state and output widths under the square tape contract".into(),
             ));
@@ -91,7 +94,7 @@ impl PreparedEvaluator {
         let mut result = allocate(rows, width, "output")?;
         let mut scratch = allocate(1, self.evaluator.n_scratch(), "scratch")?;
         let mut poll = Poller::new();
-        let state_width = self.evaluator.n_state();
+        let state_width = self.state_width;
         for (row, output) in arguments
             .chunks_exact(self.input_width)
             .zip(result.chunks_exact_mut(width))
@@ -189,6 +192,39 @@ mod tests {
         assert!(prepared.evaluate(&[], false).unwrap().is_empty());
         assert!(prepared.evaluate(&[1.0, 2.0, 3.0], false).is_err());
         assert!(prepared.evaluate(&[1.0, 2.0, 3.0, 4.0], true).is_err());
+    }
+
+    #[test]
+    fn declared_state_width_sets_clock_and_parameter_offsets_for_scalar_outputs() {
+        for jit in [false, true] {
+            let mut b = TapeBuilder::new();
+            let x = b.state(0);
+            let y = b.state(1);
+            let parameter = b.param(0);
+            let time = b.time();
+            let scaled = b.mul(parameter, x);
+            let sum = b.add(scaled, y);
+            let output = b.add(sum, time);
+            let tape = b.finish(&[output], &[], 2, 1).unwrap();
+            let prepared = PreparedEvaluator::new(tape, jit).unwrap();
+            assert_eq!(
+                prepared.evaluate(&[0.5, 4.0, 0.25, 2.0], false).unwrap(),
+                vec![5.25]
+            );
+        }
+    }
+
+    #[test]
+    fn non_square_declared_jacobians_refuse_before_evaluation() {
+        for jit in [false, true] {
+            let mut b = TapeBuilder::new();
+            let y = b.state(1);
+            let one = b.constant(1.0);
+            let tape = b.finish(&[y], &[one], 2, 0).unwrap();
+            let prepared = PreparedEvaluator::new(tape, jit).unwrap();
+            let error = prepared.evaluate(&[0.5, 4.0, 0.25], true).unwrap_err();
+            assert!(error.to_string().contains("equal state and output widths"));
+        }
     }
 
     #[test]

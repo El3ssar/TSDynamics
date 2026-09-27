@@ -2,6 +2,7 @@
 
 import gc
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 
 import numpy as np
 import pytest
@@ -164,8 +165,7 @@ def test_declared_input_width_overflow_is_refused_before_compilation():
 
 @pytest.mark.parametrize("jit", [False, True])
 def test_primal_output_count_can_differ_from_state_width(jit):
-    tape = _tape(False)
-    tape.outputs = np.array([5])
+    tape = replace(_tape(False), outputs=np.array([5]))
     evaluator = native.PreparedEvaluator(*tape.to_arrays(), jit)
     arguments = np.array([[0.5, 4.0, 0.25, 2.0], [2.0, 9.0, -1.0, 3.0]])
     assert evaluator.input_width == 4 and evaluator.output_width == 1
@@ -173,9 +173,8 @@ def test_primal_output_count_can_differ_from_state_width(jit):
 
 
 def test_non_square_jacobian_declaration_is_not_presented_as_a_complete_gradient():
-    tape = _tape(False)
-    tape.outputs = np.array([5])
-    tape.jac_outputs = np.array([2])  # valid 1x1 wire shape; reads two state slots
+    # Valid 1x1 wire shape, but the primal reads two state slots.
+    tape = replace(_tape(False), outputs=np.array([5]), jac_outputs=np.array([2]))
     evaluator = native.PreparedEvaluator(*tape.to_arrays(), False)
     with pytest.raises(ValueError, match="equal state and output widths"):
         evaluator.eval_jac(np.array([0.5, 4.0, 0.25, 2.0]))

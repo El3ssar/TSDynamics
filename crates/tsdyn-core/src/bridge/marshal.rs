@@ -130,6 +130,9 @@ impl Evaluator for VmEvaluator {
     fn dim(&self) -> usize {
         self.interp.dim()
     }
+    fn n_state(&self) -> usize {
+        self.interp.tape().n_state()
+    }
     fn n_param(&self) -> usize {
         self.interp.n_param()
     }
@@ -635,6 +638,39 @@ pub(super) fn sde_failure(e: SdeError) -> EngineError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_production_adapter_reports_declared_state_width_through_dyn_evaluator() {
+        let mut b = tsdyn_ir::TapeBuilder::new();
+        let x = b.state(0);
+        let z = b.state(2);
+        let parameter = b.param(0);
+        let time = b.time();
+        let sum = b.add(x, z);
+        let scaled = b.mul(parameter, sum);
+        let output = b.add(scaled, time);
+        let tape = b.finish(&[output], &[], 3, 1).unwrap();
+        let interpreted = VmEvaluator::new(tape.clone());
+        let native = std::sync::Arc::new(tsdyn_jit::JitEvaluator::new(&tape).unwrap());
+        let shared = SharedJitEvaluator::new(std::sync::Arc::clone(&native));
+        let adapters: [&dyn Evaluator; 3] = [&interpreted, native.as_ref(), &shared];
+        let arguments = [1.0, 2.0, 3.0, 0.5, 2.0];
+        for evaluator in adapters {
+            let state_width = evaluator.n_state();
+            assert_eq!(state_width, 3);
+            assert_eq!(evaluator.dim(), 1);
+            let mut scratch = vec![0.0; evaluator.n_scratch()];
+            let mut output = vec![0.0; evaluator.dim()];
+            evaluator.eval(
+                &arguments[..state_width],
+                &arguments[state_width + 1..],
+                arguments[state_width],
+                &mut scratch,
+                &mut output,
+            );
+            assert_eq!(output, vec![8.5]);
+        }
+    }
 
     #[test]
     fn integration_screen_messages_survive_the_bridge_without_a_divergence_claim() {
