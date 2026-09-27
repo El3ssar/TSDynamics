@@ -601,9 +601,9 @@ pub(super) fn integrate_failure(e: IntegrateError) -> EngineError {
         IntegrateError::AllocFailed(a) => EngineError::OutOfMemory(a.to_string()),
         IntegrateError::NonFinite { .. }
         | IntegrateError::StepCollapsed { .. }
-        | IntegrateError::Escaped { .. } => EngineError::Diverged(format!(
-            "integration diverged before reaching the final time: {e}"
-        )),
+        | IntegrateError::Escaped { .. } => {
+            EngineError::Diverged(format!("numerical integration failed: {e}"))
+        }
     }
 }
 
@@ -635,6 +635,24 @@ pub(super) fn sde_failure(e: SdeError) -> EngineError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn integration_screen_messages_survive_the_bridge_without_a_divergence_claim() {
+        for error in [
+            IntegrateError::Escaped {
+                t: 0.125,
+                magnitude: 1e200,
+            },
+            IntegrateError::NonFinite { t: 0.25 },
+        ] {
+            let result = integrate_failure(error);
+            assert!(matches!(result, EngineError::Diverged(_)));
+            let message = result.to_string();
+            assert!(message.starts_with("numerical integration failed"));
+            assert!(!message.contains("integration diverged"));
+            assert!(!message.contains("RHS is diverging"));
+        }
+    }
 
     // A minimal valid wire tape: f(u) = u0 * p0 (dim 1, n_state 1, n_param 1).
     // Wire opcodes: State=1, Param=2, Mul=12 (the v2 contract values pinned in

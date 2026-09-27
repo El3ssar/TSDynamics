@@ -165,22 +165,13 @@ pub const STALL_GRACE_STEPS: usize = 1_000_000;
 /// than a threshold on it.
 pub const STALL_GROWTH_FACTOR: f64 = 2.0;
 
-/// State magnitude at which a trajectory is declared to have escaped, whatever
-/// the kernel still thinks about its error estimate.
+/// Absolute state-magnitude limit enforced after an accepted numerical step.
 ///
-/// Waiting for an *actual* `inf` is a bad backstop: the state has to climb every
-/// remaining decade to `f64::MAX ≈ 1.8e308` first, and an adaptive controller
-/// shrinks the step as it goes, so a blow-up that is obvious by `1e150` can cost
-/// tens of seconds (or grind all the way to the step cap) before it is finally
-/// reported. Checking magnitude instead catches it in the step that crosses the
-/// threshold.
-///
-/// `1e150` is deliberately an *overflow* scale, not a tuned physical one: it is
-/// picked as `√f64::MAX` so that the very next squaring — the fastest growth an
-/// ODE right-hand side can plausibly produce — is what actually overflows. No
-/// system whose state reaches `1e150` is going to come back, and none of the
-/// catalogue's legitimately large-amplitude systems come within a hundred orders
-/// of magnitude of it, so the guard cannot false-positive on real dynamics.
+/// This legacy numerical magnitude screen can stop rapidly growing runs before
+/// non-finite arithmetic or the step budget is reached. It is an absolute limit
+/// in the user's state units, not a proof of divergence or an IEEE overflow
+/// boundary. It also refuses bounded large-scale states, including a constant
+/// equilibrium at `1e200`. The refusal must describe that limit truthfully.
 pub const OVERFLOW_SCALE: f64 = 1e150;
 
 /// Knobs for the integrate loop, shared by single and ensemble paths.
@@ -308,12 +299,13 @@ impl IntegrateConfig {
 ///
 /// Every variant carries the time at which the trouble was detected so a caller
 /// (or the ensemble layer, which turns these into per-trajectory status) can
-/// report *where* a trajectory failed. The unifying contract: a diverging
-/// trajectory surfaces as one of these, never as plausible-looking numbers.
+/// report *where* a numerical trajectory failed, rather than returning an
+/// incomplete result as though the requested integration had succeeded.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum IntegrateError {
-    /// The state (or time) went non-finite — the right-hand side diverged, or
-    /// the kernel reported [`StepOutcome::Failed`]. Carries the last good time.
+    /// A numerical state/time went non-finite, or the kernel reported
+    /// [`StepOutcome::Failed`]. Carries the last good time without classifying
+    /// the underlying dynamics.
     NonFinite {
         /// The integration time at which non-finiteness was detected.
         t: f64,
@@ -364,8 +356,8 @@ pub enum IntegrateError {
         /// The floor it fell below.
         floor: f64,
     },
-    /// The state's magnitude crossed [`OVERFLOW_SCALE`] — the trajectory is
-    /// escaping, caught before it reaches an actual `inf`.
+    /// A finite state's magnitude reached the legacy [`OVERFLOW_SCALE`] screen.
+    /// This is a numerical limit, not a classification of the underlying orbit.
     Escaped {
         /// The integration time at which the escape was detected.
         t: f64,
@@ -389,7 +381,10 @@ impl core::fmt::Display for IntegrateError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             IntegrateError::NonFinite { t } => {
-                write!(f, "non-finite state at t = {t} (the RHS diverged)")
+                write!(
+                    f,
+                    "non-finite numerical result or failed solver step at t = {t}"
+                )
             }
             IntegrateError::StepCollapsed { t, h } => {
                 write!(f, "step size collapsed to {h} at t = {t}")
@@ -407,7 +402,9 @@ impl core::fmt::Display for IntegrateError {
             IntegrateError::Escaped { t, magnitude } => {
                 write!(
                     f,
-                    "state magnitude reached {magnitude:e} at t = {t} (the RHS is diverging)"
+                    "state magnitude reached {magnitude:e} at t = {t}, meeting the \
+                     numerical magnitude-screen limit {OVERFLOW_SCALE:e}; this does not \
+                     establish divergence. Rescale the state variables to use this solver"
                 )
             }
             IntegrateError::Interrupted { t } => {
@@ -431,10 +428,10 @@ impl std::error::Error for IntegrateError {}
 #[inline(never)]
 pub(crate) fn classify_escape(u: &[f64], t: f64) -> IntegrateError {
     if !t.is_finite() || u.iter().any(|x| !x.is_finite()) {
-        // An actual `inf`/`NaN`: the right-hand side has already overflowed.
+        // A non-finite numerical state or clock; do not infer its physical cause.
         return IntegrateError::NonFinite { t };
     }
-    // Still finite, but past the overflow scale — escaping, caught early.
+    // A finite state reached the fixed legacy magnitude screen.
     let magnitude = u.iter().fold(0.0_f64, |m, x| m.max(x.abs()));
     IntegrateError::Escaped { t, magnitude }
 }
@@ -990,6 +987,31 @@ mod tests {
         let got = integrate_final(&ev, &mut s, &[1.0], &[2.0], 0.0, 3.0, &cfg).unwrap();
         let want = (-2.0_f64 * 3.0).exp();
         assert!((got[0] - want).abs() < 1e-9, "got {}, want {want}", got[0]);
+    }
+
+    #[test]
+    fn bounded_large_equilibrium_reports_a_magnitude_screen_not_divergence() {
+        let ev = ConstantField::new(vec![0.0]);
+        let mut solver = Rk4::new();
+        let cfg = IntegrateConfig::new(0.125);
+        let error = integrate_final(&ev, &mut solver, &[1e200], &[], 0.0, 0.125, &cfg)
+            .expect_err("legacy magnitude predicate is intentionally unchanged");
+        let IntegrateError::Escaped { magnitude, .. } = error else {
+            panic!("expected unchanged magnitude screen, got {error:?}");
+        };
+        assert_eq!(magnitude, 1e200);
+        let message = error.to_string();
+        assert!(message.contains("magnitude-screen limit"));
+        assert!(message.contains("does not establish divergence"));
+        assert!(!message.contains("RHS is diverging"));
+        assert!(message.contains("Rescale"));
+    }
+
+    #[test]
+    fn nonfinite_failure_message_reports_numerics_without_a_physical_diagnosis() {
+        let message = IntegrateError::NonFinite { t: 0.25 }.to_string();
+        assert!(message.contains("non-finite numerical result"));
+        assert!(!message.contains("diverg"));
     }
 
     #[test]

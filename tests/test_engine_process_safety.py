@@ -591,8 +591,8 @@ def test_a_diverging_ode_is_reported_promptly_by_every_kernel(method):
         _Blowup(ic=[1.0]).run(final_time=10.0, dt=0.01, solver=method)
 
     message = str(excinfo.value)
-    assert "diverged" in message
-    # Either escape guard is correct; the magnitude one is what makes it prompt.
+    assert "numerical integration failed" in message
+    # Either numerical screen is correct; the magnitude one is what makes it prompt.
     assert "state magnitude reached" in message or "non-finite" in message
     # A stall must never be dressed up as this, and vice versa.
     assert not isinstance(excinfo.value, StepBudgetError)

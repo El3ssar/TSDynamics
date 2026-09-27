@@ -189,29 +189,26 @@ class TestNothingThatWorkedStoppedWorking:
         assert np.isfinite(state).all()
 
 
-class TestABlowUpStillSaysItDiverged:
-    """A collapsed step is the shared symptom of two different diagnoses.
+class TestAnalyticBlowupsFailPromptly:
+    """Analytic singularities retain their prompt numerical refusal.
 
-    Both a stall and a finite-time blow-up end with the step size in the dust;
-    the only difference is whether the state reaches the escape scale before
-    ``t`` runs out of resolution.  The guard therefore grants a bounded grace
-    (``STALL_GRACE_STEPS``) so the escape guard keeps first refusal — otherwise
-    every overflow blow-up would be relabelled a solver-settings problem, which
-    is the wrong diagnosis *and* the wrong remedy.
+    Preserve the existing error classes, magnitude/nonfinite screens and time
+    budget. The error describes the numerical failure without treating a finite
+    magnitude threshold as proof of the underlying dynamics.
     """
 
-    def test_a_polynomial_blow_up_is_reported_as_a_divergence(self):
+    def test_a_polynomial_blow_up_reports_prompt_numerical_failure(self):
         elapsed, exc = _timed(lambda: _Blowup().run(final_time=10.0, dt=0.01, ic=[1.0]))
         assert isinstance(exc, ts.errors.ConvergenceError)
         assert not isinstance(exc, ts.errors.StepBudgetError), (
             "x' = x² escapes to 1e150; calling that a stalled run would send the "
             "user to tune rtol when their trajectory left the building"
         )
-        assert "diverged" in str(exc)
+        assert "numerical integration failed" in str(exc)
         assert elapsed < _PATIENCE_SECONDS
 
-    def test_an_exponential_blow_up_is_reported_as_a_divergence(self):
+    def test_an_exponential_blow_up_reports_numerical_failure(self):
         _, exc = _timed(lambda: _LogBlowup().run(final_time=5.0, dt=0.01, ic=[0.0]))
         assert isinstance(exc, ts.errors.ConvergenceError)
         assert not isinstance(exc, ts.errors.StepBudgetError)
-        assert "diverged" in str(exc)
+        assert "numerical integration failed" in str(exc)

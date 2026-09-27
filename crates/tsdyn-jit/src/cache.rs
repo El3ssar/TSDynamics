@@ -22,9 +22,9 @@
 //!
 //! A stale hit would silently return wrong numbers, so the cache does not hash
 //! a summary of the tape and trust it: the hash only chooses a candidate, and a
-//! candidate is accepted only on **full [`Tape`] equality** (`PartialEq` over
-//! `ops`, `a`, `b`, `imm`, `outputs`, `jac_outputs`, `n_state`, `n_param` — the
-//! complete input to [`crate::codegen::compile`], hence to the generated code).
+//! candidate is accepted only on full code identity: all [`Tape`] fields,
+//! with floating-point immediates compared by bits. Numerical float equality
+//! equates `+0.0` and `-0.0`, although those constants generate different code.
 //! A hash collision therefore costs a compile, never a wrong answer.
 //!
 //! # Bounds and concurrency
@@ -123,12 +123,12 @@ impl Cache {
     /// Find `tape`'s compiled evaluator, refreshing its LRU stamp.
     ///
     /// The `hash` pre-filter is only a fast reject; acceptance is full tape
-    /// equality (see the module docs).
+    /// code identity, including immediate bits (see the module docs).
     fn lookup(&mut self, hash: u64, tape: &Tape) -> Option<Arc<JitEvaluator>> {
         let pos = self
             .entries
             .iter()
-            .position(|e| e.hash == hash && &e.tape == tape)?;
+            .position(|e| e.hash == hash && same_code(&e.tape, tape))?;
         self.clock += 1;
         self.entries[pos].stamp = self.clock;
         Some(Arc::clone(&self.entries[pos].ev))
@@ -153,6 +153,23 @@ impl Cache {
             self.entries.swap_remove(oldest);
         }
     }
+}
+
+/// Compare every input to code generation without float-value equivalence.
+fn same_code(left: &Tape, right: &Tape) -> bool {
+    left.n_state() == right.n_state()
+        && left.n_param() == right.n_param()
+        && left.ops() == right.ops()
+        && left.a() == right.a()
+        && left.b() == right.b()
+        && left.outputs() == right.outputs()
+        && left.jac_outputs() == right.jac_outputs()
+        && left.imm().len() == right.imm().len()
+        && left
+            .imm()
+            .iter()
+            .zip(right.imm())
+            .all(|(a, b)| a.to_bits() == b.to_bits())
 }
 
 static CACHE: Mutex<Cache> = Mutex::new(Cache::new());
@@ -184,13 +201,10 @@ fn cache_enabled() -> bool {
 
 /// FNV-1a over every field that reaches codegen.
 ///
-/// Only a bucketing hash — [`Cache::lookup`] confirms with `Tape::eq`, so a
-/// collision costs a redundant compile, never a stale hit. Immediates are hashed
-/// by [`f64::to_bits`], which is *finer* than `Tape`'s float equality: two tapes
-/// differing only by `0.0` vs `-0.0` hash apart and so simply both compile, and
-/// a tape carrying a `NaN` immediate never compares equal to itself and so never
-/// caches. Both are lost reuse, not wrong code — the direction an error here has
-/// to fall.
+/// Only a bucketing hash — [`Cache::lookup`] confirms with [`same_code`], so a
+/// collision costs a redundant compile, never a stale hit. Immediates use their
+/// full bit patterns in both the hash and its collision check. In particular,
+/// two signed-zero differences can collide under FNV and must still be distinct.
 fn tape_hash(tape: &Tape) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     let mut mix = |x: u64| {
@@ -431,6 +445,57 @@ mod tests {
     fn tape_eq_covers_imm() {
         assert_ne!(scaled(2.0), scaled(3.0));
         assert_ne!(tape_hash(&scaled(2.0)), tape_hash(&scaled(3.0)));
+    }
+
+    fn signed_offsets(p: f64, q: f64) -> Tape {
+        let mut b = TapeBuilder::new();
+        let x = b.state(0);
+        let p = b.constant(p);
+        let first = b.add(x, p);
+        let y = b.state(1);
+        let q = b.constant(q);
+        let second = b.add(y, q);
+        b.finish(&[first, second], &[], 2, 0).unwrap()
+    }
+
+    #[test]
+    fn colliding_signed_zero_constants_compile_separate_evaluators() {
+        let _g = serialize();
+        clear_cache();
+        let first = signed_offsets(0.0, -0.0);
+        let second = signed_offsets(-0.0, 0.0);
+        // This is an actual collision, not an assumed probability of one.
+        assert_eq!(tape_hash(&first), tape_hash(&second));
+        assert_eq!(first, second); // ordinary float equality loses the signs
+        assert!(!same_code(&first, &second));
+        let a = cached_evaluator(&first).unwrap();
+        let b = cached_evaluator(&second).unwrap();
+        assert!(!Arc::ptr_eq(&a, &b));
+        let bits = |ev: &JitEvaluator| {
+            ev.eval_alloc(&[-0.0, -0.0], &[], 0.0)
+                .iter()
+                .map(|v| v.to_bits())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(bits(&a), vec![0.0_f64.to_bits(), (-0.0_f64).to_bits()]);
+        assert_eq!(bits(&b), vec![(-0.0_f64).to_bits(), 0.0_f64.to_bits()]);
+        assert!(Arc::ptr_eq(&a, &cached_evaluator(&first).unwrap()));
+        assert!(Arc::ptr_eq(&b, &cached_evaluator(&second).unwrap()));
+        let stats = cache_stats();
+        assert_eq!((stats.hits, stats.misses, stats.size), (2, 2, 2));
+        clear_cache();
+    }
+
+    #[test]
+    fn code_identity_preserves_nonfinite_immediate_payloads() {
+        let nan = f64::from_bits(0x7ff8_0000_0000_0001);
+        let other_nan = f64::from_bits(0x7ff8_0000_0000_0002);
+        assert!(same_code(&scaled(nan), &scaled(nan)));
+        assert!(!same_code(&scaled(nan), &scaled(other_nan)));
+        assert!(!same_code(
+            &scaled(f64::INFINITY),
+            &scaled(f64::NEG_INFINITY)
+        ));
     }
 
     #[test]
