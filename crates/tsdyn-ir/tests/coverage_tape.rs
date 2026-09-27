@@ -9,7 +9,7 @@
 //! semantics independently of any system.
 #![cfg(feature = "reference")]
 
-use tsdyn_ir::{reference, Op, Reg, TapeBuilder};
+use tsdyn_ir::{reference, IrError, Op, OpKind, Reg, Tape, TapeBuilder};
 
 /// Evaluate a one-output tape whose single output is `reg`, with the shared
 /// inputs `u = [0.3, 1.5, 2.0]`, `p = [3.0]`, `t = 0.7`.
@@ -262,6 +262,88 @@ fn abs_and_sign() {
 }
 
 #[test]
+fn signbit_reads_bits_including_zero_infinity_and_nan_payloads() {
+    let mut b = TapeBuilder::new();
+    let x = b.state(0);
+    let sign = b.signbit(x);
+    let tape = b.finish(&[sign], &[], 1, 0).unwrap();
+    let magnitudes = [
+        0x0000_0000_0000_0000,
+        0x0000_0000_0000_0001,
+        0x0010_0000_0000_0000,
+        0x3ff0_0000_0000_0000,
+        0x7fef_ffff_ffff_ffff,
+        0x7ff0_0000_0000_0000,
+        0x7ff0_0000_0000_0001,
+        0x7ff8_0000_0000_0000,
+        0x7ffa_bcde_f123_4567,
+        0x7fff_ffff_ffff_ffff,
+    ];
+    for magnitude in magnitudes {
+        for (mask, expected) in [(0, 0.0_f64), (1u64 << 63, 1.0_f64)] {
+            let value = f64::from_bits(magnitude | mask);
+            let output = reference::eval_alloc(&tape, &[value], &[], 0.0);
+            assert_eq!(output[0].to_bits(), expected.to_bits());
+        }
+    }
+}
+
+#[test]
+fn signbit_wire_validates_and_reaches_only_its_unary_operand() {
+    assert_eq!(Op::from_i32(62).unwrap(), Op::Signbit);
+    assert_eq!(Op::Signbit.kind(), OpKind::Unary);
+    assert_eq!(Op::Signbit.name(), "SIGNBIT");
+    let tape = Tape::from_arrays(&[1, 62], &[0, 0], &[0, -99], &[0.0; 2], &[1], &[], 1, 0).unwrap();
+    assert_eq!(tape.reachable_from(false), vec![true, true]);
+    let invalid = Tape::from_arrays(&[1, 62], &[0, 1], &[0, 0], &[0.0; 2], &[1], &[], 1, 0);
+    assert_eq!(
+        invalid.unwrap_err(),
+        IrError::ForwardReference { at: 1, reg: 1 }
+    );
+}
+
+#[test]
+fn select_validates_and_reaches_all_three_registers() {
+    assert_eq!(Op::from_i32(63).unwrap(), Op::Select);
+    assert_eq!(Op::Select.name(), "SELECT");
+    let ops = [1, 0, 0, 63];
+    let a = [0, 0, 0, 0];
+    let b = [0, 0, 0, 1];
+    let tape = Tape::from_arrays(&ops, &a, &b, &[0.0, 7.0, -0.0, 2.0], &[3], &[], 1, 0).unwrap();
+    assert_eq!(tape.reachable_from(false), vec![true; 4]);
+    assert_eq!(
+        reference::eval_alloc(&tape, &[0.0], &[], 0.0)[0].to_bits(),
+        (-0.0_f64).to_bits()
+    );
+    assert_eq!(
+        reference::eval_alloc(&tape, &[f64::NAN], &[], 0.0),
+        vec![7.0]
+    );
+    for encoded in [
+        f64::NAN,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        -1.0,
+        1.5,
+        2147483648.0,
+        1e300,
+    ] {
+        let invalid = Tape::from_arrays(&ops, &a, &b, &[0.0, 7.0, 8.0, encoded], &[3], &[], 1, 0);
+        assert!(matches!(
+            invalid,
+            Err(IrError::InvalidSelectIndex { at: 3, .. })
+        ));
+    }
+    for encoded in [3.0, 4.0, f64::from(i32::MAX)] {
+        let invalid = Tape::from_arrays(&ops, &a, &b, &[0.0, 7.0, 8.0, encoded], &[3], &[], 1, 0);
+        assert!(matches!(
+            invalid,
+            Err(IrError::ForwardReference { at: 3, .. })
+        ));
+    }
+}
+
+#[test]
 fn nonsmooth_ops() {
     // A NaN built once for the "NaN compares false / returns the other" checks.
     let nan = |b: &mut TapeBuilder| {
@@ -434,7 +516,7 @@ fn nonsmooth_ops() {
     );
 }
 
-/// Belt-and-braces: confirm the tests above collectively touch all 41 opcodes
+/// Belt-and-braces: confirm the tests above collectively touch all 43 opcodes
 /// (a single tape that uses each exactly once still evaluates).
 #[test]
 fn every_opcode_is_reachable_in_one_tape() {
@@ -485,6 +567,8 @@ fn every_opcode_is_reachable_in_one_tape() {
         b.ceil(u1),
         b.modulo(u1, u2),
         b.rem(u1, u2),
+        b.signbit(u0),
+        b.select(u0, u1, u2),
     ];
     // also surface the leaves so Const/State/Param/Time are outputs too
     outs.extend([c, u0, p0, t]);

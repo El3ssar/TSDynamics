@@ -82,6 +82,11 @@ fn random_tape(rng: &mut Rng) -> Tape {
             OpKind::Unary => (rng.below(i) as i32, 0, 0.0),
             OpKind::Binary => (rng.below(i) as i32, rng.below(i) as i32, 0.0),
             OpKind::Powi => (rng.below(i) as i32, rng.i32_in(-4, 5), 0.0),
+            OpKind::Select => (
+                rng.below(i) as i32,
+                rng.below(i) as i32,
+                rng.below(i) as f64,
+            ),
         };
         ops.push(op.to_i32());
         a.push(ai);

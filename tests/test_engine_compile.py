@@ -69,7 +69,94 @@ def test_opcode_wire_values_match_frozen_ir() -> None:
     assert (compile_ir.OP_MIN, compile_ir.OP_MAX) == (56, 57)
     assert (compile_ir.OP_FLOOR, compile_ir.OP_CEIL) == (58, 59)
     assert (compile_ir.OP_MOD, compile_ir.OP_REM) == (60, 61)
+    assert compile_ir.OP_SIGNBIT == 62
+    assert compile_ir.OP_SELECT == 63
     assert compile_ir._FUNC_OPS["floor"] == 58 and compile_ir._FUNC_OPS["ceiling"] == 59
+
+
+def test_signbit_reference_preserves_signed_zero_infinity_and_nan_bits() -> None:
+    magnitudes = np.array(
+        [
+            0x0000000000000000,
+            0x0000000000000001,
+            0x0010000000000000,
+            0x3FF0000000000000,
+            0x7FEFFFFFFFFFFFFF,
+            0x7FF0000000000000,
+            0x7FF0000000000001,
+            0x7FF8000000000000,
+            0x7FFABCDEF1234567,
+        ],
+        dtype=np.uint64,
+    )
+    bits = np.concatenate([magnitudes, magnitudes | np.uint64(1 << 63)])
+    wanted = np.concatenate([np.zeros(len(magnitudes)), np.ones(len(magnitudes))])
+    tape = Tape(
+        ops=np.array([compile_ir.OP_STATE, compile_ir.OP_SIGNBIT]),
+        a=np.array([0, 0]),
+        b=np.array([0, -99]),  # unused unary operand, not a register reference
+        imm=np.zeros(2),
+        outputs=np.array([1]),
+        n_state=1,
+        n_param=0,
+    )
+    tape.validate()
+    actual = np.array([eval_tape(tape, [value])[0] for value in bits.view(np.float64)])
+    np.testing.assert_array_equal(actual.view(np.uint64), wanted.view(np.uint64))
+    tape.a[1] = 1
+    with pytest.raises(TapeCompileError, match="register|forward|earlier"):
+        tape.validate()
+
+
+def test_select_reference_keeps_selected_bits_and_numeric_truth() -> None:
+    tape = Tape(
+        ops=np.array(
+            [compile_ir.OP_STATE, compile_ir.OP_PARAM, compile_ir.OP_PARAM, compile_ir.OP_SELECT]
+        ),
+        a=np.array([0, 0, 1, 0]),
+        b=np.array([0, 0, 0, 1]),
+        imm=np.array([0.0, 0.0, 0.0, 2.0]),
+        outputs=np.array([3]),
+        n_state=1,
+        n_param=2,
+    )
+    tape.validate()
+    arm_bits = np.array(
+        [0, 1 << 63, 0x7FF0000000000000, 0xFFF8000000001234, 0x7FF0000000000001], dtype=np.uint64
+    )
+    for condition, truth in [
+        (0.0, False),
+        (-0.0, False),
+        (2.0, True),
+        (-1.0, True),
+        (np.nan, True),
+    ]:
+        for left in arm_bits:
+            for right in arm_bits:
+                parameters = np.array([left, right], dtype=np.uint64).view(np.float64)
+                actual = eval_tape(tape, [condition], parameters)
+                assert actual.view(np.uint64)[0] == (left if truth else right)
+
+
+@pytest.mark.parametrize("encoded", [np.nan, np.inf, -np.inf, -1.0, 0.5, 2147483648.0, 3.0, 4.0])
+def test_select_false_register_encoding_is_checked_before_use(encoded) -> None:
+    tape = Tape(
+        ops=np.array(
+            [compile_ir.OP_STATE, compile_ir.OP_CONST, compile_ir.OP_CONST, compile_ir.OP_SELECT]
+        ),
+        a=np.array([0, 0, 0, 0]),
+        b=np.array([0, 0, 0, 1]),
+        imm=np.array([0.0, 1.0, 2.0, encoded]),
+        outputs=np.array([3]),
+        n_state=1,
+        n_param=0,
+    )
+    with pytest.raises(TapeCompileError, match="register"):
+        tape.validate()
+    # Direct reference evaluation must not truncate a malformed index either,
+    # even when the condition would select the other arm.
+    with pytest.raises(TapeCompileError, match="register"):
+        eval_tape(tape, [1.0])
 
 
 # ---------------------------------------------------------------------------

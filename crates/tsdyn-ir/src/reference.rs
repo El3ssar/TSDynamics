@@ -78,6 +78,20 @@ pub fn run(tape: &Tape, u: &[f64], p: &[f64], t: f64, regs: &mut [f64]) {
             }
             // Truncated remainder (Rust `%` / C `fmod`): sign of the dividend.
             Op::Rem => regs[ai] % regs[b[i] as usize],
+            Op::Signbit => {
+                if regs[ai].is_sign_negative() {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+            Op::Select => {
+                if regs[ai] != 0.0 {
+                    regs[b[i] as usize]
+                } else {
+                    regs[imm[i] as usize]
+                }
+            }
         };
         regs[i] = r;
     }

@@ -12,12 +12,13 @@
 //! | Kind        | Reads                                   | Ops |
 //! |-------------|-----------------------------------------|-----|
 //! | [`Leaf`]    | an input (`u`/`p`/`t`) or an immediate  | `Const`, `State`, `Param`, `Time` |
-//! | [`Unary`]   | register `a`                            | `Neg`, `Recip`, the transcendental functions, and the E-OPS unaries `Floor`, `Ceil` |
+//! | [`Unary`]   | register `a`                            | `Neg`, `Recip`, the transcendental functions, and the E-OPS unaries `Floor`, `Ceil`, `Signbit` |
 //! | [`Binary`]  | registers `a` **and** `b`               | `Add`, `Sub`, `Mul`, `Div`, `Pow`, and the E-OPS binaries: comparisons `Lt`, `Le`, `Gt`, `Ge`, `Eq`, `Ne`, plus `Min`, `Max`, `Mod`, `Rem` |
 //! | [`Powi`]    | register `a`, integer exponent in `b`   | `Powi` |
+//! | [`Select`]  | condition `a`, true register `b`, false register encoded in `imm` | `Select` |
 //!
 //! (The E-OPS block — the non-smooth / piecewise comparisons, `Min`/`Max`,
-//! `Floor`/`Ceil`, and the floored `Mod` / truncated `Rem` — is the additive
+//! `Floor`/`Ceil`, floored `Mod` / truncated `Rem`, and `Signbit` — is the additive
 //! extension of the frozen IR; see the variant list and [`kind()`](Op::kind).)
 //!
 //! For the per-instruction operand layout (which of `a`/`b`/`imm` each kind
@@ -27,6 +28,7 @@
 //! [`Unary`]: OpKind::Unary
 //! [`Binary`]: OpKind::Binary
 //! [`Powi`]: OpKind::Powi
+//! [`Select`]: OpKind::Select
 
 use crate::tape::IrError;
 
@@ -142,6 +144,11 @@ pub enum Op {
     Mod = 60,
     /// Truncated remainder `regs[a] % regs[b]` (C `fmod`).
     Rem = 61,
+    /// The IEEE-754 sign bit as `1.0` or `0.0`, including signed zeros and NaNs.
+    Signbit = 62,
+    /// Select register `b` when `regs[a] != 0.0`, otherwise the register whose
+    /// exact integer index is encoded in `imm`. NaN conditions are true.
+    Select = 63,
 }
 
 /// How an [`Op`] reads its operands — drives tape validation and documents arity.
@@ -155,12 +162,14 @@ pub enum OpKind {
     Binary,
     /// Reads register `a`; `b` is the literal integer exponent.
     Powi,
+    /// Reads registers `a` and `b`, plus a validated register index in `imm`.
+    Select,
 }
 
 impl Op {
     /// Every opcode, in ascending wire-value order.  Handy for exhaustive
     /// iteration in tests and tooling.
-    pub const ALL: [Op; 41] = [
+    pub const ALL: [Op; 43] = [
         Op::Const,
         Op::State,
         Op::Param,
@@ -202,6 +211,8 @@ impl Op {
         Op::Ceil,
         Op::Mod,
         Op::Rem,
+        Op::Signbit,
+        Op::Select,
     ];
 
     /// The wire value (the `#[repr(i32)]` discriminant).
@@ -256,6 +267,8 @@ impl Op {
             59 => Op::Ceil,
             60 => Op::Mod,
             61 => Op::Rem,
+            62 => Op::Signbit,
+            63 => Op::Select,
             other => return Err(IrError::UnknownOpcode(other)),
         };
         Ok(op)
@@ -272,7 +285,8 @@ impl Op {
                 OpKind::Binary
             }
             Powi => OpKind::Powi,
-            // everything else (the transcendentals, Neg/Recip, Floor/Ceil) is a
+            Select => OpKind::Select,
+            // everything else (the transcendentals, Neg/Recip, Floor/Ceil/Signbit) is a
             // register-`a` unary
             _ => OpKind::Unary,
         }
@@ -324,6 +338,8 @@ impl Op {
             Ceil => "CEIL",
             Mod => "MOD",
             Rem => "REM",
+            Signbit => "SIGNBIT",
+            Select => "SELECT",
         }
     }
 }
@@ -363,6 +379,8 @@ mod tests {
         assert_eq!(Op::Ceil.to_i32(), 59);
         assert_eq!(Op::Mod.to_i32(), 60);
         assert_eq!(Op::Rem.to_i32(), 61);
+        assert_eq!(Op::Signbit.to_i32(), 62);
+        assert_eq!(Op::Select.to_i32(), 63);
     }
 
     #[test]
@@ -374,7 +392,7 @@ mod tests {
 
     #[test]
     fn all_is_complete_and_ordered() {
-        assert_eq!(Op::ALL.len(), 41);
+        assert_eq!(Op::ALL.len(), 43);
         for win in Op::ALL.windows(2) {
             assert!(win[0].to_i32() < win[1].to_i32(), "ALL must be ascending");
         }
@@ -383,8 +401,8 @@ mod tests {
     #[test]
     fn unknown_opcode_is_rejected() {
         // The reserved gaps around the defined ranges stay invalid (47-49 before
-        // the E-OPS block, 62+ after it).
-        for bad in [-1, 4, 9, 16, 22, 29, 47, 49, 62, 1000] {
+        // the E-OPS block, 64+ after it).
+        for bad in [-1, 4, 9, 16, 22, 29, 47, 49, 64, 1000] {
             assert!(matches!(Op::from_i32(bad), Err(IrError::UnknownOpcode(v)) if v == bad));
         }
     }
@@ -400,7 +418,7 @@ mod tests {
         assert_eq!(Op::Recip.kind(), OpKind::Unary);
         assert_eq!(Op::Tanh.kind(), OpKind::Unary);
         assert_eq!(Op::Atanh.kind(), OpKind::Unary);
-        // E-OPS block: comparisons + min/max/mod/rem are binary, floor/ceil unary.
+        // E-OPS block: comparisons + min/max/mod/rem are binary; signbit is unary.
         assert_eq!(Op::Lt.kind(), OpKind::Binary);
         assert_eq!(Op::Ne.kind(), OpKind::Binary);
         assert_eq!(Op::Min.kind(), OpKind::Binary);
@@ -409,5 +427,7 @@ mod tests {
         assert_eq!(Op::Rem.kind(), OpKind::Binary);
         assert_eq!(Op::Floor.kind(), OpKind::Unary);
         assert_eq!(Op::Ceil.kind(), OpKind::Unary);
+        assert_eq!(Op::Signbit.kind(), OpKind::Unary);
+        assert_eq!(Op::Select.kind(), OpKind::Select);
     }
 }

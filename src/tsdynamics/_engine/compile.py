@@ -138,6 +138,8 @@ OP_FLOOR = 58  # floor(regs[a])
 OP_CEIL = 59  # ceil(regs[a])
 OP_MOD = 60  # floored modulo: regs[a] - regs[b] * floor(regs[a] / regs[b])
 OP_REM = 61  # truncated remainder: regs[a] % regs[b]  (C fmod)
+OP_SIGNBIT = 62  # IEEE-754 sign bit, including signed zeros and NaNs
+OP_SELECT = 63  # condition in a, true register in b, false-register index in imm
 
 #: SymEngine/SymPy function spelling → unary opcode.  Matches ``tsdyn-ir``'s
 #: ``Op::name`` spellings for the elementary functions.
@@ -177,7 +179,7 @@ _REL_OPS: dict[str, int] = {
 #: Opcodes whose register file slot is filled by reading a single source
 #: register ``a`` (the unary functions plus ``Neg``/``Recip`` and the
 #: round-to-integral ops).
-_UNARY_OPS: frozenset[int] = frozenset({OP_NEG, OP_RECIP, *_FUNC_OPS.values()})
+_UNARY_OPS: frozenset[int] = frozenset({OP_NEG, OP_RECIP, OP_SIGNBIT, *_FUNC_OPS.values()})
 #: Binary opcodes (read registers ``a`` and ``b``).
 _BINARY_OPS: frozenset[int] = frozenset(
     {
@@ -212,6 +214,8 @@ _NONSMOOTH_OPS: frozenset[int] = frozenset(
         _FUNC_OPS["sign"],
         OP_FLOOR,
         OP_CEIL,
+        OP_SIGNBIT,
+        OP_SELECT,
         OP_MOD,
         OP_REM,
         OP_MIN,
@@ -823,6 +827,10 @@ class Tape:
                 _check_reg(i, int(b[i]))
             elif op == OP_POWI:
                 _check_reg(i, int(a[i]))  # b is the literal exponent, not a register
+            elif op == OP_SELECT:
+                _check_reg(i, int(a[i]))
+                _check_reg(i, int(b[i]))
+                _select_false_reg(i, self.imm[i])
             else:
                 raise TapeCompileError(f"unknown opcode {op} at instruction {i}")
 
@@ -863,6 +871,23 @@ def _check_reg(at: int, reg: int) -> None:
         raise TapeCompileError(
             f"instruction {at} reads register {reg}, which is not a strictly earlier register"
         )
+
+
+def _select_false_reg(at: int, encoded: Any) -> int:
+    """Validate the third register's float64 wire encoding before conversion."""
+    if (
+        np.iscomplexobj(encoded)
+        or not np.isfinite(encoded)
+        or not 0 <= encoded <= np.iinfo(np.int32).max
+        or encoded != int(encoded)
+    ):
+        raise TapeCompileError(
+            f"instruction {at}: select false-register index {encoded!r} "
+            "must be an exact nonnegative i32 encoded in imm"
+        )
+    register = int(encoded)
+    _check_reg(at, register)
+    return register
 
 
 # ---------------------------------------------------------------------------
@@ -2997,6 +3022,9 @@ def run_tape(tape: Tape, u: Any, p: Any = (), t: float = 0.0) -> np.ndarray:
                 r = -regs[ai]
             elif op == OP_RECIP:
                 r = 1.0 / regs[ai]
+            elif op == OP_SELECT:
+                false_register = _select_false_reg(i, imm[i])
+                r = regs[int(b[i])] if regs[ai] != 0.0 else regs[false_register]
             elif op in _BINARY_FUNC:
                 r = _BINARY_FUNC[op](regs[ai], regs[int(b[i])])
             else:
@@ -3045,6 +3073,7 @@ _UNARY_FUNC: dict[int, Any] = {
     46: np.arctanh,
     OP_FLOOR: np.floor,
     OP_CEIL: np.ceil,
+    OP_SIGNBIT: np.signbit,
 }
 
 # Binary opcode → implementation.  Comparisons yield 1.0 / 0.0; Min/Max follow

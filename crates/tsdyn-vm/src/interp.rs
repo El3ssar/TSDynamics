@@ -217,6 +217,20 @@ impl Interpreter {
                     x - y * (x / y).floor()
                 }
                 Op::Rem => regs[ai] % regs[b[i] as usize],
+                Op::Signbit => {
+                    if regs[ai].is_sign_negative() {
+                        1.0
+                    } else {
+                        0.0
+                    }
+                }
+                Op::Select => {
+                    if regs[ai] != 0.0 {
+                        regs[b[i] as usize]
+                    } else {
+                        regs[imm[i] as usize]
+                    }
+                }
             };
             regs[i] = r;
         }

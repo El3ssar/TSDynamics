@@ -8,7 +8,9 @@
 //! ```
 //!
 //! Both walk the tape once. Each instruction's result becomes a Cranelift SSA
-//! [`Value`]; arithmetic / `Sqrt` / `Abs` lower to native IEEE-754 instructions
+//! [`Value`]; arithmetic / `Sqrt` / `Abs` lower to native IEEE-754 instructions,
+//! `Signbit` extracts the stored sign with integer instructions,
+//! `Select` copies the chosen value without arithmetic on either arm,
 //! and the transcendentals / `Pow` / `Powi` / `Sign` lower to calls into the
 //! host [`shims`]. Only the registers reachable from the function's outputs are
 //! emitted — via the shared
@@ -23,7 +25,9 @@
 
 use std::collections::HashMap;
 
-use cranelift_codegen::ir::{types, AbiParam, FuncRef, InstBuilder, MemFlagsData, Value};
+use cranelift_codegen::ir::{
+    condcodes::IntCC, types, AbiParam, FuncRef, InstBuilder, MemFlagsData, Value,
+};
 use cranelift_codegen::Context;
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::{JITBuilder, JITModule};
@@ -73,7 +77,7 @@ struct MathDecl {
 }
 
 /// Every opcode that lowers to a host call, paired with its shim. Opcodes not
-/// listed here (the leaves, arithmetic, `Sqrt`, `Abs`) lower to native Cranelift
+/// listed here (the leaves, arithmetic, `Sqrt`, `Abs`, `Signbit`, `Select`) lower to native Cranelift
 /// instructions.
 fn math_table() -> [MathDecl; 29] {
     macro_rules! d {
@@ -380,6 +384,30 @@ fn build_body(
                 let x = reg(&regs, a[i]);
                 bcx.ins().fabs(x)
             }
+            Op::Signbit => {
+                // Integer extraction observes the stored sign even for -0.0,
+                // infinities and either-sign NaN; no float comparison is valid.
+                let x = reg(&regs, a[i]);
+                let bits = bcx.ins().bitcast(types::I64, MemFlagsData::new(), x);
+                let shift = bcx.ins().iconst(types::I64, 63);
+                let sign = bcx.ins().ushr(bits, shift);
+                bcx.ins().fcvt_from_uint(types::F64, sign)
+            }
+            Op::Select => {
+                let condition = reg(&regs, a[i]);
+                let bits = bcx
+                    .ins()
+                    .bitcast(types::I64, MemFlagsData::new(), condition);
+                let mask = bcx.ins().iconst(types::I64, i64::MAX);
+                let magnitude = bcx.ins().band(bits, mask);
+                let zero = bcx.ins().iconst(types::I64, 0);
+                // Only +0 and -0 are false; nonzero finite values, infinity,
+                // and either-sign NaN are true. No arithmetic touches an arm.
+                let truth = bcx.ins().icmp(IntCC::NotEqual, magnitude, zero);
+                let when_true = reg(&regs, b[i]);
+                let when_false = reg(&regs, imm[i] as i32);
+                bcx.ins().select(truth, when_true, when_false)
+            }
             Op::Pow => {
                 let (x, y) = (reg(&regs, a[i]), reg(&regs, b[i]));
                 call_math(module, math_ids, &mut frefs, &mut bcx, Op::Pow, &[x, y])
@@ -403,8 +431,8 @@ fn build_body(
                     call_math(module, math_ids, &mut frefs, &mut bcx, shim, &[x, y])
                 }
                 // Leaves and `Powi` are handled by explicit arms above.
-                OpKind::Leaf | OpKind::Powi => {
-                    unreachable!("leaf/powi handled by explicit arms: {shim:?}")
+                OpKind::Leaf | OpKind::Powi | OpKind::Select => {
+                    unreachable!("leaf/powi/select handled by explicit arms: {shim:?}")
                 }
             },
         };

@@ -70,6 +70,8 @@
 //! | 59 | `Ceil`  | unary  | `regs[a].ceil()` |
 //! | 60 | `Mod`   | binary | floored modulo `a - b*(a/b).floor()` |
 //! | 61 | `Rem`   | binary | truncated remainder `regs[a] % regs[b]` |
+//! | 62 | `Signbit` | unary | IEEE-754 sign bit as `1.0` or `0.0`, including zeros and NaNs |
+//! | 63 | `Select` | select | condition in `a`, true register in `b`, false-register index in `imm` |
 //!
 //! The wire values are the FFI contract: they are exactly what the Python
 //! emitter writes and the v2 VM read.  See [`Tape`] for the per-instruction
