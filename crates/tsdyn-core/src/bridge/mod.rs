@@ -38,6 +38,7 @@ pub mod map;
 pub mod map_lyapunov;
 pub mod marshal;
 pub mod ode;
+pub mod prepared;
 pub mod sde;
 pub mod stepper;
 
@@ -55,6 +56,7 @@ pub use map_lyapunov::map_lyapunov_bridge;
 pub use marshal::build_tape;
 pub use marshal::EngineError;
 pub use ode::{ensemble_final, eval_jac, eval_rhs, integrate_dense};
+pub use prepared::PreparedEvaluator;
 pub use sde::{sde_ensemble_final, sde_integrate_dense};
 pub use stepper::OdeStepper;
 

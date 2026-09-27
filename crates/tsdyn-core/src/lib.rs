@@ -27,6 +27,7 @@
 //! | [`integrate_sde_ensemble_final`] | `(n_ic, dim)` | parallel SDE batch → final states |
 //! | [`integrate_events_dense`] | `(K,), (K, dim), …` | crossings of one event over a span |
 //! | [`PyOdeStepper`] (`OdeStepper`) | handle | resumable per-`dt` ODE stepper (stream WS-STEPPER) |
+//! | [`prepared::PyPreparedEvaluator`] (`PreparedEvaluator`) | handle | owned raw point/batch RHS and fused Jacobian evaluation |
 //! | [`solvers`] | `list[str]` | registered `method=` names (introspection) |
 //! | [`jit_cache_stats`] | `dict[str, int]` | compiled-evaluator cache counters |
 //! | [`clear_jit_cache`] | `None` | drop every cached compiled evaluator |
@@ -37,6 +38,9 @@
 //! per-`dt` stepping loop never re-marshals the tape. It backs
 //! `ContinuousSystem.step()` and is GIL/lifetime-safe (owns its data, releases the
 //! GIL during compute, `Send` so Python may finalize it on any thread).
+//! `PreparedEvaluator` instead retains only immutable numerical code. Every call
+//! supplies its state/time/parameters and owns separate input/output/scratch
+//! storage; it applies no integration or trajectory-screening semantics.
 //!
 //! Each leading call passes the tape wire arrays
 //! `(ops, a, b, imm, outputs, jac_outputs, n_state, n_param)` — exactly the tuple
@@ -50,6 +54,7 @@
 //! `&dyn Evaluator` seam the interpreter uses).
 
 mod bridge;
+mod prepared;
 
 use bridge::EngineError;
 use numpy::{
@@ -1556,6 +1561,7 @@ fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(map_lyapunov_spectrum, m)?)?;
     m.add_function(wrap_pyfunction!(lyapunov_spectrum_ode, m)?)?;
     m.add_class::<PyOdeStepper>()?;
+    m.add_class::<prepared::PyPreparedEvaluator>()?;
     m.add_function(wrap_pyfunction!(solvers, m)?)?;
     m.add_function(wrap_pyfunction!(jit_cache_stats, m)?)?;
     m.add_function(wrap_pyfunction!(clear_jit_cache, m)?)?;
