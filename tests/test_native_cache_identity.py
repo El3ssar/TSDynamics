@@ -8,6 +8,8 @@ from tsdynamics._engine import run
 from tsdynamics._engine.compile import OP_ADD, OP_CONST, OP_STATE, Tape
 from tsdynamics._engine.problem import MapProblem
 
+_rust = pytest.importorskip("tsdynamics._rust")
+
 
 def _offset_tape(first, second):
     # The exact operation sequence is intentional: +0 and -0 are different
@@ -54,9 +56,7 @@ def test_bounded_large_equilibrium_reports_a_numerical_screen(backend, solver, s
     # This patch deliberately preserves the legacy limit. A constant finite
     # solution must not be described as a proved physical divergence.
     with pytest.raises(ts.errors.ConvergenceError) as caught:
-        Constant().run(
-            final_time=0.125, dt=sample_dt, ic=[1e200], backend=backend, solver=solver
-        )
+        Constant().run(final_time=0.125, dt=sample_dt, ic=[1e200], backend=backend, solver=solver)
     message = str(caught.value)
     assert "numerical integration failed" in message
     assert "magnitude-screen limit" in message
