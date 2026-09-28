@@ -13,16 +13,17 @@
 //!
 //! What each instruction reads, by [`OpKind`](crate::OpKind):
 //!
-//! | Field    | `Leaf`                              | `Unary`        | `Binary`             | `Powi`              |
-//! |----------|-------------------------------------|----------------|----------------------|---------------------|
-//! | `ops[i]` | the opcode                          | the opcode     | the opcode           | `Op::Powi`          |
-//! | `a[i]`   | `State`/`Param`: input index; else — | source reg     | left source reg      | base source reg     |
-//! | `b[i]`   | —                                   | —              | right source reg     | **integer exponent**|
-//! | `imm[i]` | `Const`: the constant; else —       | —              | —                    | —                   |
+//! | Field    | `Leaf`                              | `Unary`        | `Binary`             | `Powi`              | `Select` |
+//! |----------|-------------------------------------|----------------|----------------------|---------------------|----------|
+//! | `ops[i]` | the opcode                          | the opcode     | the opcode           | `Op::Powi`          | `Op::Select` |
+//! | `a[i]`   | `State`/`Param`: input index; else — | source reg     | left source reg      | base source reg     | condition reg |
+//! | `b[i]`   | —                                   | —              | right source reg     | **integer exponent**| true reg |
+//! | `imm[i]` | `Const`: the constant; else —       | —              | —                    | —                   | exact false-reg index |
 //!
-//! `imm` is parallel to `ops` (one slot per instruction) and only read for
-//! `Const`; the other slots are conventionally `0.0`.  This "immediate at the
-//! instruction's own index" layout is the v2 contract and is preserved verbatim.
+//! `imm` is parallel to `ops` (one slot per instruction). `Const` reads its
+//! floating-point value; the additive `Select` opcode reads an exact nonnegative
+//! i32 register index encoded there. Other slots are conventionally `0.0`.
+//! Array shapes/dtypes and every existing opcode's interpretation are unchanged.
 //!
 //! # Outputs
 //!
@@ -64,6 +65,13 @@ pub enum IrError {
         at: usize,
         /// The out-of-order register index it tried to read.
         reg: i32,
+    },
+    /// A Select false-register index is not an exact nonnegative i32 in `imm`.
+    InvalidSelectIndex {
+        /// The reading instruction's index.
+        at: usize,
+        /// Original float bits, retained without NaN equality ambiguity.
+        bits: u64,
     },
     /// A `State` leaf at instruction `at` indexes `idx`, outside `0..n_state`.
     StateIndexOutOfRange {
@@ -121,6 +129,11 @@ impl core::fmt::Display for IrError {
             IrError::ForwardReference { at, reg } => write!(
                 f,
                 "instruction {at} reads register {reg}, which is not a strictly earlier register"
+            ),
+            IrError::InvalidSelectIndex { at, bits } => write!(
+                f,
+                "instruction {at}: select false-register index {:?} must be an exact nonnegative i32 encoded in imm",
+                f64::from_bits(*bits)
             ),
             IrError::StateIndexOutOfRange { at, idx, n_state } => write!(
                 f,
@@ -274,6 +287,22 @@ impl Tape {
                 }
                 // Powi reads register `a`; `b` is the literal exponent.
                 OpKind::Powi => check_reg(i, a)?,
+                OpKind::Select => {
+                    check_reg(i, a)?;
+                    check_reg(i, b)?;
+                    let encoded = self.imm[i];
+                    if !encoded.is_finite()
+                        || encoded < 0.0
+                        || encoded > f64::from(i32::MAX)
+                        || encoded.fract() != 0.0
+                    {
+                        return Err(IrError::InvalidSelectIndex {
+                            at: i,
+                            bits: encoded.to_bits(),
+                        });
+                    }
+                    check_reg(i, encoded as i32)?;
+                }
             }
         }
 
@@ -427,6 +456,12 @@ impl Tape {
                 OpKind::Binary => {
                     live[self.a[i] as usize] = true;
                     live[self.b[i] as usize] = true;
+                }
+                OpKind::Select => {
+                    live[self.a[i] as usize] = true;
+                    live[self.b[i] as usize] = true;
+                    // Construction validated exactness/range before this cast.
+                    live[self.imm[i] as usize] = true;
                 }
             }
         }

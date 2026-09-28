@@ -335,12 +335,25 @@ class TestTangentEngineLyapunov:
         assert exps[0] > 0.5  # the positive exponent (~0.9)
 
     def test_stiff_default_keeps_the_slow_path(self) -> None:
-        # An implicit (stiff) default method declines the engine kernel
-        # (make_ode_stepper rejects it) and keeps the per-chunk loop — still finite.
+        # Test implicit routing on resolved, independently known rates. A coarse
+        # Oregonator frame does not establish validity merely by staying finite.
         pytest.importorskip("tsdynamics._rust")
-        sys = ts.systems.Oregonator()
-        exps = sys._lyapunov_spectrum(dt=0.05, transient=10.0, final_time=40.0, k=2)
-        assert np.all(np.isfinite(exps))
+
+        class StiffDiagonal(ts.ContinuousSystem):
+            variables = ("x", "y")
+            params = {}
+            _default_ic = (1.0, 1.0)
+            _default_method = "bdf"
+
+            @staticmethod
+            def _equations(y, t):
+                return [-y(0), -100 * y(1)]
+
+        tangent = ts.derived.TangentSystem(StiffDiagonal(), k=2, backend="interp")
+        tangent.reinit()
+        assert not tangent._step_explicit_engine
+        exps = tangent._lyapunov_spectrum(dt=0.001, transient=0, final_time=0.1)
+        np.testing.assert_allclose(exps, [-1.0, -100.0], rtol=0, atol=1e-4)
 
 
 # ---------------------------------------------------------------------------

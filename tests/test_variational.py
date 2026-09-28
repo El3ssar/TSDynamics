@@ -292,59 +292,65 @@ def test_changing_k_rebuilds_the_extended_tape() -> None:
 
 
 @pytest.mark.slow
-def test_oregonator_stiff_lyapunov_finite_descending() -> None:
-    """The genuinely-stiff Oregonator Lyapunov spectrum is finite and descending.
+def test_oregonator_stiff_lyapunov_refuses_unresolved_contraction() -> None:
+    """Coarse stiff tangent chunks must not pass a finiteness-only acceptance.
 
-    End-to-end guard for the named P0 system: ``ts.systems.Oregonator()`` defaults to the
-    implicit ``bdf`` kernel, so ``lyapunov_spectrum`` drives the extended
-    variational ODE onto that kernel.  Before the fix this *raised* (no Jacobian
-    tape); it must now return a finite, descending spectrum.  ``final_time`` is
-    kept modest for speed — correctness of the *values* is covered by the
-    closed-form oscillator oracles above; here we only assert it does not raise
-    and is well-formed.
-
-    Why the tolerance is pinned instead of taking the v6 library default
-    -------------------------------------------------------------------
-    The **extended variational** system for a stiff flow packs the base state and
-    the deviation vectors into one error-weight vector.  For the Oregonator that
-    spans ~16 decades: the base ``z`` reaches ``2.4e3`` while the strongly
-    contracting tangent direction (``lambda_3 ~ -3e3``) decays to ``~3e-11``
-    inside a single ``dt=0.01`` chunk.  A single global ``atol`` cannot serve
-    both, and at ``atol=1e-12`` the BDF step collapses (``ConvergenceError`` at
-    ``t~7.8``).
-
-    That is a **pre-existing weakness of the stiff extended-variational path**,
-    not something the v6 tolerance bump introduced:
-
-    * The value was never converged at any tolerance — ``lambda_3`` measures
-      -2984 / -2904 / -7405 / -8213 / -10001 at ``rtol=1e-6 … 1e-9``, a 3.4x
-      spread. This test asserts only shape/finiteness/ordering for that reason.
-    * Two of the four catalogue ODEs with an implicit ``_default_method``
-      (``SprottL``, ``SprottJerk``) already raise ``ConvergenceError`` here at
-      **both** the old and the new tolerance, and a third (``SprottP``) returns
-      unrelated numbers at each.
-    * The Oregonator's *flow* path, by contrast, is unambiguously **better** at
-      the v6 default: at ``T=100`` its error against SciPy ``Radau`` at
-      ``rtol=1e-12`` drops 1.89e-2 -> 4.85e-5, a **390x** improvement.
-
-    So the flow keeps the library default and this variational guard pins the
-    tolerance the stiff path can actually take.  Fixing the underlying
-    ill-conditioning (per-block error weights for the variational lowering) is
-    its own piece of work.
+    This regime previously returned strongly tolerance-dependent contraction
+    rates while the test checked only shape/order. The propagated frame loses
+    its independent fast direction at these controls; an actionable refusal is
+    the valid outcome. Resolved scalar/coupled/shear flow oracles are tested in
+    test_flow_lyapunov_resolution.py.
     """
     pytest.importorskip("tsdynamics._rust")
-    spec = ts.analysis.lyapunov_spectrum(
+    with pytest.raises(ValueError, match="numerically unresolved|integration error scale"):
+        ts.analysis.lyapunov_spectrum(
+            ts.systems.Oregonator(),
+            final_time=6.0,
+            dt=0.01,
+            transient=2.0,
+            ic=[1.0, 1.0, 1.0],
+            rtol=1e-6,
+            atol=1e-9,
+        )
+
+
+def test_short_oregonator_spectrum_matches_independent_variational_volume_oracle() -> None:
+    """Two resolved columns plus Liouville volume avoid subtracting a lost fast mode."""
+    from scipy.integrate import solve_ivp
+
+    pytest.importorskip("tsdynamics._rust")
+    horizon = 1e-4
+    q, epsilon, mu = 2e-4, 0.01, 1e-6
+
+    def reference(_time, state):
+        x, y, z = state[:3]
+        rhs = [y - x, (q * z - z * y + y * (1 - y)) / epsilon, (-q * z - y * z + x) / mu]
+        jac = np.array(
+            [
+                [-1.0, 1.0, 0.0],
+                [0.0, (-z + 1 - 2 * y) / epsilon, (q - y) / epsilon],
+                [1 / mu, -z / mu, (-q - y) / mu],
+            ]
+        )
+        frame = state[3:9].reshape(3, 2)
+        return np.r_[rhs, (jac @ frame).ravel(), np.trace(jac)]
+
+    initial = np.r_[[1.0, 1.0, 1.0], np.eye(3)[:, :2].ravel(), 0.0]
+    oracle = solve_ivp(reference, (0.0, horizon), initial, method="Radau", rtol=1e-11, atol=1e-13)
+    assert oracle.success
+    _, upper = np.linalg.qr(oracle.y[3:9, -1].reshape(3, 2), mode="reduced")
+    first_two = np.log(np.abs(np.diag(upper))) / horizon
+    expected = np.r_[first_two, oracle.y[-1, -1] / horizon - first_two.sum()]
+    measured = ts.analysis.lyapunov_spectrum(
         ts.systems.Oregonator(),
-        final_time=6.0,
-        dt=0.01,
-        transient=2.0,
+        final_time=horizon,
+        transient=0,
+        dt=1e-6,
         ic=[1.0, 1.0, 1.0],
-        rtol=1e-6,
-        atol=1e-9,
+        rtol=1e-9,
+        atol=1e-12,
     )
-    assert spec.shape == (3,)
-    assert np.all(np.isfinite(spec))
-    assert spec[0] >= spec[1] >= spec[2]  # descending (QR order)
+    np.testing.assert_allclose(measured.exponents, expected, rtol=0, atol=0.05)
 
 
 @pytest.mark.slow

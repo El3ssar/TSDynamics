@@ -237,7 +237,7 @@ def test_divergence_raises_runtime_error():
     ic = np.array([1.0])
     p = np.empty(0)
     t_eval = np.array([0.0, 0.5, 1.5, 2.0])
-    with pytest.raises(RuntimeError, match="diverged"):
+    with pytest.raises(RuntimeError, match="numerical integration failed"):
         _rust.integrate_dense(
             ops,
             a,

@@ -72,7 +72,8 @@ class TestTheMaximalExponentHasExactlyOneDoor:
 
     def test_a_map_burn_in_can_be_switched_off_by_name(self, henon: object) -> None:
         cold = float(A.lyapunov_spectrum(henon, k=1, n=20_000, ic=[0.1, 0.1], transient=0)[0])
-        assert cold == 0.4159988587314602
+        # Equivalent QR algorithms differ at the last few rounding bits.
+        assert cold == pytest.approx(0.4159988587314602, rel=0, abs=1e-14)
 
     def test_n_counts_iterations_on_a_map(self, henon: object) -> None:
         """Doubling ``n`` doubles the work -- ``n`` is iterations, not cycles."""

@@ -6,9 +6,8 @@
 //! `J(x_n)` (the **pre-image** convention — `J` evaluated at the state *before* the
 //! step), reorthonormalises the deviation frame every `reortho_interval` steps with
 //! a hand-rolled modified Gram–Schmidt, accumulates `Σ log|R_ii|`, and returns the
-//! time-averaged spectrum (the maximal exponent is the leading entry). Maps are
-//! ~6000× slower native than the per-step Python QR loop they replace, because that
-//! loop pays a Python→FFI / NumPy round-trip *per iterate*; this kernel pays none.
+//! time-averaged rates in tangent-column order. The public analysis sorts them. Maps are
+//! integrated without the Python→FFI / NumPy round-trip per iterate.
 //!
 //! # Algorithm (line-for-line with the released Python loop)
 //!
@@ -18,7 +17,7 @@
 //! 2. step the map `x_{n+1} = f(x_n)` (a non-finite iterate is divergence);
 //! 3. update the deviation frame `W ← J · W`;
 //! 4. every `reortho_interval` steps, QR-reorthonormalise `W = Q·R`, keep `Q`,
-//!    accumulate `log|R_ii|` (flushed to `tiny` to dodge `log 0`).
+//!    accumulate logarithmic growth, retaining exact zero columns as `-inf`.
 //!
 //! So the accumulated product is `J(x_{N-1}) ··· J(x_0)` — the exact tangent map —
 //! and `λ_i = (Σ log|R_ii|) / (#intervals · reortho_interval)`.
@@ -43,11 +42,7 @@
 
 use tsdyn_ir::Evaluator;
 
-/// Smallest positive normal `f64` — the floor the released path applies to a
-/// diagonal `|R_ii|` before `log`, so a momentarily collapsed direction yields a
-/// large finite negative contribution instead of `-inf` (mirrors
-/// `numpy.finfo(float).tiny`).
-const TINY: f64 = f64::MIN_POSITIVE;
+use crate::lyapunov::{mgs_renormalise, TangentQrError, UNRESOLVED_TANGENT_RANK};
 
 /// Why a map Lyapunov run could not be set up or completed.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -58,8 +53,7 @@ pub enum MapLyapunovError {
     /// The tape carries no Jacobian (`with_jacobian=False`) — the tangent map needs
     /// `∂f/∂u`. → `ValueError`.
     NoJacobian,
-    /// The iteration diverged: a non-finite iterate, Jacobian, deviation frame, or
-    /// reorthonormalisation before completing all steps. → `RuntimeError`.
+    /// A non-finite state iterate before completing all steps. → `RuntimeError`.
     Diverged(String),
     /// The embedder's interrupt hook stopped the run (see [`crate::interrupt`])
     /// — normally a Ctrl-C at the Python prompt. A `steps`-heavy spectrum is one
@@ -92,7 +86,7 @@ impl std::error::Error for MapLyapunovError {}
 /// The accumulated spectrum a [`map_lyapunov`] run returns.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MapLyapunovOutcome {
-    /// The `k` Lyapunov exponents, largest first (QR order) — the time-averaged
+    /// The `k` Lyapunov exponents in QR column order — the time-averaged
     /// `log|R_ii|`.
     pub exponents: Vec<f64>,
     /// The number of reorthonormalisation intervals completed (the `_elapsed` the
@@ -100,65 +94,8 @@ pub struct MapLyapunovOutcome {
     pub intervals: usize,
 }
 
-/// In-place modified Gram–Schmidt over the column-major `dim × k` frame `w`.
-///
-/// Column `j` occupies `w[j*dim .. (j+1)*dim]`. Orthonormalises the columns left to
-/// right, writing the orthonormal `Q` back into `w` and the diagonal stretch
-/// factors `|R_jj|` into `rdiag` (`rdiag[j] = ‖ŵ_j‖` after removing the projections
-/// onto columns `0..j`). Returns `false` if any norm or coefficient is non-finite
-/// (the deviation frame blew up). A column whose norm underflows below [`TINY`] is
-/// recorded as [`TINY`] and replaced with a zero vector — exactly the released
-/// path's `diag = where(diag < tiny, tiny, diag)` guard, so a collapsed direction
-/// contributes a large finite negative exponent rather than `NaN`.
-#[inline]
-fn mgs(w: &mut [f64], dim: usize, k: usize, rdiag: &mut [f64]) -> bool {
-    for j in 0..k {
-        // Orthogonalise column j against the already-orthonormal columns 0..j.
-        for i in 0..j {
-            // r_ij = q_i · w_j
-            let mut dot = 0.0;
-            for d in 0..dim {
-                dot += w[i * dim + d] * w[j * dim + d];
-            }
-            if !dot.is_finite() {
-                return false;
-            }
-            // w_j ← w_j − r_ij q_i
-            for d in 0..dim {
-                w[j * dim + d] -= dot * w[i * dim + d];
-            }
-        }
-        // r_jj = ‖w_j‖
-        let mut norm2 = 0.0;
-        for d in 0..dim {
-            let v = w[j * dim + d];
-            norm2 += v * v;
-        }
-        if !norm2.is_finite() {
-            return false;
-        }
-        let norm = norm2.sqrt();
-        if norm < TINY {
-            // Collapsed direction: record the floor and zero the column so the
-            // subsequent columns orthogonalise against a clean (zero) vector — the
-            // released `where(diag < tiny, tiny, diag)` outcome.
-            rdiag[j] = TINY;
-            for d in 0..dim {
-                w[j * dim + d] = 0.0;
-            }
-        } else {
-            rdiag[j] = norm;
-            let inv = 1.0 / norm;
-            for d in 0..dim {
-                w[j * dim + d] *= inv;
-            }
-        }
-    }
-    true
-}
-
-/// Compute the discrete-map Lyapunov spectrum (the maximal exponent is the leading
-/// entry) over the lowered map RHS + Jacobian `ev`.
+/// Compute discrete-map tangent growth rates in frame-column order over the
+/// lowered map RHS + Jacobian `ev`; a partial frame need not contain the maximum.
 ///
 /// `ev` must be a lowered map evaluator carrying its Jacobian (`has_jacobian()`):
 /// `eval` writes the next state `f(x)` (a map's RHS *is* the next state), and
@@ -225,7 +162,7 @@ pub fn map_lyapunov(
     let mut w_prop = vec![0.0; dim * k];
     let mut jac = vec![0.0; dim * dim];
     let mut scratch = vec![0.0; ev.n_scratch()];
-    let mut rdiag = vec![0.0; k];
+    let mut growths = vec![0.0; k];
 
     let mut sums = vec![0.0; k];
     let mut intervals = 0usize;
@@ -239,15 +176,16 @@ pub fn map_lyapunov(
         }
         // (1) Jacobian at the pre-image x_n, plus the next state in one pass.
         ev.eval_jac(&x, p, 0.0, &mut scratch, &mut x_next, &mut jac);
-        if !jac.iter().all(|v| v.is_finite()) {
-            return Err(MapLyapunovError::Diverged(format!(
-                "non-finite Jacobian at iterate {i} (the map diverged)"
-            )));
-        }
         // (2) advance the map; a non-finite iterate is divergence.
         if !x_next.iter().all(|v| v.is_finite()) {
             return Err(MapLyapunovError::Diverged(format!(
-                "non-finite state at iterate {i} (the map diverged)"
+                "non-finite state at iterate {i}; cannot continue map iteration"
+            )));
+        }
+        if !jac.iter().all(|v| v.is_finite()) {
+            return Err(MapLyapunovError::BadShape(format!(
+                "non-finite Jacobian at iterate {i}; inspect model derivatives before \
+                 interpreting tangent growth"
             )));
         }
         x.copy_from_slice(&x_next[..dim]);
@@ -264,24 +202,59 @@ pub fn map_lyapunov(
                 }
                 pcol[r] = acc;
             }
+            if pcol.iter().all(|v| *v == 0.0) {
+                // Only a vanished column needs to distinguish structural zeros
+                // from lost products or cancellation. Reevaluate its terms in
+                // the same order; ordinary propagation keeps the plain dot loop.
+                let mut nonzero_term = false;
+                for jrow in jac.chunks(dim) {
+                    for (&coefficient, &component) in jrow.iter().zip(wcol) {
+                        let term = coefficient * component;
+                        if term == 0.0 && coefficient != 0.0 && component != 0.0 {
+                            return Err(MapLyapunovError::BadShape(
+                                "map tangent propagation underflowed to zero; reduce reortho_interval \
+                                 before interpreting contraction rates".to_string(),
+                            ));
+                        }
+                        nonzero_term |= term != 0.0;
+                    }
+                }
+                if nonzero_term {
+                    return Err(MapLyapunovError::BadShape(
+                        "map tangent propagation vanished through cancellation; exact rank loss \
+                         cannot be distinguished from roundoff. Reduce reortho_interval or \
+                         rescale the model before interpreting contraction rates"
+                            .to_string(),
+                    ));
+                }
+            }
         }
         if !w_prop.iter().all(|v| v.is_finite()) {
-            return Err(MapLyapunovError::Diverged(format!(
-                "non-finite deviation frame at iterate {i} (the map diverged)"
+            return Err(MapLyapunovError::BadShape(format!(
+                "non-finite tangent propagation at iterate {i}; reduce reortho_interval \
+                 or rescale the model before interpreting growth rates"
             )));
         }
         w.copy_from_slice(&w_prop);
 
         // (4) reorthonormalise every reortho_interval steps; accumulate log|R_ii|.
         if (i + 1) % reortho_interval == 0 {
-            if !mgs(&mut w, dim, k, &mut rdiag) {
-                return Err(MapLyapunovError::Diverged(format!(
-                    "non-finite reorthonormalisation at iterate {i} (the map diverged)"
-                )));
+            match mgs_renormalise(&mut w, dim, k, &mut growths) {
+                Ok(()) => (),
+                Err(TangentQrError::NonFinite) => {
+                    return Err(MapLyapunovError::BadShape(format!(
+                        "non-finite tangent reorthonormalisation at iterate {i}; reduce \
+                         reortho_interval or rescale the model before interpreting growth rates"
+                    )))
+                }
+                Err(TangentQrError::UnresolvedRank) => {
+                    return Err(MapLyapunovError::BadShape(
+                        UNRESOLVED_TANGENT_RANK.to_string(),
+                    ))
+                }
             }
             for j in 0..k {
-                let d = if rdiag[j] < TINY { TINY } else { rdiag[j] };
-                sums[j] += d.ln();
+                sums[j] += growths[j];
             }
             intervals += 1;
         }
@@ -353,6 +326,84 @@ mod tests {
         Interpreter::new(b.finish(&[nx], &[dnx], 1, 0).unwrap())
     }
 
+    fn linear_plane_jac(a: f64, b: f64, c: f64, d: f64) -> Interpreter {
+        let mut tape = TapeBuilder::new();
+        let x = tape.state(0);
+        let y = tape.state(1);
+        let ac = tape.constant(a);
+        let bc = tape.constant(b);
+        let cc = tape.constant(c);
+        let dc = tape.constant(d);
+        let ax = tape.mul(ac, x);
+        let by = tape.mul(bc, y);
+        let cx = tape.mul(cc, x);
+        let dy = tape.mul(dc, y);
+        let nx = tape.add(ax, by);
+        let ny = tape.add(cx, dy);
+        Interpreter::new(tape.finish(&[nx, ny], &[ac, bc, cc, dc], 2, 0).unwrap())
+    }
+
+    #[test]
+    fn logarithmic_rates_preserve_tiny_huge_and_exact_zero_multipliers() {
+        for factor in [0.0, 1e-320, 1e-300, 1e-200, 1e200, -1e200] {
+            let ev = VmEval::new(linear_plane_jac(factor, 0.0, 0.0, 1.0));
+            let out = map_lyapunov(&ev, &[], &[0.0, 0.0], 6, 2, 1).unwrap();
+            if factor == 0.0 {
+                assert_eq!(out.exponents[0], f64::NEG_INFINITY);
+            } else {
+                assert!((out.exponents[0] - factor.abs().ln()).abs() < 1e-10);
+            }
+            assert_eq!(out.exponents[1], 0.0);
+        }
+    }
+
+    #[test]
+    fn tangent_overflow_does_not_claim_that_a_zero_orbit_diverged() {
+        let ev = VmEval::new(linear_plane_jac(1e200, 0.0, 0.0, 1.0));
+        let err = map_lyapunov(&ev, &[], &[0.0, 0.0], 2, 2, 2).unwrap_err();
+        assert!(matches!(err, MapLyapunovError::BadShape(_)));
+        assert!(err.to_string().contains("non-finite tangent propagation"));
+        assert!(err.to_string().contains("reortho_interval"));
+    }
+
+    #[test]
+    fn zero_columns_do_not_hide_or_regenerate_surviving_directions() {
+        let ev = VmEval::new(linear_plane_jac(0.0, 0.0, 0.0, 2.0));
+        let out = map_lyapunov(&ev, &[], &[0.0, 0.0], 6, 2, 1).unwrap();
+        assert_eq!(out.exponents[0], f64::NEG_INFINITY);
+        assert!((out.exponents[1] - 2.0_f64.ln()).abs() < 1e-14);
+        let nilpotent = VmEval::new(linear_plane_jac(0.0, 2.0, 0.0, 0.0));
+        let one = map_lyapunov(&nilpotent, &[], &[0.0, 0.0], 1, 2, 1).unwrap();
+        assert_eq!(one.exponents[0], f64::NEG_INFINITY);
+        assert!((one.exponents[1] - 2.0_f64.ln()).abs() < 1e-14);
+        let two = map_lyapunov(&nilpotent, &[], &[0.0, 0.0], 2, 2, 1).unwrap();
+        assert_eq!(two.exponents, vec![f64::NEG_INFINITY; 2]);
+    }
+
+    #[test]
+    fn dependent_nonzero_frames_and_underflow_are_explicitly_refused() {
+        let dependent = VmEval::new(linear_plane_jac(1.0, 1.0, 0.0, 0.0));
+        let err = map_lyapunov(&dependent, &[], &[0.0, 0.0], 2, 2, 1).unwrap_err();
+        assert!(matches!(err, MapLyapunovError::BadShape(_)));
+        assert!(err
+            .to_string()
+            .contains("dependent or numerically unresolved"));
+        let small = VmEval::new(linear_plane_jac(1e-300, 0.0, 0.0, 1.0));
+        let err = map_lyapunov(&small, &[], &[0.0, 0.0], 2, 2, 2).unwrap_err();
+        assert!(matches!(err, MapLyapunovError::BadShape(_)));
+        assert!(err.to_string().contains("underflowed to zero"));
+    }
+
+    #[test]
+    fn cancellation_to_zero_is_not_certified_as_exact_collapse() {
+        let a = f64::from_bits(1.0_f64.to_bits() + 1);
+        // In exact arithmetic on these represented coefficients, A²=2^-104 I.
+        let ev = VmEval::new(linear_plane_jac(a, 1.0, -(a * a), -a));
+        let err = map_lyapunov(&ev, &[], &[0.0, 0.0], 2, 2, 2).unwrap_err();
+        assert!(matches!(err, MapLyapunovError::BadShape(_)));
+        assert!(err.to_string().contains("cancellation"));
+    }
+
     #[test]
     fn henon_spectrum_matches_literature() {
         // Hénon at (1.4, 0.3): λ ≈ [0.419, -1.623] (Sprott 2003).
@@ -387,7 +438,7 @@ mod tests {
 
     #[test]
     fn partial_spectrum_k_less_than_dim() {
-        // Requesting k = 1 of a 2-D map returns only the maximal exponent.
+        // This seed's single direction converges to the leading Hénon rate.
         let ev = VmEval::new(henon_jac(1.4, 0.3));
         let full = map_lyapunov(&ev, &[], &[0.1, 0.1], 8000, 2, 1).unwrap();
         let top = map_lyapunov(&ev, &[], &[0.1, 0.1], 8000, 1, 1).unwrap();

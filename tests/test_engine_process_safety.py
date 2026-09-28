@@ -553,9 +553,12 @@ def test_a_stalled_run_is_a_step_budget_error_not_a_divergence():
     message = str(excinfo.value)
     assert "step limit" in message
     assert "diverged" not in message, f"a stalled run must not claim divergence: {message}"
-    # The message has to be actionable: the remedy for a stall is a solver knob.
-    assert "stalled" in message
-    assert "rtol" in message and "bdf" in message
+    # Shared advice cannot prescribe a solver unavailable to another family,
+    # or classify the underlying dynamics from an unfinished computation.
+    assert "calculation is incomplete" in message
+    assert "model scales" in message and "requested span" in message
+    assert "rtol/atol where supported" in message
+    assert "bdf" not in message
     # Additive by construction: every existing divergence handler still catches it.
     assert isinstance(excinfo.value, ConvergenceError)
     assert isinstance(excinfo.value, RuntimeError)
@@ -591,8 +594,8 @@ def test_a_diverging_ode_is_reported_promptly_by_every_kernel(method):
         _Blowup(ic=[1.0]).run(final_time=10.0, dt=0.01, solver=method)
 
     message = str(excinfo.value)
-    assert "diverged" in message
-    # Either escape guard is correct; the magnitude one is what makes it prompt.
+    assert "numerical integration failed" in message
+    # Either numerical screen is correct; the magnitude one is what makes it prompt.
     assert "state magnitude reached" in message or "non-finite" in message
     # A stall must never be dressed up as this, and vice versa.
     assert not isinstance(excinfo.value, StepBudgetError)

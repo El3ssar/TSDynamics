@@ -1,4 +1,4 @@
-//! Milstein — the order-1.0 (strong) explicit SDE scheme for diagonal noise.
+//! Componentwise Milstein for diagonal noise with vanishing cross-noise terms.
 //!
 //! For a diagonal-Itô SDE `dX_k = f_k(X, t) dt + g_k(X, t) dW_k`, the Milstein
 //! step adds to Euler–Maruyama the first-order Itô–Taylor correction
@@ -9,10 +9,19 @@
 //! ```
 //!
 //! where `ΔW_k ~ N(0, h)` is the engine-drawn increment for component `k`. The
-//! correction needs only the **diagonal** of the diffusion Jacobian `∂g_k/∂X_k`:
-//! with independent per-component Wiener processes the off-diagonal Lévy-area
-//! terms vanish, which is exactly why the diagonal-noise contract (ROADMAP §11)
-//! makes order 1.0 reachable without simulating iterated stochastic integrals.
+//! correction uses only the **diagonal** of the diffusion Jacobian `∂g_k/∂X_k`.
+//! Its use requires `g_j * partial_j(g_k) = 0` for every `j != k` over the model
+//! domain. Own-coordinate diffusion `g_k(X_k, t)` is a sufficient condition;
+//! dependence on a coordinate with identically zero noise is also admissible.
+//! Independent Wiener processes or diagonal coefficient storage alone do not
+//! remove cross-noise terms. General noncommuting diffusion needs iterated
+//! stochastic integrals, which this kernel does not simulate.
+//!
+//! Under this structural condition and the usual smoothness/growth hypotheses,
+//! the scheme has strong order 1.0. The tape bridge conservatively checks the
+//! structure. Callers supplying arbitrary `Evaluator` implementations directly
+//! must establish this precondition themselves and provide a valid Jacobian;
+//! zero entries returned by a claimed Jacobian cannot certify it.
 //!
 //! Raising the strong order from 0.5 to 1.0 costs one extra thing over
 //! Euler–Maruyama: the diffusion evaluator must carry its Jacobian. The kernel

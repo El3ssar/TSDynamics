@@ -38,6 +38,7 @@ pub mod map;
 pub mod map_lyapunov;
 pub mod marshal;
 pub mod ode;
+pub mod prepared;
 pub mod sde;
 pub mod stepper;
 
@@ -49,12 +50,14 @@ pub use basin::{basin_march_flow_bridge, basin_march_map_bridge};
 pub use dde::integrate_dde_dense;
 pub use events::integrate_events_dense;
 pub use lyapunov::lyapunov_spectrum_ode_bridge;
+pub use lyapunov::{lyapunov_spectrum_ode_budgeted_bridge, BudgetedLyapunovError};
 pub use map::{iterate_map, map_ensemble_final, map_param_sweep};
 pub use map_lyapunov::map_lyapunov_bridge;
 #[cfg(test)]
 pub use marshal::build_tape;
 pub use marshal::EngineError;
 pub use ode::{ensemble_final, eval_jac, eval_rhs, integrate_dense};
+pub use prepared::PreparedEvaluator;
 pub use sde::{sde_ensemble_final, sde_integrate_dense};
 pub use stepper::OdeStepper;
 

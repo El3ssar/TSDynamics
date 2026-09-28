@@ -102,8 +102,8 @@ class TestABadStartIsRefusedQuickly:
             "point of the span-relative step floor is that it no longer does"
         )
 
-    def test_the_refusal_still_says_what_it_always_said(self):
-        """Fail fast, not differently: same class, same advice, same words."""
+    def test_the_refusal_describes_incomplete_work_and_supported_controls(self):
+        """Keep the exception hierarchy while giving truthful numerical advice."""
         _, exc = _timed(
             lambda: ts.systems.LorenzBounded().run(final_time=100.0, dt=0.01, ic=_BAD_START)
         )
@@ -114,10 +114,11 @@ class TestABadStartIsRefusedQuickly:
         assert isinstance(exc, RuntimeError)
         message = str(exc)
         assert "did not reach the final time" in message
-        # The remedy the testers called correct, word for word.
-        assert "looser rtol/atol" in message
-        assert "method='bdf'" in message
-        assert "shorter integration span" in message
+        assert "calculation is incomplete" in message
+        assert "model scales" in message and "requested span" in message
+        assert "rtol/atol where supported" in message
+        assert "method='bdf'" not in message
+        assert "model is fine" not in message
         # ...and it now names the step size that made it impossible.
         assert "step size collapsed" in message
 
@@ -189,29 +190,26 @@ class TestNothingThatWorkedStoppedWorking:
         assert np.isfinite(state).all()
 
 
-class TestABlowUpStillSaysItDiverged:
-    """A collapsed step is the shared symptom of two different diagnoses.
+class TestAnalyticBlowupsFailPromptly:
+    """Analytic singularities retain their prompt numerical refusal.
 
-    Both a stall and a finite-time blow-up end with the step size in the dust;
-    the only difference is whether the state reaches the escape scale before
-    ``t`` runs out of resolution.  The guard therefore grants a bounded grace
-    (``STALL_GRACE_STEPS``) so the escape guard keeps first refusal — otherwise
-    every overflow blow-up would be relabelled a solver-settings problem, which
-    is the wrong diagnosis *and* the wrong remedy.
+    Preserve the existing error classes, magnitude/nonfinite screens and time
+    budget. The error describes the numerical failure without treating a finite
+    magnitude threshold as proof of the underlying dynamics.
     """
 
-    def test_a_polynomial_blow_up_is_reported_as_a_divergence(self):
+    def test_a_polynomial_blow_up_reports_prompt_numerical_failure(self):
         elapsed, exc = _timed(lambda: _Blowup().run(final_time=10.0, dt=0.01, ic=[1.0]))
         assert isinstance(exc, ts.errors.ConvergenceError)
         assert not isinstance(exc, ts.errors.StepBudgetError), (
             "x' = x² escapes to 1e150; calling that a stalled run would send the "
             "user to tune rtol when their trajectory left the building"
         )
-        assert "diverged" in str(exc)
+        assert "numerical integration failed" in str(exc)
         assert elapsed < _PATIENCE_SECONDS
 
-    def test_an_exponential_blow_up_is_reported_as_a_divergence(self):
+    def test_an_exponential_blow_up_reports_numerical_failure(self):
         _, exc = _timed(lambda: _LogBlowup().run(final_time=5.0, dt=0.01, ic=[0.0]))
         assert isinstance(exc, ts.errors.ConvergenceError)
         assert not isinstance(exc, ts.errors.StepBudgetError)
-        assert "diverged" in str(exc)
+        assert "numerical integration failed" in str(exc)

@@ -282,6 +282,22 @@ impl TapeBuilder {
         self.binary(Op::Rem, x, y)
     }
 
+    /// The IEEE-754 sign bit as `1.0` or `0.0`, including signed zeros and NaNs.
+    pub fn signbit(&mut self, x: Reg) -> Reg {
+        self.unary(Op::Signbit, x)
+    }
+
+    /// Select `when_true` for a nonzero condition (including NaN), else `when_false`.
+    /// The false-register index occupies `imm` without changing the array ABI.
+    pub fn select(&mut self, condition: Reg, when_true: Reg, when_false: Reg) -> Reg {
+        self.push(
+            Op::Select,
+            condition.as_i32(),
+            when_true.as_i32(),
+            f64::from(when_false.as_i32()),
+        )
+    }
+
     /// Finish into a validated [`Tape`].
     ///
     /// `outputs` are the registers holding each derivative component;

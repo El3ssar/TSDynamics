@@ -266,7 +266,7 @@ class TangentSystem(DerivedSystem):
 
             tang = ts.derived.TangentSystem(lor, k=3)
             conv = tang.run(steps=2000)
-            conv["lambda1"][-1]        # the leading exponent at the horizon
+            conv["lambda1"][-1]        # rate of the first retained tangent direction
             ts.plot(conv)              # the convergence read-out
 
         .. versionchanged:: 6.0
@@ -517,7 +517,31 @@ class TangentSystem(DerivedSystem):
             z_next = traj.y[-1]
 
         x, w = split_extended(z_next, dim, self.k)
+        if np.any(np.max(np.abs(w), axis=0) == 0):
+            raise ValueError(
+                "a flow tangent column collapsed to zero during numerical propagation; "
+                "reduce dt and tighten rtol/atol before interpreting contraction rates"
+            )
+        # The augmented-state RMS error controller pools its budget across the
+        # base state and all tangent components. Retain a conservative endpoint
+        # scale before QR, since projection can expose an unresolved contraction
+        # even when the original column is large. This is a resolution guard,
+        # not a bound on the accumulated global integration error.
+        # sum((error_i/scale_i)**2) <= extended_dim bounds the Euclidean
+        # error of any column by sqrt(extended_dim)*max(scale_i). Compute this
+        # in logs so tiny/huge tolerances and columns cannot erase the screen.
+        with np.errstate(divide="ignore"):
+            log_error_floor = np.logaddexp(
+                np.log(self._atol),
+                np.log(self._rtol) + np.log(np.max(np.abs(w), axis=0)),
+            ) + 0.5 * np.log(z_next.size)
         q, growths = _qr_growths(w)
+        if np.any(growths <= log_error_floor):
+            raise ValueError(
+                "flow tangent growth is unresolved at the integration error scale; "
+                "reduce dt (reorthonormalize more often) or tighten atol/rtol before "
+                "interpreting contraction rates"
+            )
         self._z = embed_extended(x, q)
         self._t = t0 + dt
         self._last_growths = growths
@@ -805,7 +829,9 @@ class TangentSystem(DerivedSystem):
         Returns
         -------
         ndarray, shape (k,)
-            Lyapunov exponents, largest first (QR order).
+            Growth rates in retained tangent-frame order. A partial frame need
+            not contain the largest system exponent; use the public analysis
+            for a sorted leading prefix.
         """
         if self._mode == "map":
             return self._lyapunov_spectrum_map(**kwargs)

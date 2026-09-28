@@ -25,7 +25,9 @@
 //! The JIT must agree with the interpreter. It does so **exactly**, not merely to
 //! a tolerance: arithmetic (`Add`/`Sub`/`Mul`/`Div`/`Neg`/`Recip`), `Sqrt` and
 //! `Abs` lower to Cranelift's IEEE-754 instructions — bit-identical to the same
-//! Rust operators the interpreter uses — and every transcendental, `Pow`, `Powi`
+//! Rust operators the interpreter uses. `Signbit` uses integer sign-bit
+//! extraction, and `Select` copies the chosen value, preserving signed zeros
+//! and either-sign NaN payloads. Every transcendental, `Pow`, `Powi`
 //! and `Sign` lowers to a host call into the *same* `std`/`libm` function the
 //! interpreter calls (`f64::sin`, `f64::powf`, …). The result is bit-for-bit
 //! equality with the interpreter on every tape (proven by the

@@ -1,13 +1,13 @@
-//! Criterion benches for the engine's two end-to-end hot paths.
+//! Criterion benches for the engine's end-to-end hot paths.
 //!
 //! The kernel-level benches (`tsdyn-solvers`, `tsdyn-vm`) isolate individual
-//! optimisations; these two measure what a user actually waits for — a full
+//! optimisations; these measure what a user actually waits for — a full
 //! `integrate` and a full map `iterate` through the same loops the FFI bridge
 //! drives. They are the coarse net that catches a regression the isolated
 //! benches would miss (an extra allocation per output point, a lost buffer
 //! reuse, a poller that ticks too often).
 //!
-//! Both run on the interpreter (`tsdyn-vm`), not the JIT: the engine crate does
+//! These run on the interpreter (`tsdyn-vm`), not the JIT: the engine crate does
 //! not depend on `tsdyn-jit` (that edge lives in `tsdyn-core`), and the
 //! interpreter is the backend the default `backend="interp"` uses anyway.
 
@@ -15,10 +15,16 @@ use std::hint::black_box;
 use std::time::Duration;
 
 use criterion::{criterion_group, criterion_main, Criterion};
-use tsdyn_engine::{integrate_grid, iterate_dense, IntegrateConfig};
+use tsdyn_engine::{
+    integrate_grid, iterate_dense, map_lyapunov, IntegrateConfig, MapLyapunovError,
+    MapLyapunovOutcome,
+};
 use tsdyn_ir::{Evaluator, Tape, TapeBuilder};
 use tsdyn_solvers::explicit::Rk45;
 use tsdyn_vm::Interpreter;
+
+#[path = "support/map_lyapunov_reference.rs"]
+mod map_lyapunov_reference;
 
 /// Adapts the interpreter to the `Evaluator` trait (as `tsdyn-core` does).
 struct VmEval(Interpreter);
@@ -75,6 +81,10 @@ fn lorenz() -> Tape {
 /// The Hénon map `x' = 1 − a x² + y; y' = b x` — a map tape's "RHS" is the next
 /// state, and the catalogue bakes `a`/`b` in as constants.
 fn henon() -> Tape {
+    henon_tape(false)
+}
+
+fn henon_tape(with_jacobian: bool) -> Tape {
     let mut b = TapeBuilder::new();
     let x = b.state(0);
     let y = b.state(1);
@@ -86,7 +96,14 @@ fn henon() -> Tape {
     let one_m = b.sub(one, ax2);
     let xn = b.add(one_m, y);
     let yn = b.mul(bb, x);
-    b.finish(&[xn, yn], &[], 2, 0).unwrap()
+    if with_jacobian {
+        let minus_two_a = b.constant(-2.8);
+        let j00 = b.mul(minus_two_a, x);
+        let zero = b.constant(0.0);
+        b.finish(&[xn, yn], &[j00, one, bb, zero], 2, 0).unwrap()
+    } else {
+        b.finish(&[xn, yn], &[], 2, 0).unwrap()
+    }
 }
 
 fn bench_integrate(c: &mut Criterion) {
@@ -196,12 +213,50 @@ fn bench_iterate(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_map_lyapunov(c: &mut Criterion) {
+    type Kernel = fn(
+        &dyn Evaluator,
+        &[f64],
+        &[f64],
+        usize,
+        usize,
+        usize,
+    ) -> Result<MapLyapunovOutcome, MapLyapunovError>;
+    let ev = VmEval(Interpreter::new(henon_tape(true)));
+    let kernels: [(&str, Kernel); 2] = [
+        ("baseline_guarded", map_lyapunov_reference::map_lyapunov),
+        ("current", map_lyapunov),
+    ];
+    let initial = [0.1, 0.1];
+    let reference = kernels[0].1(&ev, &[], &initial, 20_000, 2, 1).unwrap();
+    let mut group = c.benchmark_group("map_lyapunov");
+    group.warm_up_time(Duration::from_millis(300));
+    group.measurement_time(Duration::from_secs(1));
+    for (name, kernel) in kernels {
+        let result = kernel(&ev, &[], &initial, 20_000, 2, 1).unwrap();
+        assert_eq!(result.intervals, 20_000);
+        // det(J)=-0.3 gives the exact finite-time log-volume growth.
+        assert!((result.exponents.iter().sum::<f64>() - 0.3_f64.ln()).abs() < 1e-10);
+        for (value, expected) in result.exponents.iter().zip(&reference.exponents) {
+            assert!((value - expected).abs() < 1e-11);
+        }
+        group.bench_function(format!("henon_20000/{name}"), |b| {
+            b.iter(|| {
+                // Keep both entry points opaque to the caller; measure the
+                // complete kernels under the same compiler and runner.
+                black_box(black_box(kernel)(&ev, &[], &initial, 20_000, 2, 1).unwrap())
+            });
+        });
+    }
+    group.finish();
+}
+
 criterion_group! {
     name = benches;
     config = Criterion::default()
         .sample_size(30)
         .warm_up_time(Duration::from_millis(500))
         .measurement_time(Duration::from_secs(3));
-    targets = bench_integrate, bench_iterate
+    targets = bench_integrate, bench_iterate, bench_map_lyapunov
 }
 criterion_main!(benches);

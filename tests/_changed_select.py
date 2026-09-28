@@ -175,6 +175,9 @@ _AREA_TESTS: dict[str, tuple[str, ...]] = {
     # Lyapunov is cross-cutting (the spectrum feeds the known-value catalogue),
     # so it pulls its dedicated tests *and* the literature catalogue.
     "lyapunov": (
+        "test_lyapunov_clock.py",
+        "test_tangent_scale_contract.py",
+        "test_flow_lyapunov_resolution.py",
         "test_lyapunov_from_data.py",
         "test_variational.py",
         "test_dde_lyapunov.py",

@@ -9,6 +9,10 @@
 //! | `euler_maruyama` | Euler–Maruyama | 0.5 | no |
 //! | `milstein` | Milstein (diagonal) | 1.0 | yes |
 //!
+//! Orders assume the schemes' regularity hypotheses. This Milstein kernel also
+//! requires vanishing cross-noise coefficients `g_j * partial_j(g_i)` for i != j;
+//! diagonal storage and independent noise alone are insufficient. See [`Milstein`].
+//!
 //! # Why a separate trait from [`Solver`](crate::Solver)
 //!
 //! An SDE step is not an ODE step with the frozen [`Solver::step`](crate::Solver::step)

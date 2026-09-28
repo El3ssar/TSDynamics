@@ -776,7 +776,10 @@ def lyapunov_spectrum(
         if atol is not None:
             fwd["atol"] = atol
     estimate = method_fn(**fwd)
-    exponents = np.asarray(estimate, dtype=float)
+    # QR columns need not be ordered (notably after exact map rank loss).
+    # The public spectrum promises largest first; live TangentSystem frames
+    # retain their own column order so rates continue to match deviations.
+    exponents = np.sort(np.asarray(estimate, dtype=float))[::-1]
     meta = _build_meta(
         system,
         analysis="lyapunov_spectrum",

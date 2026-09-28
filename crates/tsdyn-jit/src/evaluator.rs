@@ -70,7 +70,7 @@ impl JitEvaluator {
         })
     }
 
-    /// System dimension — the length of `u`, `deriv`, and `√(jac.len())`.
+    /// Derivative output count; the declared state input width may differ.
     #[inline]
     pub fn dim(&self) -> usize {
         self.dim
@@ -230,6 +230,10 @@ impl Evaluator for JitEvaluator {
         self.dim()
     }
     #[inline]
+    fn n_state(&self) -> usize {
+        self.n_state
+    }
+    #[inline]
     fn n_param(&self) -> usize {
         self.n_param()
     }
@@ -283,6 +287,10 @@ impl Evaluator for SharedJitEvaluator {
     #[inline]
     fn dim(&self) -> usize {
         self.0.dim()
+    }
+    #[inline]
+    fn n_state(&self) -> usize {
+        Evaluator::n_state(self.0.as_ref())
     }
     #[inline]
     fn n_param(&self) -> usize {

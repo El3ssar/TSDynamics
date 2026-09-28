@@ -60,15 +60,13 @@ pub enum EngineError {
     /// "diverge loudly" contract). → `tsdynamics.errors.ConvergenceError` (a
     /// `RuntimeError` subclass).
     Diverged(String),
-    /// The run exhausted its per-segment step budget **with a finite state** —
-    /// it stalled, it did not blow up. →
+    /// The run exhausted a work allowance or tripped a numerical stall guard. →
     /// `tsdynamics.errors.StepBudgetError` (a `ConvergenceError` subclass,
     /// so `except ConvergenceError` / `except RuntimeError` keep catching it).
     ///
-    /// Kept distinct from [`Diverged`](EngineError::Diverged) because the two
-    /// have different remedies: a divergence means the equations or the initial
-    /// condition are wrong, a step-budget exhaustion means the *solver settings*
-    /// are wrong for a model that is perfectly well behaved.
+    /// Kept distinct from [`Diverged`](EngineError::Diverged) because incomplete
+    /// numerical work is not evidence that equations/initial conditions are
+    /// wrong, or that a recorded finite state belongs to a bounded trajectory.
     StepBudget(String),
     /// The embedder's interrupt hook stopped the run — a Ctrl-C at the Python
     /// prompt. → whatever the signal handler raised (normally
@@ -129,6 +127,9 @@ impl VmEvaluator {
 impl Evaluator for VmEvaluator {
     fn dim(&self) -> usize {
         self.interp.dim()
+    }
+    fn n_state(&self) -> usize {
+        self.interp.tape().n_state()
     }
     fn n_param(&self) -> usize {
         self.interp.n_param()
@@ -569,20 +570,19 @@ pub(super) fn event_direction(direction: i32) -> Result<EventDirection, EngineEr
 /// Deliberately part of the message rather than left to the docs: the whole
 /// point of separating this from divergence is that the *remedy* differs, so
 /// the error has to say what it is.
-const STEP_BUDGET_ADVICE: &str = "the state is still finite, so this is a stalled run rather than \
-     a divergence: the kernel is taking steps far smaller than the span needs. \
-     Try a looser rtol/atol, an implicit method (method='bdf') if the system is \
-     stiff, or a shorter integration span";
+const STEP_BUDGET_ADVICE: &str = "the requested calculation is incomplete. Inspect the reached \
+     time, model scales and requested span; review an appropriate solver and the step/tolerance \
+     controls (rtol/atol where supported) before retrying";
 
 /// Classify an [`IntegrateError`] into the [`EngineError`] its cause implies.
 ///
 /// The distinction this function exists to draw is
 /// [`IntegrateError::StepLimit`] vs everything else. Hitting the per-segment
-/// step cap **with a finite state** is not a divergence — the model is fine and
-/// the budget ran out — but it used to be reported as
+/// step cap records exhausted work, without proving model validity or
+/// classifying the dynamics, but it used to be reported as
 /// `"integration diverged before reaching the final time: hit the 100000000-step
 /// limit"`, which tells a user with a merely stiff or over-tight problem to go
-/// looking for a blow-up that is not there (and, since the cap is per output
+/// looking for a blow-up the work limit does not establish (and, since the cap is per output
 /// segment, only after tens of seconds of grinding). It now gets its own
 /// variant and its own advice.
 pub(super) fn integrate_failure(e: IntegrateError) -> EngineError {
@@ -601,9 +601,9 @@ pub(super) fn integrate_failure(e: IntegrateError) -> EngineError {
         IntegrateError::AllocFailed(a) => EngineError::OutOfMemory(a.to_string()),
         IntegrateError::NonFinite { .. }
         | IntegrateError::StepCollapsed { .. }
-        | IntegrateError::Escaped { .. } => EngineError::Diverged(format!(
-            "integration diverged before reaching the final time: {e}"
-        )),
+        | IntegrateError::Escaped { .. } => {
+            EngineError::Diverged(format!("numerical integration failed: {e}"))
+        }
     }
 }
 
@@ -635,6 +635,57 @@ pub(super) fn sde_failure(e: SdeError) -> EngineError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_production_adapter_reports_declared_state_width_through_dyn_evaluator() {
+        let mut b = tsdyn_ir::TapeBuilder::new();
+        let x = b.state(0);
+        let z = b.state(2);
+        let parameter = b.param(0);
+        let time = b.time();
+        let sum = b.add(x, z);
+        let scaled = b.mul(parameter, sum);
+        let output = b.add(scaled, time);
+        let tape = b.finish(&[output], &[], 3, 1).unwrap();
+        let interpreted = VmEvaluator::new(tape.clone());
+        let native = std::sync::Arc::new(tsdyn_jit::JitEvaluator::new(&tape).unwrap());
+        let shared = SharedJitEvaluator::new(std::sync::Arc::clone(&native));
+        let adapters: [&dyn Evaluator; 3] = [&interpreted, native.as_ref(), &shared];
+        let arguments = [1.0, 2.0, 3.0, 0.5, 2.0];
+        for evaluator in adapters {
+            let state_width = evaluator.n_state();
+            assert_eq!(state_width, 3);
+            assert_eq!(evaluator.dim(), 1);
+            let mut scratch = vec![0.0; evaluator.n_scratch()];
+            let mut output = vec![0.0; evaluator.dim()];
+            evaluator.eval(
+                &arguments[..state_width],
+                &arguments[state_width + 1..],
+                arguments[state_width],
+                &mut scratch,
+                &mut output,
+            );
+            assert_eq!(output, vec![8.5]);
+        }
+    }
+
+    #[test]
+    fn integration_screen_messages_survive_the_bridge_without_a_divergence_claim() {
+        for error in [
+            IntegrateError::Escaped {
+                t: 0.125,
+                magnitude: 1e200,
+            },
+            IntegrateError::NonFinite { t: 0.25 },
+        ] {
+            let result = integrate_failure(error);
+            assert!(matches!(result, EngineError::Diverged(_)));
+            let message = result.to_string();
+            assert!(message.starts_with("numerical integration failed"));
+            assert!(!message.contains("integration diverged"));
+            assert!(!message.contains("RHS is diverging"));
+        }
+    }
 
     // A minimal valid wire tape: f(u) = u0 * p0 (dim 1, n_state 1, n_param 1).
     // Wire opcodes: State=1, Param=2, Mul=12 (the v2 contract values pinned in

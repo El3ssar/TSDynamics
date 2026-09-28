@@ -12,7 +12,10 @@
 //! [`super::marshal`]; the renormalisation loop and the QR live in
 //! [`tsdyn_engine::lyapunov`].
 
-use tsdyn_engine::lyapunov::{lyapunov_spectrum_ode, LyapunovError, LyapunovOutcome};
+use tsdyn_engine::lyapunov::{
+    lyapunov_spectrum_ode, lyapunov_spectrum_ode_budgeted, LyapunovError, LyapunovOutcome,
+    LyapunovWorkLimit,
+};
 use tsdyn_ir::Tape;
 use tsdyn_solvers::Solver;
 
@@ -29,8 +32,56 @@ fn to_engine_err(e: LyapunovError) -> EngineError {
         LyapunovError::BadShape(m) => EngineError::BadShape(m),
         LyapunovError::Diverged(m) => EngineError::Diverged(m),
         LyapunovError::StepBudget(m) => EngineError::StepBudget(m),
+        LyapunovError::WorkLimit(info) => EngineError::StepBudget(info.to_string()),
         LyapunovError::Interrupted => EngineError::Interrupted,
     }
+}
+
+/// Keep structured work-limit evidence separate from legacy bridge failures.
+#[derive(Debug)]
+pub enum BudgetedLyapunovError {
+    /// Existing validation/numerical failure, with unchanged error mapping.
+    Engine(EngineError),
+    /// Whole-analysis resource refusal, with exact progress retained.
+    WorkLimit(Box<LyapunovWorkLimit>),
+}
+
+/// Explicitly budgeted sibling; it does not change the legacy entry point.
+#[allow(clippy::too_many_arguments)]
+pub fn lyapunov_spectrum_ode_budgeted_bridge(
+    tape: Tape,
+    p: &[f64],
+    method: &str,
+    rtol: f64,
+    atol: f64,
+    dim: usize,
+    k: usize,
+    z0: &[f64],
+    t0: f64,
+    dt: f64,
+    burn_in: f64,
+    final_time: f64,
+    jit: bool,
+    max_steps: usize,
+) -> Result<LyapunovOutcome, BudgetedLyapunovError> {
+    use BudgetedLyapunovError::Engine;
+    if max_steps == 0 {
+        return Err(Engine(EngineError::InvalidParameter(
+            "max_steps must be a positive trial count".into(),
+        )));
+    }
+    let tol = Tolerances::new(rtol, atol).map_err(Engine)?;
+    let name = resolve_solver(method).map_err(Engine)?;
+    require_jacobian_if_needed(&tape, name).map_err(Engine)?;
+    let ev = build_evaluator(tape, jit).map_err(Engine)?;
+    let factory = move || -> Box<dyn Solver> { build_solver(name, tol) };
+    lyapunov_spectrum_ode_budgeted(
+        &*ev, factory, p, dim, k, z0, t0, dt, burn_in, final_time, rtol, atol, max_steps,
+    )
+    .map_err(|error| match error {
+        LyapunovError::WorkLimit(info) => BudgetedLyapunovError::WorkLimit(info),
+        other => Engine(to_engine_err(other)),
+    })
 }
 
 /// Run the burn-in + averaging Benettin Lyapunov-spectrum loop over an
@@ -71,8 +122,10 @@ pub fn lyapunov_spectrum_ode_bridge(
     // march); the name is a registry name and the tolerances are validated, so
     // `build_solver` always succeeds.
     let factory = move || -> Box<dyn Solver> { build_solver(name, tol) };
-    lyapunov_spectrum_ode(&*ev, factory, p, dim, k, z0, t0, dt, burn_in, final_time)
-        .map_err(to_engine_err)
+    lyapunov_spectrum_ode(
+        &*ev, factory, p, dim, k, z0, t0, dt, burn_in, final_time, rtol, atol,
+    )
+    .map_err(to_engine_err)
 }
 
 #[cfg(test)]
@@ -81,7 +134,7 @@ mod tests {
     use tsdyn_ir::TapeBuilder;
 
     /// Extended variational tape of `dx = a x, dy = b y` with `k` tangents (the
-    /// Jacobian is the constant `diag(a, b)`). Spectrum is `[max(a,b), min(a,b)]`.
+    /// Jacobian is the constant `diag(a, b)`). Identity-frame rates are `[a, b]`.
     fn linear_extended(a: f64, b: f64, k: usize) -> Tape {
         let dim = 2;
         let mut bld = TapeBuilder::new();
