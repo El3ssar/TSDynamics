@@ -805,7 +805,7 @@ mod tests {
             "scripted-reject-once"
         }
         fn caps(&self) -> Caps {
-            Rk45::new(1e-9, 1e-11).caps()
+            Rk45::with_tolerances(1e-9, 1e-11).caps()
         }
         fn step(&mut self, _ev: &dyn Evaluator, st: &mut SolverState, h: f64) -> StepOutcome {
             if !self.rejected {
@@ -1007,7 +1007,7 @@ mod tests {
                 "scripted-failure"
             }
             fn caps(&self) -> Caps {
-                Rk45::new(1e-9, 1e-11).caps()
+                Rk45::with_tolerances(1e-9, 1e-11).caps()
             }
             fn step(&mut self, _ev: &dyn Evaluator, _st: &mut SolverState, _h: f64) -> StepOutcome {
                 StepOutcome::Failed
