@@ -553,9 +553,12 @@ def test_a_stalled_run_is_a_step_budget_error_not_a_divergence():
     message = str(excinfo.value)
     assert "step limit" in message
     assert "diverged" not in message, f"a stalled run must not claim divergence: {message}"
-    # The message has to be actionable: the remedy for a stall is a solver knob.
-    assert "stalled" in message
-    assert "rtol" in message and "bdf" in message
+    # Shared advice cannot prescribe a solver unavailable to another family,
+    # or classify the underlying dynamics from an unfinished computation.
+    assert "calculation is incomplete" in message
+    assert "model scales" in message and "requested span" in message
+    assert "rtol/atol where supported" in message
+    assert "bdf" not in message
     # Additive by construction: every existing divergence handler still catches it.
     assert isinstance(excinfo.value, ConvergenceError)
     assert isinstance(excinfo.value, RuntimeError)

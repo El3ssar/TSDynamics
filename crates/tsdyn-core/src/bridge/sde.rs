@@ -6,9 +6,10 @@
 //! numerics, the seeded RNG threading and the validation are unchanged. Shared
 //! plumbing lives in [`super::marshal`].
 
+use tsdyn_engine::interrupt::Poller;
 use tsdyn_engine::rng::SplitMix64;
 use tsdyn_engine::{sde_ensemble_final as engine_sde_ensemble, sde_integrate_grid, SdeConfig};
-use tsdyn_ir::Tape;
+use tsdyn_ir::{Op, OpKind, Tape};
 use tsdyn_solvers::sde::{self, SdeKernel};
 
 use super::marshal::{build_evaluator, sde_failure, validate_grid, EngineError};
@@ -33,6 +34,9 @@ fn resolve_sde(method: &str, diffusion: &Tape) -> Result<fn() -> Box<dyn SdeKern
                 sde::available()
             ))
         })?;
+    if reg.name == "milstein" {
+        require_componentwise_noise(diffusion)?;
+    }
     if reg.caps.needs_jacobian && !diffusion.has_jacobian() {
         return Err(EngineError::BadShape(format!(
             "SDE method {:?} needs the diffusion Jacobian ∂g/∂u, but the diffusion tape was \
@@ -42,6 +46,85 @@ fn resolve_sde(method: &str, diffusion: &Tape) -> Result<fn() -> Box<dyn SdeKern
         )));
     }
     Ok(reg.make)
+}
+
+/// Establish the structural sufficient condition for the implemented correction.
+///
+/// For distinct coordinates i and j the omitted stochastic term has coefficient
+/// g_j * partial_j(g_i). We accept an absent state dependency or a literal zero
+/// driver g_j. Supplied Jacobian zeros, current parameter values, and numerical
+/// probes are not proofs. In particular, diagonal coefficient storage alone
+/// does not establish this condition. Unknown/cancelled dependencies may refuse.
+///
+/// Walk only primal-output ancestors, including all three Select operands. The
+/// visited stamps and stack use O(registers) memory rather than a dense
+/// registers-by-dimension dependency matrix. Tape construction validates every
+/// index; marking before pushing keeps the stack within the reserved capacity.
+fn require_componentwise_noise(tape: &Tape) -> Result<(), EngineError> {
+    let dim = tape.dim();
+    if tape.n_state() != dim {
+        return Err(EngineError::BadShape(format!(
+            "Milstein diffusion must have n_state == dim; got {} != {dim}",
+            tape.n_state()
+        )));
+    }
+    let mut seen = Vec::new();
+    let mut stack = Vec::new();
+    for buffer in [&mut seen, &mut stack] {
+        buffer.try_reserve_exact(tape.n_reg()).map_err(|_| {
+            EngineError::OutOfMemory(
+                "cannot allocate the Milstein diffusion dependency check".to_string(),
+            )
+        })?;
+    }
+    seen.resize(tape.n_reg(), usize::MAX);
+    let mut poll = Poller::new();
+    for (component, &output) in tape.outputs().iter().enumerate() {
+        let output = output as usize;
+        seen[output] = component;
+        stack.push(output);
+        while let Some(register) = stack.pop() {
+            if poll.tick() {
+                return Err(EngineError::Interrupted);
+            }
+            let op = tape.ops()[register];
+            if op == Op::State {
+                let other = tape.a()[register] as usize;
+                let driver = tape.outputs()[other] as usize;
+                let zero_driver = tape.ops()[driver] == Op::Const && tape.imm()[driver] == 0.0;
+                if other != component && !zero_driver {
+                    return Err(EngineError::Unsupported(format!(
+                        "Milstein's componentwise correction cannot establish zero cross-noise \
+                         terms: diffusion component {component} reads state {other}, whose \
+                         noise coefficient is not a literal zero. Use 'euler_maruyama' for \
+                         this diffusion structure."
+                    )));
+                }
+                continue;
+            }
+            let a = tape.a()[register] as usize;
+            let (parents, count) = match op.kind() {
+                OpKind::Leaf => continue,
+                OpKind::Unary | OpKind::Powi => ([a, 0, 0], 1),
+                OpKind::Binary => ([a, tape.b()[register] as usize, 0], 2),
+                OpKind::Select => (
+                    [
+                        a,
+                        tape.b()[register] as usize,
+                        tape.imm()[register] as usize,
+                    ],
+                    3,
+                ),
+            };
+            for &parent in &parents[..count] {
+                if seen[parent] != component {
+                    seen[parent] = component;
+                    stack.push(parent);
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Validate the SDE tape pair and shared parameters, returning the dimension.
@@ -218,4 +301,151 @@ pub fn sde_ensemble_final(
         return Err(EngineError::Interrupted);
     }
     Ok(result.states)
+}
+
+#[cfg(test)]
+mod componentwise_tests {
+    use super::*;
+    use tsdyn_ir::{Reg, TapeBuilder};
+
+    fn finish(mut builder: TapeBuilder, outputs: &[Reg], n_param: usize) -> Tape {
+        let zero = builder.constant(0.0);
+        // Deliberately uninformative claimed derivatives: eligibility must read
+        // the primal dependencies rather than infer independence from this matrix.
+        builder
+            .finish(outputs, &[zero; 4], outputs.len(), n_param)
+            .unwrap()
+    }
+
+    fn cross_noise(zero_driver: bool) -> Tape {
+        let mut builder = TapeBuilder::new();
+        let x = builder.state(0);
+        let driver = builder.constant(if zero_driver { -0.0 } else { 1.0 });
+        finish(builder, &[driver, x], 0)
+    }
+
+    #[test]
+    fn cross_noise_does_not_become_valid_from_a_zero_claimed_jacobian() {
+        let diffusion = cross_noise(false);
+        assert!(matches!(
+            resolve_sde("milstein", &diffusion),
+            Err(EngineError::Unsupported(_))
+        ));
+        assert!(resolve_sde("euler_maruyama", &diffusion).is_ok());
+    }
+
+    #[test]
+    fn unsupported_structure_is_not_given_an_unusable_add_jacobian_remedy() {
+        let mut builder = TapeBuilder::new();
+        let one = builder.constant(1.0);
+        let x = builder.state(0);
+        let coupled = builder.finish(&[one, x], &[], 2, 0).unwrap();
+        assert!(matches!(
+            resolve_sde("milstein", &coupled),
+            Err(EngineError::Unsupported(_))
+        ));
+        let mut builder = TapeBuilder::new();
+        let one = builder.constant(1.0);
+        let independent = builder.finish(&[one, one], &[], 2, 0).unwrap();
+        assert!(matches!(
+            resolve_sde("milstein", &independent),
+            Err(EngineError::BadShape(_))
+        ));
+    }
+
+    #[test]
+    fn a_literal_zero_driver_allows_dependence_on_its_coordinate() {
+        assert!(resolve_sde("milstein", &cross_noise(true)).is_ok());
+    }
+
+    #[test]
+    fn a_control_driver_is_not_proved_zero_by_its_current_value() {
+        let mut builder = TapeBuilder::new();
+        let x = builder.state(0);
+        let sigma = builder.param(0);
+        let diffusion = finish(builder, &[sigma, x], 1);
+        assert!(matches!(
+            resolve_sde("milstein", &diffusion),
+            Err(EngineError::Unsupported(_))
+        ));
+    }
+
+    #[test]
+    fn own_coordinate_time_and_control_dependencies_are_admitted() {
+        let mut builder = TapeBuilder::new();
+        let x = builder.state(0);
+        let y = builder.state(1);
+        let p = builder.param(0);
+        let t = builder.time();
+        let cubic = builder.powi(x, -3); // exponent is an immediate, not a register
+        let g0 = builder.mul(p, cubic);
+        let g1 = builder.add(y, t);
+        let diffusion = finish(builder, &[g0, g1], 1);
+        assert!(resolve_sde("milstein", &diffusion).is_ok());
+    }
+
+    #[test]
+    fn every_selection_operand_contributes_dependencies() {
+        for which in 0..3 {
+            let mut builder = TapeBuilder::new();
+            let x = builder.state(0);
+            let one = builder.constant(1.0);
+            let args = match which {
+                0 => [x, one, one],
+                1 => [one, x, one],
+                _ => [one, one, x],
+            };
+            let selected = builder.select(args[0], args[1], args[2]);
+            let diffusion = finish(builder, &[one, selected], 0);
+            assert!(matches!(
+                resolve_sde("milstein", &diffusion),
+                Err(EngineError::Unsupported(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn unreachable_and_jacobian_only_dependencies_do_not_restrict_the_primal() {
+        let mut builder = TapeBuilder::new();
+        let x = builder.state(0);
+        let y = builder.state(1);
+        let zero = builder.constant(0.0);
+        let _unused = builder.mul(x, y);
+        let diffusion = builder.finish(&[x, y], &[x, y, zero, zero], 2, 0).unwrap();
+        assert!(resolve_sde("milstein", &diffusion).is_ok());
+    }
+
+    #[test]
+    fn dense_and_ensemble_manual_tapes_cannot_bypass_the_guard() {
+        let mut builder = TapeBuilder::new();
+        let zero = builder.constant(0.0);
+        let drift = builder.finish(&[zero, zero], &[], 2, 0).unwrap();
+        for jit in [false, true] {
+            let dense = sde_integrate_dense(
+                drift.clone(),
+                cross_noise(false),
+                &[0., 0.],
+                &[],
+                &[0., 0.1],
+                "milstein",
+                0.1,
+                123,
+                jit,
+            );
+            assert!(matches!(dense, Err(EngineError::Unsupported(_))));
+            let ensemble = sde_ensemble_final(
+                drift.clone(),
+                cross_noise(false),
+                &[0., 0.],
+                &[],
+                0.,
+                0.1,
+                "milstein",
+                0.1,
+                123,
+                jit,
+            );
+            assert!(matches!(ensemble, Err(EngineError::Unsupported(_))));
+        }
+    }
 }

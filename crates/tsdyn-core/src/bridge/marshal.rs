@@ -60,15 +60,13 @@ pub enum EngineError {
     /// "diverge loudly" contract). → `tsdynamics.errors.ConvergenceError` (a
     /// `RuntimeError` subclass).
     Diverged(String),
-    /// The run exhausted its per-segment step budget **with a finite state** —
-    /// it stalled, it did not blow up. →
+    /// The run exhausted a work allowance or tripped a numerical stall guard. →
     /// `tsdynamics.errors.StepBudgetError` (a `ConvergenceError` subclass,
     /// so `except ConvergenceError` / `except RuntimeError` keep catching it).
     ///
-    /// Kept distinct from [`Diverged`](EngineError::Diverged) because the two
-    /// have different remedies: a divergence means the equations or the initial
-    /// condition are wrong, a step-budget exhaustion means the *solver settings*
-    /// are wrong for a model that is perfectly well behaved.
+    /// Kept distinct from [`Diverged`](EngineError::Diverged) because incomplete
+    /// numerical work is not evidence that equations/initial conditions are
+    /// wrong, or that a recorded finite state belongs to a bounded trajectory.
     StepBudget(String),
     /// The embedder's interrupt hook stopped the run — a Ctrl-C at the Python
     /// prompt. → whatever the signal handler raised (normally
@@ -572,20 +570,19 @@ pub(super) fn event_direction(direction: i32) -> Result<EventDirection, EngineEr
 /// Deliberately part of the message rather than left to the docs: the whole
 /// point of separating this from divergence is that the *remedy* differs, so
 /// the error has to say what it is.
-const STEP_BUDGET_ADVICE: &str = "the state is still finite, so this is a stalled run rather than \
-     a divergence: the kernel is taking steps far smaller than the span needs. \
-     Try a looser rtol/atol, an implicit method (method='bdf') if the system is \
-     stiff, or a shorter integration span";
+const STEP_BUDGET_ADVICE: &str = "the requested calculation is incomplete. Inspect the reached \
+     time, model scales and requested span; review an appropriate solver and the step/tolerance \
+     controls (rtol/atol where supported) before retrying";
 
 /// Classify an [`IntegrateError`] into the [`EngineError`] its cause implies.
 ///
 /// The distinction this function exists to draw is
 /// [`IntegrateError::StepLimit`] vs everything else. Hitting the per-segment
-/// step cap **with a finite state** is not a divergence — the model is fine and
-/// the budget ran out — but it used to be reported as
+/// step cap records exhausted work, without proving model validity or
+/// classifying the dynamics, but it used to be reported as
 /// `"integration diverged before reaching the final time: hit the 100000000-step
 /// limit"`, which tells a user with a merely stiff or over-tight problem to go
-/// looking for a blow-up that is not there (and, since the cap is per output
+/// looking for a blow-up the work limit does not establish (and, since the cap is per output
 /// segment, only after tens of seconds of grinding). It now gets its own
 /// variant and its own advice.
 pub(super) fn integrate_failure(e: IntegrateError) -> EngineError {

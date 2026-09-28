@@ -327,12 +327,11 @@ pub enum IntegrateError {
     /// The per-segment step cap ([`IntegrateConfig::max_steps`]) was hit before
     /// reaching the target time, with the state still perfectly finite.
     ///
-    /// This is **not** a divergence and must not be reported as one: the model
-    /// is fine, the *budget* ran out. It means the kernel is taking steps far
-    /// smaller than the span needs — normally an explicit method on a stiff
-    /// problem, or a tolerance tighter than the dynamics can meet. The caller
-    /// fixes it by changing a knob (a looser `rtol`/`atol`, an implicit method,
-    /// a step floor that fails fast), not by fixing their equations.
+    /// This records incomplete numerical work, not a classification of the
+    /// dynamics or the model's validity. Small accepted steps or repeated
+    /// rejections can exhaust the allowance. Review the requested horizon,
+    /// tolerances, solver and permitted work without inferring boundedness or
+    /// divergence from this resource limit.
     StepLimit {
         /// Time reached when the cap was hit.
         t: f64,
@@ -344,10 +343,9 @@ pub enum IntegrateError {
     /// that it cannot reach the final time, caught in O(1) instead of after the
     /// whole [`IntegrateConfig::max_steps`] budget.
     ///
-    /// Like [`StepLimit`](IntegrateError::StepLimit) and unlike everything else
-    /// here, this is **not** a divergence: the state is finite and the model is
-    /// fine. It is the same "did not reach the final time" condition, found
-    /// early, and carries the same remedy.
+    /// Like [`StepLimit`](IntegrateError::StepLimit), this records that the
+    /// requested numerical calculation did not finish. A finite recorded state
+    /// does not establish model validity, boundedness or divergence.
     Stalled {
         /// Time at which the step was found to have collapsed.
         t: f64,

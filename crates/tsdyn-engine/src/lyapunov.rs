@@ -29,7 +29,7 @@
 //! this kernel folds into the engine.
 
 use tsdyn_ir::Evaluator;
-use tsdyn_solvers::Solver;
+use tsdyn_solvers::{Caps, Solver, SolverState, StepOutcome};
 
 use crate::integrate::{integrate_grid_polled, IntegrateConfig, IntegrateError};
 use crate::interrupt::Poller;
@@ -49,6 +49,8 @@ pub enum LyapunovError {
     /// loop distinguishes them: the remedy is a solver knob, not a fix to the
     /// equations.
     StepBudget(String),
+    /// A whole-analysis trial allowance was exhausted; no spectrum is complete.
+    WorkLimit(Box<LyapunovWorkLimit>),
     /// The embedder's interrupt hook stopped the run (a Ctrl-C at the Python
     /// prompt). This used to be *reported as a divergence*: the chunk loop
     /// funnelled every [`IntegrateError`] into
@@ -63,12 +65,124 @@ impl core::fmt::Display for LyapunovError {
             LyapunovError::BadShape(m)
             | LyapunovError::Diverged(m)
             | LyapunovError::StepBudget(m) => f.write_str(m),
+            LyapunovError::WorkLimit(info) => info.fmt(f),
             LyapunovError::Interrupted => f.write_str("interrupted"),
         }
     }
 }
 
 impl std::error::Error for LyapunovError {}
+
+/// Exact engine-level solver attempts; these are not RHS/Newton evaluation counts.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TrialCounts {
+    /// Calls made to the underlying solver's `step` method.
+    pub attempted: usize,
+    /// Attempts accepted by the solver.
+    pub accepted: usize,
+    /// Attempts rejected by error control.
+    pub rejected: usize,
+    /// Attempts reporting an unrecoverable solver failure.
+    pub failed: usize,
+}
+
+/// Work and clock evidence retained by an explicitly budgeted analysis.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LyapunovWork {
+    /// Whole-call allowance, shared by burn-in and averaging.
+    pub max_steps: usize,
+    /// Exact attempts/outcomes observed so far.
+    pub counts: TrialCounts,
+    /// Base dimension and number of propagated tangent directions.
+    pub dim: usize,
+    /// Number of propagated tangent directions.
+    pub k: usize,
+    /// Requested start clock.
+    pub start_time: f64,
+    /// Requested end of burn-in.
+    pub burn_end: f64,
+    /// Requested averaging duration.
+    pub average_duration: f64,
+    /// Current phase: `burn_in`, `averaging`, or `complete`.
+    pub phase: &'static str,
+    /// Last time actually reached by the numerical integrator.
+    pub reached_time: f64,
+    /// Time of the last completed QR operation.
+    pub last_qr_time: f64,
+    /// End of the current requested QR interval.
+    pub chunk_end: f64,
+    /// Requested end of burn-in plus averaging.
+    pub requested_end: f64,
+    /// Completed burn-in QR intervals.
+    pub burn_chunks: usize,
+    /// Completed averaging QR intervals.
+    pub averaging_chunks: usize,
+    /// Actual solver name used for the current chunk.
+    pub solver: &'static str,
+    /// Requested QR interval and unchanged solver tolerances.
+    pub dt: f64,
+    /// Relative tolerance passed to the solver factory.
+    pub rtol: f64,
+    /// Absolute tolerance passed to the solver factory.
+    pub atol: f64,
+}
+
+/// An incomplete calculation stopped at its whole-call work limit.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LyapunovWorkLimit {
+    /// The work/clock/settings evidence at refusal.
+    pub work: LyapunovWork,
+}
+
+impl core::fmt::Display for LyapunovWorkLimit {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let w = &self.work;
+        write!(f,
+            "Lyapunov calculation is incomplete: max_steps={} solver trials were used ({} accepted, {} rejected) during {}; reached t={}, last completed QR t={}, requested end t={}. Solver={}, dt={}, rtol={}, atol={}. Increase the explicit work allowance or revise the requested numerical protocol; this work limit does not classify the dynamics.",
+            w.max_steps, w.counts.accepted, w.counts.rejected, w.phase,
+            w.reached_time, w.last_qr_time, w.requested_end, w.solver, w.dt, w.rtol, w.atol)
+    }
+}
+
+/// A borrowing adapter: all numerical and dense-output behavior is delegated.
+struct CountingSolver<'a> {
+    inner: &'a mut dyn Solver,
+    counts: &'a mut TrialCounts,
+}
+
+impl Solver for CountingSolver<'_> {
+    fn name(&self) -> &'static str {
+        self.inner.name()
+    }
+    fn caps(&self) -> Caps {
+        self.inner.caps()
+    }
+    fn step(&mut self, ev: &dyn Evaluator, st: &mut SolverState, h: f64) -> StepOutcome {
+        // The caller limits this two-node integration to the remaining allowance,
+        // so attempted never exceeds its representable usize limit.
+        self.counts.attempted += 1;
+        let outcome = self.inner.step(ev, st, h);
+        match outcome {
+            StepOutcome::Accepted { .. } => self.counts.accepted += 1,
+            StepOutcome::Rejected { .. } => self.counts.rejected += 1,
+            StepOutcome::Failed => self.counts.failed += 1,
+        }
+        outcome
+    }
+    fn interpolate(&self, u0: &[f64], h: f64, theta: f64, out: &mut [f64]) -> bool {
+        self.inner.interpolate(u0, h, theta, out)
+    }
+    fn prepare_dense(
+        &mut self,
+        ev: &dyn Evaluator,
+        st: &mut SolverState,
+        u0: &[f64],
+        t0: f64,
+        h: f64,
+    ) -> bool {
+        self.inner.prepare_dense(ev, st, u0, t0, h)
+    }
+}
 
 /// Failure to resolve the propagated tangent frame without inventing directions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -148,6 +262,7 @@ pub(crate) fn mgs_renormalise(
 
 /// Advance the extended variational state `z` to one exact chunk endpoint,
 /// re-seeding a fresh solver as in the Python per-chunk integration path.
+#[allow(clippy::too_many_arguments)]
 fn advance_chunk<F>(
     ev: &dyn Evaluator,
     solver_factory: &F,
@@ -156,6 +271,7 @@ fn advance_chunk<F>(
     tf: f64,
     p: &[f64],
     poll: &mut Poller,
+    work: Option<&mut LyapunovWork>,
 ) -> Result<(), IntegrateError>
 where
     F: Fn() -> Box<dyn Solver>,
@@ -165,11 +281,23 @@ where
     let mut solver = solver_factory();
     // First step is the grid-derived `tf - t` (NOT raw `dt`), matching
     // `OdeStepper::advance` / the basin march exactly.
-    let cfg = IntegrateConfig::new(tf - t);
+    let mut cfg = IntegrateConfig::new(tf - t);
     // The caller's poller, not a fresh one: a chunk is a handful of solver
     // steps, so a per-chunk poller would reset long before a stride and a
     // multi-minute spectrum would never check for signals.
-    let out = integrate_grid_polled(ev, &mut *solver, &z[..n], p, &t_eval, &cfg, poll)?;
+    let out = if let Some(work) = work {
+        work.solver = solver.name();
+        work.chunk_end = tf;
+        let remaining = work.max_steps - work.counts.attempted;
+        cfg.max_steps = cfg.max_steps.min(remaining);
+        let mut counted = CountingSolver {
+            inner: &mut *solver,
+            counts: &mut work.counts,
+        };
+        integrate_grid_polled(ev, &mut counted, &z[..n], p, &t_eval, &cfg, poll)?
+    } else {
+        integrate_grid_polled(ev, &mut *solver, &z[..n], p, &t_eval, &cfg, poll)?
+    };
     // `out` is the flat `(2, n)` buffer; the last row is the advanced state.
     z.copy_from_slice(&out[n..2 * n]);
     Ok(())
@@ -224,6 +352,8 @@ pub struct LyapunovOutcome {
     /// The most recent per-step log-stretch contributions (the released
     /// `self._last_growths`).
     pub last_growths: Vec<f64>,
+    /// Present only for the explicitly budgeted entry point.
+    pub work: Option<LyapunovWork>,
 }
 
 /// Run the full burn-in + averaging Benettin Lyapunov-spectrum estimate for an ODE
@@ -272,6 +402,85 @@ pub fn lyapunov_spectrum_ode<F>(
 where
     F: Fn() -> Box<dyn Solver>,
 {
+    lyapunov_spectrum_ode_impl(
+        ev,
+        solver_factory,
+        p,
+        dim,
+        k,
+        z0,
+        t0,
+        dt,
+        burn_in,
+        final_time,
+        rtol,
+        atol,
+        None,
+    )
+}
+
+/// The same numerical algorithm with one explicit whole-analysis trial allowance.
+/// No default is chosen here; the legacy entry point and return ABI are unchanged.
+#[allow(clippy::too_many_arguments)]
+pub fn lyapunov_spectrum_ode_budgeted<F>(
+    ev: &dyn Evaluator,
+    solver_factory: F,
+    p: &[f64],
+    dim: usize,
+    k: usize,
+    z0: &[f64],
+    t0: f64,
+    dt: f64,
+    burn_in: f64,
+    final_time: f64,
+    rtol: f64,
+    atol: f64,
+    max_steps: usize,
+) -> Result<LyapunovOutcome, LyapunovError>
+where
+    F: Fn() -> Box<dyn Solver>,
+{
+    if max_steps == 0 {
+        return Err(LyapunovError::BadShape(
+            "max_steps must be a positive trial count".into(),
+        ));
+    }
+    lyapunov_spectrum_ode_impl(
+        ev,
+        solver_factory,
+        p,
+        dim,
+        k,
+        z0,
+        t0,
+        dt,
+        burn_in,
+        final_time,
+        rtol,
+        atol,
+        Some(max_steps),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn lyapunov_spectrum_ode_impl<F>(
+    ev: &dyn Evaluator,
+    solver_factory: F,
+    p: &[f64],
+    dim: usize,
+    k: usize,
+    z0: &[f64],
+    t0: f64,
+    dt: f64,
+    burn_in: f64,
+    final_time: f64,
+    rtol: f64,
+    atol: f64,
+    max_steps: Option<usize>,
+) -> Result<LyapunovOutcome, LyapunovError>
+where
+    F: Fn() -> Box<dyn Solver>,
+{
     // --- validation (mirrors the Python guards) ---
     if !rtol.is_finite()
         || !atol.is_finite()
@@ -293,7 +502,12 @@ where
             "k must be in [1, {dim}], got {k}"
         )));
     }
-    let n = dim * (k + 1);
+    let n = k
+        .checked_add(1)
+        .and_then(|columns| dim.checked_mul(columns))
+        .ok_or_else(|| {
+            LyapunovError::BadShape("extended dimension dim*(k+1) overflows usize".into())
+        })?;
     if ev.dim() != n {
         return Err(LyapunovError::BadShape(format!(
             "extended evaluator dimension {} != dim*(k+1) = {n}",
@@ -351,12 +565,42 @@ where
     // the polling cadence is one check per `POLL_STRIDE` *solver steps*, not
     // per chunk (see `advance_chunk`).
     let mut poll = Poller::new();
+    let mut work = max_steps.map(|limit| LyapunovWork {
+        max_steps: limit,
+        counts: TrialCounts::default(),
+        dim,
+        k,
+        start_time: t0,
+        burn_end: t_burn,
+        average_duration: final_time,
+        phase: "burn_in",
+        reached_time: t0,
+        last_qr_time: t0,
+        chunk_end: t0,
+        requested_end: t_end,
+        burn_chunks: 0,
+        averaging_chunks: 0,
+        solver: "not_started",
+        dt,
+        rtol,
+        atol,
+    });
 
     // --- burn-in: advance + QR, no accumulation ---
     let mut chunk = 1;
     while t < t_burn {
         let target = chunk_target(t0, t_burn, t, dt, chunk)?;
-        advance_chunk(ev, &solver_factory, &mut z, t, target, p, &mut poll).map_err(classify)?;
+        let advanced = advance_chunk(
+            ev,
+            &solver_factory,
+            &mut z,
+            t,
+            target,
+            p,
+            &mut poll,
+            work.as_mut(),
+        );
+        advanced.map_err(|error| classify_work(error, work.as_ref()))?;
         if !renorm_step(
             &mut z,
             dim,
@@ -371,14 +615,32 @@ where
             ));
         }
         t = target;
+        if let Some(w) = &mut work {
+            w.reached_time = t;
+            w.last_qr_time = t;
+            w.burn_chunks += 1;
+        }
         chunk += 1;
     }
 
     // --- averaging window: advance + QR + accumulate ---
     chunk = 1;
+    if let Some(w) = &mut work {
+        w.phase = "averaging";
+    }
     while t < t_end {
         let target = chunk_target(t_burn, t_end, t, dt, chunk)?;
-        advance_chunk(ev, &solver_factory, &mut z, t, target, p, &mut poll).map_err(classify)?;
+        let advanced = advance_chunk(
+            ev,
+            &solver_factory,
+            &mut z,
+            t,
+            target,
+            p,
+            &mut poll,
+            work.as_mut(),
+        );
+        advanced.map_err(|error| classify_work(error, work.as_ref()))?;
         if !renorm_step(
             &mut z,
             dim,
@@ -397,16 +659,25 @@ where
             growths[i] += last_growths[i];
         }
         t = target;
+        if let Some(w) = &mut work {
+            w.reached_time = t;
+            w.last_qr_time = t;
+            w.averaging_chunks += 1;
+        }
         chunk += 1;
     }
 
     let elapsed = t_end - t_burn;
     let spectrum: Vec<f64> = growths.iter().map(|&g| g / elapsed).collect();
+    if let Some(w) = &mut work {
+        w.phase = "complete";
+    }
 
     Ok(LyapunovOutcome {
         spectrum,
         final_state: z,
         last_growths,
+        work,
     })
 }
 
@@ -506,6 +777,17 @@ fn classify(e: IntegrateError) -> LyapunovError {
     }
 }
 
+fn classify_work(error: IntegrateError, work: Option<&LyapunovWork>) -> LyapunovError {
+    if let (IntegrateError::StepLimit { t, .. }, Some(work)) = (error, work) {
+        if work.counts.attempted == work.max_steps {
+            let mut evidence = work.clone();
+            evidence.reached_time = t;
+            return LyapunovError::WorkLimit(Box::new(LyapunovWorkLimit { work: evidence }));
+        }
+    }
+    classify(error)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -513,6 +795,335 @@ mod tests {
     use tsdyn_ir::TapeBuilder;
     use tsdyn_solvers::explicit::Rk45;
     use tsdyn_vm::Interpreter;
+
+    struct RejectOnce {
+        rejected: bool,
+    }
+
+    impl Solver for RejectOnce {
+        fn name(&self) -> &'static str {
+            "scripted-reject-once"
+        }
+        fn caps(&self) -> Caps {
+            Rk45::new(1e-9, 1e-11).caps()
+        }
+        fn step(&mut self, _ev: &dyn Evaluator, st: &mut SolverState, h: f64) -> StepOutcome {
+            if !self.rejected {
+                self.rejected = true;
+                StepOutcome::Rejected { h_next: h / 2.0 }
+            } else {
+                st.t += h;
+                StepOutcome::Accepted { h_next: h }
+            }
+        }
+        fn interpolate(&self, _u0: &[f64], _h: f64, _theta: f64, out: &mut [f64]) -> bool {
+            out.fill(7.0);
+            true
+        }
+        fn prepare_dense(
+            &mut self,
+            _ev: &dyn Evaluator,
+            _st: &mut SolverState,
+            _u0: &[f64],
+            _t0: f64,
+            _h: f64,
+        ) -> bool {
+            false
+        }
+    }
+
+    fn scripted_factory() -> Box<dyn Solver> {
+        Box::new(RejectOnce { rejected: false })
+    }
+
+    #[test]
+    fn work_limit_spans_rejections_burn_in_and_qr_boundaries() {
+        let ev = crate::testkit::ConstantField::new(vec![0.0, 0.0]);
+        let z0 = [3.0, 1.0];
+        // Each quarter-time chunk requires one rejection and two acceptances.
+        // These expected clocks/counts are exact dyadic arithmetic.
+        for (limit, phase, reached, last_qr, accepted, rejected) in [
+            (2, "burn_in", 0.125, 0.0, 1, 1),
+            (3, "averaging", 0.25, 0.25, 2, 1),
+            (5, "averaging", 0.375, 0.25, 3, 2),
+        ] {
+            let error = lyapunov_spectrum_ode_budgeted(
+                &ev,
+                scripted_factory,
+                &[],
+                1,
+                1,
+                &z0,
+                0.0,
+                0.25,
+                0.25,
+                0.25,
+                1e-9,
+                1e-11,
+                limit,
+            )
+            .unwrap_err();
+            let LyapunovError::WorkLimit(info) = error else {
+                panic!("expected whole-call work limit")
+            };
+            assert_eq!(info.work.phase, phase);
+            assert_eq!(info.work.reached_time, reached);
+            assert_eq!(info.work.last_qr_time, last_qr);
+            assert_eq!(
+                info.work.counts,
+                TrialCounts {
+                    attempted: limit,
+                    accepted,
+                    rejected,
+                    failed: 0
+                }
+            );
+            assert_eq!(info.work.requested_end, 0.5);
+            assert_eq!(info.work.solver, "scripted-reject-once");
+        }
+        let complete = lyapunov_spectrum_ode_budgeted(
+            &ev,
+            scripted_factory,
+            &[],
+            1,
+            1,
+            &z0,
+            0.0,
+            0.25,
+            0.25,
+            0.25,
+            1e-9,
+            1e-11,
+            6,
+        )
+        .unwrap();
+        assert_eq!(complete.spectrum, [0.0]);
+        assert_eq!(complete.final_state, z0);
+        let work = complete.work.unwrap();
+        assert_eq!(
+            work.counts,
+            TrialCounts {
+                attempted: 6,
+                accepted: 4,
+                rejected: 2,
+                failed: 0
+            }
+        );
+        assert_eq!((work.burn_chunks, work.averaging_chunks), (1, 1));
+        assert_eq!(work.phase, "complete");
+        assert_eq!(work.reached_time, 0.5);
+        assert_eq!(z0, [3.0, 1.0]);
+    }
+
+    #[test]
+    fn counter_forwards_dense_behavior_and_capabilities_without_counting_it_as_trials() {
+        let ev = crate::testkit::ConstantField::new(vec![0.0]);
+        let mut state = SolverState::for_evaluator(&ev, vec![1.0], 0.0, vec![]);
+        let mut inner = RejectOnce { rejected: false };
+        let caps = inner.caps();
+        let mut counts = TrialCounts::default();
+        let mut counted = CountingSolver {
+            inner: &mut inner,
+            counts: &mut counts,
+        };
+        assert_eq!(counted.name(), "scripted-reject-once");
+        assert_eq!(counted.caps(), caps);
+        let mut output = [0.0];
+        assert!(counted.interpolate(&[1.0], 0.25, 0.5, &mut output));
+        assert_eq!(output, [7.0]);
+        assert!(!counted.prepare_dense(&ev, &mut state, &[1.0], 0.0, 0.25));
+        assert_eq!(counts, TrialCounts::default());
+    }
+
+    #[test]
+    fn a_zero_trial_allowance_fails_before_creating_a_solver() {
+        let ev = crate::testkit::ConstantField::new(vec![0.0, 0.0]);
+        let error = lyapunov_spectrum_ode_budgeted(
+            &ev,
+            || panic!("invalid allowance must not call the factory"),
+            &[],
+            1,
+            1,
+            &[0.0, 1.0],
+            0.0,
+            0.25,
+            0.0,
+            1.0,
+            1e-9,
+            1e-11,
+            0,
+        )
+        .unwrap_err();
+        assert!(matches!(error, LyapunovError::BadShape(_)));
+    }
+
+    #[test]
+    fn oversized_declared_dimensions_refuse_before_allocation_or_slicing() {
+        let ev = crate::testkit::ConstantField::new(vec![0.0, 0.0]);
+        for (dim, k) in [(usize::MAX / 2 + 2, 1), (usize::MAX, usize::MAX)] {
+            let legacy = lyapunov_spectrum_ode(
+                &ev,
+                || panic!("invalid shape must not construct a solver"),
+                &[],
+                dim,
+                k,
+                &[0.0, 1.0],
+                0.0,
+                0.25,
+                0.0,
+                1.0,
+                1e-9,
+                1e-11,
+            )
+            .unwrap_err();
+            let budgeted = lyapunov_spectrum_ode_budgeted(
+                &ev,
+                || panic!("invalid shape must not construct a solver"),
+                &[],
+                dim,
+                k,
+                &[0.0, 1.0],
+                0.0,
+                0.25,
+                0.0,
+                1.0,
+                1e-9,
+                1e-11,
+                10,
+            )
+            .unwrap_err();
+            for error in [legacy, budgeted] {
+                assert!(matches!(error, LyapunovError::BadShape(_)));
+                assert!(error.to_string().contains("overflows"));
+            }
+        }
+    }
+
+    #[test]
+    fn a_failed_solver_attempt_is_counted_without_changing_its_outcome() {
+        struct Failed;
+        impl Solver for Failed {
+            fn name(&self) -> &'static str {
+                "scripted-failure"
+            }
+            fn caps(&self) -> Caps {
+                Rk45::new(1e-9, 1e-11).caps()
+            }
+            fn step(&mut self, _ev: &dyn Evaluator, _st: &mut SolverState, _h: f64) -> StepOutcome {
+                StepOutcome::Failed
+            }
+        }
+        let ev = crate::testkit::ConstantField::new(vec![0.0]);
+        let mut state = SolverState::for_evaluator(&ev, vec![1.0], 0.0, vec![]);
+        let mut inner = Failed;
+        let mut counts = TrialCounts::default();
+        let mut counted = CountingSolver {
+            inner: &mut inner,
+            counts: &mut counts,
+        };
+        assert_eq!(counted.step(&ev, &mut state, 0.25), StepOutcome::Failed);
+        assert_eq!(
+            counts,
+            TrialCounts {
+                attempted: 1,
+                accepted: 0,
+                rejected: 0,
+                failed: 1
+            }
+        );
+        assert_eq!(state.t, 0.0);
+    }
+
+    #[test]
+    fn a_nonbinding_budget_preserves_all_numerical_outputs_bit_for_bit() {
+        let ev = VmEval::new(linear_extended(0.5, -2.0, 2));
+        let z0 = [1.0, 1.0, 1.0, 0.0, 0.0, 1.0];
+        let legacy = lyapunov_spectrum_ode(
+            &ev,
+            rk45_factory,
+            &[],
+            2,
+            2,
+            &z0,
+            0.0,
+            0.1,
+            1.0,
+            3.0,
+            1e-9,
+            1e-11,
+        )
+        .unwrap();
+        let counted = lyapunov_spectrum_ode_budgeted(
+            &ev,
+            rk45_factory,
+            &[],
+            2,
+            2,
+            &z0,
+            0.0,
+            0.1,
+            1.0,
+            3.0,
+            1e-9,
+            1e-11,
+            1_000_000,
+        )
+        .unwrap();
+        assert!(legacy.work.is_none());
+        for (old, new) in [&legacy.spectrum, &legacy.final_state, &legacy.last_growths]
+            .into_iter()
+            .zip([
+                &counted.spectrum,
+                &counted.final_state,
+                &counted.last_growths,
+            ])
+        {
+            assert_eq!(
+                old.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                new.iter().map(|v| v.to_bits()).collect::<Vec<_>>()
+            );
+        }
+        let work = counted.work.unwrap();
+        assert_eq!(
+            work.counts.attempted,
+            work.counts.accepted + work.counts.rejected
+        );
+        assert!(work.counts.rejected > 0);
+        let exact = lyapunov_spectrum_ode_budgeted(
+            &ev,
+            rk45_factory,
+            &[],
+            2,
+            2,
+            &z0,
+            0.0,
+            0.1,
+            1.0,
+            3.0,
+            1e-9,
+            1e-11,
+            work.counts.attempted,
+        )
+        .unwrap();
+        assert_eq!(exact.spectrum, legacy.spectrum);
+        let limited = lyapunov_spectrum_ode_budgeted(
+            &ev,
+            rk45_factory,
+            &[],
+            2,
+            2,
+            &z0,
+            0.0,
+            0.1,
+            1.0,
+            3.0,
+            1e-9,
+            1e-11,
+            work.counts.attempted - 1,
+        )
+        .unwrap_err();
+        assert!(matches!(limited, LyapunovError::WorkLimit(_)));
+    }
 
     /// Build the extended variational tape of the 2-D linear flow
     /// `dx = a x, dy = b y` with `k` tangents. The Jacobian is the constant

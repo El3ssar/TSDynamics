@@ -102,8 +102,8 @@ class TestABadStartIsRefusedQuickly:
             "point of the span-relative step floor is that it no longer does"
         )
 
-    def test_the_refusal_still_says_what_it_always_said(self):
-        """Fail fast, not differently: same class, same advice, same words."""
+    def test_the_refusal_describes_incomplete_work_and_supported_controls(self):
+        """Keep the exception hierarchy while giving truthful numerical advice."""
         _, exc = _timed(
             lambda: ts.systems.LorenzBounded().run(final_time=100.0, dt=0.01, ic=_BAD_START)
         )
@@ -114,10 +114,11 @@ class TestABadStartIsRefusedQuickly:
         assert isinstance(exc, RuntimeError)
         message = str(exc)
         assert "did not reach the final time" in message
-        # The remedy the testers called correct, word for word.
-        assert "looser rtol/atol" in message
-        assert "method='bdf'" in message
-        assert "shorter integration span" in message
+        assert "calculation is incomplete" in message
+        assert "model scales" in message and "requested span" in message
+        assert "rtol/atol where supported" in message
+        assert "method='bdf'" not in message
+        assert "model is fine" not in message
         # ...and it now names the step size that made it impossible.
         assert "step size collapsed" in message
 

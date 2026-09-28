@@ -58,10 +58,13 @@ mod prepared;
 
 use bridge::EngineError;
 use numpy::{
-    IntoPyArray, PyArray1, PyArray2, PyArrayMethods, PyReadonlyArray1, PyReadonlyArray2,
-    PyUntypedArrayMethods,
+    IntoPyArray, PyArray1, PyArray2, PyArrayDescrMethods, PyArrayMethods, PyReadonlyArray1,
+    PyReadonlyArray2, PyUntypedArrayMethods,
 };
-use pyo3::exceptions::{PyMemoryError, PyNotImplementedError, PyRuntimeError, PyValueError};
+use pyo3::exceptions::{
+    PyMemoryError, PyNotImplementedError, PyOverflowError, PyRuntimeError, PyTypeError,
+    PyValueError,
+};
 use pyo3::prelude::*;
 
 /// Map an [`EngineError`] to the Python exception type its variant implies.
@@ -1228,6 +1231,153 @@ fn map_lyapunov_spectrum<'py>(
 
 use bridge::lyapunov_spectrum_ode_bridge;
 
+fn lyapunov_work_dict<'py>(
+    py: Python<'py>,
+    work: &tsdyn_engine::lyapunov::LyapunovWork,
+    jit: bool,
+) -> PyResult<Bound<'py, pyo3::types::PyDict>> {
+    let data = pyo3::types::PyDict::new(py);
+    data.set_item("complete", work.phase == "complete")?;
+    data.set_item("scope", "whole_analysis")?;
+    data.set_item("unit", "solver_trial_steps")?;
+    data.set_item("max_steps", work.max_steps)?;
+    data.set_item("attempted_steps", work.counts.attempted)?;
+    data.set_item("accepted_steps", work.counts.accepted)?;
+    data.set_item("rejected_steps", work.counts.rejected)?;
+    data.set_item("failed_steps", work.counts.failed)?;
+    data.set_item("system_dimension", work.dim)?;
+    data.set_item("directions", work.k)?;
+    data.set_item("start_time", work.start_time)?;
+    data.set_item("burn_end", work.burn_end)?;
+    data.set_item("average_duration", work.average_duration)?;
+    data.set_item("phase", work.phase)?;
+    data.set_item("reached_time", work.reached_time)?;
+    data.set_item("last_qr_time", work.last_qr_time)?;
+    data.set_item("chunk_end", work.chunk_end)?;
+    data.set_item("requested_end", work.requested_end)?;
+    data.set_item("completed_burn_chunks", work.burn_chunks)?;
+    data.set_item("completed_average_chunks", work.averaging_chunks)?;
+    data.set_item("solver", work.solver)?;
+    data.set_item("backend", if jit { "jit" } else { "interp" })?;
+    data.set_item("dt", work.dt)?;
+    data.set_item("rtol", work.rtol)?;
+    data.set_item("atol", work.atol)?;
+    Ok(data)
+}
+
+fn budgeted_lyapunov_error(error: bridge::BudgetedLyapunovError, jit: bool) -> PyErr {
+    match error {
+        bridge::BudgetedLyapunovError::Engine(error) => to_py_err(error),
+        bridge::BudgetedLyapunovError::WorkLimit(info) => {
+            let error = typed_err("StepBudgetError", info.to_string(), false);
+            Python::attach(|py| {
+                match lyapunov_work_dict(py, &info.work, jit)
+                    .and_then(|data| error.value(py).setattr("work", data))
+                {
+                    Ok(()) => error,
+                    Err(allocation_error) => allocation_error,
+                }
+            })
+        }
+    }
+}
+
+/// Explicit whole-analysis solver-trial allowance and exact work diagnostics.
+/// This low-level sibling preserves the legacy three-array return ABI.
+#[pyfunction]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+#[pyo3(signature = (ops, a, b, imm, outputs, jac_outputs, n_state, n_param, p, method, rtol, atol, dim, k, z0, t0, dt, burn_in, final_time, jit, *, max_steps))]
+fn lyapunov_spectrum_ode_budgeted<'py>(
+    py: Python<'py>,
+    ops: PyReadonlyArray1<i32>,
+    a: PyReadonlyArray1<i32>,
+    b: PyReadonlyArray1<i32>,
+    imm: PyReadonlyArray1<f64>,
+    outputs: PyReadonlyArray1<i32>,
+    jac_outputs: PyReadonlyArray1<i32>,
+    n_state: usize,
+    n_param: usize,
+    p: PyReadonlyArray1<f64>,
+    method: String,
+    rtol: f64,
+    atol: f64,
+    dim: usize,
+    k: usize,
+    z0: PyReadonlyArray1<f64>,
+    t0: f64,
+    dt: f64,
+    burn_in: f64,
+    final_time: f64,
+    jit: bool,
+    max_steps: &Bound<'py, PyAny>,
+) -> PyResult<(
+    Bound<'py, PyArray1<f64>>,
+    Bound<'py, PyArray1<f64>>,
+    Bound<'py, PyArray1<f64>>,
+    Bound<'py, pyo3::types::PyDict>,
+)> {
+    let invalid_count = || {
+        typed_err(
+            "InvalidParameterError",
+            "max_steps must be a positive integer trial count".into(),
+            true,
+        )
+    };
+    // NumPy 2.0 booleans still exposed __index__; identify their canonical
+    // scalar type via the dtype C API instead of relying on that coercion.
+    let numpy_bool = numpy::dtype::<bool>(py).typeobj();
+    if max_steps.is_instance_of::<pyo3::types::PyBool>() || max_steps.is_instance(&numpy_bool)? {
+        return Err(invalid_count());
+    }
+    let limit = max_steps.extract::<usize>().map_err(|error| {
+        if error.is_instance_of::<PyTypeError>(py)
+            || error.is_instance_of::<PyValueError>(py)
+            || error.is_instance_of::<PyOverflowError>(py)
+        {
+            invalid_count()
+        } else {
+            error
+        }
+    })?;
+    if limit == 0 {
+        return Err(invalid_count());
+    }
+    let tape = OwnedTape::copy_in(&ops, &a, &b, &imm, &outputs, &jac_outputs, n_state, n_param)?;
+    let p = vec_f64("p", &p)?;
+    let z0 = vec_f64("z0", &z0)?;
+    let out = detached(py, || {
+        bridge::lyapunov_spectrum_ode_budgeted_bridge(
+            tape.build()
+                .map_err(bridge::BudgetedLyapunovError::Engine)?,
+            &p,
+            &method,
+            rtol,
+            atol,
+            dim,
+            k,
+            &z0,
+            t0,
+            dt,
+            burn_in,
+            final_time,
+            jit,
+            limit,
+        )
+    })
+    .map_err(|error| budgeted_lyapunov_error(error, jit))?;
+    let work = out
+        .work
+        .as_ref()
+        .expect("budgeted outcome retains work evidence");
+    let diagnostics = lyapunov_work_dict(py, work, jit)?;
+    Ok((
+        PyArray1::from_vec(py, out.spectrum),
+        PyArray1::from_vec(py, out.final_state),
+        PyArray1::from_vec(py, out.last_growths),
+        diagnostics,
+    ))
+}
+
 /// Run the whole burn-in + averaging Benettin Lyapunov-spectrum loop for an ODE
 /// flow in one engine call.
 ///
@@ -1560,6 +1710,7 @@ fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(basin_march_map, m)?)?;
     m.add_function(wrap_pyfunction!(map_lyapunov_spectrum, m)?)?;
     m.add_function(wrap_pyfunction!(lyapunov_spectrum_ode, m)?)?;
+    m.add_function(wrap_pyfunction!(lyapunov_spectrum_ode_budgeted, m)?)?;
     m.add_class::<PyOdeStepper>()?;
     m.add_class::<prepared::PyPreparedEvaluator>()?;
     m.add_function(wrap_pyfunction!(solvers, m)?)?;

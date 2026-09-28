@@ -50,6 +50,7 @@ pub use basin::{basin_march_flow_bridge, basin_march_map_bridge};
 pub use dde::integrate_dde_dense;
 pub use events::integrate_events_dense;
 pub use lyapunov::lyapunov_spectrum_ode_bridge;
+pub use lyapunov::{lyapunov_spectrum_ode_budgeted_bridge, BudgetedLyapunovError};
 pub use map::{iterate_map, map_ensemble_final, map_param_sweep};
 pub use map_lyapunov::map_lyapunov_bridge;
 #[cfg(test)]
