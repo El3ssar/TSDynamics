@@ -1,7 +1,7 @@
 //! Prepared point/batch evaluation without integration or trajectory screening.
 
 use tsdyn_engine::alloc::try_zeroed;
-use tsdyn_engine::interrupt::Poller;
+use tsdyn_engine::interrupt::{poll_hook, Poller};
 use tsdyn_ir::{Evaluator, Tape};
 
 use super::marshal::{build_evaluator_send, EngineError};
@@ -20,6 +20,28 @@ fn allocate(rows: usize, width: usize, kind: &str) -> Result<Vec<f64>, EngineErr
             "cannot allocate a {rows} x {width} {kind} buffer for prepared evaluation"
         ))
     })
+}
+
+/// Bound each validation scan between direct interruption checks. Small points
+/// avoid the hook; large input/output rows remain interruptible without using
+/// a strided Poller only once per chunk (which would multiply its stride).
+fn all_finite(values: &[f64]) -> Result<bool, EngineError> {
+    finite_with_poll(values, poll_hook)
+}
+
+fn finite_with_poll(
+    values: &[f64],
+    mut should_stop: impl FnMut() -> bool,
+) -> Result<bool, EngineError> {
+    for (chunk_index, chunk) in values.chunks(4096).enumerate() {
+        if chunk_index != 0 && should_stop() {
+            return Err(EngineError::Interrupted);
+        }
+        if chunk.iter().any(|value| !value.is_finite()) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 impl PreparedEvaluator {
@@ -80,6 +102,25 @@ impl PreparedEvaluator {
     /// Scratch is allocated once per call and reused only within that call.
     /// There is no live state, shared workspace, magnitude limit or row rejection.
     pub fn evaluate(&self, arguments: &[f64], jacobian: bool) -> Result<Vec<f64>, EngineError> {
+        self.evaluate_impl::<false>(arguments, jacobian)
+    }
+
+    /// Validate all inputs first, then only returned primal/fused output values.
+    /// Nonfinite unused scratch registers are not a domain failure. The raw
+    /// sibling preserves IEEE components and never enters these checks.
+    pub fn evaluate_checked(
+        &self,
+        arguments: &[f64],
+        jacobian: bool,
+    ) -> Result<Vec<f64>, EngineError> {
+        self.evaluate_impl::<true>(arguments, jacobian)
+    }
+
+    fn evaluate_impl<const CHECKED: bool>(
+        &self,
+        arguments: &[f64],
+        jacobian: bool,
+    ) -> Result<Vec<f64>, EngineError> {
         if !arguments.len().is_multiple_of(self.input_width) {
             return Err(EngineError::BadShape(format!(
                 "prepared arguments must contain complete rows of width {}",
@@ -90,6 +131,13 @@ impl PreparedEvaluator {
         let rows = arguments.len() / self.input_width;
         if rows == 0 {
             return Ok(Vec::new());
+        }
+        // Scan the complete batch before evaluating its first row. A later
+        // invalid input takes precedence over an earlier output-domain failure.
+        if CHECKED && !all_finite(arguments)? {
+            return Err(EngineError::InvalidParameter(
+                "state, time and control parameters must be finite".into(),
+            ));
         }
         let mut result = allocate(rows, width, "output")?;
         let mut scratch = allocate(1, self.evaluator.n_scratch(), "scratch")?;
@@ -112,6 +160,16 @@ impl PreparedEvaluator {
             } else {
                 self.evaluator
                     .eval(state, controls, time, &mut scratch, output);
+            }
+            if CHECKED && !all_finite(output)? {
+                let quantity = if jacobian {
+                    "Jacobian"
+                } else {
+                    "right-hand side"
+                };
+                return Err(EngineError::InvalidParameter(format!(
+                    "{quantity} is undefined or numerically unresolved at the supplied state, time and parameters; check the equation domain, derivative boundaries and numerical scale"
+                )));
             }
         }
         Ok(result)
@@ -141,6 +199,161 @@ mod tests {
             vec![]
         };
         b.finish(&[first, second], &jac, 2, 1).unwrap()
+    }
+
+    #[test]
+    fn checked_valid_outputs_preserve_raw_bits_and_empty_shapes() {
+        for jit in [false, true] {
+            let prepared = PreparedEvaluator::new(field(true), jit).unwrap();
+            for jacobian in [false, true] {
+                for rows in [
+                    vec![],
+                    vec![-0.0, 4.0, -0.0, 1.0],
+                    vec![1e200, 4.0, 0.0, 0.5, 1e-200, 9.0, 0.0, 0.5],
+                ] {
+                    let raw = prepared.evaluate(&rows, jacobian).unwrap();
+                    let checked = prepared.evaluate_checked(&rows, jacobian).unwrap();
+                    assert_eq!(
+                        raw.iter().map(|x| x.to_bits()).collect::<Vec<_>>(),
+                        checked.iter().map(|x| x.to_bits()).collect::<Vec<_>>()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn all_inputs_are_checked_before_any_output_domain_failure() {
+        for jit in [false, true] {
+            let prepared = PreparedEvaluator::new(field(true), jit).unwrap();
+            // Row one has undefined sqrt(y); row two has invalid time/control.
+            for offset in [4, 5, 6, 7] {
+                let mut rows = [1.0, -1.0, 0.0, 1.0, 1.0, 4.0, 0.0, 1.0];
+                rows[offset] = f64::INFINITY;
+                for jacobian in [false, true] {
+                    let error = prepared.evaluate_checked(&rows, jacobian).unwrap_err();
+                    assert!(matches!(error, EngineError::InvalidParameter(ref message)
+                        if message == "state, time and control parameters must be finite"));
+                }
+            }
+            assert!(matches!(
+                prepared.evaluate_checked(&[f64::NAN], false),
+                Err(EngineError::BadShape(_))
+            ));
+            let primal = PreparedEvaluator::new(field(false), jit).unwrap();
+            assert!(matches!(
+                primal.evaluate_checked(&[f64::NAN; 4], true),
+                Err(EngineError::BadShape(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn checked_jacobian_includes_primal_and_derivative_domain_evidence() {
+        for jit in [false, true] {
+            let prepared = PreparedEvaluator::new(field(true), jit).unwrap();
+            assert_eq!(
+                prepared
+                    .evaluate_checked(&[1.0, 0.0, 0.0, 1.0], false)
+                    .unwrap(),
+                vec![1.0, 0.0]
+            );
+            assert!(matches!(
+                prepared.evaluate_checked(&[1.0, 0.0, 0.0, 1.0], true),
+                Err(EngineError::InvalidParameter(ref message)) if message.starts_with("Jacobian is undefined")
+            ));
+            let mut b = TapeBuilder::new();
+            let x = b.state(0);
+            let primal = b.ln(x);
+            let derivative = b.recip(x);
+            let tape = b.finish(&[primal], &[derivative], 1, 0).unwrap();
+            let logarithm = PreparedEvaluator::new(tape, jit).unwrap();
+            let raw = logarithm.evaluate(&[-1.0, 0.0], true).unwrap();
+            assert!(raw[0].is_nan());
+            assert_eq!(raw[1], -1.0);
+            assert!(matches!(
+                logarithm.evaluate_checked(&[-1.0, 0.0], true),
+                Err(EngineError::InvalidParameter(_))
+            ));
+            assert_eq!(
+                logarithm.evaluate_checked(&[1.0, 0.0], true).unwrap(),
+                vec![0.0, 1.0]
+            );
+        }
+    }
+
+    #[test]
+    fn unused_nonfinite_scratch_is_not_screened_but_unused_input_is() {
+        for jit in [false, true] {
+            let mut b = TapeBuilder::new();
+            let x = b.state(0);
+            let invalid = b.sqrt(x);
+            let truth = b.constant(1.0);
+            let negative_zero = b.constant(-0.0);
+            let selected = b.select(truth, negative_zero, invalid);
+            // State 1 and control 0 are declared but never read.
+            let tape = b.finish(&[selected], &[], 2, 1).unwrap();
+            let prepared = PreparedEvaluator::new(tape, jit).unwrap();
+            let value = prepared
+                .evaluate_checked(&[-1.0, 2.0, 3.0, 4.0], false)
+                .unwrap();
+            assert_eq!(value[0].to_bits(), (-0.0_f64).to_bits());
+            for offset in [1, 2, 3] {
+                let mut args = [-1.0, 2.0, 3.0, 4.0];
+                args[offset] = f64::NAN;
+                assert!(prepared.evaluate(&args, false).unwrap()[0].is_sign_negative());
+                assert!(matches!(
+                    prepared.evaluate_checked(&args, false),
+                    Err(EngineError::InvalidParameter(_))
+                ));
+            }
+        }
+    }
+
+    #[test]
+    fn checked_handles_remain_independent_after_concurrent_domain_failures() {
+        for jit in [false, true] {
+            let prepared = PreparedEvaluator::new(field(true), jit).unwrap();
+            tsdyn_jit::clear_cache();
+            std::thread::scope(|scope| {
+                for index in 0..4 {
+                    let evaluator = &prepared;
+                    scope.spawn(move || {
+                        for _ in 0..32 {
+                            assert!(evaluator
+                                .evaluate_checked(&[1.0, -1.0, 0.0, 1.0], false)
+                                .is_err());
+                            let parameter = index as f64 + 1.0;
+                            let output = evaluator
+                                .evaluate_checked(&[0.5, 4.0, 0.25, parameter], true)
+                                .unwrap();
+                            assert_eq!(output[0], 0.5 * parameter + 0.25);
+                            assert_eq!(output[2], parameter);
+                        }
+                    });
+                }
+            });
+        }
+    }
+
+    #[test]
+    fn finite_scan_polls_between_bounded_chunks_without_point_overhead() {
+        let mut calls = 0;
+        assert!(finite_with_poll(&[1.0, 2.0], || {
+            calls += 1;
+            false
+        })
+        .unwrap());
+        assert_eq!(calls, 0);
+        let values = vec![1.0; 8193];
+        assert!(matches!(
+            finite_with_poll(&values, || {
+                calls += 1;
+                calls == 2
+            }),
+            Err(EngineError::Interrupted)
+        ));
+        assert_eq!(calls, 2);
     }
 
     #[test]

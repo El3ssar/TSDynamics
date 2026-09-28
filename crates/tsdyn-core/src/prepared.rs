@@ -16,7 +16,7 @@ pub(crate) struct PyPreparedEvaluator {
 }
 
 impl PyPreparedEvaluator {
-    fn evaluate<'py>(
+    fn evaluate<'py, const CHECKED: bool>(
         &self,
         py: Python<'py>,
         arguments: PyReadonlyArrayDyn<'py, f64>,
@@ -46,7 +46,14 @@ impl PyPreparedEvaluator {
                 *destination = *source;
             }
         }
-        let output = detached(py, || self.inner.evaluate(&copied, jacobian)).map_err(to_py_err)?;
+        let output = detached(py, || {
+            if CHECKED {
+                self.inner.evaluate_checked(&copied, jacobian)
+            } else {
+                self.inner.evaluate(&copied, jacobian)
+            }
+        })
+        .map_err(to_py_err)?;
         *shape.last_mut().expect("argument rank checked above") = result_width;
         PyArray1::from_vec(py, output).reshape(IxDyn(&shape))
     }
@@ -83,7 +90,7 @@ impl PyPreparedEvaluator {
         py: Python<'py>,
         arguments: PyReadonlyArrayDyn<'py, f64>,
     ) -> PyResult<Bound<'py, PyArrayDyn<f64>>> {
-        self.evaluate(py, arguments, false)
+        self.evaluate::<false>(py, arguments, false)
     }
 
     /// Return raw primal components followed by the row-major Jacobian per row.
@@ -92,7 +99,25 @@ impl PyPreparedEvaluator {
         py: Python<'py>,
         arguments: PyReadonlyArrayDyn<'py, f64>,
     ) -> PyResult<Bound<'py, PyArrayDyn<f64>>> {
-        self.evaluate(py, arguments, true)
+        self.evaluate::<false>(py, arguments, true)
+    }
+
+    /// Require finite arguments and RHS outputs, preserving the raw method above.
+    fn eval_rhs_checked<'py>(
+        &self,
+        py: Python<'py>,
+        arguments: PyReadonlyArrayDyn<'py, f64>,
+    ) -> PyResult<Bound<'py, PyArrayDyn<f64>>> {
+        self.evaluate::<true>(py, arguments, false)
+    }
+
+    /// Require finite arguments and the full fused primal/Jacobian output.
+    fn eval_jac_checked<'py>(
+        &self,
+        py: Python<'py>,
+        arguments: PyReadonlyArrayDyn<'py, f64>,
+    ) -> PyResult<Bound<'py, PyArrayDyn<f64>>> {
+        self.evaluate::<true>(py, arguments, true)
     }
 
     #[getter]
