@@ -25,7 +25,7 @@ tsdyn-ir.workspace = true
 # method-of-lines chain 9.39 -> 9.96 ms) — a cost the compiled-evaluator cache in
 # `cache.rs` now pays once per tape rather than once per FFI call.
 cranelift-codegen = "0.135"
-cranelift-frontend = "0.135"
+cranelift-frontend = "0.136"
 cranelift-module = "0.135"
 # `cranelift-jit` detects the host ISA internally (via cranelift-native), so we
 # do not depend on cranelift-native directly — `JITBuilder::new` pulls it in.
