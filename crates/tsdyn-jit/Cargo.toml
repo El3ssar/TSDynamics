@@ -29,7 +29,7 @@ cranelift-frontend = "0.135"
 cranelift-module = "0.135"
 # `cranelift-jit` detects the host ISA internally (via cranelift-native), so we
 # do not depend on cranelift-native directly — `JITBuilder::new` pulls it in.
-cranelift-jit = "0.135"
+cranelift-jit = "0.136"
 
 [dev-dependencies]
 # The cross-validation tests check the JIT against the production interpreter
