@@ -27,11 +27,11 @@ initial condition with `ic=[...]`. Leaving `ic` unset lets the library pick a
 sensible starting point.
 
 !!! info "`ts.systems.Lorenz`, not `ts.Lorenz`"
-    The top level is seventeen names; every built-in system lives under
+    The top level is eleven names; every built-in system lives under
     `ts.systems`. Typing `ts.Lorenz` raises an error that hands you the address:
 
     ```
-    ts.Lorenz moved in v6: the top level is 17 names now, and this one lives at
+    ts.Lorenz moved: the top level is 11 names now, and this one lives at
     its own address.
         ts.systems.Lorenz()
     ```
@@ -147,8 +147,8 @@ print(ts.analysis.lyapunov_spectrum(lor, final_time=500.0, dt=0.05))
 ```
 
 One positive exponent, one near-zero (the direction along the flow), one
-strongly negative — the positive/zero/negative signature that certifies a
-chaotic attractor. The verdict word is only printed when it survives a tenfold
+strongly negative — numerical evidence consistent with a chaotic attractor.
+A finite-time estimate is not a proof. The verdict word is only printed when it survives a tenfold
 change of the zero tolerance; otherwise the result says `indeterminate at this
 horizon` instead of guessing.
 

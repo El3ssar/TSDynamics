@@ -102,6 +102,9 @@ class MaynardSmith(DiscreteMap):
     Notes
     -----
     The default ``a = 0.87``, ``b = 0.75`` sits in a chaotic regime.
+    The catalogue audit measured a leading exponent of about ``0.130`` for the
+    tested default orbit, stable through 200,000 iterations; the presence of
+    cycles elsewhere in the model is not a regularity claim for these defaults.
     """
 
     params = {"a": 0.87, "b": 0.75}

@@ -647,8 +647,8 @@ def basin_entropy(
     box_size : int, default 5
         Box side length in cells.
     base : float, default e
-        Logarithm base.  With the default natural log the fractal threshold is
-        :math:`\log 2 \approx 0.693`.
+        Finite logarithm base greater than 1.  With the default natural log the
+        fractal threshold is :math:`\log 2 \approx 0.693`.
     include_diverged : bool, default False
         If ``False`` (the default), diverged cells (``-1``) are dropped before the
         per-box colour count — escape is not a basin, so it must not inflate the
@@ -665,7 +665,8 @@ def basin_entropy(
     Raises
     ------
     ValueError
-        If ``box_size < 1`` or the label array yields no boxes (it is empty).
+        If ``box_size < 1``, ``base`` is not finite and greater than 1, or the
+        label array yields no full boxes.
 
     References
     ----------
@@ -676,6 +677,8 @@ def basin_entropy(
     labels = _as_label_array(basins, analysis="basin_entropy")
     if box_size < 1:
         raise ValueError(f"box_size must be >= 1, got {box_size}")
+    if not np.isfinite(base) or base <= 1.0:
+        raise ValueError("base must be finite and greater than 1 (e for nats, 2 for bits).")
     log = np.log(base)
 
     box_entropies: list[float] = []
@@ -749,6 +752,16 @@ def _iter_blocks(labels: np.ndarray, box_size: int) -> Iterator[np.ndarray]:
 # ---------------------------------------------------------------------------
 
 
+def _positive_radii(radii: tuple[int, ...], *, minimum: int) -> tuple[int, ...]:
+    """Return distinct positive integer radii in increasing physical scale."""
+    if any(isinstance(r, bool) or not isinstance(r, (int, np.integer)) or r < 1 for r in radii):
+        raise ValueError("radii must be positive integers (distances in grid cells).")
+    ordered = tuple(sorted(set(int(r) for r in radii)))
+    if len(ordered) < minimum:
+        raise ValueError(f"need at least {minimum} distinct radii to analyse the boundary.")
+    return ordered
+
+
 def uncertainty_exponent(
     basins: Any,
     *,
@@ -770,7 +783,8 @@ def uncertainty_exponent(
     basins : BasinsResult or array-like of int
         The basin image.
     radii : tuple of int, default (1, 2, 3, 4, 5)
-        Perturbation radii in cells.
+        Positive integer perturbation radii in cells.  Duplicate radii are
+        removed and the result is ordered by increasing radius.
     cell_size : float or array-like, default 1.0
         Physical cell spacing (a scalar or per-axis); rescales ``epsilons`` only —
         the exponent is invariant to it.
@@ -788,7 +802,8 @@ def uncertainty_exponent(
     Raises
     ------
     ValueError
-        If fewer than two ``radii`` are given, or fewer than two non-zero
+        If fewer than two distinct positive integer ``radii`` are given,
+        ``cell_size`` is not finite and positive, or fewer than two non-zero
         :math:`f(\varepsilon)` values are available to fit a slope (no boundary).
 
     References
@@ -797,13 +812,20 @@ def uncertainty_exponent(
     an obstruction to predictability", *Physics Letters A* **99**, 415 (1983).
     """
     labels = _as_label_array(basins, analysis="uncertainty_exponent")
-    radii = tuple(int(r) for r in radii)
-    if len(radii) < 2:
-        raise ValueError("need at least two radii to fit a slope.")
+    radii = _positive_radii(radii, minimum=2)
 
     valid = None if include_diverged else (labels != -1)  # -1 == DIVERGED/escape
     fractions = np.array([_uncertain_fraction(labels, m, valid) for m in radii])
-    spacing = float(np.mean(np.atleast_1d(cell_size)))
+    spacings = np.atleast_1d(np.asarray(cell_size, dtype=float))
+    if (
+        spacings.ndim != 1
+        or spacings.size not in (1, labels.ndim)
+        or not np.all(np.isfinite(spacings) & (spacings > 0.0))
+    ):
+        raise ValueError(
+            "cell_size must be finite and positive, as a scalar or one value per axis."
+        )
+    spacing = float(np.mean(spacings))
     epsilons = np.asarray(radii, dtype=float) * spacing
 
     positive = fractions > 0.0
@@ -938,7 +960,9 @@ def wada_property(
         The basin image.  Diverged cells (``-1``) are ignored when counting
         colours.
     radii : tuple of int, default (1, 2, 3, 4, 5)
-        Chebyshev radii (in cells) at which to grow the neighbourhood.
+        Positive integer Chebyshev radii (in cells) at which to grow the
+        neighbourhood.  Duplicates are removed and the result is ordered by
+        increasing radius.
     threshold : float, default 0.9
         Minimum :math:`W` at the largest radius to call the boundary Wada.
     include_diverged : bool, default False
@@ -955,7 +979,8 @@ def wada_property(
     ------
     ValueError
         If ``basins`` carries non-integer labels (attractor ids must be integers,
-        with ``-1`` marking escape).
+        with ``-1`` marking escape), no positive integer ``radii`` are given, or
+        ``threshold`` is not a finite fraction in ``[0, 1]``.
 
     References
     ----------
@@ -966,7 +991,9 @@ def wada_property(
 
     labels = _as_label_array(basins, analysis="wada_property")
     colors = [int(c) for c in np.unique(labels) if c >= 1]
-    radii = tuple(int(r) for r in radii)
+    radii = _positive_radii(radii, minimum=1)
+    if not np.isfinite(threshold) or not 0.0 <= threshold <= 1.0:
+        raise ValueError("threshold must be a finite fraction in [0, 1].")
     valid = None if include_diverged else (labels != -1)  # -1 == DIVERGED/escape
     boundary = _neighbor_differs(labels, 1, valid=valid)
     n_boundary = int(boundary.sum())

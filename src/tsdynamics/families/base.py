@@ -1337,7 +1337,9 @@ class SystemBase(DeriveMixin, SystemPlottable):
             )
         )
 
-    def _carry_ic_provenance(self, clone: SystemBase) -> SystemBase:
+    def _carry_ic_provenance(
+        self, clone: SystemBase, *, preserve_ic_choice: bool = True
+    ) -> SystemBase:
         """Copy *how the IC was chosen* onto a clone built by the constructor.
 
         ``copy()`` / :meth:`with_params` rebuild through ``type(self)(ic=self.ic)``,
@@ -1347,8 +1349,14 @@ class SystemBase(DeriveMixin, SystemPlottable):
         ``with_params`` sweep (an orbit diagram, a continuation) turned the retry
         off for every swept value.  ``copy.copy`` / ``deepcopy`` never had the bug
         (they clone ``__dict__``); these two now agree with them.
+
+        A shape-changing rebuild passes ``preserve_ic_choice=False`` because it
+        generated a new initial condition; the seed still carries across.
         """
-        object.__setattr__(clone, "_ic_explicit", bool(self.__dict__.get("_ic_explicit", False)))
+        if preserve_ic_choice:
+            object.__setattr__(
+                clone, "_ic_explicit", bool(self.__dict__.get("_ic_explicit", False))
+            )
         seed = self.__dict__.get("_ic_seed")
         if seed is not None:
             object.__setattr__(clone, "_ic_seed", int(seed))
@@ -1430,7 +1438,9 @@ class SystemBase(DeriveMixin, SystemPlottable):
         Returns
         -------
         SystemBase
-            New instance of the same subclass.
+            New instance of the same subclass. If a structural parameter changes
+            the state dimension or field shape, the constructor regenerates a
+            matching default IC instead of carrying the old-shaped state.
         """
         new_p = {**cast(ParamSet, self.params).as_dict(), **overrides}
         # ``dim`` and ``field_shape`` are forwarded because a system that takes
@@ -1438,14 +1448,32 @@ class SystemBase(DeriveMixin, SystemPlottable):
         # nothing to re-read them from — measured, ``DimCtor(dim=2).with_params(k=2)``
         # raised "does not declare its state-space dimension", which broke
         # continuation and orbit diagrams for exactly those systems.
-        return self._carry_ic_provenance(
-            type(self)(
-                params=new_p,
-                ic=self.ic,
-                dim=cast(int, self.dim),
-                field_shape=self.__dict__.get("_field_shape"),
-            )
+        clone = type(self)(
+            params=new_p,
+            ic=self.ic,
+            dim=cast(int, self.dim),
+            field_shape=self.__dict__.get("_field_shape"),
         )
+        resized = clone.dim != self.dim or clone._field_shape != self._field_shape
+        if resized:
+            # The custom constructor derives its shape from the new parameters.
+            # An IC from the old state space is not an initial condition in the
+            # new one, even when two field shapes happen to have the same size.
+            # Rebuild once without old shape overrides so field systems can
+            # regenerate their own dimension-dependent initial conditions.
+            import inspect
+
+            # Field constructors can use seed to regenerate a random spatial
+            # profile. Older user constructors may not accept that base keyword;
+            # their random-IC fallback still receives it via provenance below.
+            seed = self.__dict__.get("_ic_seed")
+            seed_kw = (
+                {"seed": seed}
+                if seed is not None and "seed" in inspect.signature(type(self).__init__).parameters
+                else {}
+            )
+            clone = type(self)(params=new_p, **seed_kw)
+        return self._carry_ic_provenance(clone, preserve_ic_choice=not resized)
 
     # --- IC resolution ---
 

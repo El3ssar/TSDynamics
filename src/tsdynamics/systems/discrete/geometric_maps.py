@@ -146,6 +146,9 @@ class Circle(DiscreteMap):
     map develops a cubic inflection and the tongues fill the parameter axis; for
     :math:`k > 1` it is non-invertible and can be chaotic. The default
     ``omega = 0.333``, ``k = 5.7`` sits well inside the chaotic regime.
+    The catalogue audit measured a leading exponent of about ``1.085`` for the
+    tested default orbit, stable through 200,000 iterations; the mode-locking
+    description applies to other parameter regimes.
 
     Parameters
     ----------

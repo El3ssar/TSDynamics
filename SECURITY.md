@@ -12,14 +12,14 @@ recommend always running the most recent release.
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 3.1.x   | :white_check_mark: |
-| < 3.1   | :x:                |
+| 6.0.x   | :white_check_mark: |
+| < 6.0   | :x:                |
 
 Because releases are
 [fully automated](CONTRIBUTING.md#release-process) via
 python-semantic-release, a fix merged to `main` ships in the next patch release
-within minutes — so "upgrade to the latest release" is almost always the
-remediation.
+after the release checks and package builds pass. Upgrade to the latest release
+containing the fix.
 
 ## Reporting a vulnerability
 
@@ -82,17 +82,18 @@ Out of scope:
 
 ## Supply-chain and dependency auditing
 
-Security is enforced continuously in CI, not only on report:
+CI continuously checks the dependency and release supply chain:
 
 - **Dependency vulnerability audit.** Our
   [`security-audit.yml`](.github/workflows/security-audit.yml) workflow runs
   `pip-audit` (Python dependencies) and `cargo-audit` (the Rust engine and its
-  crates) and fails the build if a dependency with a known advisory is pulled
-  in. It also runs on a schedule so a newly disclosed advisory in an existing
-  dependency is surfaced even without a code change.
+  crates). Findings are advisory (`continue-on-error`): they appear in the job
+  logs and require maintainer triage, but do not block a build or merge. The
+  workflow also runs weekly so a newly disclosed advisory can be surfaced
+  without a code change.
 - **Automated dependency updates.** [Dependabot](.github/dependabot.yml) opens
-  pull requests for outdated Python and GitHub-Actions dependencies on a monthly
-  cadence.
+  pull requests for outdated Python, Rust, and GitHub Actions dependencies on a
+  monthly cadence. Coupled Cranelift crates are updated together.
 - **Trusted publishing.** Releases are published to PyPI via OIDC
   [Trusted Publishing](https://docs.pypi.org/trusted-publishers/) — no
   long-lived API tokens are stored in the repository.

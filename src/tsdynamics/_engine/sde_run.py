@@ -78,7 +78,7 @@ def sde_integrate_dense(
     if backend == "reference":
         raise NotImplementedError(
             "the engine SDE path needs backend='interp'/'jit'; the pure-Python "
-            "reference SDE integrator lives in StochasticSystem.integrate."
+            "reference SDE integrator lives in StochasticSystem.run."
         )
     eng = _engine()
     y = eng.integrate_sde_dense(

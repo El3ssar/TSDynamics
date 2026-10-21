@@ -181,14 +181,30 @@ def sagitta_profile(
     -------
     np.ndarray, shape (n,)
         The per-point sagitta, aligned to ``samples``.
+
+    Raises
+    ------
+    InvalidParameterError
+        If the samples are not a finite 1-D series or 2-D point set with at
+        least one component, or ``span`` is not a positive integer.
     """
     reject_system(samples, analysis="sagitta_profile")
     s = np.asarray(samples, dtype=float)
     if s.ndim == 1:
         s = s[:, None]
+    if s.ndim != 2 or s.shape[1] == 0:
+        raise invalid_value(
+            "samples",
+            s.shape,
+            rule="must be a 1D series or a 2D point set with at least one component",
+        )
+    if not np.all(np.isfinite(s)):
+        raise invalid_value("samples", "non-finite", rule="must be finite (no nan/inf)")
+    if isinstance(span, bool) or not isinstance(span, (int, np.integer)) or span < 1:
+        raise invalid_value("span", span, rule="must be a positive integer")
     n = s.shape[0]
     out = np.zeros(n, dtype=float)
-    if span < 1 or n < 2 * span + 1:
+    if n < 2 * span + 1:
         return out
     if normalize:
         std = s.std(axis=0, ddof=1)
@@ -333,6 +349,7 @@ def estimate_dt_from_sagitta(
         raise invalid_value("y", type(y).__name__, rule="must be a numpy array")
     if not np.all(np.isfinite(y)):
         raise invalid_value("y", "non-finite", rule="must be finite (no nan/inf)")
+    n_input = y.shape[0] if y.ndim else 0
 
     needs_embedding = False
 
@@ -342,6 +359,8 @@ def estimate_dt_from_sagitta(
         n_samples_original = len(y)
     elif y.ndim == 2:
         _, n_dim = y.shape
+        if n_dim == 0:
+            raise invalid_value("y", y.shape, rule="must have at least one component")
         if n_dim == 1:
             needs_embedding = True
             y_original = y.squeeze()
@@ -375,14 +394,14 @@ def estimate_dt_from_sagitta(
         raise invalid_value(
             "y", n_samples, rule="must have at least 5 samples after embedding (got n_samples)"
         )
-    if not (dt0 > 0):
-        raise invalid_value("dt0", dt0, rule="must be > 0")
-    if not (epsilon > 0):
-        raise invalid_value("epsilon", epsilon, rule="must be > 0")
+    if not np.isfinite(dt0) or not (dt0 > 0):
+        raise invalid_value("dt0", dt0, rule="must be finite and > 0")
+    if not np.isfinite(epsilon) or not (epsilon > 0):
+        raise invalid_value("epsilon", epsilon, rule="must be finite and > 0")
     if not (0.0 < percentile <= 100.0):
         raise invalid_value("percentile", percentile, rule="must be in (0, 100]")
-    if search_growth <= 1.0:
-        raise invalid_value("search_growth", search_growth, rule="must be > 1.0")
+    if not np.isfinite(search_growth) or search_growth <= 1.0:
+        raise invalid_value("search_growth", search_growth, rule="must be finite and > 1.0")
     if min_points_per_segment < 1:
         raise invalid_value("min_points_per_segment", min_points_per_segment, rule="must be >= 1")
 
@@ -410,9 +429,11 @@ def estimate_dt_from_sagitta(
     def _make_result(
         stride: int, achieved: float, searched: list[tuple[int, float]], extra_note: str
     ) -> SagittaDt:
-        idx = np.arange(0, n_samples, stride, dtype=int)
-        if idx[-1] != (n_samples - 1):
-            idx = np.concatenate([idx, np.array([n_samples - 1], dtype=int)])
+        # The reconstruction loses its last delay window, but these indices
+        # decimate the caller's original samples, including its final sample.
+        idx = np.arange(0, n_input, stride, dtype=int)
+        if idx[-1] != (n_input - 1):
+            idx = np.concatenate([idx, np.array([n_input - 1], dtype=int)])
         evs = np.array(sorted(searched, key=lambda x: x[0]), dtype=float)
         spans = evs[:, 0].astype(int) if evs.size else np.array([1], dtype=int)
         return SagittaDt(

@@ -9,9 +9,10 @@ description: Subclass a family base and write the dynamics as one symbolic metho
 The built-in catalogue is a starting point, not a ceiling. Defining your own
 system is the same short contract every built-in follows: name the components,
 declare the parameters, and write one method holding the math. Subclass the right
-family base and everything else — lowering to the engine, integration, the whole
-[analysis toolkit](../analysis/index.md), and even a documentation page — comes
-for free.
+family base and you inherit lowering, integration, and the common stepping
+protocol. The [analysis toolkit](../analysis/index.md) documents which routines
+accept each family. Systems contributed to the built-in catalogue also receive
+generated documentation pages.
 
 This page builds one ODE end to end, then shows the map and SDE variants.
 
@@ -26,7 +27,8 @@ $$
 \dot w = \tfrac{1}{\tau}\,(v + a - b\,w).
 $$
 
-It is not in the catalogue, so we can build it from scratch. Subclass
+The catalogue already includes a FitzHugh–Nagumo model; rebuilding it here shows
+the full contract from scratch. Subclass
 `ContinuousSystem`, name the components, declare the parameters, and translate
 the equations into `_equations`:
 
@@ -226,8 +228,10 @@ traj = dw.run(final_time=100.0, dt=0.01, seed=1)   # seed → reproducible path
 
 Like maps, `_drift`/`_diffusion` take parameters positionally. Running an SDE
 uses a fixed-step scheme (`solver="euler_maruyama"` by default, `"milstein"` for
-strong order 1); `dt` is the noise scale $\sqrt{dt}$, and `seed=` fixes the
-realisation.
+strong order 1 with componentwise diffusion $g_k(X_k,t)$). The Wiener increment
+has standard deviation $\sqrt{dt}$; `dt` sets the numerical step, and `seed=`
+fixes the realisation. Cross-component diffusion requires `euler_maruyama`:
+the Milstein implementation does not simulate Lévy areas.
 
 Delay equations follow the same shape with `DelaySystem` and a delayed accessor
 `y(i, t - tau)` — see [the mental model](concepts.md#dde-delaysystem).
@@ -237,8 +241,9 @@ Delay equations follow the same shape with `DelaySystem` and a delayed accessor
 The four families all ask you for the *equations*, so the library can lower them
 to the engine. When you already have a **stepper** — a foreign ODE solver, an
 agent-based model, a hardware-in-the-loop rig, anything that advances a state
-vector — `WrappedSystem` adapts it to the same protocol, and the whole analysis
-toolkit applies unchanged. It is the one place where subclassing (well,
+vector — `WrappedSystem` adapts it to the same protocol. Analyses that need only
+that protocol can then use it; routines requiring symbolic equations or analytic
+Jacobians have additional requirements. It is the one place where subclassing (well,
 instantiating) a library type is genuinely the only path: there is no equation to
 lower and so nothing to infer.
 
@@ -262,8 +267,8 @@ ts.plot(traj)                              # and it plots like any other
 `step_fn(state, n_or_dt) -> new_state` is the whole contract. Pass
 `family="ode"` and `n_or_dt` becomes a time increment instead of an iteration
 count; `default_dt=` is what a bare `.step()` advances by. Anything that reads a
-system through the protocol — orbit diagrams, Poincaré sections, ensembles,
-basins — works on it.
+system through the protocol can work on it, subject to the routine's supported
+families and required capabilities.
 
 ## Auto-registration and auto-docs
 

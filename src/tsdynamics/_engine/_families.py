@@ -60,7 +60,7 @@ def _run_continuous(
             raise NotImplementedError(
                 f"the reference integrator covers ODEs (and maps) only, not "
                 f"{problem.family!r}; use backend='interp'/'jit' (the Rust engine) for "
-                f"DDE integration, or StochasticSystem.integrate for SDEs."
+                f"DDE integration, or StochasticSystem.run for SDEs."
             )
         return _reference_ode(
             problem, t_eval, method=method, rtol=rtol, atol=atol, max_step=max_step

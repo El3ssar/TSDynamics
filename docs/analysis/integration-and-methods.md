@@ -314,7 +314,7 @@ discretisation and the noise scale $\sqrt{dt}$.
 | `method` | Kind | Adaptive | Needs Jacobian | Family | Description | Origin |
 | -------- | ---- | -------- | -------------- | ------ | ----------- | ------ |
 | `euler_maruyama` | explicit | — | — | sde | Euler–Maruyama diagonal-Itô (strong order 0.5) | builtin |
-| `milstein` | explicit | — | yes | sde | Milstein diagonal-Itô (strong order 1.0; uses ∂g/∂u) | builtin |
+| `milstein` | explicit | — | yes | sde | Milstein with componentwise diffusion gₖ(Xₖ,t) (strong order 1.0; uses ∂gₖ/∂Xₖ) | builtin |
 
 !!! note "Why there is no order or stability column"
     A `SolverSpec` carries only the capability flags shown above —

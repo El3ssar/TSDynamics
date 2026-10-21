@@ -590,8 +590,12 @@ def lyapunov_spectrum(
 
     Examples
     --------
-    >>> lyapunov_spectrum(Lorenz(), final_time=300.0)   # [0.91, ~0, -14.57]
-    >>> lyapunov_spectrum(Henon(), k=2, n=5000)         # [0.42, -1.62]
+    >>> spectrum = lyapunov_spectrum(Lorenz(ic=[1.0, 1.0, 1.0]), final_time=300.0)
+    >>> spectrum.shape
+    (3,)
+    >>> spectrum = lyapunov_spectrum(Henon(), k=2, n=5000, ic=[0.1, 0.1])
+    >>> spectrum.shape
+    (2,)
 
     References
     ----------

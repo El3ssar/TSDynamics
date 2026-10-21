@@ -154,6 +154,41 @@ def test_old_dict_without_version_loads() -> None:
     _assert_specs_equal(spec, restored)
 
 
+@pytest.mark.parametrize("version", range(1, SCHEMA_VERSION + 1))
+def test_supported_schema_versions_load(version) -> None:
+    spec = _time_series_spec()
+    envelope = {"schema_version": version, "spec": spec.to_dict()}
+    _assert_specs_equal(spec, from_dict_envelope(envelope))
+    _assert_specs_equal(spec, PlotSpec.from_dict(envelope))
+
+
+@pytest.mark.parametrize("version", [True, False, None, "3", 1.5, 0, -1])
+def test_invalid_schema_versions_are_refused(version) -> None:
+    envelope = {"schema_version": version, "spec": _time_series_spec().to_dict()}
+    with pytest.raises(ValueError, match="schema_version must be a positive integer"):
+        from_dict_envelope(envelope)
+
+
+def test_future_schema_version_is_refused_at_every_loader() -> None:
+    import tsdynamics as ts
+
+    envelope = {"schema_version": SCHEMA_VERSION + 1, "spec": _time_series_spec().to_dict()}
+    for loader, payload in (
+        (from_dict_envelope, envelope),
+        (PlotSpec.from_dict, envelope),
+        (from_json, json.dumps(envelope)),
+        (ts.viz.load, json.dumps(envelope)),
+    ):
+        with pytest.raises(ValueError, match="newer.*upgrade tsdynamics"):
+            loader(payload)
+
+
+@pytest.mark.parametrize("payload", [None, [], "plot", {}, {"x": 1}])
+def test_invalid_envelope_spec_has_a_clear_error(payload) -> None:
+    with pytest.raises(ValueError, match="'spec' must be a plot mapping"):
+        from_dict_envelope({"schema_version": SCHEMA_VERSION, "spec": payload})
+
+
 def test_unrecognized_payload_raises() -> None:
     """A JSON object that is neither an envelope nor a bare spec dict raises."""
     with pytest.raises(ValueError):

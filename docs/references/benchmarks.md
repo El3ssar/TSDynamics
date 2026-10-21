@@ -53,7 +53,9 @@ be fair to every library and reproducible on any machine.
   the work done — the Lyapunov renormalisation interval, the fixed-point search
   method — TSDynamics is run with the **same** setting as the reference it is
   compared against (e.g. the Julia `Δt=0.1` renorm step, the same $[-2,2]^2$ box
-  and rigorous method for fixed points), so the comparison is apples-to-apples.
+  for fixed points). TSDynamics' numerical interval search and Julia's certified
+  interval method have different guarantees: matching the search box and root
+  values does not make their certification work equivalent.
 - **Process isolation.** Every library runs in its own subprocess and writes a
   JSON record the orchestrator merges. A crash, a slow library, or an import
   side-effect cannot take the rest of the suite down, and each library gets a
@@ -194,7 +196,8 @@ numbers.** These finish in single-digit milliseconds or microseconds:
 Quoting a "50×" here would be true and useless: 5 ms versus 0.1 ms is not a gap
 anyone iterates or bifurcates around, and TSDynamics still returns the *same*
 answer — the Hénon fixed point to the identical $1.1\times10^{-16}$ as Julia's
-rigorous method. Moving these tight map/event loops fully into the Rust engine, as
+rigorous method. TSDynamics' numerical interval search does not provide Julia's
+formal guarantees. Moving these tight map/event loops fully into the Rust engine, as
 the trajectory path already is, is on the roadmap; we'll put a proper head-to-head
 here once we are at or past Julia on them.
 

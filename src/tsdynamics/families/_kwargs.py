@@ -52,18 +52,22 @@ WHY: dict[tuple[str, str], tuple[str, str | None] | tuple[str, str | None, str]]
         "{cls}().run(final_time=10.0, dt=0.01)",
     ),
     ("n", "ode"): (
-        "n is a *map* keyword: a flow runs for a span of continuous time, not a "
-        "count of iterations, so its horizon is final_time.",
+        "n is the retired map-count spelling (now steps): a flow runs for a "
+        "span of continuous time, so its horizon is final_time.",
         "{cls}().run(final_time=100.0, dt=0.01)",
     ),
+    ("n", "map"): (
+        "n is the retired iteration-count spelling: a map's horizon is steps.",
+        "{cls}().run(steps=1000)",
+    ),
     ("n", "dde"): (
-        "n is a *map* keyword: a delay system runs for a span of continuous "
-        "time, so its horizon is final_time.",
+        "n is the retired map-count spelling (now steps): a delay system runs "
+        "for a span of continuous time, so its horizon is final_time.",
         "{cls}().run(final_time=100.0, dt=0.1)",
     ),
     ("n", "sde"): (
-        "n is a *map* keyword: an SDE runs for a span of continuous time, so "
-        "its horizon is final_time.",
+        "n is the retired map-count spelling (now steps): an SDE runs for a "
+        "span of continuous time, so its horizon is final_time.",
         "{cls}().run(final_time=10.0, dt=0.01)",
     ),
     # --- the clock ---------------------------------------------------------
@@ -134,11 +138,13 @@ WHY: dict[tuple[str, str], tuple[str, str | None] | tuple[str, str | None, str]]
     ),
     # --- error control -----------------------------------------------------
     ("rtol", "map"): (
-        "a map iterates in exact arithmetic — there is no local error to control.",
+        "a map applies its update rule directly, so there is no time-integration "
+        "error estimate to control (floating-point roundoff still applies).",
         "{cls}().run(steps=1000)",
     ),
     ("atol", "map"): (
-        "a map iterates in exact arithmetic — there is no local error to control.",
+        "a map applies its update rule directly, so there is no time-integration "
+        "error estimate to control (floating-point roundoff still applies).",
         "{cls}().run(steps=1000)",
     ),
     ("rtol", "sde"): (
@@ -216,6 +222,9 @@ def run_keyword_error(
 ) -> InvalidParameterError:
     """Build the ``InvalidParameterError`` for one rejected ``run()`` keyword."""
     cls = type(system).__name__
+    constructor = (
+        f"ts.systems.{cls}" if type(system).__module__.startswith("tsdynamics.systems.") else cls
+    )
     lower = cls[0].lower() + cls[1:3].lower()
     head = f"{bad} is not a valid {cls}.{verb}() keyword, got {value!r}."
     entry = WHY.get((bad, family))
@@ -224,7 +233,7 @@ def run_keyword_error(
         lead = entry[2] if len(entry) == 3 else None
         text = f"{head}\n{why}"
         if line is not None:
-            text += remedy(line.format(cls=cls, lower=lower), lead=lead)
+            text += remedy(line.format(cls=constructor, lower=lower), lead=lead)
         return InvalidParameterError(text)
     accepted_list = ", ".join(accepted)
     return InvalidParameterError(

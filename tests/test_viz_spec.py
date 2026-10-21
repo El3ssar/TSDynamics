@@ -58,6 +58,16 @@ def _panel(label: str = "a", *, three_d: bool = False) -> PlotSpec:
     )
 
 
+@pytest.mark.parametrize("name", ["width", "height", "dpi"])
+@pytest.mark.parametrize("value", [0.0, -1.0, np.nan, np.inf, "wide"])
+def test_size_rejects_invalid_geometry_without_mutating(name, value):
+    spec = _panel().size(width=4.0, height=3.0, dpi=100.0)
+    before = spec.to_dict()
+    with pytest.raises(InvalidParameterError, match=rf"size\({name}=.*finite and positive"):
+        spec.size(**{name: value})
+    assert spec.to_dict() == before
+
+
 def _composite(n: int = 2, *, three_d: bool = False) -> PlotSpec:
     """A COMPOSITE spec with ``n`` panels."""
     return PlotSpec(

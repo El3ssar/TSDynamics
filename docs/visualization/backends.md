@@ -98,6 +98,10 @@ exactly, so a spec computed on one machine can be cached, shipped to a web
 frontend, or replayed **without re-running the analysis** and without a plotting
 library installed.
 
+The loader accepts supported older envelopes and legacy unversioned plot
+mappings. It rejects malformed version stamps and future schema versions with
+an upgrade message, so newer documents cannot be silently misinterpreted.
+
 ```python
 text = spec.to_json()                    # the JSON string
 same = ts.viz.load(text)                 # …read it back — a path works too

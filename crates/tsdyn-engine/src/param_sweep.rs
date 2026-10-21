@@ -300,15 +300,18 @@ mod tests {
         Interpreter::new(b.finish(&[nx], &[], 1, 0).unwrap())
     }
 
-    /// A sweep whose point buffer cannot be allocated must be an ordinary
-    /// `Err`. This was a *process-level* failure through a plain public call:
-    /// `orbit_diagram(map, …, n=2**40)` reached `vec![0.0; n_values · n_record ·
-    /// n_components]`, whose allocation-error handler aborts the interpreter.
+    /// An output beyond Vec's byte-capacity limit must be an ordinary `Err`.
+    /// Do not test this by requesting merely more than physical RAM: an
+    /// overcommitting allocator can accept that reservation, then initializing
+    /// the buffer exhausts the host instead of returning an allocation error.
+    /// The Python subprocess tests exercise allocator refusal under RLIMIT_AS
+    /// on platforms that enforce it; these cases reject before touching pages.
     #[test]
     fn an_unservable_point_buffer_is_an_error_not_an_abort() {
         let ev = VmEval::new(logistic_param());
         let values = [3.5, 3.6, 3.7];
-        for n_record in [1usize << 40, usize::MAX] {
+        let beyond_byte_capacity = isize::MAX as usize / core::mem::size_of::<f64>() + 1;
+        for n_record in [beyond_byte_capacity, usize::MAX] {
             let err = map_orbit_sweep(&ev, &[3.5], 0, &values, &[0.5], &[0], 0, n_record, false)
                 .expect_err("an unservable point buffer must not be allocated");
             assert!(

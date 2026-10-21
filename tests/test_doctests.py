@@ -144,6 +144,8 @@ def _page_requires(page: str) -> list[str]:
 @pytest.mark.parametrize("page", full_tier_pages())
 def test_doc_page_fences_full(page: str) -> None:
     """Heavy doc pages (animation / composition) — nightly ``-m full`` tier."""
+    for module in _page_requires(page):
+        pytest.importorskip(module)
     run_page_fences(page)
 
 

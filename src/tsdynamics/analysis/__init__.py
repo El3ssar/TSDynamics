@@ -408,8 +408,9 @@ def __dir__() -> list[str]:
     return sorted(__all__)
 
 
-# Populate the registry from out-of-tree plugins, then compute the surface.
-discover_plugins()
+# Compute the built-in surface now. The parent package discovers installed
+# plugins after its public family aliases, version and system catalogue are
+# available: an analysis plugin may import any of those while it initializes.
 _refresh_surface()
 
 # ---------------------------------------------------------------------------

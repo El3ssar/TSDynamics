@@ -761,13 +761,13 @@ class ContinuousSystem(SystemBase, ABC):
         # clears ``1e-9`` the regime is unambiguously forward+positive, so the happy
         # path goes straight to the handle (never touching ``make_output_grid``);
         # only the sub-``1e-9`` remainder defers to the helper for that identical
-        # loud-footgun error (and the byte-identical degenerate-grid behaviour).
+        # loud-footgun error and exact two-endpoint grid.
         if not tf - t0 > 1e-9:
             from tsdynamics._utils.grids import make_output_grid
 
             # Raises InvalidParameterError for dt <= 0 / a non-forward window; for a
-            # valid-but-tiny span it returns the (possibly single-node) grid, which
-            # the per-``dt`` engine core integrated identically — reproduce that here
+            # valid-but-tiny span it returns the exact two-endpoint grid, which
+            # the per-``dt`` engine core integrates identically — reproduce that here
             # via the same lean core to stay byte-identical for the rare small step.
             t_eval = make_output_grid(t0, tf, dt)
             from tsdynamics._engine.run import _step_continuous
@@ -931,7 +931,7 @@ class ContinuousSystem(SystemBase, ABC):
 
         Examples
         --------
-        >>> J = Lorenz().jacobian_sym()          # doctest: +SKIP
+        >>> J = Lorenz().jacobian_sym()
         >>> J[0]                                 # the row d(dx/dt)/dy
         [-sigma, sigma, 0]
         """

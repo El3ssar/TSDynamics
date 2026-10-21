@@ -8,10 +8,10 @@ test edits and a regression fails loudly instead of slipping through.
 
 Sections (one per P4 ``POLISH`` gate stream):
 
-- **Result-object contract** (stream WS-RESULT-GATE, this file's content) — every
-  registered analysis returns a self-describing
-  :class:`~tsdynamics.analysis._result.AnalysisResult` carrying the full result
-  surface (``.meta`` / ``.summary()`` / ``.to_dict()`` / the ``.plot`` seam), and
+- **Result-object contract** (stream WS-RESULT-GATE, this file's content) —
+  analyses returning :class:`~tsdynamics.analysis._result.AnalysisResult` carry
+  the full result surface (``.meta`` / ``repr`` / ``.to_dict()`` / ``.plot``).
+  Alternative return types have explicit annotation and runtime contracts, and
   every scaling-curve result exposes the one canonical
   ``(estimate, stderr, abscissa, ordinate, fit_region, intercept)`` schema.  The
   contract is checked three ways: a *static* sweep over every registered
@@ -51,6 +51,7 @@ from collections.abc import Mapping
 
 import numpy as np
 import pytest
+from _analysis_returns import NON_RESULT_RETURNS
 
 import tsdynamics as ts
 from tsdynamics import registry
@@ -111,7 +112,7 @@ _CONTRACT_METHODS = ("to_dict",)
 #: surface.  ``poincare_section`` returns a
 #: :class:`~tsdynamics.derived.PoincareSection` (a
 #: :class:`~tsdynamics.data.Trajectory` subclass) so the section keeps every
-#: trajectory affordance while adding ``summary``/``to_dict``/``plot`` on top.
+#: trajectory affordance and the readable ``repr``/``to_dict``/``plot`` surface.
 _RESULT_CARVE_OUTS: dict[str, type] = {
     "poincare_section": PoincareSection,
 }
@@ -150,7 +151,7 @@ def _return_classes(fn: object) -> tuple[type, ...]:
 def _carries_core_surface(cls: type, *, require_to_frame: bool) -> list[str]:
     """Return the contract affordances ``cls`` is *missing* (empty when complete).
 
-    Checks that ``summary``/``to_dict`` (and, for ``AnalysisResult`` proper,
+    Checks that ``to_dict`` (and, for ``AnalysisResult`` proper,
     ``to_frame``) resolve as callables, that ``plot`` resolves (the seam), and
     that ``meta`` is a declared field — read from :func:`dataclasses.fields` for
     dataclass results (``meta`` has a ``default_factory`` so it is not a class
@@ -196,8 +197,8 @@ _BASE_RESULT_CLASSES = (
 def test_base_result_classes_expose_contract(cls):
     """Each result base/wrapper exposes the full self-describing surface.
 
-    The bases carry the canonical implementations; if one loses ``summary`` /
-    ``to_dict`` / ``to_frame`` / ``plot`` / a ``meta`` field, every result that
+    The bases carry the canonical implementations; if one loses ``to_dict`` /
+    ``to_frame`` / ``plot`` / a ``meta`` field, every result that
     inherits from it loses it too — so they are the load-bearing guard.
     """
     missing = _carries_core_surface(cls, require_to_frame=True)
@@ -231,52 +232,27 @@ def test_analysis_result_plot_seam_raises_until_a_backend_lands(_no_render_backe
 # Static, registry-driven — every registered analysis's *return type*
 # ---------------------------------------------------------------------------
 
-#: Analyses **promoted into the registry by v6** that do not yet declare an
-#: ``AnalysisResult`` return, with the slot that owns the result class.
-#:
-#: Contract §4.2 r1 ("every registered analysis returns an ``AnalysisResult``
-#: subclass") and §5.7 ("``analysis/planar.py``'s 8 field functions — **promoted
-#: public**") pull in opposite directions for exactly one release: promoting a
-#: function into ``registry.analyses`` puts it under the result contract, and the
-#: result classes are a different slot's file.  Every row is an **xfail**, so the
-#: day one of them starts returning a result the row has to be deleted — the
-#: table cannot quietly become the norm.
-_RESULT_CONTRACT_NOT_LANDED: dict[str, str] = {
-    # S4 · ANALYSIS-DOOR promoted these eight from analysis/planar.py (§5.7);
-    # S3 · ANALYSIS-DOMAIN owns the result classes they need.
-    "escape_time_field": "S3/S4: promoted in v6, result class not landed (§4.2 r1)",
-    "flow_field": "S3/S4: promoted in v6, result class not landed (§4.2 r1)",
-    "ftle_field": "S3/S4: promoted in v6, result class not landed (§4.2 r1)",
-    "invariant_density": "S3/S4: promoted in v6, result class not landed (§4.2 r1)",
-    "nullclines": "S3/S4: promoted in v6, result class not landed (§4.2 r1)",
-    "streamlines": "S3/S4: promoted in v6, result class not landed (§4.2 r1)",
-    "trace_determinant": "S3/S4: promoted in v6, result class not landed (§4.2 r1)",
-    "transient_time_field": "S3/S4: promoted in v6, result class not landed (§4.2 r1)",
-    # the sampling tools and the set metric, likewise newly registered
-    "estimate_dt_from_sagitta": "S3: registered in v6, returns a hidden SagittaDt (§4.2 r1)",
-    "sagitta_profile": "S3: registered in v6, returns a bare ndarray (§4.2 r1)",
-    "set_distance": "S3: registered in v6, returns a bare float (§4.2 r1)",
-    # pre-existing returns the promotion sweep newly exposed
-    "autocorrelation": "S3: returns a bare ndarray (§4.2 r1)",
-    "correlation_sum": "S3: returns an unannotated tuple (§4.2 r1)",
-    "dimension_spectrum": "S3: returns an unannotated tuple (§4.2 r1)",
-}
-
 
 def test_registered_analysis_return_carries_full_contract(analysis_entry):
-    """Every registered analysis declares a return type that carries the contract.
+    """Every registered analysis declares its supported return contract.
 
     Registry-driven (so a new analysis is swept with zero edits) and *static* —
     it reads the resolved return annotation rather than constructing inputs for
-    all ~47 analyses.  Fails loudly if an analysis returns a bare
-    ``float``/``ndarray``/``list`` (no annotated result class), or a hand-rolled
-    result object that does not subclass :class:`AnalysisResult` and lacks the
-    ``summary``/``to_dict``/``plot``/``meta`` surface.  The runtime sweep below
-    proves the surface actually fires.
+    all analyses.  Numeric-result classes carry the shared surface; supported
+    alternative returns are pinned to their exact annotations in
+    ``NON_RESULT_RETURNS``.  A changed annotation cannot stay hidden behind an
+    expected failure.  Runtime sweeps exercise both kinds of return.
     """
     name = analysis_entry.name
-    if name in _RESULT_CONTRACT_NOT_LANDED:
-        pytest.xfail(_RESULT_CONTRACT_NOT_LANDED[name])
+    if name in NON_RESULT_RETURNS:
+        expected = NON_RESULT_RETURNS[name]
+        actual = typing.get_type_hints(analysis_entry.obj).get("return")
+        assert actual == expected, (
+            f"{name!r} changed its documented non-result return from {expected} to {actual}; "
+            "update or remove its explicit return contract"
+        )
+        assert analysis_entry.metadata.get("returns") is None
+        return
     classes = _return_classes(analysis_entry.obj)
 
     if name in _RESULT_CARVE_OUTS:
@@ -331,17 +307,6 @@ def _basin_box():
     from tsdynamics.data import Box
 
     return Box(np.array([-1.6, -0.45]), np.array([1.6, 0.45]))
-
-
-#: Registered analyses whose ``to_dict()`` is a valid mapping but not yet
-#: JSON-serializable, because a hand-rolled ``to_dict`` embeds a raw object rather
-#: than recursing into its serializable form: ``recurrence_matrix`` carries a
-#: SciPy sparse ``csr_matrix``, ``windowed_rqa`` carries nested ``RQAResult``
-#: objects, and ``attractors`` carries nested ``Attractor`` objects.  All
-#: three are real gaps against the ``to_dict`` "JSON-friendly" promise, tracked
-#: for a fix in the owning analysis modules (out of this gate's owned paths); the
-#: core contract (``to_dict`` returns a mapping) is still asserted for them below.
-_TODICT_NOT_JSON = frozenset({"recurrence_matrix", "windowed_rqa", "attractors"})
 
 
 def _runtime_cases() -> list[tuple[str, object]]:
@@ -443,12 +408,11 @@ def test_runtime_result_contract(name, thunk, _no_render_backend):
     """A representative analysis of each result class fires the full contract live.
 
     Asserts on the returned object: it is an ``AnalysisResult`` (or the
-    ``PoincareSection`` carve-out); ``.meta`` is a populated mapping; ``repr`` and
-    ``.summary()`` produce non-empty text; ``.to_dict()`` is a mapping (and
-    JSON-serializable, except the two tracked gaps in :data:`_TODICT_NOT_JSON`);
+    ``PoincareSection`` carve-out); ``.meta`` is a populated mapping; ``repr``
+    produces non-empty text; ``.to_dict()`` is a JSON-serializable mapping;
     and the ``.plot`` seam raises :class:`VisualizationNotInstalled`.
 
-    The carve-out (``PoincareSection``) carries the same ``meta``/``summary``/
+    The carve-out (``PoincareSection``) carries the same ``meta``/``repr``/
     ``to_dict``/``plot`` surface as an ``AnalysisResult``, but its ``plot`` is a
     ``Trajectory`` *method* rather than the typed-method accessor namespace — so
     the ``.plot.<kind>()`` assertion runs only for ``AnalysisResult`` instances.
@@ -473,11 +437,10 @@ def test_runtime_result_contract(name, thunk, _no_render_backend):
     # export
     data = result.to_dict()
     assert isinstance(data, dict), f"{name}.to_dict() returned {type(data).__name__}, not a dict"
-    if name not in _TODICT_NOT_JSON:
-        try:
-            json.dumps(data)
-        except TypeError as exc:  # pragma: no cover - a failure here is the gate firing
-            pytest.fail(f"{name}.to_dict() is not JSON-serializable: {exc}")
+    try:
+        json.dumps(data)
+    except TypeError as exc:  # pragma: no cover - a failure here is the gate firing
+        pytest.fail(f"{name}.to_dict() is not JSON-serializable: {exc}")
 
     # the deferred visualization seam (raises until a rendering backend registers).
     # A Trajectory-shaped result's ``.plot()`` only *builds* the spec since v6, so
@@ -491,21 +454,6 @@ def test_runtime_result_contract(name, thunk, _no_render_backend):
     if isinstance(result, AnalysisResult):
         with pytest.raises(VisualizationNotInstalled):
             result.plot(title="still refused without a backend")
-
-
-@pytest.mark.parametrize("name", sorted(_TODICT_NOT_JSON))
-def test_known_non_json_to_dict_is_still_a_mapping(name):
-    """The tracked non-JSON ``to_dict`` results still satisfy the mapping contract.
-
-    ``recurrence_matrix``/``windowed_rqa`` embed a sparse matrix / nested results,
-    so ``json.dumps`` does not yet round-trip them — a known gap against the
-    ``to_dict`` "JSON-friendly" promise, tracked for a fix in the owning modules.
-    This pins the *structural* half of the contract (``to_dict`` is a mapping) so
-    the gap cannot widen into "no ``to_dict`` at all".
-    """
-    thunk = dict(_RUNTIME_CASES)[name]
-    data = thunk().to_dict()
-    assert isinstance(data, dict) and data, f"{name}.to_dict() is not a populated mapping"
 
 
 # ---------------------------------------------------------------------------
@@ -1695,9 +1643,15 @@ _ERRGATE_RUNNABLE: list[_RunnableCase] = [
     # ── a flow keyword aimed at a map ──
     _RunnableCase(
         "map-given-a-flow-keyword",
-        lambda: ts.systems.Henon().run(n=10, dt=0.01),
+        lambda: ts.systems.Henon().run(steps=10, dt=0.01),
         "run",
-        ("Henon().run(n=",),
+        ("ts.systems.Henon().run(steps=",),
+    ),
+    _RunnableCase(
+        "map-given-the-retired-count-keyword",
+        lambda: ts.systems.Henon().run(n=10),
+        "run",
+        ("ts.systems.Henon().run(steps=",),
     ),
     # ── right idea, wrong family ──
     _RunnableCase(
@@ -1793,40 +1747,16 @@ _ERRGATE_RUNNABLE: list[_RunnableCase] = [
 _NOT_A_USER_CALL = ("_", "tsdynamics.analysis._", "self.", "<")
 
 
-#: Error messages whose remedy line still names the **pre-v6 top-level spelling**
-#: (``ts.analysis.fixed_points(...)`` rather than ``ts.analysis.fixed_points(...)``), with
-#: the owning slot.
-#:
-#: This is not cosmetic and it is not a style preference.  v6 curated the top
-#: level to seventeen names, so ``ts.analysis.fixed_points`` does not resolve any more —
-#: a message handing that line back is handing back a line that raises.  Contract
-#: §5.6 says so directly ("the remedy lines are bare, not ``ts.analysis.``-
-#: qualified" is listed as one of the three live defects that die on the way).
-#: The message strings live in ``analysis/**``, owned by S3 · ANALYSIS-DOMAIN and
-#: C7 · ANALYSIS-DISCOVERY.
-#:
-#: Strict xfails, so each row turns red the moment its message is qualified and
-#: the row has to be deleted.  :func:`test_errgate_remedy_lines_resolve` is the
-#: gate the whole table exists to be measured against.
-_ERRGATE_NOT_QUALIFIED: dict[str, str] = {
-    # The four ``analysis/dimensions`` rows were deleted in v6 round 9: the
-    # messages now say ``ts.analysis.correlation_dimension`` /
-    # ``…fixed_mass_dimension`` / ``…generalized_dimension``, which resolve.
-    # The table shrank from 5 rows to 1, and this is the one left.
-    #
-    # A different SHAPE of gap: the message is complete prose and hands back
-    # nothing at all.  S1 · RUN owns families/_kwargs.py.
-    "map-given-a-flow-keyword": "S1: families/_kwargs.py hands back no runnable line",
-}
+#: Unresolved remedy exceptions, empty after correcting the last map keyword
+#: case. A future exception must name its defect; its strict xfail turns red
+#: once fixed. For example, ``ts.fixed_points`` is retired, whereas the public
+#: ``ts.analysis.fixed_points`` resolves and can appear in a remedy.
+_ERRGATE_NOT_QUALIFIED: dict[str, str] = {}
 
 #: The subset of :data:`_ERRGATE_NOT_QUALIFIED` whose *literal token* also no
 #: longer matches, so the older string check fails as well.  Kept separate
 #: because a strict xfail must not be attached to a test that passes.
-_ERRGATE_TOKEN_STALE = frozenset(
-    {
-        "map-given-a-flow-keyword",
-    }
-)
+_ERRGATE_TOKEN_STALE: frozenset[str] = frozenset()
 
 
 def _errgate_params(table: object) -> list[object]:
@@ -1864,8 +1794,8 @@ def test_errgate_remedy_lines_resolve(case: _RunnableCase) -> None:
     """**Every dotted name a remedy line hands back must resolve.**
 
     The strongest form of the runnable-line standard, and the one v6 made
-    load-bearing: curating the top level to seventeen names means
-    ``ts.analysis.fixed_points(system)`` no longer runs, so a message that offers it is
+    load-bearing: curating the top level to eleven names means
+    ``ts.fixed_points(system)`` no longer runs, so a message that offers it is
     now *worse* than one that offers nothing — it looks authoritative and fails.
 
     Parses each remedy line and walks every ``ts.a.b`` attribute path in it
@@ -1958,6 +1888,18 @@ def test_errgate_runnable_lines_detects_prose_and_code() -> None:
     # a bare name is not a call, and an unindented line is prose, not a remedy
     assert _runnable_lines("do:\n    periodic_orbits") == []
     assert _runnable_lines("ts.analysis.basins(system, region)") == []
+
+
+@pytest.mark.parametrize("wrong", [{"steps": 10, "dt": 0.01}, {"n": 10}])
+def test_map_keyword_remedy_runs_with_only_the_public_package_import(wrong) -> None:
+    """A built-in correction pastes into a REPL with only ``import tsdynamics as ts``."""
+    with pytest.raises(ValueError) as exc:
+        ts.systems.Henon().run(**wrong)
+    lines = _runnable_lines(str(exc.value))
+    assert lines == ["ts.systems.Henon().run(steps=1000)"]
+    result = eval(lines[0], {"ts": ts})
+    assert isinstance(result, ts.Trajectory)
+    assert result.shape == (1001, 2)
 
 
 # ===========================================================================

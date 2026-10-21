@@ -117,8 +117,12 @@ def _window_stats(
     is the residual standard deviation and ``stderr`` the standard error of the
     slope; both are ``inf`` for a degenerate (zero-spread) window.
     """
-    xs = x[lo:]
-    ys = y[lo:]
+    # Translate before accumulating moments.  Subtracting nearly equal raw
+    # sums (sum(x*x) - sum(x)**2/n) otherwise loses the entire variance when
+    # the log scales have a large offset, although a slope is translation
+    # invariant.
+    xs = x[lo:] - x[lo]
+    ys = y[lo:] - y[lo]
     cnt = np.arange(1, xs.size + 1, dtype=float)
     sx = np.cumsum(xs)
     sy = np.cumsum(ys)
@@ -130,7 +134,7 @@ def _window_stats(
         cxy = sxy - sx * sy / cnt
         cyy = syy - sy * sy / cnt
         slope = cxy / cxx
-        intercept = (sy - slope * sx) / cnt
+        intercept = (sy - slope * sx) / cnt + y[lo] - slope * x[lo]
         ssr = np.maximum(cyy - slope * cxy, 0.0)
         dof = np.maximum(cnt - 2.0, 1.0)
         sigma = np.where(cnt > 2.0, np.sqrt(ssr / dof), 0.0)
@@ -187,7 +191,7 @@ def fit_scaling_region(
     tol : float, default 1.5
         A window is a candidate when its residual sigma is at most
         ``tol * sigma_min``.  Larger ``tol`` admits wider but slightly less
-        straight windows.
+        straight windows.  Must be finite and at least 1.
     min_span_frac : float, default 0.5
         Minimum window width as a fraction of the total abscissa range.
     min_span : float, optional
@@ -205,9 +209,10 @@ def fit_scaling_region(
     Raises
     ------
     ValueError
-        If ``x`` and ``y`` differ in length, if ``min_window < 2``, if fewer
-        than ``min_window`` points are supplied, or if ``x`` has no spread (no
-        admissible window).
+        If ``x`` and ``y`` are not finite 1-D curves of equal length ordered by
+        increasing ``x``; if ``min_window`` is not an integer of at least 2; if
+        fewer than ``min_window`` points are supplied; if the window settings
+        are out of range; or if ``x`` has no spread (no admissible window).
 
     References
     ----------
@@ -225,16 +230,32 @@ def fit_scaling_region(
     """
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
+    if x.ndim != 1 or y.ndim != 1:
+        raise ValueError("x and y must be one-dimensional scaling curves.")
     if x.shape != y.shape:
         raise ValueError(f"x and y must have the same shape, got {x.shape} and {y.shape}.")
+    if not np.all(np.isfinite(x)) or not np.all(np.isfinite(y)):
+        raise ValueError("x and y must contain only finite values.")
     n = x.size
-    if min_window < 2:
-        raise ValueError("min_window must be at least 2.")
+    if (
+        isinstance(min_window, bool)
+        or not isinstance(min_window, (int, np.integer))
+        or min_window < 2
+    ):
+        raise ValueError("min_window must be an integer of at least 2.")
+    if not np.isfinite(tol) or tol < 1.0:
+        raise ValueError("tol (flatness) must be finite and >= 1.")
+    if not np.isfinite(min_span_frac) or not 0.0 <= min_span_frac <= 1.0:
+        raise ValueError("min_span_frac must be finite and lie in [0, 1].")
+    if min_span is not None and (not np.isfinite(min_span) or min_span < 0.0):
+        raise ValueError("min_span must be finite and non-negative.")
     if n < min_window:
         raise ValueError(
             f"need at least min_window={min_window} points to fit a scaling region, got {n}. "
             "Widen the scale range, add more data, or lower min_window."
         )
+    if np.any(np.diff(x) < 0.0):
+        raise ValueError("x must be ordered by increasing scale.")
 
     total = float(x[-1] - x[0])
     floor_abs = _DECADE if min_span is None else float(min_span)

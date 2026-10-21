@@ -539,15 +539,22 @@ def _trace_kernel(
     Raises
     ------
     TapeCompileError
-        If ``call()`` raised anything at all.  The message names the system, the
-        kernel, the offending source line, the numeric call detected on it (when
-        one is), and the SymEngine replacements.
+        If symbolic evaluation fails outside the structural-indexing case
+        below. The message names the system, kernel, offending source line,
+        numeric call detected on it (when one is), and SymEngine replacements.
+    InvalidParameterError
+        If array indexing fails while tracing structural parameters, with a
+        state-shape rebuild remedy instead of symbolic-function advice.
     """
     try:
         return call()
     except TapeCompileError:
         raise
     except Exception as err:  # noqa: BLE001 - any kernel failure means "not lowerable"
+        if isinstance(err, IndexError) and bool(getattr(system, "_structural_params", ())):
+            raise _state_shape_error(
+                system, kernel, f"could not index its arrays for the configured dim={system.dim}"
+            ) from err
         name = _kernel_owner(system).__name__
         parts = [f"{name}: `{kernel}` could not be lowered to an engine tape."]
         frame = _kernel_source_frame(err)
@@ -610,6 +617,29 @@ def _trace_kernel(
         if hint:
             parts.append(hint)
         raise TapeCompileError("\n".join(parts)) from err
+
+
+def _state_shape_error(system: Any, kernel: str, detail: str) -> ValueError:
+    """Explain a kernel/state-size mismatch, including structural rebuilds.
+
+    Mutating a shape parameter changes symbolic loop bounds, but cannot resize
+    the already-constructed state, field geometry, or initial condition. A fresh
+    catalogue constructor also regenerates any dimension-dependent default IC.
+    """
+    from tsdynamics.errors import InvalidParameterError, remedy
+
+    name = type(system).__name__
+    message = f"{name}: {kernel} {detail}."
+    structural = getattr(system, "_structural_params", ())
+    if structural:
+        values = ", ".join(f"{key}={system.params[key]!r}" for key in sorted(structural))
+        message += (
+            f" Structural parameters ({values}) determine the equation shape; "
+            "assigning them in params does not resize dim, field_shape or ic. "
+            "Use with_params to rebuild the shape and a matching default initial condition."
+        )
+        message += remedy(f"system = system.with_params({values})")
+    return InvalidParameterError(message)
 
 
 def _structural_params_hint(system: Any) -> str:
@@ -2195,7 +2225,9 @@ def lower_ode(system: Any, *, with_jacobian: bool = False) -> Tape:
         )
     )
     if len(exprs) != dim:
-        raise ValueError(f"_equations must return {dim} expressions, got {len(exprs)}")
+        raise _state_shape_error(
+            system, "_equations", f"must return {dim} expressions, got {len(exprs)}"
+        )
     rhs = [symengine.sympify(e) for e in exprs]
 
     return lower_expressions(
@@ -2674,7 +2706,9 @@ def lower_dde(system: Any) -> tuple[Tape, list[DelaySlot]]:
         )
     )
     if len(exprs) != dim:
-        raise ValueError(f"_equations must return {dim} expressions, got {len(exprs)}")
+        raise _state_shape_error(
+            system, "_equations", f"must return {dim} expressions, got {len(exprs)}"
+        )
 
     t_canon = symengine.Symbol("t")
     u_syms = [symengine.Symbol(f"u{i}") for i in range(dim)]
@@ -2881,8 +2915,24 @@ def lower_sde(system: Any, *, with_diffusion_jacobian: bool = False) -> LoweredS
         time_sym=t_canon,
         control_names=control_names,
     )
+    canonical_diffusion = [symengine.sympify(e).subs(subs) for e in diff_exprs]
+    if with_diffusion_jacobian:
+        # The implemented Milstein correction omits iterated cross-Wiener
+        # integrals. Independent driving processes alone do not make those
+        # terms vanish: g_k must depend only on its own state component.
+        for k, expression in enumerate(canonical_diffusion):
+            if any(u in expression.free_symbols for j, u in enumerate(u_syms) if j != k):
+                from tsdynamics.errors import InvalidParameterError
+
+                raise InvalidParameterError(
+                    f"{type(system).__name__}: solver='milstein' requires componentwise "
+                    f"diffusion g_k(X_k, t), but _diffusion component {k} depends on "
+                    "another state component. Cross-dependent noise needs iterated "
+                    "stochastic integrals that this solver does not simulate. "
+                    "Use solver='euler_maruyama' for this system."
+                )
     diffusion = lower_expressions(
-        [symengine.sympify(e).subs(subs) for e in diff_exprs],
+        canonical_diffusion,
         u_syms,
         param_syms=param_syms,
         time_sym=t_canon,

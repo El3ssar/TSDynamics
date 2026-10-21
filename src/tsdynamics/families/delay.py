@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any, ClassVar, cast
@@ -443,13 +444,19 @@ class DelaySystem(SystemBase, ABC):
         :class:`~tsdynamics.families.StochasticSystem` use — it was ``0.1``, a
         difference no mathematics asked for).  A map counts iterations instead.
         """
+        dt = float(n_or_dt) if n_or_dt is not None else self._default_step_dt
+        if not math.isfinite(dt) or dt <= 0.0:
+            raise InvalidParameterError(f"dt must be finite and positive, got {dt!r}.")
         if self._past_ic is None:
             self.reinit()
-        dt = float(n_or_dt) if n_or_dt is not None else self._default_step_dt
-        self._t_now = self._t_now + dt
+        next_time = self._t_now + dt
+        if not math.isfinite(next_time) or next_time == self._t_now:
+            raise InvalidParameterError(
+                f"dt={dt!r} cannot advance time from {self._t_now!r} at float64 precision."
+            )
         traj = self.run(
-            final_time=self._t_now,
-            dt=min(dt, self._t_now),
+            final_time=next_time,
+            dt=min(dt, next_time),
             ic=self._past_ic,
             rtol=self._step_rtol if self._step_rtol is not None else self._default_rtol,
             atol=self._step_atol if self._step_atol is not None else self._default_atol,
@@ -458,8 +465,9 @@ class DelaySystem(SystemBase, ABC):
         state = np.asarray(traj.y[-1], dtype=float)
         if not np.isfinite(state).all():
             raise ConvergenceError(
-                f"{type(self).__name__}: DDE diverged at t={self._t_now:.6g} during step()."
+                f"{type(self).__name__}: DDE diverged at t={next_time:.6g} during step()."
             )
+        self._t_now = next_time
         self._state_now = state.copy()
         return state
 

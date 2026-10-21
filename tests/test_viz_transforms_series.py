@@ -404,6 +404,41 @@ def test_a_series_too_short_to_diagnose_says_so():
         geometry(np.arange(4.0), "psd")
 
 
+@pytest.mark.parametrize("dt", [0.0, -0.1, np.nan, np.inf])
+def test_series_diagnostics_refuse_invalid_sample_spacing(dt):
+    with pytest.raises(InvalidParameterError, match="dt must be finite and positive"):
+        geometry(np.arange(16.0), "psd", dt=dt)
+
+
+@pytest.mark.parametrize("name", ["psd", "autocorrelation", "return_time"])
+def test_series_diagnostics_do_not_delete_missing_samples(name):
+    values = np.sin(np.arange(64.0))
+    values[20] = np.nan
+    with pytest.raises(InvalidInputError, match="finite samples.*interpolate"):
+        geometry(values, name)
+
+
+@pytest.mark.parametrize("shape", [(16,), (16, 2)])
+def test_unnamed_arrays_do_not_silently_replace_a_named_component(shape):
+    with pytest.raises(KeyError, match="no.*variables"):
+        series_of(np.ones(shape), components="z")
+
+
+def test_series_diagnostics_refuse_an_irregular_time_axis():
+    t = np.arange(16.0)
+    t[8:] += 0.5
+    trajectory = ts.Trajectory(t, np.sin(t)[:, None])
+    with pytest.raises(InvalidInputError, match="uniformly spaced"):
+        geometry(trajectory, "psd")
+
+
+def test_decimated_map_series_keeps_the_iteration_spacing():
+    system = ts.systems.Logistic()
+    trajectory = ts.Trajectory(np.arange(16.0), np.sin(np.arange(16.0))[:, None], system=system)
+    _, spacing, _, _ = series_of(trajectory[::2])
+    assert spacing == 2.0
+
+
 # ---------------------------------------------------------------------------
 # Rendering — the only evidence that matters
 # ---------------------------------------------------------------------------

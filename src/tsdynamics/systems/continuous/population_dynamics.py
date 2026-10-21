@@ -89,6 +89,11 @@ class CoevolvingPredatorPrey(ContinuousSystem):
     between stabilizing and disruptive regimes, and this coupling generates chaos
     even without external forcing.
 
+    Sustained chaotic attraction is unconfirmed at the shipped defaults. The
+    catalogue audit measured ``lambda_1 ≈ -3.2e-3`` over its standard window;
+    a longer-window positive estimate accompanied an escaping orbit, rather
+    than a bounded attractor. Check boundedness before interpreting exponents.
+
     Parameters
     ----------
     a1, a2, a3 : float
@@ -171,7 +176,10 @@ class KawczynskiStrizhak(ContinuousSystem):
 
     Notes
     -----
-    The default parameters lie in the chaotic regime.
+    The shipped defaults have not established sustained chaos in the catalogue
+    audit: leading finite-time exponents were near zero or negative across
+    tested starts (about ``-9.4e-3`` in the standard window and ``-1.3e-3`` over
+    the longer window). The default tag describes bursting, not confirmed chaos.
     """
 
     reference = "Strizhak & Kawczynski (1995), J. Phys. Chem. 99, 10830-10833"
@@ -259,6 +267,11 @@ class MacArthur(ContinuousSystem):
     With the phytoplankton parameters of Huisman & Weissing the model exhibits
     sustained chaotic competition of more species than resources ("the paradox
     of the plankton").  State is ``[N_1..N_5, R_1..R_5]``.
+
+    Chaos is not established for this implementation's shipped defaults: the
+    catalogue audit repeatedly measured a near-zero leading finite-time
+    exponent (about ``-1.55e-4``). The general model's chaotic regimes should
+    not be read as a guarantee about this parameter set and initial condition.
 
     Parameters
     ----------

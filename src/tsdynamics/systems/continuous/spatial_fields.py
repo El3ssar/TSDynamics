@@ -125,6 +125,7 @@ class GrayScott(ContinuousSystem):
         ic=None,
         dim: int | None = None,
         field_shape: tuple[int, ...] | None = None,
+        seed: int | None = None,
         **param_kwargs: float,
     ):
         # ``dim``/``field_shape`` are accepted and ignored: both are derived from
@@ -143,21 +144,24 @@ class GrayScott(ContinuousSystem):
             params,
             param_kwargs,
             {
-                "N": None if N is None else int(N),
+                "N": N,
                 "Du": None if Du is None else float(Du),
                 "Dv": None if Dv is None else float(Dv),
                 "F": None if F is None else float(F),
                 "k": None if k is None else float(k),
             },
+            integer_params=("N",),
         )
         n_val = int(p["N"])
         if n_val < 3:
             raise ValueError("GrayScott requires N >= 3.")
         if ic is None:
-            ic = self._nucleation_ic(n_val)
+            ic = self._nucleation_ic(n_val, seed=0 if seed is None else seed)
         # ``field_shape=(N, N)`` so a custom-N instance is self-describing (the
         # base resolves it onto ``traj.meta["field_shape"]``).
-        super().__init__(dim=2 * n_val * n_val, params=p, ic=ic, field_shape=(n_val, n_val))
+        super().__init__(
+            dim=2 * n_val * n_val, params=p, ic=ic, field_shape=(n_val, n_val), seed=seed
+        )
 
     @staticmethod
     def _nucleation_ic(N: int, *, seed: int = 0) -> np.ndarray:
@@ -172,8 +176,9 @@ class GrayScott(ContinuousSystem):
         v = np.zeros((N, N), dtype=float)
         c = N // 2
         r = max(3, N // 8)
-        u[c - r : c + r, c - r : c + r] = 0.5
-        v[c - r : c + r, c - r : c + r] = 0.25
+        patch = slice(max(0, c - r), min(N, c + r))
+        u[patch, patch] = 0.5
+        v[patch, patch] = 0.25
         u += 0.02 * rng.standard_normal((N, N))
         v += 0.02 * rng.standard_normal((N, N))
         return np.concatenate([u.ravel(), v.ravel()])
@@ -292,6 +297,7 @@ class SwiftHohenberg(ContinuousSystem):
         ic=None,
         dim: int | None = None,
         field_shape: tuple[int, ...] | None = None,
+        seed: int | None = None,
         **param_kwargs: float,
     ):
         # See GrayScott.__init__: both are derived from ``N`` and are accepted
@@ -306,18 +312,19 @@ class SwiftHohenberg(ContinuousSystem):
             params,
             param_kwargs,
             {
-                "N": None if N is None else int(N),
+                "N": N,
                 "L": None if L is None else float(L),
                 "r": None if r is None else float(r),
             },
+            integer_params=("N",),
         )
         n_val = int(p["N"])
         if n_val < 3:
             raise ValueError("SwiftHohenberg requires N >= 3.")
         if ic is None:
-            rng = np.random.default_rng(type(self)._ic_seed)
+            rng = np.random.default_rng(type(self)._ic_seed if seed is None else seed)
             ic = 0.1 * rng.standard_normal(n_val * n_val)
-        super().__init__(dim=n_val * n_val, params=p, ic=ic, field_shape=(n_val, n_val))
+        super().__init__(dim=n_val * n_val, params=p, ic=ic, field_shape=(n_val, n_val), seed=seed)
 
     @staticmethod
     def _equations(Y, t, *, N, L, r):

@@ -187,7 +187,7 @@
 
       <p class="ts-cite">
         If TSDynamics helps your research, please cite it — see
-        <a href="project/">Project · Citation</a> for the BibTeX entry and DOI.
+        <a href="project/citation/">Project · Citation</a> for the BibTeX entry and DOI.
       </p>
     </div>
 
@@ -212,10 +212,11 @@
       <div class="ts-card">
         <span class="no">No. 1</span>
         <h3>A native engine, no build step</h3>
-        <p>ODEs, delay equations and maps all lower to one Rust engine and run on
+        <p>ODEs, delay equations, stochastic equations and maps lower to one Rust engine and run on
         a built-in Cranelift JIT, with a bit-for-bit identical interpreter
-        alongside. No toolchain, nothing on disk: it compiles itself, in
-        milliseconds, once per system.</p>
+        alongside. Prebuilt wheels need no external toolchain. Lowering and
+        compilation happen in-process, with bounded memory caches and no
+        compilation cache on disk.</p>
       </div>
       <div class="ts-card">
         <span class="no">No. 2</span>
@@ -226,10 +227,11 @@
       </div>
       <div class="ts-card">
         <span class="no">No. 3</span>
-        <h3>One protocol, every analysis</h3>
+        <h3>A shared stepping protocol</h3>
         <p>Everything that steps — a map, a flow, a Poincaré section of a flow —
-        shares one protocol, so the toolkit composes: an orbit diagram over a
-        Poincaré map <em>is</em> a bifurcation diagram.</p>
+        shares one protocol. Each analysis declares its supported inputs, so
+        compatible tools compose: an orbit diagram over a Poincaré map
+        <em>is</em> a bifurcation diagram.</p>
       </div>
     </div>
   </section>

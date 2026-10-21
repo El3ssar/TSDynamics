@@ -78,6 +78,19 @@ class TestParamSet:
         p.a = 99.0
         assert p.param_hash() != h0
 
+    def test_inplace_union_keeps_identity_and_declaration_order(self) -> None:
+        p = ParamSet({"a": 1.0, "b": 2.0})
+        original = p
+        p |= {"b": 3.0, "a": 4.0}
+        assert p is original
+        assert p.as_tuple() == (4.0, 3.0)
+
+    def test_inplace_union_rejects_unknown_keys_atomically(self) -> None:
+        p = ParamSet({"a": 1.0, "b": 2.0})
+        with pytest.raises(KeyError, match="typo"):
+            p |= {"a": 99.0, "typo": 3.0}
+        assert p == {"a": 1.0, "b": 2.0}
+
 
 # ---------------------------------------------------------------------------
 # Trajectory

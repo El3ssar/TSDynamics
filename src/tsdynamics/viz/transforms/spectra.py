@@ -28,11 +28,10 @@ believing it:
 
 Log axes live in the *data*
 ---------------------------
-:class:`~tsdynamics.viz.transforms.Geometry` carries axis labels and limits but
-no axis **scale**, so a transform cannot ask for a log axis.  ``gali_curves``
-therefore plots :math:`\log_{10}` of the quantities and says so on the axis
-labels.  That is not merely a workaround: it makes the power-law references
-straight lines with an exact, stated slope, which is what one actually reads.
+``gali_curves`` plots :math:`\log_{10}` of the quantities and says so on the
+axis labels. This makes the power-law references straight lines with an exact,
+stated slope. Other transforms can declare logarithmic axes directly through
+``Geometry.axis_scales``.
 
 Every transform here is ``source="data"``: each accepts the already-computed
 result object (a :class:`~tsdynamics.analysis.LyapunovSpectrum`, a

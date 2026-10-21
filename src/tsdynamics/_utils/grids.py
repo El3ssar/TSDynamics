@@ -62,20 +62,12 @@ def make_output_grid(t0: float, tf: float, dt: float) -> np.ndarray:
 
     The endpoint tolerance
     ----------------------
-    ``tf`` is appended when ``t_arr`` is empty *or* its last sample sits below
-    ``tf - 1e-12``.  The small absolute slack matters: when ``dt`` divides the
-    window cleanly, the last ``arange`` sample lands on ``tf`` only up to
-    floating-point error — typically a fraction of a ULP *below* it.  Comparing
-    against the bare ``tf`` would then see ``t_arr[-1] < tf`` and append a second,
-    sub-ULP-spaced "endpoint", giving a spurious final segment of width ~1e-16.
-    The ``1e-12`` slack treats any sample already within that band of ``tf`` as
-    *being* the endpoint, so a cleanly-dividing window yields no duplicate tail.
-    It is an **absolute** tolerance (not relative) by deliberate design: the
-    integration windows here are O(1)–O(1e3) in time units and ``dt`` is rarely
-    below ~1e-6, so 1e-12 is far smaller than any meaningful step yet comfortably
-    larger than ``arange`` round-off — a relative tolerance would buy nothing and
-    complicate the contract.  (A pathological window with ``dt`` itself near
-    1e-12 is already rejected upstream as physically meaningless.)
+    A last interior sample within four ULPs of ``tf`` is replaced by the exact
+    endpoint, avoiding a duplicate roundoff-sized tail.  The slack is capped at
+    a small fraction of ``dt`` and never replaces the start sample: short time
+    units are valid, and even a sub-picosecond window must retain both bounds.
+    Building offsets from zero avoids accumulating the rounded ``t0 + dt``
+    increment when the start time is large compared with the sampling interval.
 
     This is the one chokepoint every flow family (ODE / DDE / SDE) and the
     engine run layer build their grid through, so it is also where the
@@ -136,10 +128,27 @@ def make_output_grid(t0: float, tf: float, dt: float) -> np.ndarray:
             rule=f"must run forward in time (be > the start time {t0!r})",
             hint="check the sign and that final_time exceeds t0",
         )
-    t_arr = np.arange(t0, tf, dt)
-    if t_arr.size == 0 or t_arr[-1] < tf - 1e-12:
-        t_arr = np.append(t_arr, tf)
-    return t_arr
+    span = tf - t0
+    if not math.isfinite(span):
+        raise invalid_value("final_time", tf, rule="must give a finite window length from t0")
+    # A single requested increment has exactly two distinct representable
+    # bounds, even when rounding makes ``tf - t0`` slightly larger than dt.
+    # It needs no interior lattice, so the multi-sample resolution guard below
+    # must not reject it. This is also the grid used by the live ODE stepper.
+    if tf == t0 + dt:
+        return np.array([t0, tf], dtype=np.float64)
+    if dt < span and dt < max(math.ulp(t0), math.ulp(tf)):
+        raise invalid_value(
+            "dt", dt, rule=f"is too small to advance time from t0={t0!r} at float64 precision"
+        )
+    t_arr = np.arange(0.0, span, dt)
+    if t0 != 0.0:
+        t_arr += t0
+    slack = min(4.0 * math.ulp(tf), dt * 1e-9)
+    if t_arr.size > 1 and (t_arr[-1] >= tf or tf - float(t_arr[-1]) <= slack):
+        t_arr[-1] = tf
+        return t_arr
+    return np.append(t_arr, tf)
 
 
 def __dir__() -> list[str]:

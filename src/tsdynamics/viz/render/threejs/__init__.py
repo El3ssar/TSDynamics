@@ -3,8 +3,8 @@
 This in-tree backend is a *data exporter*, not a drawer: it consumes a
 :class:`~tsdynamics.viz.spec.PlotSpec` and lowers its drawable layers into a
 **three.js BufferGeometry-ready** JSON-able payload — flat ``Float32``-style
-positions / colors / indices plus a top-level ``metadata`` block (labels / units /
-bounds / camera).  A web frontend reads the payload and builds
+positions, scalar colour channels and optional mesh indices, plus a top-level
+``metadata`` block (labels / bounds / camera). A web frontend reads the payload and builds
 ``THREE.BufferGeometry`` objects directly, with no re-running of the analysis.
 
 The geometry lowering — and the documented payload schema — live in

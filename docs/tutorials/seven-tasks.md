@@ -8,8 +8,8 @@ description: Seven tasks in one sitting — simulate a system, test it for chaos
 
 This is the cold-start page: seven things people actually come to a
 dynamical-systems library to do, each in a handful of lines, on one page, in
-order. Paste them in sequence into a fresh session — every line here is executed
-by the documentation gate, so what you see is what runs.
+order. Paste them in sequence into a fresh session. Install
+`tsdynamics[viz,interactive]` to render the plots and export the animations.
 
 If you only read one page, read this one. The rest of the site is the same
 material at depth.
@@ -43,9 +43,10 @@ len(traj)             # 10001 samples
 traj.meta["method"]   # the solver kernel that ran — 'rk45'
 ```
 
-`dt` is the **output sampling interval**, not an accuracy knob: the solver is
+For this adaptive ODE solver, `dt` is the **output sampling interval**: the solver is
 adaptive and uses genuine dense output, so a coarse `dt` costs resolution and
-nothing else. Accuracy is `rtol`/`atol` (`1e-9`/`1e-12` by default) and
+does not set its integration error tolerance. Accuracy is controlled by
+`rtol`/`atol` (`1e-9`/`1e-12` by default) and
 `max_step=` bounds the internal step when a feature is narrow.
 
 A map is the same verb with the horizon its mathematics actually has — a count:
@@ -63,7 +64,7 @@ just the signature:
 InvalidParameterError: final_time is not a valid Henon.run() keyword, got 10.0.
 final_time is a *flow* keyword: a map has no continuous time — its horizon is a
 count of iterations.
-    Henon().run(steps=1000)
+    ts.systems.Henon().run(steps=1000)
 ```
 
 Draw it:
@@ -76,8 +77,9 @@ ts.plot(traj, color="#4B3F9E", title="Lorenz")
 
 ## 2 · Is it chaotic?
 
-The Lyapunov spectrum is the defining measurement. It comes from the variational
-equations — exact, not finite-differenced — and **the result prints the answer**:
+The Lyapunov spectrum estimates how nearby trajectories separate. Here it comes
+from integrating the variational equations with the analytic Jacobian, and
+**the result prints the answer**:
 
 ```python
 spec = ts.analysis.lyapunov_spectrum(lor, final_time=300.0, dt=0.05, transient=40.0)
@@ -197,8 +199,9 @@ A single unstable equilibrium in a bounded 2-D flow means the orbits have to go
 *somewhere*: that is the limit cycle you will see in §6.
 
 For a map, `periodic_orbits` finds period-$p$ orbits the same way, and
-`method="interval"` swaps multi-start Newton for a rigorous interval enclosure
-that cannot silently miss a root.
+`fixed_points(..., method="interval")` replaces multi-start Newton with a
+deterministic interval branch-and-prune search. It uses ordinary floats without
+outward rounding, so it does not certify enclosures or guarantee completeness.
 
 ---
 
@@ -244,7 +247,9 @@ print(ts.analysis.basin_entropy(basins.labels))
 #     (44/64 boxes on the boundary, box size 5, log base 2.718)
 ```
 
-`Sbb > ln 2` would certify a **fractal** boundary — here it does not, because a
+`Sbb > ln 2` is the basin-entropy criterion for a **fractal** boundary under
+its sampling assumptions; a finite grid alone is not a proof. Here the criterion
+is not met, consistent with a
 smooth manifold separates the wells. And if you want the shares without the
 image, Monte-Carlo them instead (basin stability, Menck et al. 2013):
 
@@ -295,8 +300,8 @@ movie.save("vdp.html")     # ...or a real-time comet you can pan while it plays
 ```
 
 !!! tip "Animate on a solid background"
-    A GIF has no alpha channel, so a transparent animation flattens to one fill
-    colour. Give a movie a solid stage: `.background("#0B0F14")`.
+    GIF supports only fully transparent or opaque pixels, so fading trails look
+    best against a solid stage: `.background("#0B0F14")`.
 
 ---
 
@@ -338,12 +343,11 @@ print(rma.info)
 #   variables   prey, predator
 #   reference   Rosenzweig & MacArthur (1963), Am. Nat. 97, 209-223   doi:10.1086/282272
 #   defaults    solver=rk45  rtol=1e-09  atol=1e-12  dt=0.02  backend=jit
-#   analyses    ts.analysis.find(system) → 50
+#   analyses    ts.analysis.find(system) → 20
 ```
 
-There is no registration call and no build step — and **everything in tasks 1–6
-now works on it**, because every tool in the library is written against the same
-protocol:
+There is no registration call or external build step. The same ODE tools apply
+to this model, subject to each routine's dimension and mathematical assumptions:
 
 ```python
 traj = rma.run(final_time=200.0, dt=0.05, ic=[1.0, 0.5])
@@ -385,7 +389,7 @@ generates its documentation page and sweeps it into the test suite.
 | Every quantifier, with its literature | [Analysis](../analysis/index.md) |
 | The full plotting grammar — grids, primitives, themes | [Visualization](../visualization/index.md) |
 | The 177 built-in systems | [Systems](../systems/index.md) |
-| Chaos, certified end to end | [Anatomy of a chaotic attractor](chaotic-attractor.md) |
+| Numerical evidence for chaos | [Anatomy of a chaotic attractor](chaotic-attractor.md) |
 | Where chaos comes from | [The road to chaos](bifurcations.md) |
 | Only data, no equations | [Reconstruction from one signal](reconstruction.md) |
 | Multistability in depth | [Basins & multistability](basins-multistability.md) |

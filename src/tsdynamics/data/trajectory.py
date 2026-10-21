@@ -357,8 +357,8 @@ def _axis_dt(t: Any) -> float | None:
     """Return the uniform step of time axis ``t``, or ``None`` if it has none.
 
     The single reading of "what is one sample worth here", shared by
-    :attr:`Trajectory.dt` and by the row-selection meta rebuild, so the number a
-    trajectory reports and the number it records cannot drift apart.
+    :attr:`Trajectory.dt`, the row-selection meta rebuild, and the series plot
+    transforms, so their sampling intervals cannot drift apart.
     """
     axis = np.asarray(t, dtype=float)
     if axis.size < 2:
@@ -404,11 +404,13 @@ class Trajectory:
 
     Examples
     --------
-    >>> traj = lor.run(final_time=100)
+    >>> import tsdynamics as ts
+    >>> lor = ts.systems.Lorenz()
+    >>> traj = lor.run(final_time=100, ic=[1.0, 1.0, 1.0])
     >>> traj.dim
     3
-    >>> traj["x"]            # named component (via the class's ``variables``)
-    array([...])
+    >>> traj["x"].shape      # named component (via the class's ``variables``)
+    (5001,)
     >>> traj.after(20.0)     # drop transient
     Trajectory of Lorenz  (n: ..., dim: 3, var: x, y, z)   t ∈ [20, 100]
         measure it:  ts.analysis.find(traj)   ·   draw it:  ts.plot(traj)
@@ -438,8 +440,8 @@ class Trajectory:
         "tolerates that — it is what lets plain arrays reach the analysis layer.",
         "meta": "Provenance of the run that produced this: system name, "
         "parameter snapshot, solver, ``dt``, tolerances, ``ic``, library version. "
-        "Preserved verbatim through slicing and :meth:`after`, which is why it "
-        "records what was *asked for* and :attr:`dt` reads the ``t`` axis instead.",
+        "Preserved through slicing and :meth:`after`; ``dt``, ``t0`` and ``ic`` "
+        "are re-derived for the selected rows when those keys are present.",
         "_kdtree": None,
         "_unbounded": None,
         "_unbounded_checked": None,

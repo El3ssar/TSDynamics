@@ -1,4 +1,4 @@
-"""Built-in system catalogue — and the registry verbs that search it.
+"""System catalogue — built-in and installed plugin classes, with search verbs.
 
 Every built-in system class is re-exported flat here, so the canonical path to a
 model is ``tsdynamics.systems.<Name>`` (e.g. ``tsdynamics.systems.Lorenz``) — no
@@ -16,6 +16,13 @@ search — and it is the one with 177 members::
 
 The per-category submodules (``continuous`` / ``discrete``) remain importable for
 finer navigation; they are off the listing, like every other internal submodule.
+
+Installed ``tsdynamics.systems`` entry points load on the first import of this
+namespace. Each must expose a concrete family subclass under its class name.
+Valid plugins join the same listing, ``names``, ``get`` and ``find``; ordinary
+user classes remain available through ``registry``. Plugins cannot replace an
+existing namespace or registered system name, and a broken plugin warns while
+the rest of the catalogue remains usable.
 """
 
 from __future__ import annotations
@@ -27,8 +34,7 @@ from typing import Any
 from . import continuous, discrete
 
 # Flat re-export of every catalogue class. Adding a system to a category module's
-# ``__all__`` automatically surfaces it here (and at ``tsdynamics.<Name>`` via the
-# top-level lazy accessor) — no manual edit needed.
+# ``__all__`` automatically surfaces it here — no manual edit needed.
 for _name in continuous.__all__:
     globals()[_name] = getattr(continuous, _name)
 for _name in discrete.__all__:
@@ -41,7 +47,7 @@ __all__ = ["find", "get", "names", *_SYSTEM_NAMES]
 
 
 def names() -> list[str]:
-    """Return every catalogue system's class name, sorted.
+    """Return every built-in and accepted plugin system's class name, sorted.
 
     Returns
     -------
@@ -85,7 +91,7 @@ def get(name: str) -> type:
 
     from tsdynamics.errors import InvalidParameterError
 
-    cls = globals().get(name)
+    cls = globals().get(name) if isinstance(name, str) and name in _SYSTEM_NAMES else None
     if isinstance(cls, type):
         return cls
     close = difflib.get_close_matches(name, _SYSTEM_NAMES, n=3, cutoff=0.6)
@@ -138,7 +144,7 @@ class SystemList(list):  # type: ignore[type-arg]
 
         if not self:
             return self._header
-        entries = {e.cls: e for e in registry.all_systems()}
+        entries = {e.cls: e for e in registry.all_systems(builtin=None)}
         lines = [self._header]
         for family in ("ode", "dde", "map", "sde"):
             rows = [c for c in self if getattr(entries.get(c), "family", None) == family]
@@ -251,7 +257,10 @@ def find(
 
     words = [w for w in str(what).lower().split() if w]
     out: list[type] = []
-    for entry in registry.all_systems():
+    exported = {globals()[name] for name in _SYSTEM_NAMES}
+    for entry in registry.all_systems(builtin=None):
+        if entry.cls not in exported:
+            continue
         if family is not None and entry.family != family:
             continue
         if dim is not None and entry.dim != dim:
@@ -294,3 +303,42 @@ def __getattr__(name: str) -> Any:
         return get(name)
     except InvalidParameterError as exc:
         raise AttributeError(str(exc)) from None
+
+
+def _discover_plugins() -> None:
+    """Expose plugins after top-level initialization has bound this namespace."""
+    import inspect
+    import keyword
+    import warnings
+
+    from tsdynamics import registry
+    from tsdynamics.families.base import SystemBase
+    from tsdynamics.plugins import SYSTEMS_GROUP, load_plugins
+
+    global _SYSTEM_NAMES
+    for name, cls in load_plugins(SYSTEMS_GROUP, reject_duplicates=True).items():
+        try:
+            if not name.isidentifier() or keyword.iskeyword(name) or name.startswith("_"):
+                raise ValueError("the entry-point name must be a public Python class name")
+            if name in globals():
+                raise ValueError("the name already belongs to the system namespace")
+            if (
+                not isinstance(cls, type)
+                or not issubclass(cls, SystemBase)
+                or inspect.isabstract(cls)
+            ):
+                raise TypeError("the target must be a concrete TSDynamics family subclass")
+            if name != cls.__name__:
+                raise ValueError(f"the entry-point name must match the class name {cls.__name__!r}")
+            entries = registry.all_systems(builtin=None)
+            entry = next((entry for entry in entries if entry.cls is cls), None)
+            if entry is None or entry.family not in _FAMILY_WORD:
+                raise TypeError("the target must implement an ODE, DDE, map or SDE family")
+            if any(entry.name == name and entry.cls is not cls for entry in entries):
+                raise ValueError("a different registered system already uses this name")
+        except Exception as exc:  # noqa: BLE001 - isolate invalid third-party metadata
+            warnings.warn(f"ignored system plugin {name!r}: {exc}", stacklevel=2)
+            continue
+        globals()[name] = cls
+        _SYSTEM_NAMES = (*_SYSTEM_NAMES, name)
+        __all__.append(name)

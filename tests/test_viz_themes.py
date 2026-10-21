@@ -130,6 +130,23 @@ def test_the_house_style_lands_on_matplotlib(house, traj):
         plt.close(fig)
 
 
+@pytest.mark.parametrize("components", [[0, 1], [0, 1, 2]])
+@pytest.mark.parametrize("location", ["right", "bottom"])
+def test_dark_theme_keeps_colorbar_labels_readable(traj, components, location):
+    pytest.importorskip("matplotlib")
+    from matplotlib.colors import to_rgba
+
+    spec = ts.plot(traj, components=components, color_by="time").theme("dark")
+    spec.colorize(colorbar={"location": location, "tickformat": "%.1f", "label": "time"})
+    figure = spec.render("matplotlib")
+    figure.canvas.draw()
+    axis = figure.axes[-1].xaxis if location == "bottom" else figure.axes[-1].yaxis
+    expected = to_rgba(ts.viz.themes.get("dark").foreground)
+    assert to_rgba(axis.label.get_color()) == expected
+    assert all(to_rgba(label.get_color()) == expected for label in axis.get_ticklabels())
+    assert all("." in label.get_text() for label in axis.get_ticklabels())
+
+
 def test_the_house_style_lands_on_plotly(house, traj):
     """plotly follows the palette through ``layout.colorway`` — its own idiom for it."""
     pytest.importorskip("plotly")

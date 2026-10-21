@@ -635,7 +635,7 @@ class SanUmSrisuchinwong(ContinuousSystem):
 
 
 class DequanLi(ContinuousSystem):
-    """Dequan Li system — a three-scroll chaotic attractor.
+    """Dequan Li flow, associated with three-scroll chaotic regimes.
 
     A three-dimensional smooth autonomous quadratic flow, due to Dequan Li, in
     the Lorenz family but with an extra ``x*z`` term in the ``x`` equation and an
@@ -658,7 +658,11 @@ class DequanLi(ContinuousSystem):
 
     Notes
     -----
-    Chaotic at the default parameters, exhibiting a three-scroll attractor.
+    Sustained chaos is not established at the shipped defaults. The catalogue
+    audit measured leading finite-time exponents near zero (about ``2.9e-4``
+    over the standard window and ``1.5e-4`` over a five-times-longer window)
+    from four starts. This does not distinguish periodic from quasiperiodic
+    motion, so the default behavior is left unclassified.
     """
 
     reference = "Li (2008), Phys. Lett. A 372, 387-393"

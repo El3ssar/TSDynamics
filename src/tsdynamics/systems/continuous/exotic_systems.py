@@ -498,18 +498,22 @@ class NewtonLiepnik(ContinuousSystem):
 # could be confidently matched to this specific three-dimensional Robinson
 # vector field; the maintainer should confirm the original reference.
 class Robinson(ContinuousSystem):
-    """Robinson system: a Lorenz-type attractor from a Duffing-like oscillator.
+    """Robinson-labelled flow built from a Duffing-like oscillator.
 
     A three-dimensional flow built from a Duffing-like ``x``–``y`` oscillator
     (double-well restoring force ``x - 2*x**3``) coupled to a slow ``z`` mode
-    driven by ``x**2``. For suitable parameters it produces a Lorenz-type
-    chaotic attractor.
+    driven by ``x**2``. A chaotic parameter regime has not been validated for
+    this catalogue entry.
 
     Note
     ----
     The catalogue carries this vector field without a confirmed primary
     citation: no published source could be confidently matched to this specific
     three-dimensional form (see the module-level ``TODO`` above the class).
+    At the shipped defaults, the catalogue audit measured near-zero leading
+    finite-time exponents whose signs depend on the initial condition
+    (approximately ``-6.5e-4`` to ``8.8e-4`` over the longer window). A chaotic
+    default attractor is therefore unconfirmed.
 
     Parameters
     ----------

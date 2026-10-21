@@ -382,8 +382,8 @@ def gali(
     --------
     >>> gali(Henon(), k=2, n=60).is_chaotic()          # exponential collapse
     True
-    >>> float(gali(Lorenz(), k=2, final_time=25.0))    # ~0: Lorenz is chaotic
-    0.0...
+    >>> float(gali(Lorenz(ic=[1.0, 1.0, 1.0]), k=2, final_time=25.0)) < 1e-6
+    True
 
     References
     ----------
@@ -432,6 +432,14 @@ def gali(
     else:
         if n is not None:
             raise InvalidParameterError("n applies to maps; use final_time/dt for a flow.")
+        if (
+            isinstance(n_internal, bool)
+            or not isinstance(n_internal, (int, np.integer))
+            or n_internal < 1
+        ):
+            raise InvalidParameterError(
+                "n_internal must be a positive integer (RK4 sub-steps per dt)."
+            )
         t_end = 100.0 if final_time is None else float(final_time)
         step_dt = 0.1 if dt is None else float(dt)
         if step_dt <= 0.0:

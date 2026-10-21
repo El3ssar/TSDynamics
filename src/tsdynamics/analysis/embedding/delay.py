@@ -87,6 +87,10 @@ class MutualInformation(ArrayResult):
         bins = self.meta.get("bins")
         n = self.meta.get("n_samples")
         floor = 0.0 if bins is None or n is None else _mi_noise_floor(int(bins), int(n))
+        # The independence bias is expressed in nats.  It must be compared in
+        # the same units as the curve: changing the logarithm base must never
+        # change the recommended delay.
+        floor /= float(np.log(self.meta.get("base", np.e)))
         return _select_delay(curve, floor=floor)
 
     def __plot_spec__(self, kind: str | None = None) -> Any:
@@ -213,8 +217,9 @@ def mutual_information(
         Number of histogram bins per axis.  Default: a sample-size-dependent
         rule, ``clip(sqrt(N/5), 16, 128)``.
     base : float, default ``e``
-        Logarithm base — ``e`` for nats, ``2`` for bits.  Only rescales the
-        curve; the location of the first minimum is unaffected.
+        Logarithm base — ``e`` for nats, ``2`` for bits.  Must be finite and
+        greater than 1.  Only rescales the curve; the recommended delay is
+        unaffected.
     components : int or str, optional
         Component selector for a multi-component input.
 
@@ -229,8 +234,9 @@ def mutual_information(
     Raises
     ------
     ValueError
-        If ``max_delay`` is negative, ``bins`` is less than ``2``, or the series
-        is constant (its range collapses, leaving the histogram undefined).
+        If ``max_delay`` is negative, ``bins`` is less than ``2``, ``base`` is
+        not finite and greater than 1, or the series is constant (its range
+        collapses, leaving the histogram undefined).
 
     References
     ----------
@@ -256,6 +262,9 @@ def mutual_information(
     nbins = int(bins) if bins is not None else _auto_bins(n)
     if nbins < 2:
         raise ValueError("bins must be >= 2.")
+    base = float(base)
+    if not np.isfinite(base) or base <= 1.0:
+        raise ValueError("base must be finite and greater than 1 (e for nats, 2 for bits).")
     log = np.log if base == np.e else (lambda v: np.log(v) / np.log(base))
 
     # A shared, fixed bin grid over the series range keeps marginals consistent
@@ -293,6 +302,7 @@ def mutual_information(
             # floor (``_mi_noise_floor``) without re-deriving the binning rule.
             "bins": nbins,
             "n_samples": n,
+            "base": base,
         },
     )
 
@@ -433,10 +443,10 @@ def optimal_delay(
 
     Notes
     -----
-    If no first minimum / crossing is found within ``max_delay`` (e.g. a
-    slowly-decaying curve), the criterion's global fallback is used — the
-    location of the smallest mutual information, or ``max_delay`` for the
-    autocorrelation rules — so a usable delay is always returned.
+    If no significant mutual-information minimum is found, the recommendation
+    is 1 when the curve has reached its independence floor, or the largest lag
+    when the curve is still above that floor.  The autocorrelation rules use
+    their largest available lag when no crossing is found.
 
     The mutual-information criterion is the more widely recommended nonlinear
     measure (Fraser & Swinney 1986); the autocorrelation rules are the classic

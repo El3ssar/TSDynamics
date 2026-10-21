@@ -1,5 +1,5 @@
 ---
-description: A complete walkthrough of a chaotic flow — define the Lorenz system, integrate it, plot the butterfly, then certify the chaos with sensitive dependence, the Lyapunov spectrum, the Kaplan–Yorke dimension, and a correlation-dimension cross-check.
+description: A complete walkthrough of a chaotic flow — define the Lorenz system, integrate it, plot the butterfly, then quantify evidence for chaos with sensitive dependence, the Lyapunov spectrum, the Kaplan–Yorke dimension, and a correlation-dimension cross-check.
 ---
 
 <span class="ts-kicker">Tutorial · Anatomy of a chaotic attractor</span>
@@ -8,8 +8,8 @@ description: A complete walkthrough of a chaotic flow — define the Lorenz syst
 
 Everyone has seen the Lorenz butterfly. This tutorial takes it apart. We start
 from three lines of differential equations, integrate them, and draw the
-attractor — and then we do the thing a picture alone can never do: we *certify*
-that the motion is genuinely chaotic and put numbers on it. By the end you will
+attractor, then quantify numerical evidence for chaos. These finite-time
+estimates do not constitute a mathematical proof. By the end you will
 have watched two identical-looking states pull apart, measured the exponential
 rate at which they do, read the attractor's fractal dimension straight off that
 measurement, and confirmed it a second, independent way. That chain — integrate,
@@ -240,8 +240,8 @@ animation model.
 
 ## What you built
 
-From a catalogue system and half a dozen calls you produced the complete
-chaos certificate: the attractor drawn, sensitive dependence witnessed, the
+From a catalogue system and half a dozen calls you gathered numerical evidence
+for chaos: the attractor drawn, sensitive dependence witnessed, the
 Lyapunov spectrum computed with its signs read, the phase-volume contraction
 checked against theory, and the fractal dimension pinned down two independent
 ways. Every result carries its settings in `traj.meta` / the result's `.meta`,

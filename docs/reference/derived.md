@@ -7,8 +7,8 @@ description: API reference for tsdynamics.derived — PoincareMap, StroboscopicM
 # Derived systems
 
 Wrappers that re-present an existing system through a new lens while keeping the
-[`System`](base.md) protocol intact, so every analysis composes with them
-transparently — and so you `run` them exactly as you ran the original. Prose
+[`System`](base.md) protocol intact. Analyses work with a derived view when its
+family and capabilities meet their requirements, and it still answers `run`. Prose
 introduction: [the mental model](../start/concepts.md#derived-systems-composition).
 
 Two of them are reached by a **verb on the system**, because they speak the same

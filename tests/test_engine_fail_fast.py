@@ -41,19 +41,22 @@ pytestmark = pytest.mark.filterwarnings("ignore::RuntimeWarning")
 # 1e150 escape scale.  Measured before the fix: 33.0 s.  After: 0.41 s.
 _BAD_START = [-44.529592, -22.733539, -49.582328]
 
-# Generous enough to survive a loaded CI box (the fixed path measures ~0.4 s and
-# the unfixed one 33 s, so anything in between separates them unambiguously).
-_PATIENCE_SECONDS = 8.0
+# Measure solver work in process CPU seconds. Wall time also includes scheduler
+# starvation from other jobs (the fixed path took 17.9 s wall on a busy host).
+# Keep the original 8 s budget: the fixed path uses ~0.4 s, the unfixed one ~33 s.
+# Signal/deadlock responsiveness has separate tests in test_engine_process_safety.
+_CPU_BUDGET_SECONDS = 8.0
 
 
 def _timed(fn):
-    """Run ``fn``, returning ``(elapsed_seconds, raised_exception_or_None)``."""
-    t0 = time.perf_counter()
+    """Return CPU seconds, wall seconds, and the exception (if any)."""
+    t0 = time.process_time()
+    wall0 = time.perf_counter()
     try:
         fn()
     except Exception as exc:  # noqa: BLE001 - the exception *is* the measurement
-        return time.perf_counter() - t0, exc
-    return time.perf_counter() - t0, None
+        return time.process_time() - t0, time.perf_counter() - wall0, exc
+    return time.process_time() - t0, time.perf_counter() - wall0, None
 
 
 class _Blowup(ts.ContinuousSystem):
@@ -93,18 +96,18 @@ class TestABadStartIsRefusedQuickly:
     """The headline: the same refusal, in about a second instead of half a minute."""
 
     def test_a_diverging_start_is_refused_in_about_a_second(self):
-        elapsed, exc = _timed(
+        cpu_seconds, wall_seconds, exc = _timed(
             lambda: ts.systems.LorenzBounded().run(final_time=100.0, dt=0.01, ic=_BAD_START)
         )
         assert exc is not None, "a start that cannot be integrated must be refused"
-        assert elapsed < _PATIENCE_SECONDS, (
-            f"the refusal took {elapsed:.1f}s; it used to take 33s and the whole "
-            "point of the span-relative step floor is that it no longer does"
+        assert cpu_seconds < _CPU_BUDGET_SECONDS, (
+            f"the refusal used {cpu_seconds:.1f} CPU seconds ({wall_seconds:.1f}s wall); "
+            "it used to use 33s before the span-relative step floor"
         )
 
     def test_the_refusal_still_says_what_it_always_said(self):
         """Fail fast, not differently: same class, same advice, same words."""
-        _, exc = _timed(
+        _, _, exc = _timed(
             lambda: ts.systems.LorenzBounded().run(final_time=100.0, dt=0.01, ic=_BAD_START)
         )
         assert isinstance(exc, ts.errors.StepBudgetError)
@@ -131,10 +134,12 @@ class TestABadStartIsRefusedQuickly:
         """
         verdicts = {}
         for dt in (0.01, 1.0):
-            elapsed, exc = _timed(
+            cpu_seconds, wall_seconds, exc = _timed(
                 lambda dt=dt: ts.systems.LorenzBounded().run(final_time=100.0, dt=dt, ic=_BAD_START)
             )
-            assert elapsed < _PATIENCE_SECONDS, f"dt={dt} took {elapsed:.1f}s"
+            assert cpu_seconds < _CPU_BUDGET_SECONDS, (
+                f"dt={dt} used {cpu_seconds:.1f} CPU seconds ({wall_seconds:.1f}s wall)"
+            )
             verdicts[dt] = type(exc).__name__
         assert verdicts[0.01] == verdicts[1.0] == "StepBudgetError", verdicts
 
@@ -201,17 +206,21 @@ class TestABlowUpStillSaysItDiverged:
     """
 
     def test_a_polynomial_blow_up_is_reported_as_a_divergence(self):
-        elapsed, exc = _timed(lambda: _Blowup().run(final_time=10.0, dt=0.01, ic=[1.0]))
+        cpu_seconds, wall_seconds, exc = _timed(
+            lambda: _Blowup().run(final_time=10.0, dt=0.01, ic=[1.0])
+        )
         assert isinstance(exc, ts.errors.ConvergenceError)
         assert not isinstance(exc, ts.errors.StepBudgetError), (
             "x' = x² escapes to 1e150; calling that a stalled run would send the "
             "user to tune rtol when their trajectory left the building"
         )
         assert "diverged" in str(exc)
-        assert elapsed < _PATIENCE_SECONDS
+        assert cpu_seconds < _CPU_BUDGET_SECONDS, (
+            f"blow-up used {cpu_seconds:.1f} CPU seconds ({wall_seconds:.1f}s wall)"
+        )
 
     def test_an_exponential_blow_up_is_reported_as_a_divergence(self):
-        _, exc = _timed(lambda: _LogBlowup().run(final_time=5.0, dt=0.01, ic=[0.0]))
+        _, _, exc = _timed(lambda: _LogBlowup().run(final_time=5.0, dt=0.01, ic=[0.0]))
         assert isinstance(exc, ts.errors.ConvergenceError)
         assert not isinstance(exc, ts.errors.StepBudgetError)
         assert "diverged" in str(exc)

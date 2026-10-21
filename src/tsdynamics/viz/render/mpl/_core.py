@@ -1262,6 +1262,8 @@ def _apply_colorbar(
     mappable: ScalarMappable | None,
     colorbar: Colorbar | None,
     meta: dict[str, Any] | None = None,
+    *,
+    theme: Theme | None = None,
 ) -> None:
     """Attach a colorbar for ``mappable`` honouring a :class:`Colorbar` spec.
 
@@ -1289,6 +1291,11 @@ def _apply_colorbar(
             location=colorbar.location,
             shrink=_aspect_shrink(ax, colorbar.location),
         )
+    if theme is not None:
+        _apply_theme_to_figure(fig, cb.ax, theme)
+        if theme.foreground is not None:
+            cb.ax.xaxis.get_offset_text().set_color(theme.foreground)
+            cb.ax.yaxis.get_offset_text().set_color(theme.foreground)
     if colorbar.label:
         label_kw: dict[str, Any] = {}
         if colorbar.label_size is not None:
@@ -1302,10 +1309,11 @@ def _apply_colorbar(
         import matplotlib.ticker as mticker
 
         fmt_str = colorbar.tickformat
+        axis = cb.ax.xaxis if cb.orientation == "horizontal" else cb.ax.yaxis
         if "{" in fmt_str:
-            cb.ax.yaxis.set_major_formatter(mticker.StrMethodFormatter(fmt_str))
+            axis.set_major_formatter(mticker.StrMethodFormatter(fmt_str))
         else:
-            cb.ax.yaxis.set_major_formatter(mticker.FormatStrFormatter(fmt_str))
+            axis.set_major_formatter(mticker.FormatStrFormatter(fmt_str))
     if colorbar.label_size is not None:
         cb.ax.tick_params(labelsize=float(colorbar.label_size))
 
@@ -1659,7 +1667,7 @@ def _draw_2d_panel(
     _apply_theme_grid(ax, spec, theme)
     _apply_axes(ax, spec, preset, theme)
     if colorbar:
-        _apply_colorbar(fig, ax, mappable, spec.colorbar, spec.meta)
+        _apply_colorbar(fig, ax, mappable, spec.colorbar, spec.meta, theme=theme)
     _apply_legend(ax, spec, theme)
     _apply_annotations(ax, spec.annotations)
     return mappable

@@ -21,6 +21,7 @@ from collections.abc import Mapping
 
 import numpy as np
 import pytest
+from _analysis_returns import NON_RESULT_RETURNS
 
 import tsdynamics as ts
 from tsdynamics import registry
@@ -154,50 +155,20 @@ def test_registry_names_match_entry_names():
 # ---------------------------------------------------------------------------
 # Result-object contract (stream WS-WRAP)
 #
-# Every registered analysis returns a self-describing AnalysisResult (carrying
-# .meta), never a bare float/ndarray/list — the v4 result-model invariant.  The
-# sweep below is registry-driven, so a new analysis joins it with zero edits; a
-# function that forgets to wrap its return fails loudly here.
+# Numeric-result analyses share AnalysisResult.  Supported alternative return
+# shapes are pinned in NON_RESULT_RETURNS, with annotation and runtime checks.
+# A new analysis joins the registry sweep automatically.
 # ---------------------------------------------------------------------------
 
 #: Registered analyses that legitimately return something other than an
 #: ``AnalysisResult``, with the type they DO return.  ``poincare_section`` returns
 #: a :class:`~tsdynamics.derived.PoincareSection` — a :class:`~tsdynamics.data.Trajectory`
-#: subclass carrying section intent + the ``.summary()`` / ``.to_dict()`` / ``.plot``
+#: subclass carrying section intent + the readable repr / ``.to_dict()`` / ``.plot``
 #: result surface (stream WS-POINCARE-API, issue #209) — rather than an
 #: ``AnalysisResult`` proper, so the section keeps all the trajectory affordances.
 _RESULT_CARVE_OUTS: dict[str, type] = {
     "poincare_section": PoincareSection,
 }
-
-#: Registered analyses that return a **plain value** — an array, a float, a
-#: tuple, a list of small records.  v6 promoted these onto the public surface
-#: (CONTRACT §5.7: the eight ``planar`` field analyses had no door at all, and a
-#: user who wanted FTLE *numbers* rather than a picture could not reach them), and
-#: promoting them collided with §4.2 r1 ("every registered analysis returns an
-#: ``AnalysisResult``").  §2.4's 53-name listing is the harder contract, so they
-#: are registered, and the honest record of the exception is THIS table plus the
-#: registry's own ``returns=`` field: an analysis either DECLARES the result class
-#: it returns, or it is listed here.  Giving the 13 result wrappers is a v6.1
-#: item (it moves the returned *type*, in two files this slot does not own).
-_PLAIN_VALUE_ANALYSES: frozenset[str] = frozenset(
-    {
-        "autocorrelation",
-        "correlation_sum",
-        "dimension_spectrum",
-        "escape_time_field",
-        "estimate_dt_from_sagitta",
-        "flow_field",
-        "ftle_field",
-        "invariant_density",
-        "nullclines",
-        "sagitta_profile",
-        "set_distance",
-        "streamlines",
-        "trace_determinant",
-        "transient_time_field",
-    }
-)
 
 
 def _return_annotation_types(fn: object) -> tuple[object, ...]:
@@ -228,18 +199,18 @@ def _return_annotation_types(fn: object) -> tuple[object, ...]:
 def test_analysis_returns_analysis_result(analysis_entry):
     """Every registered analysis declares an ``AnalysisResult`` return (or a carve-out).
 
-    Freezes the v4 result-model invariant: bare ``float``/``ndarray``/``list``
-    returns are gone.  The check reads the (resolved) return annotation, so it
-    runs without constructing inputs for all 48 analyses — the per-area test
-    modules verify the *runtime* objects.
+    Alternative return shapes have exact contracts in NON_RESULT_RETURNS; all
+    other entries must declare an AnalysisResult class matching their resolved
+    return annotation.  Runtime checks complement this static sweep.
     """
     name = analysis_entry.name
     types = _return_annotation_types(analysis_entry.obj)
 
-    if name in _PLAIN_VALUE_ANALYSES:
+    if name in NON_RESULT_RETURNS:
+        assert typing.get_type_hints(analysis_entry.obj).get("return") == NON_RESULT_RETURNS[name]
         assert analysis_entry.metadata.get("returns") is None, (
             f"{name!r} is listed as a plain-value analysis but DECLARES returns="
-            f"{analysis_entry.metadata['returns']!r}; drop it from _PLAIN_VALUE_ANALYSES"
+            f"{analysis_entry.metadata['returns']!r}; remove its NON_RESULT_RETURNS entry"
         )
         return
 
@@ -261,6 +232,76 @@ def test_analysis_returns_analysis_result(analysis_entry):
     )
     assert declared in types, (
         f"analysis {name!r} declares returns={declared.__name__} but is annotated {types}"
+    )
+
+
+def test_non_result_return_contracts_have_no_stale_registry_entries():
+    assert set(NON_RESULT_RETURNS) <= set(registry.analyses.names())
+
+
+def _matches_return_annotation(value, annotation):
+    origin = typing.get_origin(annotation)
+    args = typing.get_args(annotation)
+    if origin is tuple:
+        return (
+            isinstance(value, tuple)
+            and len(value) == len(args)
+            and all(
+                _matches_return_annotation(item, expected)
+                for item, expected in zip(value, args, strict=True)
+            )
+        )
+    if origin is list:
+        return isinstance(value, list) and all(
+            _matches_return_annotation(v, args[0]) for v in value
+        )
+    if origin is dict:
+        return isinstance(value, dict) and all(
+            _matches_return_annotation(k, args[0]) and _matches_return_annotation(v, args[1])
+            for k, v in value.items()
+        )
+    return isinstance(value, annotation)
+
+
+@pytest.mark.parametrize("name", sorted(NON_RESULT_RETURNS))
+def test_non_result_analysis_runtime_return_matches_its_contract(name):
+    """Supported alternative returns are executed and checked, never xfailed."""
+    if name == "nullclines":
+        pytest.importorskip("contourpy")
+    flow = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0])
+    window = {"xlim": (-1.0, 1.0), "ylim": (-1.0, 1.0), "grid": 5}
+    t = np.linspace(0.0, 20.0, 200)
+    curve = np.column_stack([np.cos(t), np.sin(t)])
+    axis = np.linspace(0.0, 1.0, 30)
+    points = np.column_stack([a.ravel() for a in np.meshgrid(axis, axis)])
+    cases = {
+        "autocorrelation": lambda: ts.analysis.autocorrelation(curve[:, 0], max_delay=10),
+        "correlation_sum": lambda: ts.analysis.correlation_sum(points, theiler=0),
+        "dimension_spectrum": lambda: ts.analysis.dimension_spectrum(points, qs=[2.0]),
+        "escape_time_field": lambda: ts.analysis.escape_time_field(
+            flow, final_time=0.01, chunks=1, escape=lambda u: np.ones(len(u), dtype=bool), **window
+        ),
+        "estimate_dt_from_sagitta": lambda: ts.analysis.estimate_dt_from_sagitta(
+            curve, t[1] - t[0], epsilon=0.05
+        ),
+        "flow_field": lambda: ts.analysis.flow_field(flow, **window),
+        "ftle_field": lambda: ts.analysis.ftle_field(flow, final_time=0.01, **window),
+        "invariant_density": lambda: ts.analysis.invariant_density(curve[:, 0], bins=10),
+        "nullclines": lambda: ts.analysis.nullclines(flow, **window),
+        "sagitta_profile": lambda: ts.analysis.sagitta_profile(curve),
+        "set_distance": lambda: ts.analysis.set_distance(curve, curve + 1.0),
+        "streamlines": lambda: ts.analysis.streamlines(
+            flow, seeds=2, steps=3, **{k: v for k, v in window.items() if k != "grid"}
+        ),
+        "trace_determinant": lambda: ts.analysis.trace_determinant(flow, points=[[0.0, 0.0, 0.0]]),
+        "transient_time_field": lambda: ts.analysis.transient_time_field(
+            flow, final_time=0.01, chunks=1, settled=lambda u: np.ones(len(u), dtype=bool), **window
+        ),
+    }
+    assert set(cases) == set(NON_RESULT_RETURNS)
+    result = cases[name]()
+    assert _matches_return_annotation(result, NON_RESULT_RETURNS[name]), (
+        f"{name} returned {type(result).__name__}, expected {NON_RESULT_RETURNS[name]}"
     )
 
 

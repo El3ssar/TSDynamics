@@ -58,7 +58,7 @@ CACHE_DIR = ROOT / ".cache" / "docs-gallery"
 #: Bump when the *rendering* changes (theme, size, dpi) so every cached figure
 #: is re-rendered.  The snippet text and the library version are already in the
 #: key, so ordinary content changes need no bump.
-RENDERER_VERSION = "gallery-2"
+RENDERER_VERSION = "gallery-3"
 
 #: Where the figures live on the site.  They are registered as *generated* files
 #: from the cache directory (like the field movies), so nothing is ever written

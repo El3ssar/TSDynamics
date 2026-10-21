@@ -72,7 +72,9 @@ the statistics down we need many paths.
     $g\,\partial g/\partial x$. For **additive** noise ($g$ constant, as in OU
     and the double well) that correction is identically zero, so the two schemes
     produce **bit-identical** paths — a useful sanity check. Milstein only differs
-    for **multiplicative** noise (§4's geometric Brownian motion).
+    for **multiplicative** noise (§4's geometric Brownian motion). The supported
+    Milstein coefficients are componentwise, $g_k(X_k,t)$; for diffusion that
+    depends on other components, use `euler_maruyama`.
 
 ## 2. Ensemble statistics
 

@@ -495,5 +495,5 @@ def _draw_3d_panel(fig: Any, ax: Any, spec: PlotSpec, theme: Theme | None = None
     # this one never called any helper — so a reference line / marked value on a
     # 3-D spec (106 of the 136 catalogue ODEs are 3-D) vanished with no warning.
     _apply_3d_annotations(ax, spec, theme)
-    _apply_colorbar(fig, ax, mappable, spec.colorbar, spec.meta)
+    _apply_colorbar(fig, ax, mappable, spec.colorbar, spec.meta, theme=theme)
     _apply_legend(ax, spec, theme)

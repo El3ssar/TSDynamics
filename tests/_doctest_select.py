@@ -15,8 +15,8 @@ Two surfaces are gated, both executed under the suite-wide
    executed top-to-bottom as a script (a page shares one namespace, so block
    *k+1* sees the names block *k* bound — the way a reader runs a tutorial).
 
-Why a shared injected namespace
---------------------------------
+Module-doctest convenience namespace
+-----------------------------------
 The library's doctests are written for a *reader*: they use the short names a
 user would have in scope — ``np`` (NumPy), ``ts`` (the package) and every
 built-in system class (``Lorenz``, ``Henon`` …) — without repeating ``import``
@@ -25,7 +25,7 @@ harness honours it by seeding each doctest's globals with
 :func:`doctest_namespace` *on top of* the module's own ``__dict__`` (so the
 documented object itself is always in scope).
 
-**The seeded top level is the v6 one — 17 names — and is not padded.**  Since v6
+**The seeded top level is the v6 one — 11 names — and is not padded.**  Since v6
 the analyses are free functions at ``ts.analysis.<name>`` and the result classes
 live at ``ts.analysis.results``; seeding them bare would let a page pass this
 gate while the reader's copy-paste raises ``MovedInV6``, which is the precise
@@ -33,11 +33,10 @@ failure mode an executable-documentation gate exists to prevent.  So a page that
 still writes ``lyapunov_spectrum(lor)`` fails here, correctly, until it is
 rewritten.
 
-The one convenience that remains is the built-in system classes, seeded from
-``dir(tsdynamics.systems)``: ``ts.Lorenz`` no longer resolves either, so this
-carries the same hazard — measured, **88 gated fences** call a bare system class
-with no import line.  Removing the seed is a docs-wide rewrite rather than a test
-change, so it is recorded here and deferred, not silently relied upon.
+This convenience applies only to module doctests. Documentation-page fences
+start with ordinary script globals and must import every package, class and
+analysis they use. This keeps a missing import from passing the gate while a
+reader's copy-paste fails.
 
 Gate everything, exempt on purpose
 ----------------------------------
@@ -159,62 +158,7 @@ def discover_doctest_modules() -> tuple[str, ...]:
 # ---------------------------------------------------------------------------
 
 #: module -> the exact defect, as measured.
-EXEMPT_MODULES: dict[str, str] = {
-    "tsdynamics": (
-        "The package-docstring tour shows `traj['x']` and `Lorenz()."
-        "lyapunov_spectrum()` with the value in a trailing comment and no "
-        "expected-output line, so doctest sees unexpected output. Either bind "
-        "the results to names or write the repr as the expected output."
-    ),
-    "tsdynamics.analysis.chaos.expansion": (
-        "`expansion_entropy(...)` expects `0.69...  # ln 2, exact` — the "
-        "trailing comment sits on the *want* line, so it is part of the "
-        "expected output and never matches. Move the comment to the `>>>` line."
-    ),
-    "tsdynamics.analysis.chaos.gali": (
-        "`gali(Lorenz(), k=2, final_time=25.0)` expects `0.0...` but returns "
-        "3.78e-11, which formats in scientific notation and cannot match a "
-        "`0.0`-prefixed ellipsis. Wrap in `round(..., 6)` or expect `...e-...`."
-    ),
-    "tsdynamics.analysis.fixedpoints.fixed": (
-        "Three `fixed_points(...)` examples print `FixedPointSet(N items)` but "
-        "declare no expected output."
-    ),
-    "tsdynamics.analysis.fixedpoints.periodic": (
-        "Four examples (`estimate_period`, `periodic_orbit`, `periodic_orbits`) "
-        "print a repr but declare no expected output. Note these reference "
-        "`VanDerPol`, which now EXISTS — the examples run, they just do not "
-        "declare what they print."
-    ),
-    "tsdynamics.analysis.lyapunov": (
-        "Three `lyapunov_spectrum`/`max_lyapunov` examples print a "
-        "`LyapunovSpectrum(...)` repr with no expected-output line."
-    ),
-    "tsdynamics.analysis.orbits.poincare": (
-        "`poincare_section(traj, plane=('z', 25.0))` uses a name `traj` that no "
-        "earlier line in the docstring binds -> NameError."
-    ),
-    "tsdynamics.data.trajectory": (
-        "The `Trajectory` class example opens with `traj = lor.run(...)` "
-        "but never binds `lor`, so all six following lines NameError."
-    ),
-    "tsdynamics.derived.tangent": (
-        "Two `TangentSystem` examples print a repr with no expected output."
-    ),
-    "tsdynamics.families.base": (
-        "`p.unknown = 5.0  # raises AttributeError` actually raises, so doctest "
-        "needs a `Traceback (most recent call last): ... AttributeError` block "
-        "rather than a comment."
-    ),
-    "tsdynamics.families.continuous": (
-        "`Henon().run(n=5000)` prints a Trajectory repr with no expected "
-        "output, and `sol.meta['t_events'][0].shape` expects `(... ,)` "
-        "(with a space) but gets `(70,)`."
-    ),
-    "tsdynamics.families.discrete": (
-        "Two `DiscreteMap` examples print a repr with no expected output."
-    ),
-}
+EXEMPT_MODULES: dict[str, str] = {}
 
 #: module -> why it is nightly-only.  Verified clean, but the example runs a
 #: heavy simulation, so it stays out of the change-scoped inner loop.
@@ -317,10 +261,10 @@ _FENCE_OPEN = re.compile(r"^(`{3,})\s*(?:python|py|pycon)\b.*$")
 
 
 def doctest_namespace() -> dict[str, Any]:
-    """Build the shared globals seeded into every doctest / page block.
+    """Build the convenience globals seeded into module doctests only.
 
     Contains ``np`` (NumPy), ``ts`` (the package), every built-in system class,
-    and the **v6 top level exactly as a user gets it** — 17 names, nothing added
+    and the **v6 top level exactly as a user gets it** — 11 names, nothing added
     back.  See "Why a shared injected namespace" in this module's docstring: a
     padded namespace would certify examples the reader cannot run.
     """
@@ -457,8 +401,8 @@ def iter_python_fences(text: str) -> Iterator[str]:
 def run_page_fences(page_rel: str) -> None:
     """Execute every runnable python fence in a doc page as one script.
 
-    All fences on a page share a single namespace seeded from
-    :func:`doctest_namespace`, so a later block sees names an earlier block
+    All fences on a page share ordinary script globals with no library names
+    injected, so a later block sees names an earlier block
     bound (the way a reader runs a tutorial sequentially).  Raises the original
     exception (with the page/block location chained) on the first failing block,
     which pytest renders as the test failure.
@@ -478,7 +422,7 @@ def run_page_fences(page_rel: str) -> None:
         pass
     path = DOCS_DIR / page_rel
     text = path.read_text(encoding="utf-8")
-    ns = doctest_namespace()
+    ns: dict[str, Any] = {"__name__": "__main__"}
     for k, block in enumerate(iter_python_fences(text)):
         try:
             code = compile(block, f"{page_rel}:block{k}", "exec")

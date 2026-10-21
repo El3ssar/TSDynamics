@@ -1,5 +1,5 @@
 ---
-description: Fixed points and equilibria of maps and flows (Newton, Schmelcher–Diakonos / Davidchack–Lai stabilising transformations, and the rigorous interval Krawczyk enumeration), period-p orbits of maps, limit cycles of flows by single shooting, and period estimation — each with linear-stability data.
+description: Fixed points and equilibria of maps and flows (Newton, Schmelcher–Diakonos / Davidchack–Lai stabilising transformations, and interval Krawczyk search), period-p orbits of maps, limit cycles of flows by single shooting, and period estimation — each with linear-stability data.
 ---
 
 <span class="ts-kicker">Analysis · Fixed points & periodic orbits</span>
@@ -18,7 +18,7 @@ linear-stability data.
 | --- | --- | --- |
 | [`fixed_points`](#fixed-points-and-equilibria) | $f(x) = x$ / $f(x) = 0$ | maps + flows |
 | [`periodic_orbits`](#periodic-orbits-of-maps) | period-$p$ cycles | maps |
-| [`periodic_orbit`](#periodic-orbits-of-flows-single-shooting) | a limit cycle | flows |
+| [`periodic_orbits`](#periodic-orbits-of-flows-single-shooting) | a limit cycle | flows |
 | [`estimate_period`](#estimating-a-period) | dominant period | any signal |
 
 ## Fixed points and equilibria
@@ -35,6 +35,7 @@ eigenvalue has $\operatorname{Re}\lambda_i < 0$.
 <div class="ts-item" markdown>
 ```python
 import tsdynamics as ts
+from tsdynamics.systems import VanDerPol
 
 ts.analysis.fixed_points(ts.systems.Henon())
 # [FixedPoint([-1.131354 -0.339406], unstable, |λ|max=3.2598),
@@ -55,7 +56,7 @@ an `.eigenvalue_plane()` spectrum plot; each `FixedPoint` carries `.x`,
 
 <figure class="ts-fig" markdown>
 ![Van der Pol limit cycle with its unstable origin equilibrium](../assets/figures/analysis/fixed-points.svg){ loading=lazy }
-<figcaption><span class="lbl">FIG 1</span> · autonomous Van der Pol (μ = 1): trajectories (indigo) spiral off the unstable equilibrium at the origin (rose ✕, from <code>fixed_points</code>) and onto the isolated limit cycle (teal, T ≈ 6.663, from <code>periodic_orbit</code> by single shooting).</figcaption>
+<figcaption><span class="lbl">FIG 1</span> · autonomous Van der Pol (μ = 1): trajectories (indigo) spiral off the unstable equilibrium at the origin (rose ✕, from <code>fixed_points</code>) and onto the isolated limit cycle (teal, T ≈ 6.663, from <code>periodic_orbits</code> by single shooting).</figcaption>
 </figure>
 
 </div>
@@ -102,18 +103,18 @@ ts.analysis.fixed_points(ts.systems.Logistic(params={"r": 4.0}),
 #  FixedPoint([ 0.75], unstable, |λ|max=2.0000)]
 ```
 
-### Rigorous enumeration: `method="interval"`
+### Deterministic interval search: `method="interval"`
 
 Any multi-start method can *silently miss* a root whose basin no seed landed in.
-`method="interval"` removes that risk. The **Krawczyk** operator brackets *every*
-root inside the (required) `region` by interval branch-and-prune, certifying
-existence **and** uniqueness per sub-box — so the returned set is provably
-complete (up to floating-point round-off), it needs no `seed`, and it is often
-faster than multi-start on the analytic systems it applies to. It works for maps
-**and** flows:
+`method="interval"` instead searches the required `region` with a **Krawczyk**
+operator and interval branch-and-prune. It needs no `seed` and can recover more
+roots than a modest multi-start search. The implementation uses plain floats
+without outward rounding and may recover unresolved small boxes by residual
+checks, so it provides numerical approximations, not formal existence,
+uniqueness, or completeness certificates. It works for supported maps and flows:
 
 ```python
-# all 27 equilibria of the Thomas system, rigorously, in one box
+# search the box for the Thomas system's equilibria
 ts.analysis.fixed_points(ts.systems.Thomas(),
                 region=[(-6, 6), (-6, 6), (-6, 6)], method="interval")
 # → 27 equilibria  (where a 200-seed Newton finds only 23)
@@ -125,7 +126,9 @@ or the flow's symbolic right-hand side — no symbolic diff), covering
 `sin`/`cos`/`exp`/`log`/`sqrt`/`cosh`/`tanh`/`abs` and integer powers. A kernel it
 cannot enclose — a comparison, a modulo, a non-integer power — raises
 `InvalidInputError` pointing back at `method="newton"`. The arithmetic is
-plain-float (rigorous to round-off, machine-precise roots).
+plain-float; check residuals and use an independent certified solver if a proof
+or a completeness guarantee is required. See the
+[interval-search theory](../theory/fixed-points-interval.md) for the limits.
 
 ## Periodic orbits of maps
 
@@ -195,7 +198,7 @@ an [`estimate_period`](#estimating-a-period) read of a burn-in trajectory.
 !!! note "Centres are degenerate"
     A conservative centre — an undamped harmonic oscillator, for instance — has a
     *continuum* of periodic orbits, so the shooting Jacobian is singular and
-    Newton collapses onto the equilibrium. `periodic_orbit` detects the
+    Newton collapses onto the equilibrium. `periodic_orbits` detects the
     zero-amplitude collapse (`min_amplitude`) and raises: shooting needs an
     isolated, hyperbolic cycle, not a member of a family.
 

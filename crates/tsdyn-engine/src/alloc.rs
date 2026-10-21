@@ -22,6 +22,10 @@
 //! each family lifts into its own error enum and the binding layer maps to a
 //! Python `MemoryError`.
 //!
+//! A successful reservation does not guarantee physical memory: operating
+//! systems may overcommit virtual address space. Physical-memory exhaustion
+//! during initialization remains subject to the host's resource limits.
+//!
 //! Note this is about the *output* buffers only. The engine's working buffers
 //! (`scratch`, `next`, a `dim`-length state) are sized by the tape, which the
 //! bridge has already validated, and are small; they keep the infallible
@@ -109,12 +113,13 @@ mod tests {
         assert!(err.to_string().contains("cannot allocate"));
     }
 
-    /// A representable but unservable request must be an `Err`, not the
-    /// `handle_alloc_error` abort `vec![0.0; n]` triggers.
+    /// A representable element count whose byte size exceeds Vec's limit must
+    /// be an `Err`. This fails deterministically before any pages are touched,
+    /// including on hosts whose allocator overcommits virtual address space.
     #[test]
     fn unservable_request_is_an_error_not_an_abort() {
-        // 2^50 rows x 2 cols = 2^51 f64 = 16 PiB: representable, never servable.
-        let err = try_zeroed(1usize << 50, 2).expect_err("16 PiB is not servable");
-        assert_eq!(err.bytes(), (1u128 << 51) * 8);
+        let rows = isize::MAX as usize / core::mem::size_of::<f64>() + 1;
+        let err = try_zeroed(rows, 1).expect_err("the byte size exceeds Vec's capacity limit");
+        assert!(err.bytes() > isize::MAX as u128);
     }
 }

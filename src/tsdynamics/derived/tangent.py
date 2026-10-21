@@ -77,7 +77,7 @@ class TangentSystem(DerivedSystem):
       with ``backend=``: ``"jit"`` (default), ``"interp"``, or ``"reference"``.
     - **DDEs**: not supported — tangent dynamics of a DDE lives in an
       infinite-dimensional history space; use
-      ``DelaySystem.lyapunov_spectrum`` (the engine DDE Lyapunov estimator).
+      ``ts.analysis.lyapunov_spectrum`` (the engine DDE Lyapunov estimator).
 
     Parameters
     ----------
@@ -101,8 +101,10 @@ class TangentSystem(DerivedSystem):
     >>> tang = TangentSystem(Henon(), k=2)
     >>> tang.reinit([0.1, 0.1])
     >>> for _ in range(5000):
-    ...     tang.step()
-    >>> tang.exponents()        # ≈ [0.42, -1.62]
+    ...     _ = tang.step()
+    >>> exponents = tang.exponents()        # ≈ [0.42, -1.62]
+    >>> float(exponents[0]) > 0
+    True
     """
 
     _ODE_DEFAULT_DT: ClassVar[float] = 0.1
@@ -111,7 +113,7 @@ class TangentSystem(DerivedSystem):
         if isinstance(system, DelaySystem):
             raise NotImplementedError(
                 "TangentSystem does not support delay systems — their tangent space is the "
-                "infinite-dimensional history space. Use DelaySystem.lyapunov_spectrum."
+                "infinite-dimensional history space. Use ts.analysis.lyapunov_spectrum(system)."
             )
         if isinstance(system, DiscreteMap):
             self._mode = "map"
@@ -606,12 +608,12 @@ class TangentSystem(DerivedSystem):
 
         Examples
         --------
-        >>> tang = TangentSystem(Henon(), k=2)      # doctest: +SKIP
-        >>> tang.reinit([0.1, 0.1])                 # doctest: +SKIP
-        >>> for _ in range(100):                    # doctest: +SKIP
-        ...     tang.step()
-        >>> tang.deviations()[:, 0]                 # the unstable direction here
-        ...                                         # doctest: +SKIP
+        >>> tang = TangentSystem(Henon(), k=2)
+        >>> tang.reinit([0.1, 0.1])
+        >>> for _ in range(100):
+        ...     _ = tang.step()
+        >>> tang.deviations().shape                 # columns are tangent directions
+        (2, 2)
         """
         if self._mode == "map":
             if self._map_engine_stale:

@@ -69,7 +69,7 @@ against a registry before the engine runs it. For the programmatic registry API
 | `rosenbrock`     | ode      | implicit (Rosenbrock-W) | fixed | ✓ | ✓ | stiff, one linear solve per step |
 | `trbdf2`         | ode      | implicit (ESDIRK) | 2 | ✓ | ✓ | stiff, L-stable composite step |
 | `euler_maruyama` | sde      | explicit | 0.5 (strong) | — | — | **the SDE default** — diagonal-Itô noise |
-| `milstein`       | sde      | explicit | 1.0 (strong) | — | ✓ (∂g/∂u) | SDE, higher strong order |
+| `milstein`       | sde      | explicit | 1.0 (strong) | — | ✓ (∂g/∂u) | SDE, componentwise diffusion gₖ(Xₖ,t) |
 
 All names are case- and punctuation-insensitive and carry common aliases (e.g.
 `dopri5`/`RK45` → `rk45`, `ode23` → `bs3`, `cash_karp` → `cashkarp`,
@@ -236,9 +236,12 @@ scale $\sqrt{\mathrm{d}t}$ — so a smaller `dt` is the only way to a more
 accurate sample path.
 
 `euler_maruyama` is the Euler–Maruyama scheme (strong order 0.5), the **SDE
-default**. `milstein` is the Milstein scheme (strong order 1.0), which adds the
-diffusion-derivative correction $\partial g/\partial u$ (built automatically,
-like the implicit Jacobian) for a higher strong order on the same step.
+default**. `milstein` has strong order 1.0 for componentwise diffusion
+$g_k(X_k,t)$ and adds the diffusion-derivative correction
+$\partial g_k/\partial X_k$ (built automatically, like the implicit Jacobian).
+For coefficients that depend on other components, use `euler_maruyama`.
+Independent noise does not eliminate the cross iterated integrals in that
+case; this Milstein implementation does not simulate the required Lévy areas.
 
 Pass a `seed` to make the noise realisation reproducible — it is recorded in the
 returned trajectory's `meta`:

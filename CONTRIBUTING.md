@@ -21,8 +21,11 @@ Clear math, minimal API, no hacks. Thanks for helping.
 git clone https://github.com/El3ssar/TSDynamics.git
 cd TSDynamics
 
-# Editable install with dev dependencies (pytest, ruff, mypy, ...)
-uv sync --group dev
+# Editable install with dev dependencies (builds the Rust extension)
+uv sync --locked --group dev
+
+# For plotting, documentation and the complete optional-feature suite
+uv sync --locked --group dev --group docs --all-extras
 ```
 
 Optional: install pre-commit hooks so style is enforced before you commit:
@@ -56,8 +59,8 @@ make test
 ```
 
 **Run `make test`, not the whole suite.** The suite is registry-driven — every
-per-system test is parametrized over all 171 built-in systems, so the full fast
-tier is ~5 400 items and takes a few minutes even in parallel. `make test` wraps
+per-system test is parametrized over all 177 built-in systems, so the full fast
+tier contains thousands of items. `make test` wraps
 `pytest --changed`, which diffs your working tree against `origin/main` and keeps
 only the tests that diff can affect (touch one system → that system's sweeps;
 touch one analysis area → that area's files; touch anything foundational — the
@@ -83,14 +86,14 @@ Use [Conventional Commits](https://www.conventionalcommits.org/) — the changel
 ```
 feat: add Sprott-N attractor to chaotic_attractors
 fix(dde): reject zero or negative delay parameters
-docs: clarify n_exp behaviour in DelaySystem.lyapunov_spectrum
+docs: clarify k in analysis.lyapunov_spectrum
 test: cover Tinkerbell default_ic path
 ci: pin ruff to 0.15
 ```
 
 ### 4. Open a PR
 
-GitHub Actions runs `ruff check`, `ruff format --check`, `mypy --strict`, the test matrix (Python 3.12 / 3.13 / 3.14 on Linux and macOS) and a docs build for every PR.  The CI jobs are themselves change-scoped: a docs-only PR skips the Python jobs, and the ones that do run use `pytest --changed`.  Gate merges on the single **CI summary** check — it is green when every required job either passed or was skipped as out of scope.  **The PR title must be a conventional commit** (enforced by the `pr-title.yml` check): PRs are squash-merged, so the title becomes the commit message that decides the next release.
+GitHub Actions runs `ruff check`, `ruff format --check`, `mypy --strict`, and the test matrix (Python 3.12 / 3.13 / 3.14 on Linux and macOS) for code changes. These jobs use `pytest --changed`. Documentation changes run the executable-example gate and a strict docs build in the Documentation workflow. The **CI summary** check summarizes the CI workflow; the separate documentation, Rust and wheel workflows must also pass when triggered. **The PR title must be a conventional commit** (enforced by `pr-title.yml`): PRs are squash-merged, so the title decides the next release.
 
 ---
 
@@ -102,7 +105,7 @@ Every push to `main` runs `.github/workflows/release.yml`, which:
 
 1. Runs lint + the full test suite.
 2. Parses the conventional-commit messages since the last release: `feat:` → minor, `fix:`/`perf:` → patch, `!`/`BREAKING CHANGE` → major.  Chore/ci/docs-only pushes release nothing.
-3. If a release is due: rewrites `__version__` in `src/tsdynamics/__init__.py`, commits, tags `vX.Y.Z`, creates the GitHub Release with generated notes, and publishes to PyPI via [Trusted Publishing](https://docs.pypi.org/trusted-publishers/) (OIDC — no API tokens).
+3. If a release is due: rewrites the project version and `__version__`, refreshes `uv.lock` while preserving tested dependencies, commits, tags `vX.Y.Z`, creates the GitHub Release with generated notes, and publishes to PyPI via [Trusted Publishing](https://docs.pypi.org/trusted-publishers/) (OIDC — no API tokens).
 
 Release notes land on [GitHub Releases](https://github.com/El3ssar/TSDynamics/releases) and python-semantic-release keeps CHANGELOG.md up to date.
 
@@ -168,7 +171,7 @@ class MyAttractor(ContinuousSystem):
 - Use **only** symbolic operations (`symengine.sin`, `cos`, `+`, `*`, `**`, `abs`, ...). No NumPy, no `math`, no Python control flow over `y`.
 - Return a sequence of exactly `dim` expressions.
 - Add the class name to the module's `__all__` and to `src/tsdynamics/systems/continuous/__init__.py` `__all__` — a registry consistency test fails if you forget.
-- That's it: the registry sweeps it into the bulk tests and the docs build generates its page (equations + attractor figure) automatically.  Optional metadata ClassVars: `variables`, `reference`, `known_lyapunov`.
+- That's it: the registry sweeps it into the bulk tests and the docs build generates its page (equations + attractor figure) automatically. Optional metadata ClassVars: `variables`, `_reference`, `_doi`, `_known_lyapunov`.
 
 ### DDE — `DelaySystem`
 
@@ -228,10 +231,10 @@ If random `U[0, 1)^dim` ICs don't land in your map's basin of attraction (e.g. T
 ```python
 class MyMap(DiscreteMap):
     ...
-    default_ic = np.array([-0.72, -0.64])
+    _default_ic = np.array([-0.72, -0.64])
 ```
 
-`resolve_ic` will consult `default_ic` before falling back to `U[0, 1)^dim`.
+The initial-condition resolver consults `_default_ic` before falling back to `U[0, 1)^dim`.
 
 ---
 

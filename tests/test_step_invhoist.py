@@ -44,8 +44,8 @@ def _step_grid(t0, dt):
     """Mirror of the inline output-grid branch in ``ContinuousSystem.step``.
 
     Kept in lock-step with the source so the test exercises the *exact* decision
-    ``step`` makes: the direct two-node shortcut above the helper's append
-    threshold, the helper itself at/below it.
+    ``step`` makes: the direct two-node shortcut above its small-step cutover,
+    the helper itself at/below it.
     """
     tf = t0 + dt
     if tf - t0 > 1e-9:
@@ -58,15 +58,14 @@ def _step_grid(t0, dt):
 def test_step_grid_matches_helper_across_dt_threshold():
     """``step``'s inline grid equals ``make_output_grid`` for every ``dt``.
 
-    Above the ``1e-9`` cutover the shortcut ``[t0, tf]`` is used — that sits a
-    thousandfold above the helper's ``1e-12`` append tolerance and above the
-    float-subtraction rounding even at large ``t0``, and a single-``dt`` span never
-    yields more than two nodes — so the grids are byte-identical there.  At or below
-    the cutover ``step`` defers to the helper itself.  Sweeping ``dt`` log-uniformly
+    Above the ``1e-9`` cutover the shortcut ``[t0, tf]`` is used. The helper
+    recognises the same one-increment span before building an interior lattice,
+    including a rounded increment smaller than the local ULP. At or below the
+    cutover ``step`` defers to the helper itself. Sweeping ``dt`` log-uniformly
     from ``1e-13`` to ``5`` across a range of ``t0`` magnitudes crosses the cutover in
-    both directions, pinning byte-for-byte agreement over the whole range (including
-    the degenerate single-node band the naive direct shortcut gets wrong — the exact
-    bug an earlier ``1e-12`` cutover shipped, caught here).
+    both directions, pinning byte-for-byte agreement over the whole range.
+    Every valid span now retains both exact endpoints; a sub-ULP increment
+    whose addition cannot advance time still raises.
     """
     from tsdynamics._utils.grids import make_output_grid
 
