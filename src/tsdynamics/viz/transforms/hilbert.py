@@ -464,7 +464,12 @@ def sample_index_map(
         is padding.
     """
     values, _, _, _ = series_of(
-        subject, components=components, final_time=final_time, dt=dt, steps=steps
+        subject,
+        components=components,
+        final_time=final_time,
+        dt=dt,
+        steps=steps,
+        require_uniform=False,
     )
     _, index, _, _ = _layout(
         np.asarray(values, dtype=float),
@@ -500,7 +505,12 @@ def _hilbert_geometry(
 ) -> Geometry:
     """Build the geometry shared by the four ``hilbert*`` transforms."""
     values, spacing, meta, title = series_of(
-        subject, components=components, final_time=final_time, dt=dt, steps=steps
+        subject,
+        components=components,
+        final_time=final_time,
+        dt=dt,
+        steps=steps,
+        require_uniform=False,
     )
     values = np.asarray(values, dtype=float)
     field, index, side, resolved = _layout(

@@ -60,7 +60,7 @@ References
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal, overload
 
 import numpy as np
 
@@ -128,6 +128,7 @@ def _trajectory_of(subject: Any, options: dict[str, Any]) -> Any:
     )
 
 
+@overload
 def series_of(
     subject: Any,
     *,
@@ -135,7 +136,31 @@ def series_of(
     final_time: float | None = None,
     dt: float | None = None,
     steps: int | None = None,
-) -> tuple[np.ndarray, float, dict[str, Any], str]:
+    require_uniform: Literal[True] = True,
+) -> tuple[np.ndarray, float, dict[str, Any], str]: ...
+
+
+@overload
+def series_of(
+    subject: Any,
+    *,
+    components: int | str = 0,
+    final_time: float | None = None,
+    dt: float | None = None,
+    steps: int | None = None,
+    require_uniform: Literal[False],
+) -> tuple[np.ndarray, float | None, dict[str, Any], str]: ...
+
+
+def series_of(
+    subject: Any,
+    *,
+    components: int | str = 0,
+    final_time: float | None = None,
+    dt: float | None = None,
+    steps: int | None = None,
+    require_uniform: bool = True,
+) -> tuple[np.ndarray, float | None, dict[str, Any], str]:
     """Coerce any accepted subject to ``(values, sample_spacing, meta, title)``.
 
     Accepts a bare 1-D (or 2-D, column-selected) array, a
@@ -152,14 +177,19 @@ def series_of(
         Integration controls, used **only** when ``subject`` is a system.  ``dt``
         additionally overrides the sample spacing inferred from a trajectory's
         time axis (and is the spacing of a bare array, default ``1``).
+    require_uniform : bool, optional
+        Require a uniform time axis for temporal diagnostics (the default).
+        Sample-order-only views may pass ``False``; an irregular trajectory then
+        reports ``spacing=None``, without changing or dropping its samples.
 
     Returns
     -------
     values : ndarray
         The 1-D series.
-    spacing : float
+    spacing : float or None
         The sample spacing in time or iteration units (``1.0`` for a bare array
-        unless ``dt`` is supplied, or for an undecimated map orbit).
+        unless ``dt`` is supplied, or for an undecimated map orbit). ``None``
+        when an order-only caller accepts a trajectory without uniform spacing.
     meta : dict
         Provenance, including any integration defaults this function chose.
     title : str
@@ -175,7 +205,15 @@ def series_of(
         t, y, names, _ = _split_traj(traj)
         idx = _component_index(components, names, y.shape[1])
         values = np.asarray(y[:, idx], dtype=float)
-        spacing = float(dt) if dt is not None else _spacing_of(t)
+        spacing: float | None
+        if dt is not None:
+            spacing = float(dt)
+        elif require_uniform:
+            spacing = _spacing_of(t)
+        else:
+            from tsdynamics.data.trajectory import _axis_dt
+
+            spacing = _axis_dt(t)
         meta = {**_meta(traj), "component": idx, "sample_spacing": spacing}
         if traj is not subject:  # a system was integrated for us
             meta["integrated_for_plot"] = {

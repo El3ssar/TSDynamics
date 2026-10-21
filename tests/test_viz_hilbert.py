@@ -52,6 +52,35 @@ def lorenz():
     return ts.systems.Lorenz().run(final_time=50.0, dt=0.01, ic=[1.0, 1.0, 1.0])
 
 
+@pytest.mark.parametrize("name", HILBERT_TRANSFORMS)
+def test_order_only_views_preserve_irregular_trajectory_samples(name):
+    times = np.cumsum(np.linspace(0.1, 0.3, 16))
+    values = np.sin(np.arange(16.0))
+    trajectory = ts.Trajectory(times, values[:, None])
+    actual = geometry(trajectory, name, curve="snake")
+    expected = geometry(values, name, curve="snake")
+    np.testing.assert_array_equal(actual.channels["z"].values, expected.channels["z"].values)
+    assert actual.meta["sample_spacing"] is None
+
+
+def test_sample_index_map_preserves_irregular_timestamps():
+    times = np.cumsum(np.linspace(0.1, 0.3, 16))
+    values = np.sin(np.arange(16.0))
+    trajectory = ts.Trajectory(times, values[:, None])
+    actual = hp.sample_index_map(trajectory, curve="snake")
+    expected = hp.sample_index_map(values, curve="snake")
+    np.testing.assert_array_equal(actual, expected)
+    np.testing.assert_array_equal(trajectory.t[actual], times[expected])
+
+
+def test_hilbert_accepts_a_shortened_solver_endpoint_without_claiming_uniform_spacing():
+    trajectory = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]).run(final_time=0.145, dt=0.01)
+    actual = geometry(trajectory, "hilbert", components="x", curve="snake")
+    expected = geometry(trajectory["x"], "hilbert", curve="snake")
+    np.testing.assert_array_equal(actual.channels["z"].values, expected.channels["z"].values)
+    assert actual.meta["sample_spacing"] is None
+
+
 # ---------------------------------------------------------------------------
 # Registration
 # ---------------------------------------------------------------------------
