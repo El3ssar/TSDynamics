@@ -17,7 +17,7 @@ Schema
 The serialized text is a JSON object with two top-level keys::
 
     {
-        "schema_version": 2,
+        "schema_version": 3,
         "spec": { ... Plot.to_dict() ... }
     }
 
@@ -41,6 +41,7 @@ returns as :class:`numpy.ndarray`.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from typing import Any
 
 from ._visibility import listing_dir
@@ -120,7 +121,7 @@ def to_dict_envelope(spec: PlotSpec) -> dict[str, Any]:
     return {_VERSION_KEY: SCHEMA_VERSION, _SPEC_KEY: spec.to_dict()}
 
 
-def from_dict_envelope(envelope: dict[str, Any]) -> Plot:
+def from_dict_envelope(envelope: Mapping[str, Any]) -> Plot:
     """Rebuild a :class:`Plot` from a (possibly unversioned) envelope mapping.
 
     Tolerates a missing / older ``"schema_version"`` for back-compat: an envelope
@@ -141,8 +142,20 @@ def from_dict_envelope(envelope: dict[str, Any]) -> Plot:
     Raises
     ------
     ValueError
-        If the mapping is neither a recognizable envelope nor a bare spec dict.
+        If the mapping is neither a recognizable envelope nor a bare spec dict,
+        or its schema version is invalid or newer than this library supports.
     """
+    if not isinstance(envelope, Mapping):
+        raise ValueError("not a Plot JSON payload: expected a mapping.")
+    if _VERSION_KEY in envelope:
+        version = envelope[_VERSION_KEY]
+        if type(version) is not int or version < 1:
+            raise ValueError("Plot schema_version must be a positive integer.")
+        if version > SCHEMA_VERSION:
+            raise ValueError(
+                f"Plot schema version {version} is newer than the supported version "
+                f"{SCHEMA_VERSION}; upgrade tsdynamics to load this document."
+            )
     if _SPEC_KEY in envelope:
         spec_dict = envelope[_SPEC_KEY]
     elif "kind" in envelope:
@@ -153,6 +166,8 @@ def from_dict_envelope(envelope: dict[str, Any]) -> Plot:
             "not a PlotSpec JSON payload: expected a 'spec' envelope key or a "
             "bare PlotSpec.to_dict() mapping carrying a 'kind' key."
         )
+    if not isinstance(spec_dict, Mapping) or "kind" not in spec_dict:
+        raise ValueError("not a Plot JSON payload: 'spec' must be a plot mapping carrying 'kind'.")
     return PlotSpec.from_dict(spec_dict)
 
 

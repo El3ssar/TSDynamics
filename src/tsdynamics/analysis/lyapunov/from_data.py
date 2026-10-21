@@ -983,8 +983,8 @@ def lyapunov_from_data(
         raise InvalidParameterError("k_max must be >= 2 to fit a slope.")
     if n_neighbors < 1:
         raise InvalidParameterError("n_neighbors must be >= 1.")
-    if dt <= 0.0:
-        raise InvalidParameterError("dt must be positive.")
+    if not np.isfinite(dt) or dt <= 0.0:
+        raise InvalidParameterError("dt must be finite and positive.")
     if method not in {"kantz", "rosenstein"}:
         raise InvalidParameterError(f"method must be 'kantz' or 'rosenstein', got {method!r}.")
     theiler = (dimension - 1) * delay if theiler is None else int(theiler)
@@ -1007,7 +1007,11 @@ def lyapunov_from_data(
             "k_max is too large for the embedded series: no forward images remain. "
             "Use a longer series or reduce k_max, dimension, or delay."
         )
-    tree = cKDTree(emb)
+    # Only points with every requested forward image can be neighbours.
+    # Indexing the unobservable tail as well can crowd all eligible neighbours
+    # out of a bounded nearest-neighbour query and selectively discard reference
+    # states (biasing the Rosenstein average).
+    tree = cKDTree(emb[: last + 1])
 
     if method == "kantz":
         if eps is None:
@@ -1015,8 +1019,8 @@ def lyapunov_from_data(
             # channels (see the `eps` docstring; standardize anisotropic input).
             eps = 0.1 * float(np.std(emb))
         eps = float(eps)
-        if eps <= 0.0:
-            raise InvalidParameterError("eps must be positive (series may be constant).")
+        if not np.isfinite(eps) or eps <= 0.0:
+            raise InvalidParameterError("eps must be positive and finite (series may be constant).")
         # One batched ball query for *all* candidate reference rows, then filter
         # each candidate list to neighbours inside eps, outside the Theiler window,
         # and whose k-ahead image still exists (j <= last). A reference point with
@@ -1074,12 +1078,11 @@ def lyapunov_from_data(
             means = sums / counts_arr
             divergence[k] = float(np.mean(np.log(np.maximum(means, _TINY))))
     else:  # rosenstein
-        # Examine the n_query nearest candidates per point; the cap is a
-        # heuristic sized to clear the Theiler window. A reference point whose
-        # candidates are *all* rejected (inside the window or past `last`) is
-        # skipped rather than matched to a wrong neighbour, lowering n_reference.
-        n_query = min(n_rows, 4 * theiler + 20)
-        _, idx_all = tree.query(emb, k=n_query)
+        # At most 2*w+1 indices (including self) lie in a Theiler window.
+        # Querying one more guarantees the nearest admissible neighbour whenever
+        # one exists; the tree already excludes the forward-ineligible tail.
+        n_query = min(last + 1, 2 * theiler + 2)
+        _, idx_all = tree.query(emb[: last + 1], k=n_query)
         idx_all = np.atleast_2d(idx_all)
         # Select, for each reference row, the FIRST candidate column (in the
         # tree's nearest-first order) that clears the Theiler window and whose
@@ -1090,7 +1093,10 @@ def lyapunov_from_data(
         # reference rows in this function (bound far above), and rebinding it to
         # the candidate-neighbour INDEX ARRAY gave one name two types — which is
         # what the type checker was objecting to, and is worth not doing anyway.
-        candidates: np.ndarray = idx_all[: last + 1, 1:]  # drop column 0 (the point itself)
+        # Do not assume column 0 is the self-match: with coincident states the
+        # tree may put another zero-distance match first.  The index mask below
+        # removes self regardless of its tie order.
+        candidates: np.ndarray = idx_all
         ref_grid: np.ndarray = np.arange(last + 1, dtype=np.intp)[:, None]
         valid = (candidates <= last) & (np.abs(candidates - ref_grid) > theiler)
         has_neighbour = valid.any(axis=1)

@@ -101,9 +101,14 @@ plugins:
         python:
           paths: [src]
           inventories:
-            - https://docs.python.org/3/objects.inv
-            - https://numpy.org/doc/stable/objects.inv
-            - https://docs.scipy.org/doc/scipy/objects.inv
+            # hooks/inventories.py resolves these checked-in snapshots locally.
+            # Cross-reference destinations retain the upstream base URL.
+            - url: python.inv
+              base_url: https://docs.python.org/3.12/
+            - url: numpy.inv
+              base_url: https://numpy.org/doc/stable/
+            - url: scipy.inv
+              base_url: https://docs.scipy.org/doc/scipy/
           options:
             docstring_style: numpy
             docstring_section_style: spacy
@@ -126,6 +131,7 @@ plugins:
 # Build-time generator: the per-system + browser pages for the Systems tree,
 # emitted as virtual files and patched into the nav (see hooks/docs_autogen.py).
 hooks:
+  - hooks/inventories.py
   - hooks/docs_autogen.py
 
 markdown_extensions:

@@ -480,12 +480,11 @@ class ScalarField:
     meta: dict[str, Any] = field(default_factory=dict)
 
     def __repr__(self) -> str:
-        """Render the ANSWER, like every other result in the library.
+        """Render the field's extent, finite range and missing-data fraction.
 
-        Seven of the fifty registered analyses return one of these, and it
-        carried the default dataclass repr — so printing it dumped two
-        coordinate arrays and the whole value matrix into the terminal, in a
-        library where every other result is a crafted one-line readout.
+        Shared by FTLE, escape-time and transient-time fields.  A compact
+        readout avoids dumping the coordinate arrays and whole value matrix
+        into a console.
         """
         ny, nx = (int(n) for n in np.asarray(self.values).shape[:2])
         xs = np.asarray(self.xs, dtype=float)
@@ -1175,7 +1174,7 @@ def trace_determinant(
         # ``found.points`` is the ``(n, dim)`` matrix of the equilibria: indexing
         # a result collection gives NUMBERS in v6, so there is no ``fp.x`` to
         # gather here (the records are ``found.details``).
-        pts = np.asarray(found.points, dtype=float).reshape(len(found), -1)
+        pts = np.asarray(found.points, dtype=float).reshape(len(found), int(system.dim))
     else:
         pts = np.atleast_2d(np.asarray(points, dtype=float))
 
@@ -1317,15 +1316,18 @@ def ftle_field(
     base = _base_state(system, at)
     xlim, ylim, meta = window_for(system, plane=plane, at=at, xlim=xlim, ylim=ylim)
     xs, ys = _grid_axes(xlim, ylim, grid)
-    if float(final_time) == 0.0:
-        raise InvalidParameterError("final_time= is the FTLE horizon and must be non-zero.")
+    if not np.isfinite(final_time) or float(final_time) == 0.0:
+        raise InvalidParameterError(
+            "final_time= is the FTLE horizon and must be finite and non-zero."
+        )
 
     ics = _slice_ics(base, i, j, xs, ys)
     horizon = float(abs(final_time))
+    t0 = float(integrate_kwargs.get("t0", 0.0))
     if backward:
         final = _backward_final(system, ics, horizon, integrate_kwargs)
     else:
-        final = _run.ensemble(system, ics, final_time=horizon, **integrate_kwargs)
+        final = _run.ensemble(system, ics, final_time=t0 + horizon, **integrate_kwargs)
     final = np.asarray(final, dtype=float)
 
     fx = final[:, i].reshape(ys.size, xs.size)
@@ -1363,7 +1365,7 @@ def _backward_final(
     r"""Integrate a batch **backwards** by ``horizon`` on the time-reversed flow.
 
     The engine integrates forward only, so backward time is taken the way it is
-    defined — on the flow with :math:`f \\to -f` — and the reversal is done where
+    defined — on :math:`-f(y, 2t_0-t)` — and the reversal is done where
     the flow is actually described, in the **symbolic** right-hand side: the
     system's equations are negated and lowered to their own engine tape via the
     public :func:`~tsdynamics._engine.compile.lower_expressions`, exactly as the
@@ -1377,12 +1379,13 @@ def _backward_final(
     """
     from tsdynamics._engine import run as _run
 
-    problem = _reversed_problem(system)
-    return np.asarray(_run.ensemble(problem, ics, final_time=horizon, **kwargs), dtype=float)
+    t0 = float(kwargs.get("t0", 0.0))
+    problem = _reversed_problem(system, t0=t0)
+    return np.asarray(_run.ensemble(problem, ics, final_time=t0 + horizon, **kwargs), dtype=float)
 
 
-def _reversed_problem(system: Any) -> Any:
-    """Build an :class:`~tsdynamics._engine.problem.ODEProblem` for ``-f``.
+def _reversed_problem(system: Any, *, t0: float = 0.0) -> Any:
+    """Build an :class:`~tsdynamics._engine.problem.ODEProblem` for reverse time.
 
     Lowered ``jacobian=True`` so a flow whose ``_default_method`` is an implicit
     kernel still integrates: a pre-built problem is never re-lowered by
@@ -1404,7 +1407,10 @@ def _reversed_problem(system: Any) -> Any:
     u_syms = [symengine.Symbol(f"u{j}") for j in range(dim)]
     t_canon = symengine.Symbol("t")
     subs: dict[Any, Any] = {y(j): u_syms[j] for j in range(dim)}
-    subs[t_sym] = t_canon
+    # Negating the vector field alone reverses only autonomous flows.  With an
+    # explicit time dependence, the forcing clock must also run backwards from
+    # the initial time while the numerical solver's clock advances forwards.
+    subs[t_sym] = 2.0 * t0 - t_canon
     exprs = [-symengine.sympify(expr).subs(subs) for expr in raw]
 
     tape = lower_expressions(
@@ -1415,7 +1421,7 @@ def _reversed_problem(system: Any) -> Any:
         jacobian=True,
         control_names=control_names,
     )
-    return ODEProblem(tape=tape, ic=np.zeros(dim, dtype=float), t0=0.0, system=system)
+    return ODEProblem(tape=tape, ic=np.zeros(dim, dtype=float), t0=t0, system=system)
 
 
 def _march_first_time(

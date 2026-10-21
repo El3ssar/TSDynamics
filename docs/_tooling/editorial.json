@@ -501,9 +501,9 @@
       ]
     },
     "WindmiReduced": {
-      "blurb": "A reduced model of the magnetosphere–ionosphere coupling (WINDMI) — substorm dynamics.",
+      "blurb": "A reduced magnetosphere–ionosphere coupling model (WINDMI). Tested default-parameter trajectories show regular dynamics: an attracting equilibrium or a limit cycle depending on the initial condition; the displayed orbit uses a cycling start.",
       "behavior": [
-        "chaotic"
+        "oscillatory"
       ],
       "param_roles": {
         "a1": "linear coupling coefficient of the reduced model",
@@ -993,9 +993,9 @@
       }
     },
     "Circle": {
-      "blurb": "The circle map — mode-locking, Arnold tongues, and the devil's staircase.",
+      "blurb": "The circle map, with mode-locking and Arnold tongues at other parameters. The shipped k=5.7 lies in a non-invertible regime and the tested default orbit has a consistently positive leading Lyapunov exponent.",
       "behavior": [
-        "mode-locking"
+        "chaotic"
       ],
       "param_roles": {
         "omega": "bare winding number (rotation without coupling)",
@@ -1032,9 +1032,9 @@
       }
     },
     "MaynardSmith": {
-      "blurb": "A 2-D ecological recruitment map with delayed density dependence.",
+      "blurb": "A two-dimensional ecological recruitment map with delayed density dependence. The shipped a=0.87, b=0.75 parameters give a positive leading Lyapunov exponent in the tested default orbit; other parameters can yield cycles.",
       "behavior": [
-        "cycles"
+        "chaotic"
       ],
       "param_roles": {
         "a": "damping / linear feedback on the current state",
@@ -1661,8 +1661,8 @@
       ]
     },
     "Robinson": {
-      "blurb": "A Duffing-like double-well x–y oscillator coupled to a slow z mode driven by x², producing a Lorenz-type chaotic attractor.",
-      "behavior": "chaotic",
+      "blurb": "A Duffing-like double-well oscillator coupled to a slow mode driven by x². The leading finite-time exponent is near zero and depends on the initial condition; chaos at the shipped defaults remains unconfirmed.",
+      "behavior": "mixed",
       "param_roles": {
         "a": "linear damping of the oscillator velocity y",
         "b": "coefficient of the x²·y nonlinear damping term",
@@ -1694,8 +1694,8 @@
       }
     },
     "DequanLi": {
-      "blurb": "A Lorenz-family quadratic flow whose extra x*z and x**2 terms break the two-scroll structure into a three-scroll attractor.",
-      "behavior": "chaotic",
+      "blurb": "A Lorenz-family quadratic flow with extra x*z and x² terms. Chaotic regimes are associated with this model, but sustained chaos is not established at the shipped defaults: tested starts have near-zero leading finite-time exponents.",
+      "behavior": "mixed",
       "param_roles": {
         "a": "x–y channel coupling gain",
         "d": "x*z cross-product strength in the x equation",
@@ -2168,8 +2168,8 @@
       }
     },
     "CoevolvingPredatorPrey": {
-      "blurb": "An eco-evolutionary predator-prey model where a fast-evolving prey trait feeds back on the populations, generating chaos without external forcing.",
-      "behavior": "chaotic",
+      "blurb": "An eco-evolutionary predator–prey model with a changing prey trait. Sustained chaotic attraction at the shipped defaults is unconfirmed: tested long trajectories can escape, so a finite-time positive exponent is not evidence of a bounded attractor.",
+      "behavior": "mixed",
       "param_roles": {
         "a1": "predation / conversion rate coefficient",
         "a2": "predation / conversion rate coefficient",
@@ -2209,8 +2209,8 @@
       }
     },
     "KawczynskiStrizhak": {
-      "blurb": "A three-variable polynomial reduction of the Belousov-Zhabotinsky reaction reproducing its mixed-mode and period-doubling routes to chaos.",
-      "behavior": "chaotic, bursting",
+      "blurb": "A polynomial reduction of Belousov–Zhabotinsky kinetics with mixed-mode and bursting oscillations. The model can explore routes to chaos, but sustained chaos at the shipped defaults is not established by tested near-zero finite-time exponents.",
+      "behavior": "bursting",
       "param_roles": {
         "beta": "constant drive (offset) of the slow recovery variable",
         "gamma": "timescale / gain of the fast cubic nullcline",
@@ -2249,8 +2249,8 @@
       }
     },
     "Bogdanov": {
-      "blurb": "The discrete-time normal form of the Bogdanov-Takens double-zero bifurcation — invariant circles, Arnold tongues, and chaos near a cusp.",
-      "behavior": "chaotic",
+      "blurb": "The discrete normal form of the Bogdanov–Takens bifurcation, with invariant circles and chaotic regimes. The shipped eps=mu=0 map is area-preserving; its tested default orbit has a leading exponent approaching zero, so it is not labelled chaotic by default.",
+      "behavior": "conservative",
       "param_roles": {
         "eps": "linear damping/detuning (the Hopf parameter)",
         "k": "strength of the quadratic x(x-1) nonlinearity",
@@ -2363,8 +2363,8 @@
       }
     },
     "CaTwoPlusQuasiperiodic": {
-      "blurb": "The Houart–Dupont–Goldbeter intracellular Ca²⁺ oscillator in its quasiperiodic/chaotic regime, driven by self-modulated InsP₃ feedback.",
-      "behavior": "chaotic",
+      "blurb": "The Houart–Dupont–Goldbeter intracellular Ca²⁺ oscillator with self-modulated InsP₃ feedback. The shipped parameter set is consistent with quasiperiodic oscillations; tested starts do not establish sustained chaos.",
+      "behavior": "quasiperiodic",
       "param_roles": {
         "beta": "external stimulus level",
         "V0": "constant Ca²⁺ influx",
@@ -2484,8 +2484,8 @@
       }
     },
     "MacArthur": {
-      "blurb": "MacArthur's consumer–resource model — five species competing for five substitutable resources by Liebig's law, sustaining chaotic coexistence (the paradox of the plankton).",
-      "behavior": "chaotic",
+      "blurb": "A consumer–resource model of five species competing for five resources by Liebig’s law. It supports complex coexistence dynamics; the tested default trajectory has a near-zero leading finite-time exponent, so default chaos remains unconfirmed.",
+      "behavior": "mixed",
       "param_roles": {
         "d": "resource turnover rate",
         "m": "consumer mortality",

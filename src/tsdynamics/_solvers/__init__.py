@@ -247,8 +247,9 @@ def discover_plugins(*, strict: bool = False) -> list[str]:
     Parameters
     ----------
     strict : bool, default False
-        Forwarded to :func:`tsdynamics.plugins.load_plugins`: if True, a plugin
-        that fails to import raises instead of being skipped with a warning.
+        If True, a plugin that fails to import or initialize raises instead of
+        being skipped with a warning. Registry changes made while initializing
+        a failing plugin are rolled back in either mode.
 
     Returns
     -------
@@ -257,10 +258,24 @@ def discover_plugins(*, strict: bool = False) -> list[str]:
     """
     newly_registered: list[str] = []
     for ep_name, obj in load_plugins(SOLVERS_GROUP, strict=strict).items():
-        for spec in _coerce_to_specs(ep_name, obj):
-            if spec.name not in _REGISTRY:
-                register(spec)
-                newly_registered.append(spec.name)
+        before = _REGISTRY.copy()
+        added: list[str] = []
+        try:
+            for spec in _coerce_to_specs(ep_name, obj):
+                if spec.name not in _REGISTRY:
+                    register(spec)
+                    added.append(spec.name)
+        except Exception as exc:  # noqa: BLE001 - isolate third-party factories and iterables
+            _REGISTRY.clear()
+            _REGISTRY.update(before)
+            if strict:
+                raise
+            warnings.warn(
+                f"failed to initialize solver plugin {ep_name!r}: {exc}",
+                stacklevel=2,
+            )
+            continue
+        newly_registered.extend(added)
     return newly_registered
 
 

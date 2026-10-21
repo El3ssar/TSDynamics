@@ -74,7 +74,7 @@ jobs:
         run: uv python install 3.12
 
       - name: Sync project + dev deps
-        run: uv sync --group dev
+        run: uv sync --locked --group dev --python 3.12
 
       # Build the engine extension into the source tree (same recipe as
       # engine-bindings.yml). The analysis layer runs on it where applicable.

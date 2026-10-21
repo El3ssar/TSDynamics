@@ -135,7 +135,7 @@ from . import (
     analysis as analysis,
 )
 
-# Machinery submodules: bound eagerly so ``ts.engine`` / ``ts.registry`` resolve
+# Machinery submodules: bound eagerly so ``ts.data`` / ``ts.registry`` resolve
 # and ``from tsdynamics._engine import run`` imports, but kept OFF ``__all__`` /
 # ``dir()`` — see ``_INTERNAL_SUBMODULES``.  The redundant ``as`` form marks them
 # as deliberate re-exports rather than unused imports.
@@ -156,9 +156,6 @@ from . import (
 )
 from . import (
     registry as registry,
-)
-from . import (
-    systems as systems,
 )
 from ._redirects import (
     REMOVED_IN_V6 as _REMOVED_IN_V6,
@@ -215,14 +212,14 @@ __all__ = [
 ]
 
 #: Submodules bound by an ordinary ``import`` and kept **off** ``__all__`` /
-#: ``dir()``.  They stay reachable forever — ``ts.engine`` resolves and
+#: ``dir()``. They stay reachable — ``ts.registry`` resolves and
 #: ``from tsdynamics._engine import run`` imports — they simply do not earn a tab
 #: slot, and the reason is C1: **nothing in them is required to make a call.**
 #:
 #: ``errors`` is here for a second, harder reason: the Rust bridge does
 #: ``py.import("tsdynamics.errors")`` when it builds a typed exception at the FFI
 #: boundary, so the module path is an ABI.  It left ``__all__`` only because its
-#: six classes are on the top level now.
+#: classes are reached through ``ts.errors``.
 #:
 #: This tuple is the single source of truth for that decision, and the C5 gate in
 #: ``tests/test_namespace_curation.py`` reads it: promoting or demoting a
@@ -562,3 +559,12 @@ def __getattr__(name: str) -> _Any:
 def __dir__() -> list[str]:
     """Return exactly ``__all__`` — the C5 rule written out in the module docstring."""
     return sorted(__all__)
+
+
+# Installed plugins may import any public export, including built-ins
+# through ts.systems. Bind the namespace before discovering third-party code.
+# import_module bypasses __getattr__, whose missing-name suggestions also search
+# the systems namespace and would otherwise recursively trigger discovery here.
+systems = _importlib.import_module(f"{__name__}.systems")
+systems._discover_plugins()
+analysis.discover_plugins()

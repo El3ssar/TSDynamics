@@ -15,7 +15,7 @@ class. This page is the map of those ideas.
 ## The four families
 
 A system belongs to one of four families, chosen by the base class you subclass.
-Each has exactly one method to fill in.
+ODEs, DDEs and maps need one dynamics method; SDEs need both drift and diffusion.
 
 ### ODE — `ContinuousSystem`
 
@@ -84,14 +84,16 @@ class MySDE(ts.StochasticSystem):
 ```
 
 Integrating an SDE runs a fixed-step scheme (`euler_maruyama` by default,
-`milstein` for strong order 1). Here `dt` *is* the noise scale $\sqrt{dt}$, so it
-sets both the discretisation and the output grid. Pass `seed=` for a reproducible
-realisation.
+`milstein` for strong order 1 with componentwise diffusion
+$g_k = g_k(X_k,t)$). Cross-component diffusion coefficients require
+`euler_maruyama`; this Milstein implementation does not simulate Lévy areas.
+Here `dt` sets both the discretisation and the output grid; Wiener increments
+have standard deviation $\sqrt{dt}$. Pass `seed=` for a reproducible realisation.
 
 ### Map — `DiscreteMap`
 
-A discrete map $\mathbf{x}_{n+1} = \mathbf{F}(\mathbf{x}_n)$. Fill in `_step`
-(and, for the exact Lyapunov spectrum, `_jacobian`):
+A discrete map $\mathbf{x}_{n+1} = \mathbf{F}(\mathbf{x}_n)$. Fill in `_step`;
+its Jacobian is derived automatically. An explicit `_jacobian` is optional:
 
 ```python
 import numpy as np
@@ -147,8 +149,8 @@ its delay into the tape, so a delay sweep re-lowers per value.
 ## One protocol for everything that steps
 
 All four families — and every derived wrapper below — implement the same
-`System` protocol. This is the surface the analysis toolkit consumes, so writing
-one analysis makes it work on *every* system:
+`System` protocol. Analyses use this common surface while declaring their own
+supported families and mathematical assumptions:
 
 ```python
 # skip-doctest — the protocol surface, not a runnable snippet (`sys` is any system)
@@ -174,8 +176,10 @@ u2 = lor.step(0.01)          # continue from there
 
 **`run` is the one-liner over the same machinery**, and the two verbs divide
 cleanly: `run()` is always a *fresh* integration from the initial condition;
-`step()` is the one that continues. Run the same system twice and you get the
-same trajectory twice.
+`step()` is the one that continues. An automatically resolved initial condition
+is retained on the instance, so repeated deterministic runs reuse that start.
+For reproducibility across fresh instances, fix the initial condition or pass
+`seed=`; SDEs also need a fixed noise seed to reproduce their realisation.
 
 !!! note "`family` replaces `is_discrete`"
     One name, four answers, and it separates `"dde"` from `"sde"` — which a
@@ -207,8 +211,8 @@ rather than silently degrading.
 ## Derived systems: composition
 
 A **derived system** re-presents an existing system through a new lens while
-keeping the protocol intact — so every analysis keeps working on the wrapped
-view, and you `run` it exactly as you ran the original.
+keeping the protocol intact. Analyses can consume the wrapped view when its
+family and capabilities meet their requirements, and it still answers `run`.
 
 Two of them are **verbs on the system**, because they speak the same vocabulary
 as the class you are holding:
@@ -225,7 +229,7 @@ phase circle are two different sections of the same flow, so giving both raises
 and names the choice. One `step()` of the result is one section crossing (or one
 forcing period).
 
-Because the result **is** a discrete system, every map tool applies to a flow —
+Because the result **is** a discrete system, compatible map tools apply to a flow —
 an [orbit diagram](../analysis/orbit-diagrams.md) over a Poincaré map **is** a
 bifurcation diagram of the flow.
 

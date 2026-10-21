@@ -12,6 +12,12 @@ class Bogdanov(DiscreteMap):
     cusp. The map exhibits invariant circles, Arnold tongues and chaotic
     attractors as the parameters are varied.
 
+    The shipped ``eps = mu = 0`` map is area-preserving (Jacobian determinant
+    one). Its tested default orbit has a leading exponent approaching zero
+    (about ``2.9e-4`` at 20,000 iterates and ``5.1e-5`` at 200,000), so the
+    default tag is conservative rather than a claim of chaos. Conservative
+    phase space can contain both regular and chaotic trajectories.
+
     Parameters
     ----------
     eps : float

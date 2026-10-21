@@ -16,7 +16,10 @@ tapes through :func:`tsdynamics._engine.compile.lower_sde` (drift + diffusion,
 the diffusion carrying ``∂g/∂u`` for Milstein).
 
 Solvers (the real engine, ``tsdyn-solvers``/``tsdyn-engine``): **Euler–Maruyama**
-(strong order 0.5) and **Milstein** (strong order 1.0, which reads ``∂g/∂u``).
+(strong order 0.5) and **Milstein** (strong order 1.0 for componentwise diffusion
+``g_k(X_k, t)``). Cross-dependent coefficients are supported by Euler–Maruyama;
+Milstein rejects them because its simplified correction omits cross-Wiener
+iterated stochastic integrals.
 The default ``backend="jit"`` (and ``"interp"``) dispatches the two-tape SDE call
 to the compiled Rust engine (``tsdynamics._rust``, the FFI surface in
 ``tsdyn-core``; stream E-WIRE) — the Cranelift JIT and the SSA-tape interpreter,
@@ -231,6 +234,10 @@ def _advance_to(
     time is pinned to ``t_end`` so grid points never drift. A non-finite state
     raises rather than returning silent garbage.
     """
+    if not math.isfinite(dt) or dt <= 0.0:
+        raise InvalidParameterError(f"dt must be finite and positive, got {dt!r}.")
+    if not math.isfinite(t) or not math.isfinite(t_end):
+        raise InvalidParameterError("SDE start and final times must be finite.")
     dim = u.size
     while t < t_end:
         remaining = t_end - t
@@ -243,6 +250,10 @@ def _advance_to(
         else:
             # A genuinely shorter final span draws its increment over that width.
             h = remaining
+        if t + h == t:
+            raise InvalidParameterError(
+                f"dt={dt!r} cannot advance time from {t!r} at float64 precision."
+            )
         dw = _wiener(rng, h, dim)
         u = _sde_step(method, drift, diffusion, u, p, t, dw, h)
         if not np.all(np.isfinite(u)):
@@ -298,8 +309,8 @@ class StochasticSystem(SystemBase, ABC):
     Notes
     -----
     Integration uses a fixed step (the step *is* the noise scale ``√dt``).
-    ``method`` selects ``"euler_maruyama"`` (default, order 0.5) or ``"milstein"``
-    (order 1.0). Pass ``seed`` for a reproducible noise realisation; the resolved
+    ``solver`` selects ``"euler_maruyama"`` (default, order 0.5) or ``"milstein"``
+    (order 1.0 for componentwise diffusion). Pass ``seed`` for a reproducible noise realisation; the resolved
     seed is recorded in the trajectory's ``meta``.
     """
 
@@ -506,6 +517,8 @@ class StochasticSystem(SystemBase, ABC):
             for k, v in params.items():
                 self.params[k] = v
         t0 = float(t) if t is not None else 0.0
+        if not math.isfinite(t0):
+            raise InvalidParameterError(f"t must be finite, got {t!r}.")
         # ``resolve_ic`` commits the IC before the method resolution and the tape
         # lowering below, either of which can raise — a failed ``reinit`` must
         # leave the object exactly as it was.
@@ -514,6 +527,8 @@ class StochasticSystem(SystemBase, ABC):
             canon = self._resolve_method(solver)
             base_seed = _resolve_seed(seed)
             step_dt = float(dt) if dt is not None else type(self)._default_step_dt
+            if not math.isfinite(step_dt) or step_dt <= 0.0:
+                raise InvalidParameterError(f"dt must be finite and positive, got {step_dt!r}.")
             problem = self._problem(ic=ic_arr, t0=t0, method=canon)
         self._stepper = {
             "method": canon,
@@ -546,6 +561,12 @@ class StochasticSystem(SystemBase, ABC):
         assert self._stepper is not None
         s = self._stepper
         dt = float(n_or_dt) if n_or_dt is not None else s["dt"]
+        if not math.isfinite(dt) or dt <= 0.0:
+            raise InvalidParameterError(f"dt must be finite and positive, got {dt!r}.")
+        if not math.isfinite(self._t_now + dt) or self._t_now + dt == self._t_now:
+            raise InvalidParameterError(
+                f"dt={dt!r} cannot advance time from {self._t_now!r} at float64 precision."
+            )
         u = np.asarray(self._state_now, dtype=float)
         dw = _wiener(s["rng"], dt, u.size)
         u = _sde_step(s["method"], s["drift"], s["diffusion"], u, s["p"], self._t_now, dw, dt)
@@ -662,7 +683,7 @@ class StochasticSystem(SystemBase, ABC):
             Falls back to ``self.ic``, then a ``U[0, 1)^dim`` draw.
         solver : str, optional
             ``"euler_maruyama"`` (default, order 0.5) or ``"milstein"``
-            (order 1.0).
+            (order 1.0 for componentwise diffusion ``g_k(X_k, t)``).
         seed : int, optional
             Makes the whole run reproducible: it seeds the **noise realisation**
             *and* the random initial-condition draw.  (Every other family has

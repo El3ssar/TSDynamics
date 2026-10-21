@@ -11,6 +11,8 @@ on:
 jobs:
   full-sweep:
     runs-on: ubuntu-latest
+    env:
+      MPLBACKEND: Agg
     # Hard cap so a pathological system fails the run in minutes instead of
     # hanging for the full 6-hour GitHub Actions ceiling.
     timeout-minutes: 45
@@ -30,8 +32,10 @@ jobs:
       - name: Set up Python
         run: uv python install 3.12
 
-      - name: Sync project + dev deps (builds the engine)
-        run: uv sync --group dev
+      # The full tier executes the composition and animation documentation,
+      # including SVG/GIF exports. Exercise those examples with their extras.
+      - name: Sync project + dev deps + plotting extras (builds the engine)
+        run: uv sync --locked --group dev --all-extras --python 3.12
 
       - name: Full sweep
-        run: uv run pytest -m full --no-cov -q
+        run: uv run --no-sync pytest -m full --no-cov -q

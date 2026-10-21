@@ -1135,12 +1135,15 @@ class ItikBanksTumor(ContinuousSystem):
 
 
 class CaTwoPlusQuasiperiodic(CaTwoPlus):
-    """Intracellular Ca²⁺ oscillator in its quasiperiodic / chaotic regime.
+    """Intracellular Ca²⁺ oscillator with quasiperiodic parameter defaults.
 
     The same self-modulated InsP₃ calcium model as :class:`CaTwoPlus` (Houart,
     Dupont & Goldbeter), at the parameter set for which the CICR feedback yields
-    quasiperiodic and chaotic Ca²⁺ oscillations rather than simple periodic
-    spiking.
+    quasiperiodic Ca²⁺ oscillations rather than simple periodic spiking. Other
+    parameter regimes of the model can be chaotic. The catalogue audit found
+    leading finite-time exponents approaching zero from tested starts at these
+    defaults (magnitude below ``6e-4`` over its longer window), rather than
+    evidence of sustained chaos.
 
     Parameters
     ----------

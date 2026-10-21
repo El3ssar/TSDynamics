@@ -1,5 +1,5 @@
 ---
-description: The Analysis toolkit — the Trajectory object, the uniform stepping protocol, and every quantifier that composes over any built-in or user-defined system.
+description: The analysis toolkit — trajectories, the uniform stepping protocol, and quantifiers for supported systems and sampled data.
 ---
 
 <span class="ts-kicker">Analysis · Overview</span>
@@ -8,12 +8,13 @@ description: The Analysis toolkit — the Trajectory object, the uniform steppin
 
 The quantifier toolkit. Everything that steps — a map, a flow, a delay or
 stochastic system, or a Poincaré section of a flow — implements the same
-`System` protocol, so every analysis below composes over any
-[built-in or user-defined system](../systems/index.md) without special-casing.
-You define the dynamics once; the whole toolkit follows.
+`System` protocol. Each analysis declares the inputs and families it supports:
+for example, a deterministic Lyapunov spectrum and a stochastic sample-path
+statistic have different assumptions. Use `ts.analysis.find(system)` to find
+compatible routines for a [built-in or user-defined system](../systems/index.md).
 
-Two things tie it together. First, **the `Trajectory`** — every `run` call
-returns one: a `(T, dim)` array of states with named components (`traj["x"]`),
+Two things tie it together. First, **the `Trajectory`** — a single-system `run`
+returns one (an ensemble returns a batch): a `(T, dim)` array of states with named components (`traj["x"]`),
 row/column selection (`traj[10:50]`, `traj["x", "z"]`, `traj.after(t)`) and
 provenance carried in `traj.meta`. Second, **the calling convention**:
 
@@ -22,10 +23,17 @@ provenance carried in `traj.meta`. Second, **the calling convention**:
 
 There is no bound method on a system, on a `Trajectory`, or on a result. One
 concept, one spelling; and the free function is the one that cannot hide a
-sampling choice from you. Each returns a rich result object that is a drop-in for
+sampling choice from you. Most quantifiers return a rich result object that is a drop-in for
 its underlying value (a `float`, an array) while also carrying `.meta`,
 `.to_dict()`, `.to_frame()` and a `.plot` seam — **and whose `repr` is the
 answer**, so `print(result)` is the whole reporting story.
+
+Some analyses have different return shapes, documented in their `Returns`
+sections: field dataclasses or curve lists; a `PoincareSection` trajectory;
+the named `(radii, sums)` correlation-sum tuple; a `{q: DimensionResult}` spectrum;
+sampling results and arrays; a `(centres, density, edges)` density tuple; or the
+plain `float` from `set_distance`. These alternatives do not all provide the
+result-object methods above.
 
 ```python
 import tsdynamics as ts
@@ -39,7 +47,7 @@ ts.analysis.kaplan_yorke_dimension(exps)                      # a property of th
 
 ## Finding the one you want
 
-`ts.analysis` is **53 flat, sorted names** — 50 analyses plus `find`, `register`
+`ts.analysis` is **52 flat, sorted names** — 49 analyses plus `find`, `register`
 and `results` — so `ts.analysis.<TAB>` is the index. Two questions get answered
 without leaving the REPL:
 
@@ -97,7 +105,7 @@ lower-dimensional maps that expose their structure.
 The invariant sets that organise the flow — equilibria, cycles, and their
 linear stability.
 
-- [**Fixed points & periodic orbits**](fixed-points.md) — equilibria and map fixed points (Newton / SD / DL, rigorous interval enclosure), period-$p$ orbits, and flow limit cycles by shooting.
+- [**Fixed points & periodic orbits**](fixed-points.md) — equilibria and map fixed points (Newton / SD / DL, numerical interval search), period-$p$ orbits, and flow limit cycles by shooting.
 
 ### Chaos indicators
 
@@ -130,12 +138,13 @@ is structured.
 ## Beyond the prepackaged routines
 
 Every routine above is built on the same uniform **stepping protocol** —
-`reinit(u)` / `step(n_or_dt)` / `state()` / `set_state(u)` / `time()` — that
-every system implements. When a prepackaged analysis does not fit (covariant
+`reinit(...)` / `step(n_or_dt)` / `state()` / `time()` — that
+every system implements. Most also offer `set_state(u)`; DDEs require an entire
+history and use `reinit(history=...)` instead. When a prepackaged analysis does not fit (covariant
 Lyapunov vectors, a custom event, finite-time statistics), you can drive the
 protocol directly, or reach for the derived views — `sys.poincare(...)`,
 `sys.ensemble(...)`, and `ts.derived.TangentSystem` / `ts.derived.ProjectedSystem`
-— which are themselves systems, so the whole toolkit composes back over them.
+— which are themselves systems and work with analyses that support their capabilities.
 
 ```python
 lor.reinit([1.0, 1.0, 1.0])
@@ -145,6 +154,6 @@ for _ in range(1000):
 
 ## See also
 
-- [Systems](../systems/index.md) — the 177 built-in systems every analysis composes over
+- [Systems](../systems/index.md) — the 177 built-in systems and their families
 - [Integration & methods](integration-and-methods.md) — the march underneath every quantifier
 - [Lyapunov spectra](lyapunov.md) — the natural first stop for a new attractor

@@ -305,6 +305,12 @@ class WindmiReduced(ContinuousSystem):
     ``tanh(d1*(i-1))`` switch (``d1 = 2200`` makes it a near-step at ``i = 1``,
     the substorm-onset threshold).
 
+    At the shipped defaults, tested trajectories are regular and depend on the
+    initial condition: the catalogue gate start approaches an equilibrium,
+    while the documentation's ``[1, 1, 1]`` start approaches a limit cycle.
+    Their measured leading finite-time exponents are about ``-0.19`` and
+    ``-2.7e-8`` respectively; these defaults are not advertised as chaotic.
+
     Numerical guards (no change to the dynamics)
     --------------------------------------------
     Two robustness guards keep the orbit reproducible across the engine's

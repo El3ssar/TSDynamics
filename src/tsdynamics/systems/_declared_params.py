@@ -29,6 +29,9 @@ contents are in no ``__all__``, so the catalogue modules' curated ``__dir__``
 
 from __future__ import annotations
 
+import math
+from numbers import Real
+
 from tsdynamics.errors import InvalidParameterError
 
 __all__ = ["merge_declared_params"]
@@ -40,6 +43,8 @@ def merge_declared_params(
     params: dict[str, float] | None,
     param_kwargs: dict[str, float],
     named: dict[str, float | None],
+    *,
+    integer_params: tuple[str, ...] = (),
 ) -> dict[str, float]:
     """Merge a system's three parameter channels the way the base constructor does.
 
@@ -58,6 +63,9 @@ def merge_declared_params(
         The constructor's own explicit arguments, ``None`` where omitted.  A
         non-``None`` entry that is *also* in ``params=`` or ``**param_kwargs``
         is the same duplication wearing a positional hat.
+    integer_params : tuple of str, optional
+        Structural sizes that must be positive integers. Validate after merging
+        so named arguments and ``params=`` follow the same rules.
 
     Returns
     -------
@@ -104,4 +112,15 @@ def merge_declared_params(
         value = named[name]
         assert value is not None
         merged[name] = value
+    for name in integer_params:
+        value = merged[name]
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, Real)
+            or not math.isfinite(value)
+            or value < 1
+            or value != int(value)
+        ):
+            raise InvalidParameterError(f"{cls_name}: {name} must be a positive integer.")
+        merged[name] = int(value)
     return merged

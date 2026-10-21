@@ -39,6 +39,9 @@ values live from the system on every run, so a parameter sweep re-lowers
 nothing:
 
 ```python
+import numpy as np
+import tsdynamics as ts
+
 lor = ts.systems.Lorenz()
 for rho in np.linspace(0, 50, 200):
     lor.with_params(rho=rho).run(final_time=50.0)   # one tape, 200 runs

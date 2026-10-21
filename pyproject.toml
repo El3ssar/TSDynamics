@@ -5,7 +5,7 @@ build-backend = "maturin"
 [project]
 name = "tsdynamics"
 version = "6.0.1"
-description = "Zero-warmup Rust-engine ODE/DDE/SDE integration, discrete maps, and chaos analysis for dynamical systems."
+description = "Rust-backed ODE/DDE/SDE integration, discrete maps, and chaos analysis for dynamical systems."
 readme = "README.md"
 requires-python = ">=3.12,<4.0"
 license = "MIT"
@@ -126,14 +126,17 @@ include = ["tsdynamics/viz/render/threejs/_assets/*.js"]
 # maturin cannot read __version__ from a Python file, so the canonical version is
 # the static [project] version (PSR rewrites it) and src/tsdynamics/__init__.py is
 # kept in lock-step.  PSR does NOT build (the platform wheels are built by the
-# release wheel matrix); it only computes the bump, rewrites the version, tags and
-# creates the GitHub release.
+# release wheel matrix); it computes the bump, refreshes the project version in
+# uv.lock, tags and creates the GitHub release.
 # ───────────────────────────────────────────────────────────────────────────────
 
 [tool.semantic_release]
 version_toml = ["pyproject.toml:project.version"]
 version_variables = ["src/tsdynamics/__init__.py:__version__"]
-build_command = ""
+# The release action runs in a container without uv. Refresh and stage the lock
+# after PSR stamps pyproject.toml so the next --locked CI run remains reproducible.
+# Updating only this project preserves the already-tested dependency versions.
+build_command = "python -m pip install 'uv==0.13.3' && uv lock --upgrade-package tsdynamics && git add uv.lock"
 commit_message = "chore(release): v{version} [skip ci]"
 tag_format = "v{version}"
 allow_zero_version = true

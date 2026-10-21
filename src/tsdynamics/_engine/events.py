@@ -767,8 +767,9 @@ def _reference_events(
     from scipy.integrate import solve_ivp
 
     from .compile import eval_tape
-    from .reference import _scipy_method
+    from .reference import _reference_tolerances, _scipy_method
 
+    rtol, atol = _reference_tolerances(rtol, atol)
     dim = int(problem.dim)
     tape = problem.tape
     p = problem.params_vec()

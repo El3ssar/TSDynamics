@@ -352,9 +352,9 @@ def test_plot_transform_registry_is_created_empty_and_filled_by_viz() -> None:
 #:
 #: A declared group is a promise.  ``SYSTEMS_GROUP`` was declared inside "the
 #: frozen contract a plugin author declares against", listed in ``ALL_GROUPS``,
-#: and loaded by **nothing** — so a third-party package publishing
-#: ``tsdynamics.systems`` entry points was silently ignored, with no error to
-#: debug, for as long as the group has existed.
+#: and originally loaded by nothing. Keep this gate green for all six doors;
+#: installed-system behavior is exercised with isolated fake distributions in
+#: ``test_system_plugins.py``.
 _GROUP_CONSUMERS = {
     "SYSTEMS_GROUP": "tsdynamics.systems",
     "SOLVERS_GROUP": "tsdynamics._solvers",
@@ -375,30 +375,7 @@ def test_every_declared_plugin_group_is_in_all_groups() -> None:
     assert plugins.PLOT_PRIMITIVES_GROUP == "tsdynamics.plot_primitives"
 
 
-#: Groups whose loader belongs to another v6 slot and has not landed yet.
-#: ``strict`` xfails, so each one **fails the moment it starts passing** and the
-#: row has to be deleted — the repo's established cross-slot handoff.
-_LOADER_NOT_LANDED = {
-    # §7.1: "SYSTEMS_GROUP is advertised and dead ... systems/__init__.py gains
-    # the loader."  Owner: C9 · CATALOGUE.
-    "SYSTEMS_GROUP": "C9 - CATALOGUE owns systems/__init__.py (contract 7.1)",
-}
-
-
-@pytest.mark.parametrize(
-    "group_name",
-    [
-        pytest.param(
-            name,
-            marks=(
-                [pytest.mark.xfail(strict=True, reason=_LOADER_NOT_LANDED[name])]
-                if name in _LOADER_NOT_LANDED
-                else []
-            ),
-        )
-        for name in sorted(_GROUP_CONSUMERS)
-    ],
-)
+@pytest.mark.parametrize("group_name", sorted(_GROUP_CONSUMERS))
 def test_every_declared_plugin_group_has_a_consumer(group_name) -> None:
     """Some module must actually *load* each declared group.
 

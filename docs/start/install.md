@@ -31,7 +31,8 @@ covers every CPython ≥ 3.12.
 
 Concretely, this means:
 
-- **No toolchain.** Installing and running the library never invokes a compiler.
+- **No external toolchain.** Installing a prebuilt wheel needs no compiler.
+  The default execution backend uses its bundled JIT compiler in-process.
 - **No build step, nothing on disk.** Every family — ODEs, delay equations,
   stochastic equations, and maps — lowers its symbolic equations to an
   in-process engine *tape* the first time you run it, in a fraction of a second,
@@ -41,19 +42,22 @@ Concretely, this means:
   the next run; there is no cache to wipe.
 - **The same numbers everywhere.** The tape runs on a Cranelift JIT by default,
   or on a Rust interpreter that is bit-for-bit identical — see
-  [backends](concepts.md#backends-jit-interp-reference) — so results do not
-  depend on which BLAS or Python build you happen to have.
+  [backends](concepts.md#backends-jit-interp-reference). This parity applies on
+  the same machine for the same solver and inputs; floating-point results
+  across platforms or numerical-library builds can still differ.
 
 !!! note "Building from source"
     Only building *from the source distribution* — the `sdist`, the fallback for
     a platform outside the wheel matrix — needs a Rust toolchain, because the
     package build backend is [maturin](https://www.maturin.rs/). The normal
-    `pip install` path never reaches it.
+    wheel installation path never reaches it. Use
+    `pip install --only-binary=:all: tsdynamics` to require a wheel and fail
+    instead of building from source.
 
 ## Optional extras
 
-The base install pulls in **no plotting library** — `import tsdynamics` stays
-lightweight and imports nothing heavy. The plotting backends are opt-in extras:
+The base install pulls in **no plotting library**. It still imports scientific
+dependencies, including NumPy and SciPy. The plotting backends are opt-in extras:
 
 | Extra | Installs | When you want it |
 | ----- | -------- | ---------------- |
@@ -80,7 +84,7 @@ print(ts.__version__)
 print(ts.registry.families())   # {'ode': 142, 'dde': 6, 'sde': 3, 'map': 26}
 
 traj = ts.systems.Henon().run(steps=100, ic=[0.1, 0.1])
-print(traj.y.shape)             # (100, 2)
+print(traj.y.shape)             # (101, 2): initial state plus 100 iterates
 ```
 
 `ts.registry.families()` reports the built-in catalogue by family. If

@@ -1,10 +1,11 @@
 """Shared base class for the analysis layer's result objects.
 
-Every analysis in TSDynamics returns a *self-describing result object* rather
-than a bare ``float``/``ndarray``/``list``.  :class:`AnalysisResult` is the one
-base those results share.  It is purely additive — it adds a uniform surface
-without changing any existing return value — so the analysis subpackages can be
-reparented onto it one at a time.
+Most quantifiers return a self-describing :class:`AnalysisResult` subclass.
+Some analyses deliberately return other shapes: field dataclasses and curve
+lists, the :class:`~tsdynamics.data.Trajectory`-based PoincareSection, a named
+correlation-sum tuple, a mapping of dimension results, sampling tools, arrays
+or a plain set-distance float.  Each function's Returns section names its
+actual type; those alternatives do not inherit the surface described below.
 
 The surface every result inherits
 ---------------------------------
@@ -12,16 +13,15 @@ The surface every result inherits
   built from :meth:`tsdynamics.families.base.SystemBase._provenance` at the
   call site via :func:`tsdynamics.analysis._result_base._build_meta` (private:
   an analysis builds it, a user never does).
-- ``__repr__`` — a compact, ``_repr_fields``-driven one-liner.
-- ``_repr_html_`` — a small table for Jupyter / IPython.
-- :meth:`summary` — a human-readable multi-line readout plus an optional
-  interpretation line (subclasses supply the interpretation).
+- ``__repr__`` / ``__str__`` — the measurement, interpretation and supporting
+  details in a compact readable report; there is no separate ``summary()``.
+- ``_repr_html_`` — the same report for Jupyter / IPython.
 - :meth:`to_dict` — a stdlib, JSON-friendly mapping (arrays become lists).
 - :meth:`to_frame` — a :mod:`pandas` ``DataFrame`` (``pandas`` is a soft
   dependency, imported lazily, with an install hint if it is missing).
 - ``plot`` — the visualization seam: an accessor that is both callable
-  (``result.plot()``) and a namespace of typed kind methods
-  (``result.plot()``).  The in-tree backends seed themselves on first
+  (``result.plot()``) and a namespace of compatible transforms
+  (e.g. ``result.plot.scaling_fit()``).  The in-tree backends seed themselves on first
   use, so it renders out of the box with a plotting library installed; with none
   the seam raises :class:`VisualizationNotInstalled`.
 
@@ -55,13 +55,11 @@ The scaling-curve family
 ------------------------
 A large family of estimators reads a single number off the slope of a log--log
 (or semi-log) scaling curve: every fractal dimension, the Lyapunov exponent from
-a measured time series, expansion entropy, and the Cao / false-nearest-neighbour
-embedding-dimension diagnostics.  :class:`ScalingResult` gives that whole family
+a measured time series, and expansion entropy.  :class:`ScalingResult` gives that family
 **one** canonical schema — ``estimate`` / ``stderr`` / ``abscissa`` /
 ``ordinate`` / ``fit_region`` / ``intercept`` (plus the ``local_slopes`` and
 ``scaling_window`` diagnostics) — so a single ``result.plot()`` renders
-any of them.  It is additive: existing results are *reparented* onto it by a
-later stream, not changed here.
+any of them.
 
 Module layout (de-dup split)
 ----------------------------

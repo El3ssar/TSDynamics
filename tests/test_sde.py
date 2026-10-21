@@ -291,6 +291,28 @@ def test_stepping_is_reproducible_given_a_seed():
     assert path_a == path_b
 
 
+@pytest.mark.parametrize("dt", [0.0, -0.01, np.nan, np.inf])
+def test_invalid_step_does_not_consume_noise_or_mutate_state(dt):
+    from tsdynamics.errors import InvalidParameterError
+
+    a, b = GeometricBrownianMotion(), GeometricBrownianMotion()
+    a.reinit([1.0], seed=2024)
+    b.reinit([1.0], seed=2024)
+    with pytest.raises(InvalidParameterError, match="dt"):
+        a.step(dt)
+    assert a.time() == 0.0
+    np.testing.assert_array_equal(a.state(), [1.0])
+    np.testing.assert_array_equal(a.step(0.01), b.step(0.01))
+
+
+@pytest.mark.parametrize("dt", [0.0, -0.01, np.nan, np.inf])
+def test_reinit_rejects_invalid_default_step(dt):
+    from tsdynamics.errors import InvalidParameterError
+
+    with pytest.raises(InvalidParameterError, match="dt"):
+        GeometricBrownianMotion().reinit([1.0], seed=0, dt=dt)
+
+
 def test_trajectory_drops_transient():
     gbm = GeometricBrownianMotion()
     traj = gbm.run(1.0, dt=0.05, transient=0.5, ic=[1.0], seed=0)

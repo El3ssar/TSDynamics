@@ -11,7 +11,8 @@ hide:
 
 Dynamical systems and chaos analysis for Python, on a native Rust engine —
 177 built-in systems, JIT-compiled integration with no build step, and a full
-chaos-analysis toolkit. Define the math once; get the rest.
+chaos-analysis toolkit. Define the dynamics once, then use the analyses that
+support your system's family and capabilities.
 
 <!-- The landing page (hero, install, cards) is rendered by the
      home.html template; this body is a fallback for non-template contexts. -->

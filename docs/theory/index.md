@@ -19,7 +19,7 @@ derivation, or to predict what a sweep will cost.
 | [Solvers](solvers.md) | The kernel catalogue: explicit/implicit families, `dt` as an output grid, dense output and `max_step`, the v6 default tolerances |
 | [Backends](backends.md) | `jit` (the default), `interp` and `reference` — what each is for and how they relate bit-for-bit |
 | [Lyapunov exponents](lyapunov.md) | Variational equations, QR re-orthonormalization, time-weighted averaging, the DDE caveat, the Kaplan–Yorke conjecture |
-| [Rigorous fixed points](fixed-points-interval.md) | The interval-Newton / Krawczyk enumerator: brackets *every* root in a box with a uniqueness certificate; the benchmark vs multi-start and the round-off caveat |
+| [Interval fixed-point search](fixed-points-interval.md) | Deterministic numerical branch-and-prune with a Krawczyk operator; historical timing comparisons and the limits without outward rounding |
 | [Conventions](conventions.md) | Time vs. steps, array shapes, IC resolution priority, map parameter order, metadata history semantics |
 | [Packaging](packaging.md) | Why the project ships as one `abi3` maturin wheel: the Python package plus the compiled engine |
 

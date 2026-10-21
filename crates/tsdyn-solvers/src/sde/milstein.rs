@@ -9,10 +9,11 @@
 //! ```
 //!
 //! where `ΔW_k ~ N(0, h)` is the engine-drawn increment for component `k`. The
-//! correction needs only the **diagonal** of the diffusion Jacobian `∂g_k/∂X_k`:
-//! with independent per-component Wiener processes the off-diagonal Lévy-area
-//! terms vanish, which is exactly why the diagonal-noise contract (ROADMAP §11)
-//! makes order 1.0 reachable without simulating iterated stochastic integrals.
+//! correction needs only the **diagonal** of the diffusion Jacobian `∂g_k/∂X_k`
+//! when each coefficient depends only on its own state component, `g_k(X_k, t)`.
+//! Independent Wiener processes alone do not remove cross iterated-Itô terms
+//! when `g_k` depends on other state components. The Python lowering and binding
+//! reject those coefficients for this kernel; Euler–Maruyama supports them.
 //!
 //! Raising the strong order from 0.5 to 1.0 costs one extra thing over
 //! Euler–Maruyama: the diffusion evaluator must carry its Jacobian. The kernel

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import importlib
 import sys
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -221,4 +222,61 @@ def test_broken_plugin_is_isolated(tmp_path, monkeypatch, clean_registry):
             plugins.load_plugins(plugins.SOLVERS_GROUP, strict=True)
     finally:
         sys.modules.pop("broken_solver_pkg", None)
+        importlib.invalidate_caches()
+
+
+@pytest.mark.parametrize("kind", ["factory", "iterator"])
+@pytest.mark.parametrize("strict", [False, True])
+def test_plugin_initialization_failure_restores_registry(
+    tmp_path, monkeypatch, clean_registry, kind, strict
+):
+    """Failures after import neither poison built-ins nor block healthy siblings."""
+    site = tmp_path / "site"
+    module = f"failing_solver_{kind}"
+    before = solvers.all_specs()
+    builtin = next(spec.name for spec in before.values() if spec.origin == "builtin")
+    yield_line = "yield SolverSpec(name='uncommitted', caps=SolverCaps(kind='explicit'))"
+    _write_fake_distribution(
+        site,
+        dist="failing_solver",
+        module=module,
+        group=plugins.SOLVERS_GROUP,
+        ep_name="broken_factory",
+        target=f"{module}:make_specs",
+        body=textwrap.dedent(
+            f"""
+            from tsdynamics._solvers import SolverSpec, SolverCaps, register
+
+            def make_specs():
+                register(SolverSpec(name='partial', caps=SolverCaps(kind='explicit')))
+                register(SolverSpec(name={builtin!r}, caps=SolverCaps(kind='implicit')), override=True)
+                {yield_line if kind == "iterator" else ""}
+                raise RuntimeError('boom after registration')
+
+            GOOD = SolverSpec(name='healthy_sibling', caps=SolverCaps(kind='explicit'), origin='plugin')
+            """
+        ),
+    )
+    (site / "failing_solver-0.0.0.dist-info" / "entry_points.txt").write_text(
+        f"[{plugins.SOLVERS_GROUP}]\n"
+        f"broken_factory = {module}:make_specs\n"
+        f"healthy_sibling = {module}:GOOD\n"
+    )
+    monkeypatch.syspath_prepend(str(site))
+    importlib.invalidate_caches()
+    try:
+        if strict:
+            with pytest.raises(RuntimeError, match="boom after registration"):
+                solvers.discover_plugins(strict=True)
+            assert solvers.all_specs() == before
+        else:
+            with pytest.warns(UserWarning, match="broken_factory.*boom after registration"):
+                newly = solvers.discover_plugins()
+            assert newly == ["healthy_sibling"]
+            assert solvers.get("healthy_sibling").origin == "plugin"
+            assert {name: solvers.get(name) for name in before} == before
+            assert "partial" not in solvers.available()
+            assert "uncommitted" not in solvers.available()
+    finally:
+        sys.modules.pop(module, None)
         importlib.invalidate_caches()

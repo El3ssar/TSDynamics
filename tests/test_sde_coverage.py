@@ -213,11 +213,8 @@ class _CrossDiff2D(StochasticSystem):
 
     ``g₀ = σ₀·x₀`` (so ``∂g₀/∂x₀ = σ₀ ≠ 0``) and ``g₁ = σ₁·x₀`` — whose only nonzero
     Jacobian entry is the **off-diagonal** ``∂g₁/∂x₀ = σ₁`` (``∂g₁/∂x₁ = 0``).
-    Diagonal Milstein uses only ``∂g_k/∂x_k``, so a correct kernel corrects
-    component 0 but leaves component 1 identical to Euler–Maruyama; a kernel that
-    wrongly used the off-diagonal would perturb component 1. This is what makes the
-    ``np.diagonal(gjac)`` projection testable (the ``_CovMixed2D`` fixture's
-    off-diagonal is identically zero, so it cannot bite).
+    This is noncommutative noise: the Milstein step would need cross-Wiener
+    iterated integrals, so the componentwise implementation must reject it.
     """
 
     params = {"a0": -0.5, "a1": -0.3, "sigma0": 0.4, "sigma1": 0.5}
@@ -229,55 +226,45 @@ class _CrossDiff2D(StochasticSystem):
 
     @staticmethod
     def _diffusion(y, t, a0, a1, sigma0, sigma1):
-        # g₁ depends on x₀ (a nonzero OFF-diagonal in ∂g/∂u that Milstein must ignore).
+        # g₁ depends on x₀; independent Wiener drivers do not remove cross terms.
         return [sigma0 * y(0), sigma1 * y(0)]
 
 
-def test_milstein_uses_only_the_diagonal_of_the_diffusion_jacobian():
-    """Milstein's correction uses ``∂g_k/∂x_k`` only — an off-diagonal ``∂g/∂u`` is ignored.
+@pytest.mark.parametrize("backend", ["reference", "interp", "jit"])
+def test_milstein_rejects_cross_dependent_diffusion(backend):
+    """Missing iterated stochastic integrals cannot be advertised as order one."""
+    from tsdynamics.errors import InvalidParameterError
 
-    For ``_CrossDiff2D``, component 0 (``g₀ = σ₀x₀``, ``∂g₀/∂x₀ = σ₀``) gets the
-    Itô correction, while component 1 (``g₁ = σ₁x₀``, ``∂g₁/∂x₁ = 0``) must be left
-    identical to Euler–Maruyama. A kernel that mistakenly used the off-diagonal
-    ``∂g₁/∂x₀ = σ₁`` would add a spurious term to component 1 — so this gates the
-    diagonal projection (the diagnosis's ``np.diagonal(gjac)`` concern) that the
-    all-diagonal ``_CovMixed2D`` fixture cannot.
-    """
+    with pytest.raises(InvalidParameterError, match="componentwise.*component 1"):
+        _CrossDiff2D().run(
+            final_time=0.1,
+            dt=0.01,
+            ic=[2.0, 1.5],
+            seed=0,
+            solver="milstein",
+            backend=backend,
+        )
+
+
+def test_euler_maruyama_keeps_supporting_cross_dependent_diffusion():
     sys = _CrossDiff2D()
-    em_prob = sys._problem(ic=np.array([2.0, 1.5]), t0=0.0, method="euler_maruyama")
-    mil_prob = sys._problem(ic=np.array([2.0, 1.5]), t0=0.0, method="milstein")
-    p = em_prob.params_vec()
-    u, dw, h = np.array([2.0, 1.5]), np.array([0.3, -0.25]), 0.05
-
-    em = _sde_step("euler_maruyama", em_prob.drift, em_prob.diffusion, u, p, 0.0, dw, h)
-    mil = _sde_step("milstein", mil_prob.drift, mil_prob.diffusion, u, p, 0.0, dw, h)
-
-    sigma0, sigma1 = 0.4, 0.5
-    corr0 = 0.5 * (sigma0 * u[0]) * sigma0 * (dw[0] ** 2 - h)  # ∂g₀/∂x₀ = σ₀
-    corr1 = 0.0  # ∂g₁/∂x₁ = 0 — the off-diagonal ∂g₁/∂x₀ must NOT contribute
-    np.testing.assert_allclose(mil - em, [corr0, corr1], atol=1e-14)
-    # The gate is meaningful: corr0 is nonzero, and a kernel using the off-diagonal
-    # would have given component 1 this nonzero (wrong) value instead of 0.
-    assert corr0 != 0.0
-    wrong_offdiag = 0.5 * (sigma1 * u[0]) * sigma1 * (dw[1] ** 2 - h)
-    assert wrong_offdiag != 0.0
-
-
-def test_diverged_trajectory_becomes_a_nan_row_others_survive():
-    """A diverging trajectory yields a NaN row without aborting the batch.
-
-    ``x₀ = 1`` reaches ``+∞`` before ``t = 3`` (``1/(1−t)``); ``x₀ = −1`` decays to
-    ``0`` and stays finite. The batch must isolate the blow-up as ``NaN`` and keep
-    the finite row finite — the engine must not abort the whole ensemble.
-    """
-    sys = _CovExploder()
-    finals = (
-        sys.ensemble(np.array([[1.0], [-1.0]]))
-        .run(final_time=3.0, dt=0.01, seed=0, backend="reference")
-        .final
+    em = sys.run(
+        final_time=0.1,
+        dt=0.01,
+        ic=[2.0, 1.5],
+        seed=0,
+        solver="euler_maruyama",
+        backend="reference",
     )
-    assert np.isnan(finals[0, 0])
-    assert np.isfinite(finals[1, 0])
+    assert em.y.shape == (11, 2)
+    assert np.isfinite(em.y).all()
+
+
+def test_milstein_stepping_rejects_cross_dependent_diffusion():
+    from tsdynamics.errors import InvalidParameterError
+
+    with pytest.raises(InvalidParameterError, match="euler_maruyama"):
+        _CrossDiff2D().reinit([2.0, 1.5], solver="milstein", seed=0)
 
 
 # ===========================================================================

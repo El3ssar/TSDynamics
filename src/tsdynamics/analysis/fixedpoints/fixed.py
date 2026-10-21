@@ -16,11 +16,11 @@ Davidchack--Lai (1999) stabilising transformations, which find unstable fixed
 points that pure Newton can miss by cycling a set of orthogonal matrices that
 turn each instability type into a contracting one.
 
-``method="interval"`` is a *rigorous* alternative (maps **and** flows): the
-Krawczyk operator brackets **all** roots inside the (required) search ``region``
-by interval branch-and-prune, certifying existence + uniqueness per sub-box — so
-it cannot silently miss a root the way a finite multi-start can, and is faster on
-the analytic/polynomial systems it applies to.  It needs an interval-extensible
+``method="interval"`` is a deterministic alternative (maps **and** flows): the
+Krawczyk operator searches the (required) ``region`` by interval branch-and-prune,
+avoiding random seeding.  Its arithmetic uses ordinary floating-point operations
+without outward rounding, so it provides numerical roots, not formal existence,
+uniqueness or completeness certificates.  It needs an interval-extensible
 right-hand side (the engine lives in
 :mod:`tsdynamics.analysis.fixedpoints._interval`); a system whose kernel uses an
 op the interval engine cannot enclose (a comparison, a modulo, a non-integer
@@ -512,8 +512,8 @@ def fixed_points(
         and 20 orbit points are added on top.  This is a
         completeness knob, and the cheap one: multi-start Newton is a heuristic
         that can always miss a root, so raise it when the count matters.  For a
-        *guaranteed* complete set use ``method="interval"`` (which recovers all
-        27 of Thomas's equilibria with a per-box existence certificate).
+        deterministic search of a bounded box use ``method="interval"``.  Neither
+        implementation provides a formal completeness guarantee.
     tol : float
         Residual tolerance (``‖f(x) − x‖`` for maps, ``‖f(x)‖`` for flows).
     max_iter : int
@@ -524,10 +524,11 @@ def fixed_points(
         ``"newton"`` (default) — Newton on the exact Jacobian.  ``"sd"`` /
         ``"dl"`` — Schmelcher--Diakonos / Davidchack--Lai stabilising
         transformations (maps only) for systematically reaching unstable points.
-        ``"interval"`` — the rigorous Krawczyk branch-and-prune (maps **and**
-        flows): it brackets *all* roots in ``region`` with an existence +
-        uniqueness certificate per sub-box, so it cannot silently miss a root.
-        It requires a bounded ``region`` (the box it certifies over) and an
+        ``"interval"`` — numerical Krawczyk branch-and-prune (maps **and**
+        flows).  It searches a bounded box deterministically; ordinary float
+        arithmetic and tolerance-based termination mean it is not a formal
+        certificate of existence, uniqueness or completeness.
+        It requires a bounded ``region`` (the box to search) and an
         interval-extensible right-hand side; a system whose kernel uses an op the
         interval engine cannot enclose raises
         :class:`~tsdynamics.errors.InvalidInputError` (use ``"newton"`` there).
@@ -574,9 +575,13 @@ def fixed_points(
 
     Examples
     --------
-    >>> fixed_points(Henon())              # two saddles of the Hénon map
-    >>> fixed_points(Lorenz())             # the origin and the two C± equilibria
-    >>> fixed_points(Henon(), region=[(-3, 3), (-3, 3)], method="interval")  # rigorous
+    >>> len(fixed_points(Henon()))         # two saddles of the Hénon map
+    2
+    >>> len(fixed_points(Lorenz()))        # the origin and the two C± equilibria
+    3
+    >>> roots = fixed_points(Henon(), region=[(-3, 3), (-3, 3)], method="interval")
+    >>> len(roots)
+    2
 
     References
     ----------
@@ -612,7 +617,7 @@ def fixed_points(
             hint=(
                 "'newton' is multi-start Newton; 'sd'/'dl' add stabilising "
                 "transformations that reach unstable orbits of maps; 'interval' "
-                "is the rigorous Krawczyk search, which cannot miss a root."
+                "is a deterministic numerical Krawczyk search over a bounded region."
                 + remedy(
                     "ts.analysis.fixed_points(system, method='newton')",
                     lead="The default is the one to start from:",
@@ -629,7 +634,7 @@ def fixed_points(
     rng = np.random.default_rng(seed)
 
     if method == "interval":
-        return _interval_fixed_points(system, continuous, region, dim, tol)
+        return _interval_fixed_points(system, continuous, region, dim, tol, dedup_tol)
 
     if continuous:
         rhs, jac = _c.flow_fns(system)
@@ -714,15 +719,17 @@ def _interval_fixed_points(
     region: Any,
     dim: int,
     tol: float,
+    dedup_tol: float,
 ) -> FixedPointSet:
-    r"""Rigorous Krawczyk branch-and-prune over the search box (``method="interval"``).
+    r"""Numerical Krawczyk branch-and-prune over the search box (``method="interval"``).
 
-    Brackets every root of the residual inside ``region`` with an existence +
-    uniqueness certificate per sub-box, then classifies each by the analytic
-    Jacobian spectrum (the same stability convention as ``method="newton"``).
+    Searches residual roots inside ``region``, then classifies each by the
+    analytic Jacobian spectrum (the same stability convention as
+    ``method="newton"``).  Arithmetic is not outward-rounded, and unresolved tiny
+    boxes can be accepted by residual tolerance, so results are not certified.
 
-    A bounded ``region`` is required — the interval method certifies completeness
-    *within a box*, so an unbounded search has no meaning (and the auto burn-in
+    A bounded ``region`` is required — an unbounded branch-and-prune search has
+    no meaning (and the auto burn-in
     box would not enclose off-attractor equilibria).  An interval-extensible RHS
     is required too; a kernel the interval engine cannot enclose raises
     :class:`~tsdynamics.errors.InvalidInputError` at build time.
@@ -731,8 +738,8 @@ def _interval_fixed_points(
 
     if region is None:
         raise InvalidParameterError(
-            "method='interval' needs a bounded 'region' (the box it certifies "
-            "completeness over); pass one (lo, hi) bound per state component, "
+            "method='interval' needs a bounded 'region' (the box to search); "
+            "pass one (lo, hi) bound per state component, "
             "e.g. region=[(-3, 3), (-3, 3)] — or a Box/Ball/Grid."
         )
     lo, hi = _c.resolve_box(system, region, dim, rng=np.random.default_rng(0))
@@ -770,8 +777,9 @@ def _interval_fixed_points(
             )
 
     roots = _iv.krawczyk_roots(lo, hi, resid_jac, residual_float, jac_float, tol=tol)
-    # Deduplicate (a root straddling a bisection cut may be certified twice).
-    kept = _c.dedup_points(roots, max(1e-6, 100.0 * tol))
+    # A root on a bisection cut may be recovered twice.  Honor the same
+    # deduplication distance the other methods accept.
+    kept = _c.dedup_points(roots, max(dedup_tol, 100.0 * tol))
     out = [classify(r) for r in kept]
     out.sort(key=lambda fp: tuple(fp.x))
     return FixedPointSet(

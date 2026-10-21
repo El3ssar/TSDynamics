@@ -7,12 +7,13 @@ description: The 26 built-in discrete maps — native-engine iteration and QR-ba
 # Discrete maps
 
 **26 iterated maps**, subclasses of
-[`DiscreteMap`](../../reference/base.md). A map is defined by two plain
-numeric static methods — `_step` and `_jacobian` — decorated with
-`@staticmethod`; the Rust engine lowers `_step` to its
-IR and iterates it natively:
+[`DiscreteMap`](../../reference/base.md). Define the recurrence in `_step`;
+the Jacobian is derived automatically, and a hand-written `_jacobian` is
+optional. The Rust engine lowers `_step` to its IR and iterates it natively:
 
 ```python
+from tsdynamics import DiscreteMap
+
 class Henon(DiscreteMap):
     params = {"a": 1.4, "b": 0.3}
     dim = 2
@@ -22,9 +23,6 @@ class Henon(DiscreteMap):
         x, y = X[0], X[1]
         return (1.0 - a * x**2 + y, b * x)
 
-    @staticmethod
-    def _jacobian(X, a, b):
-        ...
 ```
 
 Parameters arrive **positionally, in `params`-dict order** — a mismatched

@@ -180,6 +180,19 @@ class ParamSet(dict[str, Any]):
         for k, v in incoming.items():
             dict.__setitem__(self, k, v)
 
+    # A fixed-key map cannot widen its key type as dict.__or__ can. Mypy also
+    # checks in-place operators against that non-mutating overload; runtime
+    # validation below intentionally forbids its arbitrary new-key case.
+    def __ior__(self, other: Any) -> ParamSet:  # type: ignore[override, misc]
+        """Merge values in place without changing the declared keys.
+
+        ``dict.__ior__`` bypasses ``__setitem__`` and ``update`` on subclasses,
+        so inheriting it would let ``params |= {"typo": 1}`` corrupt the tape's
+        parameter layout.  Validate the complete update before mutating it.
+        """
+        self.update(other)
+        return self
+
     # --- helpers ---
 
     def as_tuple(self) -> tuple[Any, ...]:

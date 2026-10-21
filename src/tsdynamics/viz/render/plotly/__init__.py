@@ -9,9 +9,10 @@ and the web.
 It draws the 2-D layer marks and 2-D semantic kinds **and** the 3-D marks
 (``LINE3D`` / ``SURFACE3D``, plus the ``PHASE_PORTRAIT_3D`` semantic kind) via the
 :mod:`._threed` core — an orbitable ``go.Scatter3d`` / ``go.Surface`` ``scene``.
-It still **declines** the animation kinds (deferred everywhere) — its
-:class:`~tsdynamics.viz.render.caps.RendererCapabilities` list exactly what it
-supports, so dispatch falls back to the matplotlib reference renderer (emitting
+It supports single-panel curve animations. It declines nested panel layouts,
+animated composites and animated spatial fields; its
+:class:`~tsdynamics.viz.render.caps.RendererCapabilities` state what it supports,
+so dispatch falls back to the matplotlib reference renderer (emitting
 :class:`~tsdynamics.viz.render.caps.VisualizationDegraded`) for anything it lacks.
 Its capabilities advertise ``supports_3d=True``, ``interactive=True`` and
 ``web_export=True`` (a plotly figure serialises to a self-contained HTML fragment).
@@ -151,7 +152,8 @@ _SEMANTIC_KINDS: frozenset[PlotKind] = frozenset(
 _SUPPORTED_KINDS: frozenset[PlotKind] = _SEMANTIC_KINDS | _MARKS
 
 #: The full kind set the backend advertises — its 2-D kinds plus the 3-D kind /
-#: marks the :mod:`._threed` core draws.  Only the animation kinds are declined.
+#: marks the :mod:`._threed` core draws. Unsupported animation/layout combinations
+#: are declined by ``_PlotlyCapabilities.can_render_spec``.
 _REGISTERED_KINDS: frozenset[PlotKind] = _SUPPORTED_KINDS | _KINDS_3D
 
 

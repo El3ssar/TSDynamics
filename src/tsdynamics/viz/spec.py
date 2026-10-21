@@ -2918,7 +2918,7 @@ class Plot:
         height: float | None = None,
         dpi: float | None = None,
     ) -> Plot:
-        """Set the figure size (pixels-as-inches via ``meta``) and/or resolution.
+        """Set the figure size in inches and/or resolution in dots per inch.
 
         ``figsize`` / ``dpi`` are *not* theme fields — they live in ``meta``
         (``meta["figsize"] = (width, height)``, ``meta["dpi"]``), only the
@@ -2927,15 +2927,31 @@ class Plot:
         Parameters
         ----------
         width, height : float, optional
-            Figure width / height; an omitted dimension keeps its current value.
+            Figure width / height in inches; an omitted dimension keeps its
+            current value. For pixel dimensions use ``save(size=(width, height))``.
         dpi : float, optional
-            Output resolution (dots per inch).
+            Output resolution (dots per inch). All supplied values must be
+            finite and positive.
 
         Returns
         -------
         Plot
             ``self``, for chaining.
         """
+        from tsdynamics.errors import InvalidParameterError
+
+        for name, value in (("width", width), ("height", height), ("dpi", dpi)):
+            if value is None:
+                continue
+            try:
+                valid = math.isfinite(float(value)) and float(value) > 0
+            except (TypeError, ValueError):
+                valid = False
+            if not valid:
+                unit = "dots per inch" if name == "dpi" else "inches"
+                raise InvalidParameterError(
+                    f"size({name}={value!r}) must be finite and positive ({unit})."
+                )
         if width is not None or height is not None:
             cur = self.meta.get("figsize")
             cw, ch = cur if isinstance(cur, (tuple, list)) and len(cur) == 2 else (None, None)
@@ -4238,10 +4254,10 @@ class Plot:
         tsdynamics.viz.load : the loader for JSON **text** or a path.
         """
         if "kind" not in d and "spec" in d and "schema_version" in d:
-            # The envelope, handed straight back: unwrap rather than refuse.
-            inner = d["spec"]
-            if isinstance(inner, Mapping):
-                return cls.from_dict(inner)
+            from .export import from_dict_envelope
+
+            # Apply the same version checks as the text loader.
+            return from_dict_envelope(d)
         if "kind" not in d:
             from tsdynamics.errors import InvalidInputError
 

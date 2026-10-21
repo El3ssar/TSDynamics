@@ -22,7 +22,7 @@ numbers.
 
 <figure markdown>
 ![Running Lyapunov spectrum of the Lorenz system, the three exponents converging to their literature values on a log-time axis](../assets/figures/analysis/lyapunov.svg){ loading=lazy }
-<figcaption>The Lorenz running spectrum. As the tangent frame is stepped along the attractor the three time-averaged exponents (indigo/teal/amber) settle onto their known values <code>[0.906, 0.0, -14.57]</code> (rose, dashed) on a log-time axis — the positive · zero · strongly-negative signature that certifies a chaotic dissipative flow.</figcaption>
+<figcaption>The Lorenz running spectrum. As the tangent frame is stepped along the attractor the three time-averaged exponents (indigo/teal/amber) approach their literature estimates <code>[0.906, 0.0, -14.57]</code> (rose, dashed) on a log-time axis — the positive · zero · strongly-negative signature consistent with a chaotic dissipative flow.</figcaption>
 </figure>
 
 ## The uniform entry point

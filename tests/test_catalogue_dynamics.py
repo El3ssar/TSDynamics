@@ -82,7 +82,7 @@ need an independent re-derivation, which is what
 ``tests/test_catalogue_literature.py`` exist for; this module is the third,
 orthogonal layer, not a replacement for either.
 
-Nor does it judge every system: 23 of the 177 carry only structural behaviour
+Nor does it judge every system: 29 of the 177 carry only structural behaviour
 tags, so no exponent claim is made about them.  They are named in
 :data:`UNJUDGED_SYSTEMS` rather than skipped in silence.
 """
@@ -554,7 +554,6 @@ REGULAR_TAGS = frozenset(
         "quasiperiodic transport",
         "oscillatory",
         "relaxation",
-        "mode-locking",
         "mean-reverting",
     }
 )
@@ -806,8 +805,8 @@ def test_the_gate_names_the_systems_it_cannot_judge() -> None:
     A gate that quietly drops the systems it has no claim for is the failure
     mode this whole module exists to fix, so the roster is asserted rather than
     left implicit: if it changes, this test prints the new one.  Coverage today
-    is 154 of 177 systems carrying an exponent claim (135 chaotic, 19 regular);
-    of those, 147 are measured here and the other 7 are named in
+    is 148 of 177 systems carrying an exponent claim (129 chaotic, 19 regular);
+    of those, 141 are measured here and the other 7 are named in
     :data:`UNMEASURED_CLAIMS`.
     """
     editorial = _load_editorial()
@@ -863,6 +862,18 @@ UNJUDGED_SYSTEMS: list[str] = [
     "SwiftHohenberg",
     # `multiplicative`: a stochastic process has no deterministic tangent flow.
     "GeometricBrownianMotion",
+    # Default dynamics remain unresolved after the original chaos tags failed:
+    # DequanLi / Robinson / MacArthur have near-zero finite-time estimates;
+    # CoevolvingPredatorPrey can escape in longer windows; KawczynskiStrizhak
+    # has bursting without confirmed chaos. Bogdanov is area-preserving at the
+    # shipped eps=mu=0, with mixed regular/chaotic phase-space possibilities.
+    # Each public class note and editorial blurb records this qualification.
+    "DequanLi",
+    "Robinson",
+    "MacArthur",
+    "CoevolvingPredatorPrey",
+    "KawczynskiStrizhak",
+    "Bogdanov",
 ]
 
 
@@ -1017,8 +1028,9 @@ def test_known_lyapunov_metadata_agrees_with_the_behaviour_claim() -> None:
 #: expensive — its "piecewise-linear" reason was never a cost),
 #: ``BelousovZhabotinsky`` +25.63 in **8.0 s** (the quoted ~25 s did not
 #: reproduce), and ``MacArthur`` -1.55e-4 in 24 s — which is not a cost finding
-#: at all but a *discrepancy*, now recorded in :data:`CHAOS_CLAIM_UNRESOLVED`
-#: where it is reported on every run instead of hidden behind an exclusion.
+#: at all but a discrepancy. Its default chaos claim was subsequently corrected
+#: to unresolved; the evidence is retained in its public class notes and the
+#: explicit UNJUDGED_SYSTEMS roster instead of a cost exclusion.
 LYAPUNOV_EXCLUDE: dict[str, str] = {
     "GrayScott": "high-dimensional method-of-lines field (dim 4608)",
     "SwiftHohenberg": "high-dimensional method-of-lines field (dim 1024)",
@@ -1057,57 +1069,13 @@ def _leading_exponent(entry: Any) -> float:
 # start *does* find the documented behaviour, the fix was an entry in
 # _sampling.DYNAMICS_ICS instead (SprottE and ItikBanksTumor went that way).
 
-CHAOS_CLAIM_UNRESOLVED: dict[str, str] = {
-    "DequanLi": (
-        "documented chaotic; measured lambda_1 = +2.9e-4 (gate window) and "
-        "+1.5e-4 over a 5x window, from four different starts — a torus, not chaos"
-    ),
-    "Robinson": (
-        "documented chaotic; measured lambda_1 = +3.9e-4, and its sign flips with "
-        "the initial condition over a 5x window (-6.5e-4 to +8.8e-4)"
-    ),
-    "CaTwoPlusQuasiperiodic": (
-        "tagged chaotic; measured lambda_1 = -1.7e-3 and |lambda_1| < 6e-4 over a "
-        "5x window from three starts. The system's own name says quasiperiodic, so "
-        "the editorial tag is the likelier error"
-    ),
-    "WindmiReduced": (
-        "documented chaotic; measured lambda_1 = -0.19 (gate start) and -2.7e-8 "
-        "from the docs page's own [1, 1, 1] — a limit cycle either way"
-    ),
-    "CoevolvingPredatorPrey": (
-        "documented chaotic; measured lambda_1 = -3.2e-3. Over a 5x window it "
-        "reads +2.9e-3 but the orbit is by then escaping (growth 5.8, return gap "
-        "39), so the positive value is a transient, not an attractor"
-    ),
-    "KawczynskiStrizhak": (
-        "documented chaotic + bursting; measured lambda_1 = -9.4e-3, and -1.3e-3 "
-        "over a 5x window; the four starts tried scatter over +-3e-3 around zero"
-    ),
-    "MacArthur": (
-        "documented chaotic; measured lambda_1 = -1.55e-4 (deterministic, repeated). "
-        "Previously invisible: it sat in LYAPUNOV_EXCLUDE on a cost argument, so the "
-        "gate never asked. It costs ~24 s (the stiff variational lowering) and that "
-        "is worth paying to keep the finding on the board rather than in a table"
-    ),
-    "Bogdanov": (
-        "documented chaotic; measured lambda_1 = +2.9e-4 at 20k iterates and "
-        "+5.1e-5 at 200k — converging to zero. At the shipped eps = mu = 0 the map "
-        "is the conservative Bogdanov map, whose orbits are KAM tori for most starts"
-    ),
-}
-
-REGULAR_CLAIM_UNRESOLVED: dict[str, str] = {
-    "Circle": (
-        "tagged mode-locking; measured lambda_1 = +1.085 (stable to 200k iterates). "
-        "The shipped k = 5.7 is far above the critical k = 1, where the circle map "
-        "is non-invertible and chaotic — the tag describes k < 1"
-    ),
-    "MaynardSmith": (
-        "tagged cycles; measured lambda_1 = +0.130 (stable to 200k iterates) — "
-        "chaotic at the shipped a = 0.87, b = 0.75"
-    ),
-}
+# The ten discrepancies recorded by the original audit were reviewed against
+# their measured defaults. Editorial tags and public class notes now distinguish
+# confirmed numerical behavior from model capabilities and unresolved regimes.
+# Uncertain cases remain explicitly listed in UNJUDGED_SYSTEMS; new mismatches
+# belong here until the underlying default, implementation, or claim is fixed.
+CHAOS_CLAIM_UNRESOLVED: dict[str, str] = {}
+REGULAR_CLAIM_UNRESOLVED: dict[str, str] = {}
 
 
 def _exponent_params(claim: str, unresolved: dict[str, str]) -> list[Any]:

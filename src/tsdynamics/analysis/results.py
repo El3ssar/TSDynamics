@@ -1,7 +1,9 @@
 """``ts.analysis.results`` — the result types, behind one dot.
 
-Every registered analysis returns an :class:`AnalysisResult` subclass.  There are
-32 of them, and a user **constructs none**: they are what comes *back*, so under
+This namespace contains the 32 classes in the :class:`AnalysisResult` hierarchy.
+Most quantifiers return one of them; field analyses, sampling tools and a few
+array/container measurements have other return types documented by their own
+functions.  A user **constructs none** of these classes: they are what comes *back*, so under
 the v6 rule (a name earns a top-level slot only if a user types it in ordinary
 work) they do not belong on the flat ``ts.analysis`` tab surface, where they used
 to be 32 of 84 names — 38 % of the listing, none of it an analysis.
@@ -25,7 +27,7 @@ subpackage that produces it, and is re-exported here.  ``dir()`` mirrors
 
 The hierarchy
 -------------
-- :class:`AnalysisResult` — the base every result shares: ``.meta``, the repr
+- :class:`AnalysisResult` — the base this hierarchy shares: ``.meta``, the repr
   that *is* the answer, ``.to_dict()``, ``.to_frame()``, ``.plot``.
 - :class:`ScalarResult` / :class:`CountResult` — one number, and a complete
   drop-in for it.

@@ -66,13 +66,15 @@ def _as_points(data: Any, *, analysis: str | None = None) -> np.ndarray:
         )
     if arr.shape[0] < 2:
         raise ValueError(f"need at least two points, got {arr.shape[0]}.")
+    if arr.shape[1] == 0:
+        raise ValueError("point set must have at least one component.")
     if not np.all(np.isfinite(arr)):
         raise ValueError("point set contains non-finite values (nan/inf).")
     # Every sibling estimator refuses a constant series by name; these three were
     # the only data-first doors that did not, so a flat line came back
     # "DET = 1.000 · LAM = 1.000 · L_max = 1999   deterministic" — every pair of
     # points recurs, so the plot is all-ones and its line statistics are vacuous.
-    if float(np.ptp(arr)) == 0.0:
+    if not np.any(np.ptp(arr, axis=0) > 0.0):
         raise ValueError(
             "series is constant; every pair of points recurs, so the recurrence plot is "
             "all-ones and its DET / LAM / ENTR are undefined."
@@ -90,7 +92,7 @@ def _metric_p(metric: str | float) -> float:
     """
     if isinstance(metric, (int, float)):
         p = float(metric)
-        if p < 1.0:
+        if np.isnan(p) or p < 1.0:
             raise ValueError(f"Minkowski exponent must be >= 1 (a metric), got {metric!r}.")
         return p
     key = metric.lower()

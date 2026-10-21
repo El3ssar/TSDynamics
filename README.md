@@ -8,8 +8,7 @@
 [![codecov](https://codecov.io/gh/El3ssar/TSDynamics/graph/badge.svg)](https://codecov.io/gh/El3ssar/TSDynamics)
 
 **Dynamical systems in Python: 177 built-in systems, a native Rust integration
-engine, and a chaos-analysis toolkit — with the simplest system-definition
-contract anywhere.**
+engine, and a chaos-analysis toolkit.**
 
 You write the math (one symbolic method); TSDynamics lowers it to a native Rust
 engine and handles integration, Lyapunov spectra, bifurcation diagrams, Poincaré
@@ -50,9 +49,9 @@ class Rossler(ts.ContinuousSystem):
         return (-yv - z, x + a * yv, b + z * (x - c))
 ```
 
-That's the whole contract. The class auto-registers: every analysis tool works
-on it, the test-suite sweeps it, and the docs build renders its equations
-(LaTeX, straight from the symbolics) and its attractor — zero extra steps. Delay
+That's the whole ODE contract. The class auto-registers and works with analyses
+that accept flows. For systems added to the built-in catalogue, the test suite
+sweeps them and the docs build renders their equations and attractors. Delay
 systems use `y(0, t - tau)`; maps implement `_step` (the Jacobian is derived from
 it); SDEs add a `_diffusion` term. `Rossler().info` prints everything the library
 read back to you.
@@ -167,19 +166,19 @@ ts.analysis.lyapunov_spectrum(ts.systems.Lorenz(), k=1, ic=[1, 1, 1])     # ≈ 
 
 Plus: **attractors & basins** of any flow or map, correlation/Rényi **fractal
 dimensions**, **RQA** (recurrence quantification), **delay embedding** (Takens,
-optimal τ, Cao/FNN), **periodic orbits** (shooting, Davidchack–Lai, rigorous
-interval enclosure), GALI, the 0–1 chaos test & Hunt–Ott expansion entropy, and
+optimal τ, Cao/FNN), **periodic orbits** (shooting, Davidchack–Lai), numerical
+interval search for fixed points, GALI, the 0–1 chaos test & Hunt–Ott expansion entropy, and
 Lyapunov exponents **from a bare time series** (Kantz/Rosenstein).
 
 ## Highlights
 
 - **Four families, one interface** — **ODEs**, **DDEs**, **SDEs** and
   **discrete maps** all answer the same `run` verb and the same stepping protocol
-  (`reinit` / `step` / `state` / `time`), so every analysis composes over all of
-  them.
+  (`reinit` / `step` / `state` / `time`). Each analysis documents the families
+  and inputs it supports; `ts.analysis.find(system)` lists compatible routines.
 
-- **A small surface** — `tsdynamics.<TAB>` is **17** names, `lorenz.<TAB>` is
-  **19**, and every analysis is a free function whose first argument is its
+- **A small surface** — `tsdynamics.<TAB>` is **11** names, `lorenz.<TAB>` is
+  **20**, and every analysis is a free function whose first argument is its
   subject (`ts.analysis.lyapunov_spectrum(lorenz)`). A name that moved raises an
   error printing its new address; that error *is* the migration guide.
 
@@ -187,10 +186,11 @@ Lyapunov exponents **from a bare time series** (Kantz/Rosenstein).
 
 - **Native engine**: equations lower to a Rust engine in-process and run on a
   built-in Cranelift JIT (or a bit-for-bit identical SSA-tape interpreter);
-  parameters are runtime values, so changing them is free, and nothing is ever
-  written to disk.
+  ordinary parameters are runtime values, so changing them reuses the tape.
+  Structural parameters and delay values require fresh lowering. The engine
+  writes no compilation cache to disk.
 
-- **`dt` samples, `rtol` decides** — the output grid and the accuracy knob are
+- **For adaptive ODE solvers, `dt` samples, `rtol` decides** — the output grid and the accuracy knob are
   separate. The adaptive steppers use genuine dense output, so a coarse `dt` is
   cheap without being less accurate, and `max_step=` is there when you need to
   bound the step explicitly. Defaults are `rtol=1e-9` / `atol=1e-12`.

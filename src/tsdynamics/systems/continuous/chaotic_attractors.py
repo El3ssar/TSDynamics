@@ -177,6 +177,7 @@ class Lorenz96(ContinuousSystem):
         ic=None,
         dim: int | None = None,
         field_shape: tuple[int, ...] | None = None,
+        seed: int | None = None,
         **param_kwargs: float,
     ):
         # Both are DERIVED from ``N`` here.  They are bound (and discarded) only
@@ -192,9 +193,10 @@ class Lorenz96(ContinuousSystem):
             dict(type(self).params),
             params,
             param_kwargs,
-            {"N": None if N is None else int(N), "f": None if f is None else float(f)},
+            {"N": N, "f": None if f is None else float(f)},
+            integer_params=("N",),
         )
-        super().__init__(dim=int(p["N"]), params=p, ic=ic)
+        super().__init__(dim=int(p["N"]), params=p, ic=ic, seed=seed)
 
     @staticmethod
     def _equations(y_sym, t_sym, *, f, N):
@@ -402,6 +404,7 @@ class KuramotoSivashinsky(ContinuousSystem):
         ic=None,
         dim: int | None = None,
         field_shape: tuple[int, ...] | None = None,
+        seed: int | None = None,
         **param_kwargs: float,
     ):
         # See Lorenz96.__init__: derived from ``N``, bound only so with_params /
@@ -415,14 +418,17 @@ class KuramotoSivashinsky(ContinuousSystem):
             dict(type(self).params),
             params,
             param_kwargs,
-            {"N": None if N is None else int(N), "L": None if L is None else float(L)},
+            {"N": N, "L": None if L is None else float(L)},
+            integer_params=("N",),
         )
         N_val, L_val = int(p["N"]), float(p["L"])
         if N_val < 7:
             raise ValueError("KuramotoSivashinsky requires N >= 7 (uses ±3 stencil).")
         if ic is None:
-            ic = self._broadband_ic(N_val, L_val, seed=type(self)._ic_seed)
-        super().__init__(dim=N_val, params=p, ic=ic)
+            ic = self._broadband_ic(
+                N_val, L_val, seed=type(self)._ic_seed if seed is None else seed
+            )
+        super().__init__(dim=N_val, params=p, ic=ic, seed=seed)
 
     @staticmethod
     def _broadband_ic(N: int, L: float, *, seed: int = 0, amplitude: float = 0.5) -> np.ndarray:
@@ -685,6 +691,7 @@ class MultiChua(ContinuousSystem):
         ic=None,
         dim: int | None = None,
         field_shape: tuple[int, ...] | None = None,
+        seed: int | None = None,
         **param_kwargs: float,
     ):
         # See Lorenz96.__init__: derived from ``n_circuits``, bound only so
@@ -700,9 +707,10 @@ class MultiChua(ContinuousSystem):
             dict(type(self).params),
             params,
             param_kwargs,
-            {"n_circuits": None if n_circuits is None else int(n_circuits)},
+            {"n_circuits": n_circuits},
+            integer_params=("n_circuits",),
         )
-        super().__init__(dim=3 * int(p["n_circuits"]), params=p, ic=ic)
+        super().__init__(dim=3 * int(p["n_circuits"]), params=p, ic=ic, seed=seed)
         # A finite basin: the random-IC fallback escapes on 4 of 6 draws from
         # U[0,1]^9 at T=150, and the run comes back FINITE, so a bare ``run()``
         # returned a meaningless orbit most of the time, differently per

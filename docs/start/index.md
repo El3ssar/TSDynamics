@@ -32,5 +32,6 @@ Once you are comfortable, the rest of the site opens up:
   a rendered attractor, and its literature reference.
 - The **[Analysis](../analysis/index.md)** toolkit — Lyapunov spectra,
   bifurcation diagrams, Poincaré sections, fractal dimensions, recurrence
-  quantification, delay embeddings, basins of attraction, and more, all composing
-  over any built-in or user-defined system.
+  quantification, delay embeddings, basins of attraction, and more. Each routine
+  documents its supported families and inputs; `ts.analysis.find(system)` helps
+  select compatible tools.

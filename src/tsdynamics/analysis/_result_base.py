@@ -280,11 +280,11 @@ def _widen_axes_to_fit(base: Any, added: Any) -> None:
 
 @dataclass(frozen=True)
 class AnalysisResult:
-    """Base class for every analysis result object.
+    """Base class for the structured numeric analysis-result hierarchy.
 
     See the module docstring for the full contract.  Subclasses re-apply
     ``@dataclass(frozen=True)``, declare their own fields, list the ones to show
-    in ``__repr__``/:meth:`summary` via the ``_repr_fields`` class attribute, and
+    in ``__repr__`` via the ``_repr_fields`` class attribute, and
     optionally override :meth:`_interpretation`.
 
     Attributes

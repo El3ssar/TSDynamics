@@ -34,6 +34,7 @@ theme, style and export exactly like a phase portrait.
 
 ```python
 import tsdynamics as ts
+import numpy as np
 
 lorenz = ts.systems.Lorenz().run(final_time=200.0, dt=0.01, ic=[1, 1, 1])
 

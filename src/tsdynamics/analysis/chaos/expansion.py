@@ -234,8 +234,8 @@ def expansion_entropy(
 
     Examples
     --------
-    >>> float(expansion_entropy(Tent(params={"mu": 1.0}), Box([0.0], [1.0])))
-    0.69...                                              # ln 2, exact
+    >>> float(expansion_entropy(Tent(params={"mu": 1.0}), [(0.0, 1.0)]))  # ln 2
+    0.69...
 
     References
     ----------
@@ -283,6 +283,14 @@ def expansion_entropy(
     else:
         if n is not None:
             raise InvalidParameterError("n applies to maps; use final_time/dt for a flow.")
+        if (
+            isinstance(n_internal, bool)
+            or not isinstance(n_internal, (int, np.integer))
+            or n_internal < 1
+        ):
+            raise InvalidParameterError(
+                "n_internal must be a positive integer (RK4 sub-steps per dt)."
+            )
         t_end = 5.0 if final_time is None else float(final_time)
         step_dt = 0.1 if dt is None else float(dt)
         if step_dt <= 0.0:

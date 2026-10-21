@@ -1,10 +1,10 @@
 ---
-description: The rigorous interval-Newton / Krawczyk fixed-point finder — how it brackets every root in a box, the benchmark vs multi-start Newton, and where the win comes from.
+description: The numerical interval-Newton / Krawczyk fixed-point search — deterministic branch-and-prune, comparison with multi-start Newton, and its limits without directed rounding.
 ---
 
 <span class="ts-kicker">Theory · 08</span>
 
-# Rigorous fixed points (`method="interval"`)
+# Interval fixed-point search (`method="interval"`)
 
 [`fixed_points`](../analysis/fixed-points.md) defaults to **multi-start
 Newton**: scatter many seeds across a box, run a local solve from each, keep the
@@ -12,9 +12,12 @@ distinct roots. It is fast and general, but it has one structural weakness — a
 finite number of seeds can leave a root's basin unsampled, so it can **silently
 miss** an equilibrium. There is no certificate that the returned set is complete.
 
-`method="interval"` is the rigorous alternative. The **Krawczyk operator**
-brackets *all* roots of the residual inside a search box by interval
-branch-and-prune, with an existence-and-uniqueness certificate per sub-box.
+`method="interval"` searches the required region systematically with a
+**Krawczyk operator** and interval branch-and-prune. This implementation uses
+ordinary floating-point interval arithmetic, without outward rounding, and may
+polish unresolved small boxes by residual checks. Its results are numerical
+approximations: it provides neither formal certificates nor a guarantee that
+every root has been found.
 
 ## The Krawczyk operator
 
@@ -26,7 +29,8 @@ $$
 K([\mathbf{x}]) \;=\; m \;-\; Y\,g(m) \;+\; \bigl(I - Y\,G([\mathbf{x}])\bigr)\,([\mathbf{x}] - m).
 $$
 
-Then (Krawczyk 1969; Neumaier 1990):
+With exact interval enclosures, the mathematical test is (Krawczyk 1969;
+Neumaier 1990):
 
 - if $K([\mathbf{x}]) \cap [\mathbf{x}] = \varnothing$, the box holds **no** root → **prune**;
 - if $K([\mathbf{x}]) \subset \operatorname{int}[\mathbf{x}]$, the box holds a
@@ -35,10 +39,11 @@ Then (Krawczyk 1969; Neumaier 1990):
 - otherwise contract to $K \cap [\mathbf{x}]$, or **bisect** the widest axis and
   recurse.
 
-Because every sub-box is either pruned with a no-root proof or accepted with a
-unique-root proof, the union of accepted boxes is a *complete* enumeration of the
-roots in the original box (up to floating-point round-off — see the caveat
-below). That is the property multi-start cannot offer.
+A certified implementation can use these tests to prove exclusion and
+existence/uniqueness. TSDynamics uses the same numerical structure, but its
+plain-float arithmetic does not ensure the enclosures required for those proofs.
+Finite subdivision limits and residual-based recovery of small boxes also
+prevent a completeness claim.
 
 ### The interval right-hand side
 
@@ -51,18 +56,19 @@ explode into reciprocal or variable powers for many flows). For a **map** the
 seeded jets go straight through the pure-Python `_step`; for a **flow** they walk
 the SymEngine right-hand-side expression tree. The supported elementary
 functions (`sin`, `cos`, `exp`, `log`, `sqrt`, `cosh`, `tanh`, `abs`, integer
-powers) cover the entire built-in catalogue's flows and its analytic maps.
+powers) cover many built-in flows and analytic maps.
 
 A kernel whose operations the interval engine cannot enclose — a comparison
 (`<`), a modulo (`%`), a non-integer/variable power — raises
 `InvalidInputError` at build time, pointing back at `method="newton"`. The
 interval method is purely **additive**: `"newton"`/`"sd"`/`"dl"` are unchanged.
 
-## Benchmark — speed *and* completeness
+## Historical benchmark — speed and roots recovered
 
 Measured locally (CPython, no warm cache), interval vs multi-start Newton on the
-same box. Both find the same roots to machine precision; interval is faster on
-every case **and** rigorously complete.
+same box. Both recovered the same roots within numerical tolerance; interval
+was faster in these measurements. These historical timings are examples,
+not a performance or completeness guarantee.
 
 | System (roots in box)  | interval | Newton (`seed=0`) | speed-up |
 |------------------------|---------:|------------------:|---------:|
@@ -71,19 +77,19 @@ every case **and** rigorously complete.
 | Rössler flow (2)       | ~22 ms   | ~192 ms           |  ~8.8×   |
 | Lorenz flow (3)        | ~138 ms  | ~229 ms           |  ~1.7×   |
 
-The completeness gain is starkest where a system has **many** equilibria. The
-Thomas flow has **27** equilibria in $[-6, 6]^3$:
+Systematic subdivision can recover more roots than a modest random seed count.
+For the Thomas flow in $[-6, 6]^3$, the historical run reported:
 
 | Method                   | equilibria found | time     |
 |--------------------------|-----------------:|---------:|
-| **interval** (rigorous)  | **27 — all**     | ~0.9 s   |
+| **interval**            | **27**           | ~0.9 s   |
 | Newton, `n_seeds=200`    | 23               | ~1.3 s   |
 | Newton, `n_seeds=500`    | 26               | ~3.0 s   |
 | Newton, `n_seeds=1000`   | 27               | ~6.6 s   |
 
-Multi-start needs ~7× the time to *match* the interval method's completeness, and
-at the default seed count it silently misses four equilibria — exactly the
-failure mode the certificate rules out.
+In this run, multi-start took about 7× longer to recover the same 27 roots.
+Neither comparison establishes that an arbitrary search box has been exhausted
+with a formal proof.
 
 The interval result is **deterministic** (no `seed`): the box decomposition is a
 function of the math alone.
@@ -96,19 +102,16 @@ visiting only tens to a few thousand boxes, instead of running hundreds of full
 Newton trajectories. (A compiled interval kernel would be faster still, but the
 Python implementation already beats the multi-start default.)
 
-Two honest caveats:
+Limits:
 
-1. **Round-off, not certified bounds.** The interval arithmetic uses ordinary
-   `float` operations (no outward directed rounding), so the bracketing is
-   rigorous only up to floating-point round-off, and roots are *recovered* to
-   machine precision rather than returned as proven enclosures. A fully
-   *certified* result (provably correct outward-rounded bounds) would need a
-   directed-rounding interval kernel — best done engine-side in Rust, a larger
-   future project. For the practical task of *finding every fixed point in a
-   box*, the current implementation is both complete and machine-precise.
+1. **No certified bounds or completeness guarantee.** Ordinary `float`
+   operations do not enclose rounding error. Accepted roots are numerical
+   approximations checked by their residual, rather than proven enclosures.
+   Certification requires outward rounding throughout, validated elementary
+   functions, and explicit handling of every unresolved box.
 
-2. **Interior only.** The uniqueness test requires a root strictly inside the
-   box, so a root lying exactly on a box face is not certified. Choose `region`
+2. **Interior roots are easier to isolate.** The Krawczyk inclusion test
+   requires a root strictly inside its box. Choose `region`
    so the equilibria sit in its interior (pad the box slightly past where you
    expect roots).
 

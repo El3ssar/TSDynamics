@@ -404,6 +404,8 @@ class TestTheRegistrationDoor:
             assert entry.metadata["summary"] == "Probe dimension for the gate."
         finally:
             registry.analyses._entries.pop("_probe_dimension", None)
+            ts.analysis.__dict__.pop("_probe_dimension", None)
+            ts.analysis._refresh_surface()
 
     def test_system_expands_to_flow_and_map(self):
         assert registry.analyses.entry("fixed_points").metadata["subjects"] == ("flow", "map")

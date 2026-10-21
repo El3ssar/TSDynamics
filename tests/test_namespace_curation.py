@@ -14,7 +14,7 @@ measurably stale (``ts.LyapunovSpectrum`` resolved; ``ts.Embedding`` did not).
 
 So this file locks four contracts:
 
-1. **The listing is the surface.**  ``ts.__all__`` is seventeen names, sorted;
+1. **The listing is the surface.**  ``ts.__all__`` is eleven names, sorted;
    ``dir()`` mirrors it; and — corollary **C5** — *no API name resolves unless it
    is listed*.  :func:`test_no_api_name_resolves_on_the_top_level` sweeps the
    whole demoted population, name by name.
@@ -50,10 +50,10 @@ from tsdynamics.errors import MovedInV6
 
 # ── the curated top-level surface ────────────────────────────────────────────────
 
-#: The exact curated ``tsdynamics.__all__`` — **seventeen** names.
+#: The exact curated ``tsdynamics.__all__`` — **eleven** names.
 #:
 #: Five family bases you subclass · one received type you annotate · one plotting
-#: verb · three registries · six names you type inside ``except`` · the version.
+#: verb · three registries · the version. Typed errors live at ``ts.errors``.
 _CURATED_TOP_LEVEL = {
     # the family bases: what you subclass
     "ContinuousSystem",
@@ -459,22 +459,6 @@ _ALLOWED_DUNDERS = frozenset({"__version__"})
 #: artefacts that leak when a module has no ``__dir__``.
 _NEVER_PUBLIC = frozenset({"annotations", "Any", "TYPE_CHECKING", "discover_plugins"})
 
-#: Renderer *backend* packages, excluded from the sweep because their
-#: ``__init__.py`` files are outside this stream's ownership.  They are three
-#: levels deep (``ts.viz.render.mpl``) and ``render`` itself is not on
-#: ``ts.viz``'s listing, so no user tab-completes into them — but the exclusion
-#: should be deleted, not grown, once those files get a ``__dir__``.
-#:
-#: An ordered tuple, not a set: it is a ``parametrize`` argument, and a set's
-#: iteration order varies with the per-process string hash seed, which makes
-#: xdist workers disagree about what they collected.
-_UNCURATED_RENDERER_BACKENDS = (
-    "tsdynamics.viz.render.mpl",
-    "tsdynamics.viz.render.plotly",
-    "tsdynamics.viz.render.threejs",
-)
-
-
 #: Packages that failed to import during discovery, name -> exception.  Filled by
 #: :func:`_public_packages` and asserted empty by a test of its own, so one broken
 #: package fails **one named test** instead of erroring this whole module at
@@ -514,8 +498,6 @@ def _advertised_public_modules() -> list[str]:
     """
     out: set[str] = set()
     for pkg_name in _public_packages():
-        if pkg_name in _UNCURATED_RENDERER_BACKENDS:
-            continue
         pkg = importlib.import_module(pkg_name)
         for attr in dir(pkg):
             try:  # a lazy attribute may import a sibling package that is broken
@@ -532,9 +514,15 @@ def test_the_package_sweep_actually_finds_packages():
     """Guard the guard: an empty/tiny discovery would make the gate below vacuous."""
     pkgs = _public_packages()
     assert len(pkgs) >= 20, pkgs
-    assert {"tsdynamics", "tsdynamics.analysis", "tsdynamics.viz", "tsdynamics.systems"} <= set(
-        pkgs
-    )
+    assert {
+        "tsdynamics",
+        "tsdynamics.analysis",
+        "tsdynamics.viz",
+        "tsdynamics.systems",
+        "tsdynamics.viz.render.mpl",
+        "tsdynamics.viz.render.plotly",
+        "tsdynamics.viz.render.threejs",
+    } <= set(pkgs)
 
 
 @pytest.mark.parametrize("mod_name", _advertised_public_modules())
@@ -566,12 +554,6 @@ def test_advertised_public_module_listing_is_clean(mod_name):
         assert hasattr(mod, n), f"{mod_name}.{n} is advertised but does not resolve"
 
 
-@pytest.mark.parametrize("name", _UNCURATED_RENDERER_BACKENDS)
-def test_renderer_backend_exclusions_are_live(name):
-    """The carve-out must not outlive the packages it names."""
-    assert importlib.import_module(name) is not None
-
-
 @pytest.mark.parametrize("pkg_name", _public_packages())
 def test_public_package_listing_is_clean(pkg_name):
     """``dir()`` of every public package shows only its own public API.
@@ -580,8 +562,6 @@ def test_public_package_listing_is_clean(pkg_name):
     (a bare ``import warnings`` becomes ``ts.viz.render.warnings`` in
     autocomplete), nothing on the internals list.
     """
-    if pkg_name in _UNCURATED_RENDERER_BACKENDS:
-        pytest.skip("renderer backend __init__ is outside this stream's file ownership")
     mod = importlib.import_module(pkg_name)
     listing = dir(mod)
 
@@ -607,8 +587,6 @@ def test_public_package_listing_is_clean(pkg_name):
 @pytest.mark.parametrize("pkg_name", _public_packages())
 def test_public_package_declares_all(pkg_name):
     """Every public package declares an ``__all__`` — curation is explicit, not accidental."""
-    if pkg_name in _UNCURATED_RENDERER_BACKENDS:
-        pytest.skip("renderer backend __init__ is outside this stream's file ownership")
     mod = importlib.import_module(pkg_name)
     assert isinstance(getattr(mod, "__all__", None), list), f"{pkg_name} has no __all__"
 
@@ -621,8 +599,6 @@ def test_public_package_dir_mirrors_all(pkg_name):
     package whose ``dir()`` is bigger is leaking; one whose ``dir()`` is smaller
     is advertising a name that does not resolve.  Both have shipped.
     """
-    if pkg_name in _UNCURATED_RENDERER_BACKENDS:
-        pytest.skip("renderer backend __init__ is outside this stream's file ownership")
     mod = importlib.import_module(pkg_name)
     assert dir(mod) == sorted(mod.__all__), f"{pkg_name}: dir() and __all__ disagree"
 
@@ -655,8 +631,6 @@ def test_no_all_entry_is_shadowed(pkg_name):
     ``ts.viz.transforms()`` answered ``TypeError: 'module' object is not
     callable``), and the v4 ``entropy`` collision.
     """
-    if pkg_name in _UNCURATED_RENDERER_BACKENDS:
-        pytest.skip("renderer backend __init__ is outside this stream's file ownership")
     mod = importlib.import_module(pkg_name)
     declared = _DECLARED_SUBMODULE_EXPORTS.get(pkg_name, set())
     shadowed = sorted(
@@ -727,49 +701,6 @@ def _listing_defect(mod: types.ModuleType) -> str | None:
     return None
 
 
-#: The modules that do **not** curate their own listing yet, each with the slot
-#: that owns the file.  Two gates read it, and the split is deliberate: the fast
-#: tier refuses a **new** offender (:func:`test_the_uncurated_module_backlog_admits_no_new_offender`)
-#: and the ``full`` tier refuses a **stale row** (:func:`test_the_uncurated_module_backlog_is_self_cleaning`),
-#: exactly like the doctest exemptions.  So the list can only shrink, without a
-#: sibling slot landing its half turning the fast tier red for everyone else.
-#:
-#: The fix is always the same five lines — ``__all__`` after the imports if the
-#: module has none, then::
-#:
-#:     def __dir__() -> list[str]:
-#:         """Expose only the curated public API (``__all__``) to ``dir()``."""
-#:         return sorted(__all__)
-#:
-#: The catalogue modules are the highest-harm rows: ``chaotic_attractors``
-#: currently offers 58 names for 51 systems, and the seven extras are symengine's
-#: ``sin`` / ``cos`` / ``exp`` / ``sign`` / ``np`` / ``ClassVar``, which *look*
-#: like library helpers.
-_UNCURATED_MODULE_LISTINGS: dict[str, str] = {
-    # ── the 16 catalogue modules, owned by the SYSTEMS slot ──────────────────
-    # These are the highest-harm rows in the tree and the reason the row count
-    # is worth keeping visible: a catalogue module's public names are supposed
-    # to be *system classes*, and every one of them also offers the symengine
-    # functions its kernels are written with.
-    "tsdynamics.systems.continuous.chaotic_attractors": "SYSTEMS · 58 names for 51 systems",
-    "tsdynamics.systems.continuous.chem_bio_systems": "SYSTEMS · 27 names for 21 systems",
-    "tsdynamics.systems.continuous.climate_geophysics": "SYSTEMS · 20 names for 14 systems",
-    "tsdynamics.systems.continuous.coupled_systems": "SYSTEMS · 24 names for 19 systems",
-    "tsdynamics.systems.continuous.delayed_systems": "SYSTEMS · 9 names for 7 systems",
-    "tsdynamics.systems.continuous.exotic_systems": "SYSTEMS · 23 names for 18 systems",
-    "tsdynamics.systems.continuous.oscillatory_systems": "SYSTEMS · 14 names for 10 systems",
-    "tsdynamics.systems.continuous.physical_systems": "SYSTEMS · 14 names for 9 systems",
-    "tsdynamics.systems.continuous.population_dynamics": "SYSTEMS · 7 names for 6 systems",
-    "tsdynamics.systems.continuous.spatial_fields": "SYSTEMS · has __all__, no __dir__",
-    "tsdynamics.systems.continuous.stochastic_systems": "SYSTEMS · 4 names for 3 systems",
-    "tsdynamics.systems.discrete.chaotic_maps": "SYSTEMS · 11 names for 10 maps",
-    "tsdynamics.systems.discrete.exotic_maps": "SYSTEMS · 9 names for 8 maps",
-    "tsdynamics.systems.discrete.geometric_maps": "SYSTEMS · 6 names for 5 maps",
-    "tsdynamics.systems.discrete.polynomial_maps": "SYSTEMS · 5 names for 4 maps",
-    "tsdynamics.systems.discrete.population_maps": "SYSTEMS · 5 names for 4 maps",
-}
-
-
 def test_the_module_sweep_actually_finds_modules():
     """Guard the guard: a discovery that collapsed would certify an empty set."""
     mods = _public_modules()
@@ -788,9 +719,7 @@ def test_the_module_sweep_actually_finds_modules():
     } <= set(mods)
 
 
-@pytest.mark.parametrize(
-    "mod_name", [m for m in _public_modules() if m not in _UNCURATED_MODULE_LISTINGS]
-)
+@pytest.mark.parametrize("mod_name", _public_modules())
 def test_every_public_module_curates_its_own_listing(mod_name):
     """``__all__`` **and** ``__dir__``, mirroring, on every public module."""
     mod = importlib.import_module(mod_name)
@@ -817,37 +746,10 @@ def _measured_uncurated() -> dict[str, str]:
     }
 
 
-def test_the_uncurated_module_backlog_admits_no_new_offender():
-    """The anti-rot half: a module may not ship without a curated listing.
-
-    This is the direction that has to hold on every commit, and it is safe under
-    a concurrent tree — a sibling slot fixing one of the rows below only makes
-    the measured set *smaller*.
-    """
-    measured = _measured_uncurated()
-    new = sorted(f"{n} ({d})" for n, d in measured.items() if n not in _UNCURATED_MODULE_LISTINGS)
-    assert not new, (
-        f"public modules leaking their imports into dir(): {new}.  Add __all__ and the "
-        "three-line __dir__; do not add a row to _UNCURATED_MODULE_LISTINGS, which may "
-        "only shrink."
-    )
-    assert _UNCURATED_MODULE_LISTINGS, "the backlog went empty — delete it and this test"
-
-
 @pytest.mark.full
-def test_the_uncurated_module_backlog_is_self_cleaning():
-    """The shrink half: a row that starts passing must be deleted.
-
-    In the ``full`` tier for the reason the doctest exemptions are: the
-    "fixed one, delete the row" failure is a *bookkeeping* failure, and firing it
-    in the fast tier makes one slot's correct change break every other slot's
-    green run.  Nightly is soon enough for bookkeeping; never is not.
-    """
-    fixed = sorted(set(_UNCURATED_MODULE_LISTINGS) - set(_measured_uncurated()))
-    assert not fixed, (
-        "these modules now curate their listing — delete their rows from "
-        f"_UNCURATED_MODULE_LISTINGS: {fixed}"
-    )
+def test_every_public_module_remains_curated():
+    """The exhaustive sweep must have no exceptions or stale backlog rows."""
+    assert not (defects := _measured_uncurated()), defects
 
 
 #: The listings this ruling created, transcribed.  ``engine.run`` re-exports

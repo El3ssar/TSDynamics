@@ -11,13 +11,11 @@ against in their own ``pyproject.toml``::
     [project.entry-points."tsdynamics._solvers"]
     my_method = "my_pkg.solvers:MY_SPEC"
 
-**A declared group is a promise, and a promise nothing loads is a lie.**
-:data:`SYSTEMS_GROUP` has been advertised here since F2 and no consumer has ever
-called :func:`load_plugins` on it, so a third-party system package declaring
-``tsdynamics.systems`` entry points was silently ignored.  Each group in
-:data:`ALL_GROUPS` must have exactly one consumer that loads it;
+Each group in :data:`ALL_GROUPS` has a consumer that loads it;
 ``tests/test_registry.py::test_every_declared_plugin_group_has_a_consumer`` is
-the gate, and it names the module expected to do the loading.
+the gate. The systems namespace exposes valid third-party system classes beside
+the built-in catalogue, while its consumer protects existing names and rejects
+ambiguous duplicate entry-point names.
 
 This module is deliberately *generic*: it discovers and loads entry points and
 imports submodules, but knows nothing about what a system/solver/analysis/
@@ -33,6 +31,7 @@ from __future__ import annotations
 import importlib
 import pkgutil
 import warnings
+from collections import Counter
 from collections.abc import Iterator
 from importlib.metadata import EntryPoint, entry_points
 from types import ModuleType
@@ -92,7 +91,9 @@ def iter_entry_points(group: str) -> Iterator[EntryPoint]:
     yield from entry_points(group=group)
 
 
-def load_plugins(group: str, *, strict: bool = False) -> dict[str, Any]:
+def load_plugins(
+    group: str, *, strict: bool = False, reject_duplicates: bool = False
+) -> dict[str, Any]:
     """Load every entry point in *group* into a ``name -> object`` mapping.
 
     Each entry point is resolved with :meth:`~importlib.metadata.EntryPoint.load`
@@ -107,15 +108,34 @@ def load_plugins(group: str, *, strict: bool = False) -> dict[str, Any]:
     strict : bool, default False
         If True, re-raise the first load failure instead of warning and
         continuing.  Useful in tests.
+    reject_duplicates : bool, default False
+        Reject every entry point with an ambiguous duplicate name before
+        importing its target. Warn and skip by default, or raise in strict mode.
+        Used by the system catalogue, where installation order must not choose
+        which model a public name denotes.
 
     Returns
     -------
     dict[str, Any]
         Maps each entry point's ``name`` to the object it resolves to.  Later
-        duplicate names within the group overwrite earlier ones.
+        duplicate names within the group overwrite earlier ones unless
+        ``reject_duplicates=True``.
     """
     loaded: dict[str, Any] = {}
-    for ep in iter_entry_points(group):
+    points = list(iter_entry_points(group))
+    duplicate_names = (
+        {name for name, count in Counter(ep.name for ep in points).items() if count > 1}
+        if reject_duplicates
+        else set()
+    )
+    for name in sorted(duplicate_names):
+        message = f"duplicate plugin name {name!r} in group {group!r}; all matching entries ignored"
+        if strict:
+            raise ValueError(message)
+        warnings.warn(message, stacklevel=2)
+    for ep in points:
+        if ep.name in duplicate_names:
+            continue
         try:
             loaded[ep.name] = ep.load()
         except Exception as exc:  # noqa: BLE001 — isolate third-party failures

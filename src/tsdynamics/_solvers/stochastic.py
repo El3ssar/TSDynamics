@@ -8,8 +8,8 @@ reads the diffusion Jacobian ``∂g/∂u`` and so declares
 :func:`tsdynamics._solvers.build_kwargs` turns into ``with_jacobian=True`` on the
 diffusion tape).
 
-These are the ``method=`` names
-:meth:`~tsdynamics.families.stochastic.StochasticSystem.integrate` accepts
+These are the ``solver=`` names
+:meth:`~tsdynamics.families.stochastic.StochasticSystem.run` accepts
 (``"euler_maruyama"`` / ``"milstein"``).  Importing this module registers them
 (the F2 directory scan imports it); the registry-parity test keeps them in
 lock-step with the Rust ``register_sde_kernel!`` lines.
@@ -32,7 +32,7 @@ _SDE = frozenset({"sde"})
 #: orders documented in ``crates/tsdyn-solvers/src/sde/mod.rs``.
 _SDE_KERNELS: dict[str, tuple[str, bool]] = {
     "euler_maruyama": ("Euler–Maruyama diagonal-Itô (strong order 0.5)", False),
-    "milstein": ("Milstein diagonal-Itô (strong order 1.0; uses ∂g/∂u)", True),
+    "milstein": ("Milstein componentwise-Itô (strong order 1.0; uses ∂g/∂u)", True),
 }
 
 for _name, (_desc, _needs_jac) in _SDE_KERNELS.items():

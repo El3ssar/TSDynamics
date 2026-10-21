@@ -24,14 +24,14 @@ chaos* to *how do I find it in real data*.
   Simulate a system; test it for chaos; draw a bifurcation diagram of a map
   *and* of a flow; find fixed points and read their stability; paint basins;
   animate a phase portrait over a vector field; define a system of your own.
-  Seven things, one page, every line executed by the documentation gate.
+  Seven things, one page, with examples to run in sequence.
 
 ## The journeys
 
 ### Understanding chaos
 
 - [**Anatomy of a chaotic attractor**](chaotic-attractor.md) — define the Lorenz
-  system, integrate it, plot the butterfly, then *certify* the chaos: watch two
+  system, integrate it, plot the butterfly, then quantify evidence for chaos: watch two
   neighbouring states diverge, compute the Lyapunov spectrum, read the
   Kaplan–Yorke dimension, and cross-check it against the correlation dimension.
   The vocabulary the rest of the toolkit is built on.

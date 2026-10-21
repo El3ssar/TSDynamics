@@ -1,9 +1,9 @@
 """The TSDynamics exception hierarchy and the value-naming error standard.
 
-Every error TSDynamics raises *on purpose* descends from
-:class:`TSDynamicsError`, so a caller can write ``except ts.TSDynamicsError`` to
-catch "anything the library rejected deliberately" without also swallowing
-genuine bugs (a ``KeyError`` from the caller's own dict, say).
+Typed domain errors descend from :class:`TSDynamicsError`, so a caller can write
+``except ts.errors.TSDynamicsError`` to catch them together. Some validation
+paths also raise plain built-in exceptions; catch ``ValueError`` or
+``TypeError`` when handling both typed and built-in validation failures.
 
 Why multiple inheritance off the stdlib types
 ---------------------------------------------
@@ -15,7 +15,7 @@ The leaf classes deliberately inherit from **both** :class:`TSDynamicsError`
 
 So existing ``except ValueError`` / ``except TypeError`` handlers keep catching
 these — the hierarchy is purely *additive*.  ``isinstance(err, ValueError)`` and
-``isinstance(err, ts.TSDynamicsError)`` are both true.  This mirrors the NumPy 2.0
+``isinstance(err, ts.errors.TSDynamicsError)`` are both true.  This mirrors the NumPy 2.0
 choice (``np.exceptions.AxisError`` is a ``ValueError`` *and* an ``IndexError``)
 and is the recommendation the v4 design dossier landed on.
 
@@ -113,10 +113,10 @@ __all__ = [
 
 
 class TSDynamicsError(Exception):
-    """Base class for every error TSDynamics raises on purpose.
+    """Base class for TSDynamics' typed domain errors.
 
-    Catch this to handle "anything the library rejected deliberately" without
-    also swallowing unrelated bugs.  Concrete leaf classes additionally inherit
+    Catch this to handle typed domain errors together. Plain built-in validation
+    errors do not share this base. Concrete leaf classes additionally inherit
     from the relevant stdlib exception (e.g. :class:`InvalidParameterError` is
     also a :class:`ValueError`), so existing ``except ValueError`` handlers keep
     working — the hierarchy only *adds* a common ancestor.

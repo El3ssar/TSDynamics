@@ -28,8 +28,9 @@ provides:
 
 The user defines the math (one symbolic `_equations` method, or `_step` +
 `_jacobian` for maps); the library lowers it to an engine IR tape (via SymEngine)
-and handles integration, output grids, and documentation. There is no
-compilation/warmup step and no on-disk compile cache.
+and handles integration, output grids, and documentation. Users need no manual
+compilation or warmup step. Symbolic lowering and JIT compilation occur on first
+use and are cached in process; there is no on-disk compile cache.
 
 **Author:** Daniel Estevez
 **Python:** ≥ 3.12
@@ -99,13 +100,13 @@ src/tsdynamics/
 │   ├── _result_json.py       # to_dict / repr helpers (_jsonify / _is_frame_scalar / _fmt) + the repr formatters (_sig / _state / _vector / _pct)
 │   ├── orbits/               # A-ORBIT: orbit_diagram + OrbitDiagram (+ periods/bifurcation_points; orbit_diagram.py); poincare_section (poincare.py); return_map + ReturnMap (first-return/next-amplitude map; return_map.py); self-registers into registry.analyses
 │   ├── lyapunov/             # A-LYAP: lyapunov_spectrum (one door: tangent frame, or two-trajectory when there is no Jacobian), kaplan_yorke_dimension + lyapunov_from_data (Kantz/Rosenstein, from_data.py); self-registers into registry.analyses
-│   ├── fixedpoints/          # A-FP: fixed_points/FixedPoint (maps+flow equilibria, Newton/SD/DL + rigorous Krawczyk method="interval" in _interval.py — fixed.py), periodic_orbits/PeriodicOrbit (map orbits AND a flow's limit cycle, one verb → one OrbitSet) + estimate_period (periodic.py), shared primitives (_common.py); self-registers
+│   ├── fixedpoints/          # A-FP: fixed_points/FixedPoint (maps+flow equilibria, Newton/SD/DL + numerical Krawczyk method="interval" in _interval.py — fixed.py), periodic_orbits/PeriodicOrbit (map orbits AND a flow's limit cycle, one verb → one OrbitSet) + estimate_period (periodic.py), shared primitives (_common.py); self-registers
 │   ├── dimensions/           # A-DIM: correlation/generalized-Rényi/fixed-mass fractal dims + scaling-region fit
 │   ├── chaos/               # A-CHAOS: GALI_k (Skokos) + 0–1 test (Gottwald–Melbourne) + expansion entropy (Hunt–Ott); maps via _jacobian, flows via self-contained RK4 variational core (no engine/compile)
 │   ├── recurrence/          # A-RQA: recurrence_matrix (fixed ε / target rate, sparse cKDTree) + rqa (DET/LAM/L_max/ENTR/TT) + windowed_rqa; self-registers into registry.analyses
 │   ├── basins/              # A-BASIN: attractors/basins (recurrence-FSM AttractorMapper) + basin_fractions (basin stability) + basin_entropy/uncertainty_exponent/wada_property (boundary structure) + continuation/tipping_points + resilience; cell tessellation in _common.py; self-registers into registry.analyses
 │   ├── embedding/           # owned by A-EMBED
-│   └── sampling/            # sagitta tools: estimate_dt_from_sagitta (output-dt selector) + sagitta_profile (per-point bow, the color_by="sagitta" field). NOT registered into registry.analyses (a sampling tool, not a quantifier); SagittaDt result is hidden (not exported)
+│   └── sampling/            # registered sampling tools: estimate_dt_from_sagitta (output-dt selector returning SagittaDt) + sagitta_profile (per-point bow ndarray, the color_by="sagitta" field)
 ├── viz/                      # PlotSpec IR seam + renderers (mpl/plotly/json/threejs) + compose.py (ts.viz.plot)
 │   ├── export.py             # the JSON envelope: to_json/from_json + to_dict_envelope/from_dict_envelope + SCHEMA_VERSION (all off ts.viz.spec's listing; the round trip a user drives is Plot.to_dict/to_json + ts.viz.load)
 │   └── _visibility.py        # the viz half of the §11 visibility ruling: the curated __dir__ tables
@@ -403,16 +404,21 @@ entry-point group, and `tsdynamics.viz` does the same for
 `tsdynamics.renderers`; in-tree analyses self-register from their own
 subpackages (the A-* streams).
 `plugins.ALL_GROUPS` is the **six** extension doors —
-`tsdynamics.systems` / `.solvers` / `.analyses` / `.renderers` /
-`.plot_transforms` / `.plot_primitives` (the last added in v6). **A declared group
-is a promise, and a promise nothing loads is a lie**: `SYSTEMS_GROUP` has been
-advertised since F2 with no consumer, so a third-party system package declaring
-against it was silently ignored. `PLOT_PRIMITIVES_GROUP` was the second such
-dead door and is **live since v6.0.1** (`viz.discover_plugins` loads it via
-`viz/__init__.py::_register_primitive_entry_points`) — it mattered more than it
-looks, because `ts.viz.transforms.allow` is the *only* route a custom primitive
-has into a shipped transform, so the dead group made the two viz extension doors
-unusable together. `SYSTEMS_GROUP` is still open (tracked as a `strict` xfail).
+`tsdynamics.systems` / `._solvers` / `.analyses` / `.renderers` /
+`.plot_transforms` / `.plot_primitives` (the last added in v6). All six have
+consumers. `systems/__init__.py` loads `SYSTEMS_GROUP`, validates
+concrete family subclasses and exposes accepted classes through the same
+`ts.systems.<Class>` / `names` / `get` / `find` surface as built-ins. Entry-point
+names must equal class names. Existing namespace and registered-system names
+cannot be replaced; ambiguous duplicate names are rejected before target
+imports. Invalid or broken entries warn and are skipped. External classes remain
+non-builtin registry entries, and ordinary user classes without entry points do
+not join the systems namespace. Top-level `__init__.py` binds the built-in systems
+namespace, then calls `systems._discover_plugins()` and `analysis.discover_plugins()`
+once after all public exports and lazy resolvers are ready. Plugin imports can use family aliases, `__version__`,
+`plot` / `viz`, and `ts.systems.Lorenz` during discovery.
+`PLOT_PRIMITIVES_GROUP` is also live (`viz.discover_plugins` loads it via
+`viz/__init__.py::_register_primitive_entry_points`).
 Gate: `tests/test_registry.py::test_every_declared_plugin_group_has_a_consumer`,
 which since v6.0.1 requires an actual **loader call** (`load_plugins` /
 `register_entry_points`) applied to the group under any local alias — a bare
@@ -993,6 +999,9 @@ mathematical reason and gives the line to type.
 - `run(..., solver=, seed=, backend=)` runs a fixed-step scheme — `dt` *is*
   the noise scale `√dt` (so `dt` sets both the discretisation and the output grid).
   `solver`: `"euler_maruyama"` (order 0.5, default) or `"milstein"` (order 1.0).
+  The implemented Milstein correction requires componentwise diffusion
+  `g_k(X_k, t)`; cross-dependent `g_k(X, t)` is supported by Euler–Maruyama.
+  Both symbolic lowering and the Rust binding reject unsupported Milstein tapes.
   `seed` makes the noise realisation reproducible (recorded in `traj.meta`).
   `backend`: `"jit"` (the default, like every other family) / `"interp"` — the
   compiled engine via `tsdynamics._rust` (stream E-WIRE) — or `"reference"` (pure
@@ -1067,8 +1076,9 @@ documented tolerance):
 
 ## Analysis results — the repr IS the answer (v6, C3)
 
-Every registered analysis returns an `AnalysisResult` subclass; there are **32**
-of them and a user constructs none. Two things changed in v6.
+Most quantifiers return an `AnalysisResult` subclass; the hierarchy contains
+**32** classes and a user constructs none. Alternative return shapes are listed
+below and pinned by annotation and runtime tests. Two things changed in v6.
 
 **`summary()` is deleted and `__repr__` became what it printed.** The readable
 text already existed inside `summary()`, which nothing advertised and no REPL
@@ -1354,16 +1364,18 @@ generator. Guessing a removed name is answered by
 `subjects=("flow",)` — they evaluate or integrate the RHS at points that are in
 no trajectory — which is what makes `find(henon)` answer 14 and not 21.
 
-**Known exception to "every registered analysis returns an `AnalysisResult`"**:
-14 of the 50 return a plain value (an array, a float, a tuple, a list of small
-records) — the 7 promoted field analyses, `invariant_density`, `correlation_sum`,
-`dimension_spectrum`, `autocorrelation`, `sagitta_profile`,
-`estimate_dt_from_sagitta`, `set_distance`. They are enumerated in
-`tests/test_analysis_registry.py::_PLAIN_VALUE_ANALYSES` and declare no
-`returns=`; every other analysis must declare the class it returns, and the gate
-checks the declaration against the annotation. Giving those 14 result wrappers is
-a v6.1 item (it moves a returned *type*, in two files outside the analysis
-subpackages).
+**Supported alternative return shapes:** 14 registered analyses return types
+outside `AnalysisResult`: `FlowField`, `ScalarField` and `TraceDeterminant`
+dataclasses; lists of `Nullcline` records or streamline arrays; the
+`invariant_density` tuple of arrays; a `CorrelationSum` named tuple;
+`dimension_spectrum`'s `dict[float, DimensionResult]`; `SagittaDt`; the arrays
+from `autocorrelation` and `sagitta_profile`; and `set_distance`'s plain float.
+Their exact annotations live in `tests/_analysis_returns.py::NON_RESULT_RETURNS`,
+shared by the registry and polish gates, with runtime checks for every entry.
+Both sampling tools are currently registered. These entries declare no
+`returns=` metadata; other numeric-result analyses must declare the class they
+return. `poincare_section` separately returns the trajectory-based
+`PoincareSection`. No blanket expected-failure exemption hides these contracts.
 
 ## Derived systems & analysis
 
@@ -1557,10 +1569,10 @@ subpackages).
   only) to reach unstable points. Map stability is `|λ|<1`, flow stability
   `Re λ<0` (the `FixedPoint.continuous` flag picks the convention).
   **`method="interval"`** (stream `perf/fixedpoints-interval`, engine in
-  `_interval.py`) is the *rigorous* alternative: the Krawczyk operator brackets
-  **all** roots inside the (required) `region` by interval branch-and-prune with
-  an existence+uniqueness certificate per sub-box — so it cannot silently miss a
-  root (multi-start can), is deterministic (no `seed`), and is faster on the
+  `_interval.py`) is a deterministic numerical alternative: the Krawczyk operator
+  searches inside the required `region` by interval branch-and-prune. It gives
+  no formal existence, uniqueness or completeness certificate. It uses no random
+  seeds, and was faster on the
   analytic systems it applies to (~2–11× on the catalogue; on Thomas's 27
   equilibria it finds all 27 where `n_seeds=200` Newton finds 23). It builds the
   interval residual+Jacobian by **forward-mode AD over intervals** (`IntervalJet`
@@ -1568,8 +1580,9 @@ subpackages).
   diff), supports `sin/cos/exp/log/sqrt/cosh/tanh/abs`+integer powers (covers
   every catalogue flow + analytic maps), and raises `InvalidInputError` for a
   kernel it can't enclose (a `<`/`%`/non-integer power → use `"newton"`). The
-  arithmetic is plain-float (rigorous to round-off, machine-precise roots; a
-  *certified* outward-rounded kernel is a future engine-side project). Theory +
+  arithmetic uses ordinary floats, without outward rounding, and can accept
+  unresolved tiny boxes by residual tolerance. A certified outward-rounded
+  kernel is a future engine-side project. Theory +
   benchmark in `docs/theory/fixed-points-interval.md`. Additive: `newton`/`sd`/`dl`
   unchanged.
 - `periodic_orbits` (A-FP) finds map period-`p` orbits as fixed points of `fᵖ`
@@ -2475,9 +2488,8 @@ Nothing else in the library learns a new name when one is added.
     and `engine.problem.Problem` are), and
     `test_every_catalogue_module_lists_the_classes_it_defines` keeps `__all__`
     complete, since a `__dir__` over a partial `__all__` would *hide a system*
-    from its own module. The older backlog table stays split "no new offender"
-    (fast tier) / "delete the stale row" (`full`), so one slot's correct fix
-    cannot redden everyone else.
+    from its own module. The old exception table is removed: every public module
+    is now included in the listing gate, including the nightly sweep.
   - **Corollary, learned the hard way:** a name a library *prints back* must be
     a name the reader can then tab-complete. `Geometry.parts` was hidden while
     two of `Geometry`'s own errors ended *"iterate g.parts"*; it is listed again,
@@ -2779,11 +2791,9 @@ to opt out is an explicit, reviewed entry — never silence.
   the gate now costs a named entry with a written reason in `EXEMPT_MODULES` /
   `EXEMPT_PAGES`, and exemptions are **self-cleaning**: a `full`-tier guard
   re-runs each and **fails when one starts passing**, so the list can only
-  shrink. The 12 current exemptions are all *docstring* defects in `src/`
-  (a missing expected-output line, a comment on a `want` line, a name the
-  docstring never binds) — not defects in the code they document.
-  - Gated today: **32 modules + 42 pages** (was 15 + 20; the page count includes
-    `tutorials/seven-tasks.md`, the cold-start tutorial).
+  shrink. The old docstring defects are repaired; there are no exempt modules.
+  - Measured in the audit: **50 fast modules + 1 nightly module**, and **40 fast
+    pages + 2 nightly pages**. This includes `tutorials/seven-tasks.md`.
   - A fence that is a signature listing, a calling pattern, or a deliberate
     demonstration of what *raises* opts out **in place** with `# skip-doctest`
     — visible to the page's reader, unlike a name in a list elsewhere.
@@ -2857,7 +2867,8 @@ to opt out is an explicit, reviewed entry — never silence.
 - Every push to `main` runs `release.yml`: `test` (builds the engine + runs the
   suite) → PSR computes the bump from conventional commits (feat→minor,
   fix/perf→patch, `!`→major) and tags vX.Y.Z + creates the GitHub Release (PSR
-  does **not** build — `build_command=""`) → `wheels`/`sdist` build the
+  refreshes and stages `uv.lock` in its preparation command, without building
+  distribution artifacts) → `wheels`/`sdist` build the
   per-platform abi3 wheels from the new tag → `publish` uploads them to PyPI via
   trusted publishing (`environment: pypi`, bound to the filename `release.yml` —
   don't rename) and attaches them to the Release.
@@ -2908,8 +2919,8 @@ to opt out is an explicit, reviewed entry — never silence.
    concepts, or any existing system).
 2. Add the class name to the module's `__all__` and the category package's
    `__init__.py` (`systems/continuous/__init__.py` or `systems/discrete/__init__.py`).
-   `systems/__init__.py` flat-re-exports it automatically (→ `tsdynamics.systems.<Name>`
-   and the lazy `tsdynamics.<Name>`); a registry test fails loudly if you forget the
+   `systems/__init__.py` flat-re-exports it automatically at
+   `tsdynamics.systems.<Name>`; a registry test fails loudly if you forget the
    category `__all__`.
 3. **That's it** — the registry picks it up, the bulk test suite sweeps it,
    and the docs build generates its page (equations + figure) automatically.

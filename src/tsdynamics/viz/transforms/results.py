@@ -81,11 +81,17 @@ def _demo_bistable() -> Any:
     example=lambda primitive: (_demo_orbit(80), {"recurrence_rate": 0.05}),
     doc="The recurrence plot R(i, j) — where the orbit revisits its own neighbourhood.",
 )
-def recurrence(subject: Any, *, recurrence_rate: float = 0.05, **kwargs: Any) -> Any:
+def recurrence(
+    subject: Any,
+    *,
+    recurrence_rate: float | None = None,
+    threshold: float | None = None,
+    **kwargs: Any,
+) -> Any:
     """Draw the recurrence plot of a trajectory.
 
     A phase-space method, not a series statistic: ``R(i, j) = 1`` when the orbit
-    at time ``j`` is within ``epsilon`` of where it was at time ``i``, so the
+    at time ``j`` is within ``threshold`` of where it was at time ``i``, so the
     diagonals are recurrences and their lengths are what DET and L_max measure.
 
     There was no route from a bare trajectory to this picture before v6 — the
@@ -96,9 +102,9 @@ def recurrence(subject: Any, *, recurrence_rate: float = 0.05, **kwargs: Any) ->
 
     What correct looks like
     -----------------------
-    The fraction of the matrix that is set equals the ``recurrence_rate`` you
-    asked for — ask for 5 % and count 5 %, not 14 %.  The main diagonal is
-    always recurrent, and a periodic orbit shows diagonals spaced by its
+    The fraction of eligible pairs that is set approximates the
+    ``recurrence_rate`` you asked for; repeated distances can prevent an exact
+    match. The line of identity is excluded, and a periodic orbit shows diagonals spaced by its
     period.  Gate:
     ``tests/test_viz_truth.py::TestARecurrencePlotDrawsTheRateItWasAsked``.
 
@@ -107,10 +113,14 @@ def recurrence(subject: Any, *, recurrence_rate: float = 0.05, **kwargs: Any) ->
     subject : Trajectory or array
         The orbit.
     recurrence_rate : float, optional
-        Target fraction of recurrent pairs; ``epsilon`` is calibrated to it.
+        Target fraction of recurrent pairs; the threshold is calibrated to it.
+        Defaults to ``0.05`` when neither scale control is given.
+    threshold : float, optional
+        Fixed distance threshold, as in ``recurrence_matrix``. Give either this
+        or ``recurrence_rate``, never both.
     **kwargs
-        Forwarded to :func:`tsdynamics.analysis.recurrence_matrix` (``epsilon``,
-        ``metric``, ``theiler``).
+        Forwarded to :func:`tsdynamics.analysis.recurrence_matrix`
+        (``metric``, ``theiler``).
 
     Returns
     -------
@@ -118,7 +128,11 @@ def recurrence(subject: Any, *, recurrence_rate: float = 0.05, **kwargs: Any) ->
     """
     from tsdynamics.analysis import recurrence_matrix
 
-    result = recurrence_matrix(subject, recurrence_rate=recurrence_rate, **kwargs)
+    if recurrence_rate is None and threshold is None:
+        recurrence_rate = 0.05
+    result = recurrence_matrix(
+        subject, recurrence_rate=recurrence_rate, threshold=threshold, **kwargs
+    )
     dense = np.asarray(result.matrix.todense(), dtype=float)
     index = np.arange(dense.shape[0], dtype=float)
     return Geometry(

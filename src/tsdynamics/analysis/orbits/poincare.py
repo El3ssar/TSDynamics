@@ -154,8 +154,9 @@ def poincare_section(
 
     Examples
     --------
-    >>> section = poincare_section(Rossler(), plane=("y", 0.0, "up"), crossings=500)
-    >>> section = poincare_section(Rossler(), crossings=500)     # section chosen + recorded
+    >>> section = poincare_section(Rossler(), plane=("y", 0.0, "up"), crossings=20)
+    >>> section = poincare_section(Rossler(), crossings=20)     # section chosen + recorded
+    >>> traj = Lorenz(ic=[1.0, 1.0, 1.0]).run(final_time=30, dt=0.01)
     >>> section = poincare_section(traj, plane=("z", 25.0))     # from data
     """
     _reject_axes_pair(system, plane)

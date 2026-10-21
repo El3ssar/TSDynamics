@@ -1,12 +1,12 @@
 ---
-description: The seventeen names in the tsdynamics namespace, the rule that decides membership, where everything else lives, and the error ladder that hands you the new address.
+description: The eleven names in the tsdynamics namespace, the rule that decides membership, where everything else lives, and the error ladder that hands you the new address.
 ---
 
 <span class="ts-kicker">Reference</span>
 
 # Top level
 
-`tsdynamics.<TAB>` shows **seventeen** names. That is not minimalism for its own
+`tsdynamics.<TAB>` shows **eleven** names. That is not minimalism for its own
 sake — it is one rule applied mechanically:
 
 > A public name is a **verb** you call on the thing you are already holding, a
@@ -22,18 +22,17 @@ exps = ts.analysis.lyapunov_spectrum(ts.systems.Henon())
 ts.plot(traj, color="crimson", title="Lorenz")
 ```
 
-## The seventeen
+## The eleven
 
 ```text
-BackendError           DiscreteMap             StochasticSystem       plot
-ContinuousSystem       InvalidInputError       StepBudgetError        systems
-ConvergenceError       InvalidParameterError   TSDynamicsError        viz
-DelaySystem            Trajectory              WrappedSystem          __version__
-                                               analysis
+ContinuousSystem       StochasticSystem        plot
+DelaySystem            Trajectory              systems
+DiscreteMap            WrappedSystem           viz
+                       __version__             analysis
 ```
 
 Five classes you subclass · one type you receive and annotate · one plotting verb
-· three registries · six names you type inside `except` · the version.
+· three registries · the version.
 
 | Symbol | What it is | Canonical home |
 | ------ | ---------- | -------------- |
@@ -47,7 +46,6 @@ Five classes you subclass · one type you receive and annotate · one plotting v
 | `systems` | the 177 built-in models | — |
 | `analysis` | the 50 quantifiers | — |
 | `viz` | plots, primitives, transforms, themes, renderers | — |
-| `TSDynamicsError` … `StepBudgetError` | the six exception types you catch | `tsdynamics.errors` |
 | `__version__` | the installed version | — |
 
 The five family bases are here because each is the **sole spelling of a
@@ -56,11 +54,17 @@ system for you. `Trajectory` is the one type you *receive* that is also a type
 you *type* — you annotate it, you `isinstance` it, and you construct it
 (`ts.Trajectory(t, y)`) from data measured elsewhere.
 
-The six error classes are here for the same reason: `except ConvergenceError:` is
-something you type, and reaching for `ts.errors.ConvergenceError` to write a
-single `except` clause is a toll. Each one subclasses the builtin you would
-historically have caught, so a `RuntimeError` / `ValueError` / `TypeError`
-`except` keeps catching the same failure.
+The six error classes live at `ts.errors.<Name>`, outside the top-level listing.
+Each subclasses the builtin you would historically have caught, so a
+`RuntimeError` / `ValueError` / `TypeError` `except` keeps catching the same
+failure. Use the typed names when you need to distinguish library failures:
+
+```python
+try:
+    ts.systems.Lorenz().run(final_time=1.0, dt=-0.1)
+except ts.errors.InvalidParameterError as error:
+    print(error)
+```
 
 | You catch | It is a | Raised when |
 | --------- | ------- | ----------- |
@@ -86,11 +90,11 @@ address (see the ladder below).
 | [`ts.viz.spec`](../visualization/index.md) | the IR nouns (`Layer`, `Axis`, `PlotKind`, `Geometry`, `T`, …) | writing a renderer or a transform |
 | [`ts.derived`](derived.md) | `PoincareMap`, `StroboscopicMap`, `TangentSystem`, `ProjectedSystem`, `Ensemble` | rarely — the first two and `Ensemble` have verbs on the system |
 | [`ts.data`](data.md) | `Trajectory`, `Box`, `Ball`, `Grid`, `region`, `sampler`, `grid_points`, `set_distance` | rarely — every region argument takes plain bounds |
-| [`ts.errors`](../contributing/glossary.md) | the same six, plus `MovedInV6` and the warning types | reading the hierarchy |
+| [`ts.errors`](../contributing/glossary.md) | the six typed errors, plus `MovedInV6` and the warning types | catching a specific library failure |
 | [`ts.registry`](registry.md) | the system / analysis / renderer / transform registries | enumerating a catalogue programmatically |
 | [`ts.families`](base.md) | `SystemBase`, `ParamSet`, the `System` protocol | writing a new *family*, not a new system |
-| [`ts.utils`](utils.md) | `make_output_grid`, the tolerance constants | reading what a default actually is |
-| `ts.engine` / `ts.solvers` | the Rust-facing compile/run seam, the solver table | debugging the engine |
+| [`tsdynamics._utils`](utils.md) | `make_output_grid`, the tolerance constants | internal implementation reference |
+| `tsdynamics._engine` / `tsdynamics._solvers` | the Rust-facing compile/run seam, the solver table | debugging internals; these are private modules |
 
 ### The derived views have verbs
 
@@ -133,7 +137,7 @@ ts.analysis.correlation_dimension(traj)          # a property of a point set
 ts.analysis.kaplan_yorke_dimension(exps)         # a property of the answer above
 ```
 
-Pressing ++tab++ on a system therefore shows **19 names**, every one a verb or a
+Pressing ++tab++ on a Lorenz system shows **20 names**, every one a verb or a
 fact about that system, and `ts.analysis.<TAB>` shows the 50 quantifiers, flat
 and sorted. `ts.analysis.find(subject_or_query)` is the search:
 
@@ -182,7 +186,7 @@ it is an `ImportError`. Both spellings therefore teach:
 
 ```pycon
 >>> ts.Lorenz
-tsdynamics.errors.MovedInV6: ts.Lorenz moved in v6: the top level is 17 names now,
+tsdynamics.errors.MovedInV6: ts.Lorenz moved: the top level is 11 names now,
 and this one lives at its own address.
     ts.systems.Lorenz()
 

@@ -301,6 +301,10 @@ def _observable(
             )
         return _c._as_observable(system, components)
     if system.family == "map":
+        if final_time is not None or dt is not None:
+            raise InvalidParameterError(
+                "zero_one_test: final_time/dt apply to flows; a map uses n iterations."
+            )
         skip = int(transient) if transient is not None else 0
         count = int(n) if n is not None else 5000
         kw: dict[str, Any] = {"transient": skip}

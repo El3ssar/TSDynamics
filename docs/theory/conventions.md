@@ -11,13 +11,15 @@ The contracts the implementation commits to, stated once and precisely.
 ## Time: `t` for flows, steps for maps
 
 - **Flows** (`ContinuousSystem`, `DelaySystem`, `StochasticSystem`) live in
-  continuous time: `run(final_time, dt, t0=0.0)` produces a uniform grid from
-  `t0` to `final_time` *inclusive* (the final point is appended if the grid does
-  not land on it exactly). `dt` is the output sampling interval only; the
-  internal stepper is adaptive. `dt=None` resolves to the family default
-  (`0.02`); `dt=final_time` is the explicit two-point grid.
+  continuous time. `run(final_time=..., dt=...)` includes the initial and final
+  times, with a shorter final sampling interval if necessary. ODEs and SDEs
+  accept `t0=`; DDE runs start at zero. For adaptive ODE solvers, `dt` controls
+  output sampling while tolerances control integration accuracy. Fixed-step
+  solvers and SDEs also use `dt` as their numerical step; DDE internal steps are
+  bounded by it. `dt=None` resolves to the system's `_default_dt`.
 - **Maps** (`DiscreteMap`) live in iteration count: `run(steps)` produces
-  `traj.t == arange(steps)` — integer step indices, not float times. A map
+  `traj.t == arange(steps + 1)` — the initial state and one sample per iterate.
+  A map
   handed `final_time=` raises and says why: a map has no continuous time.
 - The protocol mirrors this: `step(n_or_dt)` means a *time increment* for
   flows (defaults 0.01 ODE / 0.1 DDE) and a *number of iterations* for
@@ -72,6 +74,8 @@ every analysis result carries its own `result.meta` recording the horizon it
 actually used.
 
 ```python
+import tsdynamics as ts
+
 lor = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0])
 
 traj = lor.run(final_time=50.0, dt=0.05)

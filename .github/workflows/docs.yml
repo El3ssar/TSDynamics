@@ -23,6 +23,9 @@ on:
       - "mkdocs.yml"
       - "hooks/**"
       - "pyproject.toml"
+      - "uv.lock"
+      - "README.md"
+      - "CLAUDE.md"
       - ".github/workflows/docs.yml"
 
 concurrency:
@@ -82,11 +85,16 @@ jobs:
           restore-keys: |
             docs-field-movies-
 
-      - name: Sync project + docs deps
-        run: uv sync --group docs
+      - name: Sync project + docs + test deps and plotting extras
+        run: uv sync --locked --group docs --group dev --all-extras --python 3.12
+
+      - name: Execute documentation examples
+        env:
+          MPLBACKEND: Agg
+        run: uv run --no-sync pytest tests/test_doctests.py --no-cov -q
 
       - name: Build documentation
-        run: uv run mkdocs build --strict
+        run: uv run --no-sync mkdocs build --strict
 
       # Official GitHub Actions Pages path (no gh-pages branch, one deploy hop) —
       # far more reliable than the legacy branch build. Pages source must be set to

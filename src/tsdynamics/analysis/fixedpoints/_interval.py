@@ -1,10 +1,9 @@
 r"""
 Interval-Newton / Krawczyk root finding over a box (stream **A-FP**, ``method="interval"``).
 
-A *rigorous*, deterministic alternative to multi-start Newton: instead of seeding
-many local solves and hoping to hit every basin, the Krawczyk operator brackets
-**all** roots of the residual :math:`g(x)=0` inside a search box by interval
-branch-and-prune, with a uniqueness/existence certificate per sub-box.
+A deterministic numerical alternative to multi-start Newton: instead of seeding
+many local solves, the Krawczyk operator searches roots of the residual
+:math:`g(x)=0` inside a box by interval branch-and-prune.
 
 The pieces:
 
@@ -28,9 +27,9 @@ The pieces:
   :math:`K \cap [x]` (or bisected when contraction stalls).
 
 The interval arithmetic here is *not* outward-rounded (it uses plain ``float``
-ops), so the bracketing is rigorous only up to floating-point round-off — fixed
-points are recovered to machine precision (each box is polished by a final
-Newton step), which is the contract :func:`tsdynamics.fixed_points` documents.
+ops), and unresolved tiny boxes can be accepted by residual tolerance.  The
+returned roots therefore carry no formal existence, uniqueness or completeness
+certificate.  Root candidates are polished by a final Newton step.
 A certified-rounded kernel would live engine-side (a larger future project; see
 ``docs/theory/fixed-points-interval.md``).
 
@@ -67,8 +66,8 @@ class Interval:
     Supports the operations the system kernels use; an unsupported operation
     (a non-integer/variable power, a comparison, a modulo) raises
     :class:`NotImplementedError`, which the public entry point turns into a clear
-    :class:`~tsdynamics.errors.InvalidInputError`.  Not outward-rounded — rigorous
-    to floating-point round-off (see the module docstring).
+    :class:`~tsdynamics.errors.InvalidInputError`.  Not outward-rounded; these
+    are numerical enclosures, not certified bounds (see the module docstring).
     """
 
     __slots__ = ("lo", "hi")
@@ -743,9 +742,9 @@ def krawczyk_roots(
 ) -> list[np.ndarray]:
     r"""Branch-and-prune for all roots of the residual in the box ``[lo0, hi0]``.
 
-    Returns the deduplicated root points (midpoints of the certified sub-boxes,
-    polished by a final float Newton).  Each returned root carries a Krawczyk
-    existence-and-uniqueness certificate for its sub-box.  Raises
+    Returns root candidates from accepted boxes, polished by a final float
+    Newton step.  Floating-point arithmetic and tolerance-based acceptance do
+    not supply formal certificates; the caller deduplicates the candidates.  Raises
     :class:`~tsdynamics.errors.ConvergenceError` if the box budget is exhausted.
     """
     from tsdynamics.errors import ConvergenceError

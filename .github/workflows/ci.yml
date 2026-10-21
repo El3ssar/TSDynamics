@@ -174,7 +174,7 @@ jobs:
       # Lint needs only ruff, not the compiled engine — skip the project build
       # (which would otherwise pull in the Rust toolchain via maturin).
       - name: Sync dev deps (locked ruff — matches local results)
-        run: uv sync --no-install-project --group dev
+        run: uv sync --locked --no-install-project --group dev --python 3.12
 
       - name: ruff check
         run: uv run --no-sync ruff check src/ tests/
@@ -202,7 +202,7 @@ jobs:
       # the installed deps — no engine build (the abi3 wheel) is needed, so skip
       # installing the project itself (as the lint job does).
       - name: Sync deps (no engine build)
-        run: uv sync --no-install-project --group dev
+        run: uv sync --locked --no-install-project --group dev --python 3.12
 
       - name: mypy --strict
         run: uv run --no-sync mypy --strict src/tsdynamics
@@ -283,7 +283,7 @@ jobs:
 
       # Install deps + dev tools, but NOT the project (no engine recompile).
       - name: Sync deps (no engine build)
-        run: uv sync --no-install-project --group dev --python ${{ matrix.python }}
+        run: uv sync --locked --no-install-project --group dev --python ${{ matrix.python }}
 
       - name: Download the prebuilt engine wheel
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
@@ -326,7 +326,7 @@ jobs:
         run: uv python install 3.12
 
       - name: Sync deps (no engine build)
-        run: uv sync --no-install-project --group dev
+        run: uv sync --locked --no-install-project --group dev --python 3.12
 
       - name: Download the prebuilt engine wheel
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
@@ -371,7 +371,7 @@ jobs:
         run: uv python install 3.12
 
       - name: Sync deps + viz extras (no engine build)
-        run: uv sync --no-install-project --group dev --extra viz --extra interactive
+        run: uv sync --locked --no-install-project --group dev --extra viz --extra interactive --python 3.12
 
       - name: Download the prebuilt engine wheel
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0

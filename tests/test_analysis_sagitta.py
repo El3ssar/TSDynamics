@@ -67,6 +67,23 @@ class TestSagitta:
         result = estimate_dt_from_sagitta(y, dt0, epsilon=0.05)
         assert result.delta_t > 0.0
         assert "Takens embedding" in result.notes
+        assert result.indices[0] == 0
+        assert result.indices[-1] == len(y) - 1
+
+    @pytest.mark.parametrize(
+        ("argument", "value"),
+        [
+            ("dt0", np.inf),
+            ("epsilon", np.inf),
+            ("search_growth", np.nan),
+            ("search_growth", np.inf),
+        ],
+    )
+    def test_rejects_nonfinite_search_settings(self, argument: str, value: float) -> None:
+        y, dt0 = _spiral_3d(T=100)
+        kwargs = {"dt0": dt0, "epsilon": 0.05, argument: value}
+        with pytest.raises(ValueError, match=argument):
+            estimate_dt_from_sagitta(y, **kwargs)
 
     def test_tighter_epsilon_does_not_coarsen_stride(self) -> None:
         y, dt0 = _spiral_3d()
@@ -93,6 +110,20 @@ class TestSagitta:
 
 
 class TestSagittaProfile:
+    @pytest.mark.parametrize(
+        "samples",
+        [np.array(1.0), np.empty((5, 0)), np.ones((5, 2, 2)), np.array([0.0, np.nan, 1.0])],
+    )
+    def test_rejects_malformed_or_nonfinite_points(self, samples: np.ndarray) -> None:
+        with pytest.raises(ValueError, match="samples"):
+            sagitta_profile(samples)
+
+    @pytest.mark.parametrize("span", [0, -1, 0.5, True])
+    def test_rejects_invalid_offsets(self, span: int) -> None:
+        y, _ = _spiral_3d(T=20)
+        with pytest.raises(ValueError, match="span"):
+            sagitta_profile(y, span=span)
+
     def test_per_point_shape_and_endpoints(self) -> None:
         y, _ = _spiral_3d(T=500)
         prof = sagitta_profile(y)

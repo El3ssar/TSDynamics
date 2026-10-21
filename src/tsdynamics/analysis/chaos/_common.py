@@ -80,6 +80,7 @@ def _as_observable(data: object, components: int | str = 0) -> np.ndarray:
         )
     y = getattr(data, "y", None)
     arr = np.asarray(y if y is not None else data, dtype=float)
+    input_ndim = arr.ndim
     if arr.ndim == 2:
         index = column_of(data, components)
         if not -arr.shape[1] <= index < arr.shape[1]:
@@ -88,10 +89,11 @@ def _as_observable(data: object, components: int | str = 0) -> np.ndarray:
                 f"{arr.shape[1]} components."
             )
         arr = arr[:, index]
-    arr = np.ravel(arr)
     if arr.ndim != 1:
         shape = np.shape(cast("npt.ArrayLike", data))
         raise ValueError(f"observable must be one-dimensional, got shape {shape}.")
+    if components != 0 and input_ndim == 1:
+        raise ValueError("components= is meaningless for a 1-D observable; use components=0.")
     if not np.all(np.isfinite(arr)):
         raise ValueError("observable contains non-finite values (nan/inf).")
     return arr

@@ -29,6 +29,24 @@ from .problem import MapProblem, ODEProblem, Problem
 __all__: list[str] = []
 
 
+def _reference_tolerances(rtol: float, atol: float) -> tuple[float, float]:
+    """Validate the same scalar tolerance domain as the compiled bridge.
+
+    SciPy silently clamps negative relative tolerances and does not reject NaN
+    tolerances. Validate before entering its solver, then apply its documented
+    relative roundoff floor explicitly so valid pure absolute control does not
+    raise a warning under a caller's strict warning policy.
+    """
+    from tsdynamics.errors import invalid_value
+
+    for name, value in (("rtol", rtol), ("atol", atol)):
+        if not math.isfinite(value) or value < 0.0:
+            raise invalid_value(name, value, rule="must be finite and non-negative")
+    if rtol == 0.0 and atol == 0.0:
+        raise invalid_value("rtol and atol", (rtol, atol), rule="cannot both be zero")
+    return max(float(rtol), 100.0 * np.finfo(np.float64).eps), float(atol)
+
+
 def _reference_ode(
     problem: ODEProblem,
     t_eval: np.ndarray,
@@ -64,6 +82,7 @@ def _reference_ode(
     from scipy.integrate import solve_ivp
 
     validate_max_step(max_step)
+    rtol, atol = _reference_tolerances(rtol, atol)
     t_eval = np.ascontiguousarray(t_eval, dtype=np.float64)
     if t_eval.size == 0:
         return np.empty((0, problem.dim), dtype=np.float64)

@@ -570,8 +570,8 @@ def periodic_orbits(
 
     Examples
     --------
-    >>> periodic_orbits(Logistic(params={"r": 3.2}), 2)   # the stable 2-cycle
-    >>> periodic_orbits(Logistic(params={"r": 3.83}), 3)  # stable node + saddle
+    >>> two_cycles = periodic_orbits(Logistic(params={"r": 3.2}), 2)
+    >>> three_cycles = periodic_orbits(Logistic(params={"r": 3.83}), 3)
     """
     reject_data(system, analysis="periodic_orbits")
     if not isinstance(system, DiscreteMap):
@@ -802,7 +802,7 @@ def _flow_periodic_orbits(
 
     Examples
     --------
-    >>> periodic_orbits(VanDerPol(params={"mu": 1.0}), 6.6, ic=[2.0, 0.0])
+    >>> cycle = periodic_orbits(VanDerPol(params={"mu": 1.0}), 6.6, ic=[2.0, 0.0])
     """
     reject_data(system, analysis="periodic_orbits")
     if not isinstance(system, ContinuousSystem):
@@ -1081,7 +1081,9 @@ def estimate_period(
 
     Examples
     --------
-    >>> estimate_period(VanDerPol().run(final_time=200, dt=0.01))   # ≈ 6.66
+    >>> period = estimate_period(VanDerPol().run(final_time=100, dt=0.01, ic=[2.0, 0.0]))
+    >>> 6.5 < float(period) < 6.8
+    True
 
     References
     ----------

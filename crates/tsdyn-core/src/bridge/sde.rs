@@ -8,7 +8,7 @@
 
 use tsdyn_engine::rng::SplitMix64;
 use tsdyn_engine::{sde_ensemble_final as engine_sde_ensemble, sde_integrate_grid, SdeConfig};
-use tsdyn_ir::Tape;
+use tsdyn_ir::{Op, OpKind, Tape};
 use tsdyn_solvers::sde::{self, SdeKernel};
 
 use super::marshal::{build_evaluator, sde_failure, validate_grid, EngineError};
@@ -41,7 +41,50 @@ fn resolve_sde(method: &str, diffusion: &Tape) -> Result<fn() -> Box<dyn SdeKern
             reg.name
         )));
     }
+    if reg.name == "milstein" {
+        check_componentwise_diffusion(diffusion)?;
+    }
     Ok(reg.make)
+}
+
+/// The simplified Milstein correction is valid for g_k(X_k, t), not arbitrary
+/// cross-dependent diagonal coefficients. Track each register's state
+/// dependencies in one SSA pass; derivatives alone cannot detect a cross-state
+/// floor/sign dependency because their almost-everywhere derivative is zero.
+fn check_componentwise_diffusion(diffusion: &Tape) -> Result<(), EngineError> {
+    // None = independent of the state, Some(MAX) = multiple state components.
+    let mut dependencies = vec![None; diffusion.n_reg()];
+    for (i, op) in diffusion.ops().iter().enumerate() {
+        dependencies[i] = if *op == Op::State {
+            Some(diffusion.a()[i] as usize)
+        } else {
+            match op.kind() {
+                OpKind::Leaf => None,
+                OpKind::Unary | OpKind::Powi => dependencies[diffusion.a()[i] as usize],
+                OpKind::Binary => {
+                    match (
+                        dependencies[diffusion.a()[i] as usize],
+                        dependencies[diffusion.b()[i] as usize],
+                    ) {
+                        (None, value) | (value, None) => value,
+                        (Some(a), Some(b)) if a == b => Some(a),
+                        _ => Some(usize::MAX),
+                    }
+                }
+            }
+        };
+    }
+    for (k, reg) in diffusion.outputs().iter().enumerate() {
+        if dependencies[*reg as usize].is_some_and(|component| component != k) {
+            return Err(EngineError::InvalidParameter(format!(
+                "SDE method 'milstein' requires componentwise diffusion g_k(X_k, t), \
+                 but diffusion component {k} depends on another state component. \
+                 Cross-dependent noise needs iterated stochastic integrals; \
+                 use 'euler_maruyama'."
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// Validate the SDE tape pair and shared parameters, returning the dimension.
@@ -218,4 +261,43 @@ pub fn sde_ensemble_final(
         return Err(EngineError::Interrupted);
     }
     Ok(result.states)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tsdyn_ir::TapeBuilder;
+
+    #[test]
+    fn milstein_rejects_cross_dependent_tape_even_with_zero_cross_derivative() {
+        let mut b = TapeBuilder::new();
+        let x0 = b.state(0);
+        let x1 = b.state(1);
+        let zero = b.constant(0.0);
+        let one = b.constant(1.0);
+        // g_1 = x1 + floor(x0): its a.e. cross derivative is zero, but its
+        // state dependence still violates the componentwise solver contract.
+        let cross = b.floor(x0);
+        let g1 = b.add(x1, cross);
+        let diffusion = b.finish(&[x0, g1], &[one, zero, zero, one], 2, 0).unwrap();
+        assert!(matches!(
+            resolve_sde("milstein", &diffusion),
+            Err(EngineError::InvalidParameter(_))
+        ));
+        assert!(resolve_sde("euler_maruyama", &diffusion).is_ok());
+    }
+
+    #[test]
+    fn milstein_accepts_componentwise_state_and_time_dependence() {
+        let mut b = TapeBuilder::new();
+        let x0 = b.state(0);
+        let x1 = b.state(1);
+        let zero = b.constant(0.0);
+        let one = b.constant(1.0);
+        let t = b.time();
+        let g0 = b.mul(t, x0);
+        let g1 = b.add(x1, t);
+        let diffusion = b.finish(&[g0, g1], &[t, zero, zero, one], 2, 0).unwrap();
+        assert!(resolve_sde("milstein", &diffusion).is_ok());
+    }
 }

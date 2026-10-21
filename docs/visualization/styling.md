@@ -285,10 +285,13 @@ spec.palette("dark")                              # borrow a registered theme's 
 spec.gridlines(show=True, axis="y", color="#9aa7b0", alpha=0.3)  # y-axis gridlines, styled
 spec.font(family="serif", size=12)                # theme font family / size
 spec.background("#0b1020")                         # figure / axes facecolor
-spec.size(width=8, height=5, dpi=150)              # figure geometry
+spec.size(width=8, height=5, dpi=150)              # inches, at 150 dots per inch
 ```
 
 Notes:
+
+- **`.size` uses inches** for width and height, as matplotlib does. For pixel
+  dimensions at export, use `spec.save("figure.png", size=(1200, 750), dpi=150)`.
 
 - **`.palette`** accepts a registered theme *name* (borrows its palette), a bare
   colour string (a one-colour palette), or an explicit sequence — the same

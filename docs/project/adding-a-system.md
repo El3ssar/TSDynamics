@@ -27,8 +27,8 @@ first; this page is the checklist you follow to land a *catalogue* system.
    contract below. Add the class name to the module's `__all__`.
 2. **Add it to the category `__all__`** —
    `src/tsdynamics/systems/continuous/__init__.py` or `.../discrete/__init__.py`.
-   (`systems/__init__.py` flat-re-exports it automatically, so
-   `ts.systems.MyAttractor` and the lazy `ts.MyAttractor` both resolve.) A
+   (`systems/__init__.py` flat-re-exports it automatically as
+   `ts.systems.MyAttractor`.) A
    registry consistency test fails loudly if you forget this step.
 3. **That's it.** The registry sweeps it into the bulk tests, and the docs build
    generates its page — equations, parameter table, `reference`, and a cached
@@ -173,6 +173,32 @@ A user-defined class registers as **non-builtin**
 built-in-only sweeps — but the whole [analysis toolkit](../analysis/index.md),
 the [derived wrappers](../references/index.md), and plotting all work on it
 exactly as on a catalogue system.
+
+## Publishing a system plugin
+
+A separate Python package can add its systems to `ts.systems` without changing
+TSDynamics. Define the class using the same family contract, then declare an
+entry point in that package's `pyproject.toml`:
+
+```toml
+[project.entry-points."tsdynamics.systems"]
+MyAttractor = "my_package.systems:MyAttractor"
+```
+
+After installing the package, start a fresh Python session. The first import of
+`tsdynamics.systems` discovers installed entries, making the class available as
+`ts.systems.MyAttractor`, through `ts.systems.get("MyAttractor")`, and in
+`ts.systems.names()` and `ts.systems.find()`. The entry-point name must match the
+concrete class's name and be a public Python identifier. An ordinary user class
+without an entry point stays in `registry` and keeps its own import address.
+
+Plugins remain non-builtin registry entries, so the built-in test sweeps and
+generated catalogue documentation do not silently expand to installed packages.
+A broken or invalid entry warns and is skipped. Names already used by a built-in,
+a namespace member or a different registered system are protected. If multiple
+distributions publish the same entry-point name, all entries with that name are
+skipped before their targets are imported; installation order never chooses a
+model for you.
 
 ## Optional metadata that improves everything downstream
 

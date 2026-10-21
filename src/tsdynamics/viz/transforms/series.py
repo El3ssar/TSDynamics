@@ -60,7 +60,7 @@ References
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal, overload
 
 import numpy as np
 
@@ -121,11 +121,35 @@ def _trajectory_of(subject: Any, options: dict[str, Any]) -> Any:
     if not hasattr(subject, "run"):
         return None
     if getattr(subject, "family", None) == "map":
-        return subject.run(steps=int(steps if steps is not None else _DEFAULT_STEPS))
+        return subject.run(steps=steps if steps is not None else _DEFAULT_STEPS)
     return subject.run(
         final_time=float(final_time if final_time is not None else _DEFAULT_FINAL_TIME),
         dt=float(dt if dt is not None else _DEFAULT_DT),
     )
+
+
+@overload
+def series_of(
+    subject: Any,
+    *,
+    components: int | str = 0,
+    final_time: float | None = None,
+    dt: float | None = None,
+    steps: int | None = None,
+    require_uniform: Literal[True] = True,
+) -> tuple[np.ndarray, float, dict[str, Any], str]: ...
+
+
+@overload
+def series_of(
+    subject: Any,
+    *,
+    components: int | str = 0,
+    final_time: float | None = None,
+    dt: float | None = None,
+    steps: int | None = None,
+    require_uniform: Literal[False],
+) -> tuple[np.ndarray, float | None, dict[str, Any], str]: ...
 
 
 def series_of(
@@ -135,7 +159,8 @@ def series_of(
     final_time: float | None = None,
     dt: float | None = None,
     steps: int | None = None,
-) -> tuple[np.ndarray, float, dict[str, Any], str]:
+    require_uniform: bool = True,
+) -> tuple[np.ndarray, float | None, dict[str, Any], str]:
     """Coerce any accepted subject to ``(values, sample_spacing, meta, title)``.
 
     Accepts a bare 1-D (or 2-D, column-selected) array, a
@@ -152,26 +177,43 @@ def series_of(
         Integration controls, used **only** when ``subject`` is a system.  ``dt``
         additionally overrides the sample spacing inferred from a trajectory's
         time axis (and is the spacing of a bare array, default ``1``).
+    require_uniform : bool, optional
+        Require a uniform time axis for temporal diagnostics (the default).
+        Sample-order-only views may pass ``False``; an irregular trajectory then
+        reports ``spacing=None``, without changing or dropping its samples.
 
     Returns
     -------
     values : ndarray
         The 1-D series.
-    spacing : float
-        The sample spacing in time units (``1.0`` for a bare array or a map).
+    spacing : float or None
+        The sample spacing in time or iteration units (``1.0`` for a bare array
+        unless ``dt`` is supplied, or for an undecimated map orbit). ``None``
+        when an order-only caller accepts a trajectory without uniform spacing.
     meta : dict
         Provenance, including any integration defaults this function chose.
     title : str
         A figure title read off the source, or ``""``.
     """
-    from tsdynamics.errors import InvalidInputError
+    from tsdynamics.errors import InvalidInputError, InvalidParameterError
+
+    if dt is not None and not (np.isfinite(dt) and dt > 0):
+        raise InvalidParameterError("dt must be finite and positive (the sample spacing).")
 
     traj = _trajectory_of(subject, {"final_time": final_time, "dt": dt, "steps": steps})
     if traj is not None:
-        t, y, names, is_discrete = _split_traj(traj)
+        t, y, names, _ = _split_traj(traj)
         idx = _component_index(components, names, y.shape[1])
         values = np.asarray(y[:, idx], dtype=float)
-        spacing = float(dt) if dt is not None else _spacing_of(t, is_discrete)
+        spacing: float | None
+        if dt is not None:
+            spacing = float(dt)
+        elif require_uniform:
+            spacing = _spacing_of(t)
+        else:
+            from tsdynamics.data.trajectory import _axis_dt
+
+            spacing = _axis_dt(t)
         meta = {**_meta(traj), "component": idx, "sample_spacing": spacing}
         if traj is not subject:  # a system was integrated for us
             meta["integrated_for_plot"] = {
@@ -187,24 +229,30 @@ def series_of(
             f"array of shape {arr.shape}."
         )
     if arr.ndim == 2:
-        idx = (
-            _component_index(components, None, arr.shape[1])
-            if not isinstance(components, str)
-            else 0
-        )
+        idx = _component_index(components, None, arr.shape[1])
         values = np.asarray(arr[:, idx], dtype=float)
     else:
+        _component_index(components, None, 1)
         values = arr.ravel()
     spacing = float(dt) if dt is not None else 1.0
     return values, spacing, {"sample_spacing": spacing}, ""
 
 
-def _spacing_of(t: np.ndarray, is_discrete: bool) -> float:
-    """Return the sample spacing of a time axis (``1.0`` for a map or a degenerate axis)."""
-    if is_discrete or t.size < 2:
+def _spacing_of(t: np.ndarray) -> float:
+    """Return a uniform time or iteration spacing; refuse an irregular axis."""
+    from tsdynamics.data.trajectory import _axis_dt
+    from tsdynamics.errors import InvalidInputError
+
+    if t.size < 2:
         return 1.0
-    step = float(t[1] - t[0])
-    return step if np.isfinite(step) and step > 0.0 else 1.0
+    step = _axis_dt(t)
+    if step is None:
+        raise InvalidInputError(
+            "series diagnostics need uniformly spaced samples with increasing time. "
+            "Resample onto a uniform grid first. If only the final output interval "
+            "is shorter, drop that final sample before plotting."
+        )
+    return step
 
 
 def _require(values: np.ndarray, minimum: int, what: str) -> np.ndarray:
@@ -214,12 +262,10 @@ def _require(values: np.ndarray, minimum: int, what: str) -> np.ndarray:
     if values.size < minimum:
         raise InvalidInputError(f"{what} needs at least {minimum} samples, got {values.size}.")
     if not np.isfinite(values).all():
-        finite: np.ndarray = values[np.isfinite(values)]
-        if finite.size < minimum:
-            raise InvalidInputError(
-                f"{what} needs at least {minimum} finite samples, got {finite.size}."
-            )
-        return finite
+        raise InvalidInputError(
+            f"{what} needs finite samples; interpolate missing values on the sampling "
+            "grid first. Dropping samples would change the measured time intervals."
+        )
     return values
 
 

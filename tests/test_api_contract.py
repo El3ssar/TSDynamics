@@ -156,15 +156,21 @@ FAMILY_SUBJECTS: dict[str, Callable[[], Any]] = {
     "StochasticSystem": lambda: ts.systems.OrnsteinUhlenbeck(),
 }
 
-#: §2.3 — ``traj.<TAB>``.  Data (4), properties (4), methods (4).
+#: Approved ``traj.<TAB>`` listing: the owner retained the seven useful data
+#: operations below; ``sel`` was retired in favour of named column indexing.
 TRAJECTORY_SURFACE: tuple[str, ...] = (
     "after",
+    "component",
     "dim",
     "dt",
     "meta",
+    "minmax",
+    "n_steps",
+    "neighbors",
     "plot",
-    "sel",
+    "set_distance",
     "shape",
+    "standardize",
     "system",
     "t",
     "to_frame",
@@ -174,6 +180,7 @@ TRAJECTORY_SURFACE: tuple[str, ...] = (
     # the two apart, and the repr prints it — a property that earns its slot by
     # being the difference between a result and a wrong number.
     "unbounded",
+    "unpack",
     "variables",
     "y",
 )
@@ -312,47 +319,18 @@ def test_the_wrapped_system_surface_is_a_subset_of_the_core() -> None:
         assert not hasattr(wrapped, name)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="C5 · TRAJECTORY — §8.1 item 8 (§2.3): traj.<TAB> is 19 names, not 12. "
-    "`to_plot_spec` and the four analysis accessors HAVE landed; the rest "
-    "(component/unpack/minmax/standardize/neighbors/n_steps/set_distance) STAY by the "
-    "owner's ruling — the criterion is learnability, not smallness, and a useful name "
-    "that costs a newcomer nothing is not the problem a second spelling is.",
-)
-def test_the_trajectory_tab_surface_is_twelve_names() -> None:
-    """§2.3 — data (4), properties (4), methods (4), and nothing else.
-
-    A ``Trajectory`` is "a glorified nd-array" in the owner's words, and 20 names
-    is not that.  Three of the names that must go are *analysis accessors*
-    (``dims`` / ``lyap`` / ``recurrence``) removed by ruling A2, and one
-    (``n_steps``) is a second spelling of ``len(traj)``.
-    """
+def test_the_trajectory_tab_surface_is_nineteen_names() -> None:
+    """The approved useful data operations remain discoverable and reachable."""
     traj = ts.systems.Lorenz().run(final_time=2.0, dt=0.1, ic=[1.0, 1.0, 1.0])
+    assert len(TRAJECTORY_SURFACE) == 19
     assert public(traj) == sorted(TRAJECTORY_SURFACE)
+    assert all(hasattr(traj, name) for name in TRAJECTORY_SURFACE)
 
 
 def test_the_trajectory_surface_never_grows_past_the_contract() -> None:
-    """The half of §2.3 that holds TODAY: no name may be ADDED to a ``Trajectory``.
-
-    The removals are C5's (above).  This direction is enforceable now, and it is
-    the direction that erodes: a helper lands on the class "just for this", and
-    the 12-name listing is dead before it is written.
-    """
+    """A new helper cannot silently enlarge the approved trajectory listing."""
     traj = ts.systems.Lorenz().run(final_time=2.0, dt=0.1, ic=[1.0, 1.0, 1.0])
-    known_pre_v6 = {
-        "component",
-        "dims",
-        "lyap",
-        "minmax",
-        "n_steps",
-        "neighbors",
-        "recurrence",
-        "set_distance",
-        "standardize",
-        "unpack",
-    }
-    unexpected = set(public(traj)) - set(TRAJECTORY_SURFACE) - known_pre_v6
+    unexpected = set(public(traj)) - set(TRAJECTORY_SURFACE)
     assert not unexpected, f"names added to Trajectory outside §2.3: {sorted(unexpected)}"
 
 
