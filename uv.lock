@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.12, <4.0"
 
 [[package]]
@@ -385,6 +385,18 @@ wheels = [
 ]
 
 [[package]]
+name = "hilbertplot"
+version = "0.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b8/0c/941958a81afbbb6d3a44453124231bf64f32f47526a75f99d9c29e359920/hilbertplot-0.2.0.tar.gz", hash = "sha256:88aab83ff88505fd4646a10a58437f9cdbd1693c1fa02888acb1a8fdb23ac212", size = 72819, upload-time = "2026-07-25T19:46:13.401Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/bb/57/dc82e8b030f83eb7328f65ec16acabab9f7c4566d4588f1c4acdb2087c4d/hilbertplot-0.2.0-py3-none-any.whl", hash = "sha256:86b2d57de03b0b56226545121d25a626888d2d2ecbea264d9181e8ee964151fc", size = 54442, upload-time = "2026-07-25T19:46:12.179Z" },
+]
+
+[[package]]
 name = "hypothesis"
 version = "6.155.2"
 source = { registry = "https://pypi.org/simple" }
@@ -579,19 +591,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/bc/cd/de45b239ea3bdf626f982a00c14bfcf2e12d261c510ba7db62c5969a27cd/librt-0.9.0-cp314-cp314t-win32.whl", hash = "sha256:a9c63e04d003bc0fb6a03b348018b9a3002f98268200e22cc80f146beac5dc40", size = 52453, upload-time = "2026-04-09T16:06:05.229Z" },
     { url = "https://files.pythonhosted.org/packages/7f/f9/bfb32ae428aa75c0c533915622176f0a17d6da7b72b5a3c6363685914f70/librt-0.9.0-cp314-cp314t-win_amd64.whl", hash = "sha256:f162af66a2ed3f7d1d161a82ca584efd15acd9c1cff190a373458c32f7d42118", size = 60044, upload-time = "2026-04-09T16:06:06.398Z" },
     { url = "https://files.pythonhosted.org/packages/aa/47/7d70414bcdbb3bc1f458a8d10558f00bbfdb24e5a11740fc8197e12c3255/librt-0.9.0-cp314-cp314t-win_arm64.whl", hash = "sha256:a4b25c6c25cac5d0d9d6d6da855195b254e0021e513e0249f0e3b444dc6e0e61", size = 50009, upload-time = "2026-04-09T16:06:07.995Z" },
-]
-
-[[package]]
-name = "lzcomplexity"
-version = "0.10.1"
-source = { registry = "https://pypi.org/simple" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/d5/31/f6578ec7de5aba8ce45b40c9492078c5471af1290d82fb87ef0d02fde3a3/lzcomplexity-0.10.1-cp312-cp312-macosx_12_0_arm64.whl", hash = "sha256:dd8efee83b7910f8bdfc5f83abc1f3631eb98741ea4a597ff0e75686dad1bfef", size = 1191210, upload-time = "2026-05-12T12:51:17.033Z" },
-    { url = "https://files.pythonhosted.org/packages/73/e5/a2d083101ea59b9963e81d3584ec8f41d1b8fe18d7ad69e2f345b9f65540/lzcomplexity-0.10.1-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:9a78ecbfc65d206b0ed2871c6a12d1e4d2a8f5fb82b1cae9e582b13fc913e0ce", size = 1216375, upload-time = "2026-05-12T12:51:02.076Z" },
-    { url = "https://files.pythonhosted.org/packages/0a/22/e0ccea90757badcde6942e58871095719930bb639601b405a39302e682f5/lzcomplexity-0.10.1-cp313-cp313-macosx_12_0_arm64.whl", hash = "sha256:4da10dfe0fd7609302211c6adf66ead1823fb845c5ff3b85a4888c4907df0d08", size = 1191217, upload-time = "2026-05-12T12:49:49.386Z" },
-    { url = "https://files.pythonhosted.org/packages/f2/93/6953049f5b683ba2a54fc5b5eb152bc5a8df3d3c4368f04a0f3e6fc2ee03/lzcomplexity-0.10.1-cp313-cp313-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:f23318569b8dd4550e9babcbe16e5058379f464da9b3724ff1f1bb91db3577f4", size = 1216377, upload-time = "2026-05-12T12:51:29.768Z" },
-    { url = "https://files.pythonhosted.org/packages/66/ab/31aca71d56c2f7e18438c36c43d4587f1f98c5c95530a26332170185ab8a/lzcomplexity-0.10.1-cp314-cp314-macosx_12_0_arm64.whl", hash = "sha256:666b9bb1d8162af6f349f25912f41732df648cfd94c83829a6376e05f89cc5c9", size = 1191200, upload-time = "2026-05-12T12:49:55.577Z" },
-    { url = "https://files.pythonhosted.org/packages/9a/db/f492f77eb865fd2694fb0cdf5102df7db4066188bbdb496b7a9f957b56dd/lzcomplexity-0.10.1-cp314-cp314-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:b5ba2f1dc14e1325856a6771ff9682df1ff7ce3dff2a591f37cfd4c3a81b87d4", size = 1216375, upload-time = "2026-05-12T12:51:30.252Z" },
 ]
 
 [[package]]
@@ -1514,9 +1513,10 @@ wheels = [
 
 [[package]]
 name = "tsdynamics"
-version = "3.2.1"
+version = "6.0.1"
 source = { editable = "." }
 dependencies = [
+    { name = "contourpy" },
     { name = "numpy" },
     { name = "scipy" },
     { name = "symengine" },
@@ -1524,11 +1524,11 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+hilbert = [
+    { name = "hilbertplot" },
+]
 interactive = [
     { name = "plotly" },
-]
-lz = [
-    { name = "lzcomplexity" },
 ]
 plot = [
     { name = "matplotlib" },
@@ -1559,16 +1559,17 @@ docs = [
 
 [package.metadata]
 requires-dist = [
-    { name = "lzcomplexity", marker = "extra == 'lz'", specifier = ">=0.9" },
+    { name = "contourpy", specifier = ">=1.2,<2.0" },
+    { name = "hilbertplot", marker = "extra == 'hilbert'", specifier = ">=0.2" },
     { name = "matplotlib", marker = "extra == 'plot'", specifier = ">=3.9,<5" },
     { name = "matplotlib", marker = "extra == 'viz'", specifier = ">=3.9,<5" },
     { name = "numpy", specifier = ">=2.0,<3.0" },
-    { name = "plotly", marker = "extra == 'interactive'", specifier = ">=6,<7" },
+    { name = "plotly", marker = "extra == 'interactive'", specifier = ">=6,<8" },
     { name = "scipy", specifier = ">=1.14,<2.0" },
     { name = "symengine", specifier = ">=0.13,<1.0" },
     { name = "sympy", specifier = ">=1.13,<2.0" },
 ]
-provides-extras = ["viz", "interactive", "plot", "lz"]
+provides-extras = ["viz", "interactive", "plot", "hilbert"]
 
 [package.metadata.requires-dev]
 dev = [

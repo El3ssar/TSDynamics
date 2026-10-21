@@ -28,6 +28,11 @@ updates:
     commit-message:
       prefix: "build(deps)"
     labels: ["rust", "dependencies"]
+    # Cranelift types cross crate boundaries. A minor update to only one crate
+    # creates incompatible Module/Context/IR types and cannot compile.
+    groups:
+      cranelift:
+        patterns: ["cranelift-*"]
 
   - package-ecosystem: cargo
     directory: "/crates/tsdyn-core"
@@ -37,3 +42,8 @@ updates:
     commit-message:
       prefix: "build(deps)"
     labels: ["rust", "dependencies"]
+    groups:
+      cranelift:
+        patterns: ["cranelift-*"]
+      python-bindings:
+        patterns: ["pyo3", "numpy"]

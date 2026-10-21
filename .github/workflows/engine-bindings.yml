@@ -75,7 +75,7 @@ jobs:
         run: uv python install 3.12
 
       - name: Sync project + dev deps
-        run: uv sync --group dev
+        run: uv sync --locked --group dev --python 3.12
 
       # pyo3's build script needs a Python interpreter at build time; cargo
       # test/build (without the extension-module feature) also links libpython,
@@ -121,4 +121,4 @@ jobs:
       - name: Run the engine-marked binding + engine-path tests
         env:
           TSD_CHANGED_BASE: origin/${{ github.event.pull_request.base.ref || 'main' }}
-        run: uv run pytest --changed -m "engine and not full" --no-cov -n auto -q
+        run: uv run --no-sync pytest --changed -m "engine and not full" --no-cov -n auto -q

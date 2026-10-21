@@ -114,12 +114,14 @@ jobs:
       # Install the freshly built wheel and import it. Only on native runners: a
       # cross-compiled aarch64 wheel (or a musl wheel on a glibc host) cannot run
       # here. The runtime deps (numpy/scipy/symengine/sympy) come from the index;
-      # the engine wheel itself resolves under --find-links.
+      # Install the artifact by path: --find-links plus a package name can select
+      # a newer published release instead of the wheel this job just built.
       - name: Verify the wheel imports + integrates
         if: ${{ matrix.native }}
         shell: bash
         run: |
-          python -m pip install --find-links dist tsdynamics
+          wheel=$(ls dist/tsdynamics-*.whl | head -n1)
+          python -m pip install "$wheel"
           python -c "import tsdynamics as ts, tsdynamics._rust; t = ts.systems.Lorenz().run(final_time=5.0, dt=0.01); assert t.meta['engine'] == 'rust'; print('tsdynamics wheel import + integrate OK on ${{ matrix.label }}')"
 
       - name: Upload wheel

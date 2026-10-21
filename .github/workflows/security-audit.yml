@@ -12,9 +12,8 @@
 #                   uploaded as a workflow artifact for inventory / downstream
 #                   vulnerability tracking.
 #
-# Both audits FAIL the job on a vulnerable dependency (that is the gate). The SBOM
-# is advisory (continue-on-error) so a transient export hiccup never masks a real
-# audit failure. The scans need no compiled engine — they read lockfiles only.
+# Audit findings and the SBOM are advisory (continue-on-error): they remain
+# visible in job logs for maintainer triage without blocking unrelated work. The scans need no compiled engine — they read lockfiles only.
 #
 # Cross-referenced from SECURITY.md (the dependency-vulnerability reporting path).
 # All third-party actions are pinned by full commit SHA (the point of this stream).
@@ -61,19 +60,19 @@ jobs:
 
       # Export the FULL locked dependency set (runtime + every optional extra +
       # dev group) so the audit covers everything a contributor or wheel can pull
-      # in. `--frozen` asserts uv.lock is up to date; `--no-emit-project` drops the
+      # in. `--locked` asserts uv.lock is up to date; `--no-emit-project` drops the
       # un-publishable local project entry (it has no PyPI advisories).
       - name: Export locked dependencies
         run: |
-          uv export --frozen --all-extras --all-groups --no-emit-project \
+          uv export --locked --all-extras --all-groups --no-emit-project \
             --no-hashes --format requirements.txt -o audit-requirements.txt
           echo "Auditing:" && wc -l audit-requirements.txt
 
       # pip-audit (PyPA) checks every pinned version against the PyPI Advisory
       # Database. Advisory: it reports findings (visible in the log + the run
-      # summary) but does not block merges — the supply-chain *protection* is the
-      # SHA-pinning of actions; a dependency audit that hard-failed every PR on the
-      # global CVE feed would block unrelated work. Triage findings via this job's
+      # summary) but does not block merges — SHA-pinned actions protect action
+      # identity, not the safety of the dependency graph. Findings still require
+      # triage; they are not dismissed by a green workflow conclusion. Triage findings via this job's
       # output (and the scheduled run) and bump deps in a dedicated PR.
       - name: pip-audit
         continue-on-error: true
@@ -99,8 +98,8 @@ jobs:
       # has its own Cargo.lock). Both are scanned against the RustSec database.
       # Advisory (continue-on-error): reports advisories without blocking merges
       # (we also dropped --deny warnings, so unmaintained/yanked crates only warn).
-      # The SHA-pinning above is the actual protection; triage RustSec findings and
-      # bump crates in a dedicated PR.
+      # SHA-pinning does not mitigate vulnerable crates; triage RustSec findings
+      # and bump affected crates in a dedicated PR.
       - name: cargo-audit (engine workspace)
         continue-on-error: true
         run: cargo audit --file crates/Cargo.lock
@@ -128,7 +127,7 @@ jobs:
         continue-on-error: true
         run: |
           mkdir -p sbom
-          uv export --frozen --all-extras --format cyclonedx1.5 \
+          uv export --locked --all-extras --format cyclonedx1.5 \
             -o sbom/tsdynamics.cdx.json
           echo "Generated SBOM:" && ls -l sbom/
 

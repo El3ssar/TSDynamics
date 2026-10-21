@@ -4,8 +4,8 @@
 #   1. test    — build the Rust engine + run the suite (the publish gate).
 #   2. release — python-semantic-release reads the conventional commits, and if a
 #                release is due bumps the version (pyproject + __init__.py),
-#                commits, tags vX.Y.Z, and creates the GitHub Release. It does
-#                NOT build (build_command="") — the wheel is compiled, so it is
+#                refreshes uv.lock, commits, tags vX.Y.Z, and creates the GitHub
+#                Release. It does NOT build distribution artifacts — the wheel is compiled, so it is
 #                built per-platform below, not by PSR.
 #   3. wheels  — build the abi3 wheel for every (platform, arch) + an sdist, from
 #                the tag PSR just created (so the wheel carries the bumped
@@ -44,6 +44,8 @@ jobs:
   test:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
+    env:
+      MPLBACKEND: Agg
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -60,19 +62,19 @@ jobs:
 
       # `uv sync` builds the project with maturin, which compiles the engine
       # extension into the venv — the suite needs the compiled `tsdynamics._rust`.
-      - name: Sync project + dev deps (builds the engine)
-        run: uv sync --group dev
+      - name: Sync project + dev deps + optional features (builds the engine)
+        run: uv sync --locked --group dev --python 3.12 --all-extras
 
       - name: Lint
         run: |
-          uv run ruff check src/ tests/
-          uv run ruff format --check src/ tests/
+          uv run --no-sync ruff check src/ tests/
+          uv run --no-sync ruff format --check src/ tests/
 
       # The full suite on the authoritative main commit — NOT change-scoped — so
       # this is where coverage is measured (the PR jobs run a selected subset and
       # deliberately skip --cov). Codecov upload is best-effort.
       - name: Tests (full suite + coverage)
-        run: uv run pytest --cov=src/tsdynamics --cov-branch --cov-report=xml -q
+        run: uv run --no-sync pytest --cov=src/tsdynamics --cov-branch --cov-report=xml -q
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
