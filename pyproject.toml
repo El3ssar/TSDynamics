@@ -38,7 +38,7 @@ classifiers = [
 
 dependencies = [
   "numpy>=2.0,<3.0",
-  "scipy>=1.14,<2.0",
+  "scipy>=1.18.1,<2.0",
   # symengine/sympy are the symbolic FRONTEND (lower _equations to the engine IR,
   # autogen the Jacobian, render docs LaTeX) — not a v2 integration backend.
   "symengine>=0.13,<1.0",
