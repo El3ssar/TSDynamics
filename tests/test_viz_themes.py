@@ -108,6 +108,7 @@ def test_themes_lists_what_exists():
 
 @pytest.mark.parametrize("theme_name", ["default", "minimal", "dark", "publication"])
 def test_builtin_svg_text_keeps_a_portable_generic_font_fallback(theme_name):
+    pytest.importorskip("matplotlib")
     import io
     import re
 

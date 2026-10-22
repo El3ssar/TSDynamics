@@ -134,6 +134,8 @@ def test_frame_count_from_duration():
 
 @pytest.mark.parametrize("n_frames, expected_ms", [(None, 1000), (6, 1500)])
 def test_short_curve_gif_honors_duration_and_explicit_frame_count(tmp_path, n_frames, expected_ms):
+    pytest.importorskip("matplotlib")
+    pytest.importorskip("PIL")
     from PIL import Image
 
     spec = viz.draw({"x": [0, 1, 2], "y": [0, 1, 0]}, "line")
@@ -158,6 +160,8 @@ def test_pingpong_mirrors_the_schedule():
 
 @pytest.mark.parametrize("count", [2, 4])
 def test_pingpong_export_duration_adds_only_nonendpoint_reverse_frames(tmp_path, count):
+    pytest.importorskip("matplotlib")
+    pytest.importorskip("PIL")
     from PIL import Image
 
     spec = viz.draw({"x": list(range(10)), "y": [0, 1] * 5}, "line")
@@ -267,6 +271,7 @@ def test_animation_invalid_types_name_the_knob_instead_of_leaking_python_errors(
 @pytest.mark.parametrize("three_d", [False, True])
 @pytest.mark.parametrize("fade", [False, True])
 def test_animated_points_keep_point_geometry_size_and_scalar_colour(three_d, fade):
+    pytest.importorskip("matplotlib")
     import numpy as np
     from matplotlib.collections import PathCollection
 
@@ -302,6 +307,7 @@ def test_animated_points_keep_point_geometry_size_and_scalar_colour(three_d, fad
 
 
 def test_animation_keeps_line_style_static_annotations_and_legend():
+    pytest.importorskip("matplotlib")
     import numpy as np
     from matplotlib.colors import to_rgba
 
@@ -325,6 +331,7 @@ def test_animation_keeps_line_style_static_annotations_and_legend():
 
 
 def test_flat_overlay_animates_in_a_three_dimensional_plot():
+    pytest.importorskip("matplotlib")
     import numpy as np
 
     spatial = viz.draw({"x": np.arange(3), "y": np.arange(3), "z": np.arange(3)}, "line3d")
@@ -339,6 +346,7 @@ def test_flat_overlay_animates_in_a_three_dimensional_plot():
 @pytest.mark.parametrize("primitive", ["points3d", "markers"])
 @pytest.mark.parametrize("backend", ["matplotlib", "plotly"])
 def test_hand_built_spatial_points_keep_their_third_coordinate(primitive, backend):
+    pytest.importorskip(backend)
     import numpy as np
 
     spec = viz.draw({"x": [0, 1], "y": [1, 2], "z": [3, 4]}, primitive)

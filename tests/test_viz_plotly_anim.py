@@ -293,6 +293,7 @@ def test_html_waits_for_slow_plotly_updates_instead_of_queueing_requests(plotly_
 
 
 def test_plotly_animation_preserves_styles_static_layers_and_axis_presentation():
+    pytest.importorskip("plotly")
     line = ts.viz.draw(
         {"x": np.arange(5), "y": np.arange(5)},
         "line",
@@ -315,6 +316,7 @@ def test_plotly_animation_preserves_styles_static_layers_and_axis_presentation()
 
 
 def test_animated_point_cloud_remains_unconnected_and_colored():
+    pytest.importorskip("plotly")
     plot = (
         ts.viz.draw(
             {"x": np.arange(5), "y": np.arange(5), "c": np.arange(5)},

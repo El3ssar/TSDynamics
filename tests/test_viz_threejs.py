@@ -1876,6 +1876,7 @@ def test_threejs_marker_annotations_stay_static_in_a_curve_animation():
 
 
 def test_nested_threejs_drawing_falls_back_with_every_panel_present():
+    pytest.importorskip("matplotlib")
     import tsdynamics as ts
 
     panels = [ts.viz.draw({"x": [0, 1], "y": [0, i]}, "line") for i in (1, 2, 3)]
@@ -1933,6 +1934,7 @@ def test_rgb_style_colours_reach_threejs_as_rgb_instead_of_python_tuple_text():
 
 @pytest.mark.parametrize("primitive", ["image", "bars", "quiver"])
 def test_threejs_never_silently_drops_an_unsupported_layer(tmp_path, primitive):
+    pytest.importorskip("matplotlib")
     import tsdynamics as ts
     from tsdynamics.errors import InvalidParameterError
     from tsdynamics.viz.render.threejs._lower import lower_spec

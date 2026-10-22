@@ -214,6 +214,7 @@ def test_style_rejects_nonfinite_sizes_and_nonboolean_switches(bad):
 @pytest.mark.parametrize("spatial", [False, True])
 @pytest.mark.parametrize("primitive", ["line", "points"])
 def test_plotly_scalar_colours_respect_hidden_and_styled_colorbars(spatial, primitive):
+    pytest.importorskip("plotly")
     import tsdynamics as ts
 
     channels = {"x": np.arange(4.0), "y": np.arange(4.0), "c": np.arange(4.0)}
@@ -228,6 +229,7 @@ def test_plotly_scalar_colours_respect_hidden_and_styled_colorbars(spatial, prim
 
 
 def test_plotly_lines_draw_requested_markers_and_rgb_colours_in_stills_and_movies():
+    pytest.importorskip("plotly")
     import tsdynamics as ts
 
     spec = ts.viz.draw({"x": [0, 1, 2], "y": [0, 2, 1]}, "line").style(
@@ -242,6 +244,7 @@ def test_plotly_lines_draw_requested_markers_and_rgb_colours_in_stills_and_movie
 
 
 def test_plotly_image_alpha_and_three_dimensional_axis_settings_are_honored():
+    pytest.importorskip("plotly")
     import tsdynamics as ts
 
     image = ts.viz.draw({"z": [[0, 1], [1, 0]]}, "image", alpha=0.2)
@@ -256,6 +259,7 @@ def test_plotly_image_alpha_and_three_dimensional_axis_settings_are_honored():
 
 
 def test_plotly_three_dimensional_colours_translate_qualitative_colormaps():
+    pytest.importorskip("plotly")
     import tsdynamics as ts
 
     spec = ts.viz.draw({"x": [0, 1], "y": [0, 1], "z": [0, 1], "c": [0, 1]}, "line3d", cmap="tab20")
@@ -264,6 +268,8 @@ def test_plotly_three_dimensional_colours_translate_qualitative_colormaps():
 
 @pytest.mark.parametrize("spatial", [False, True])
 def test_plotly_symlog_axes_warn_and_fall_back_without_changing_the_scale(tmp_path, spatial):
+    pytest.importorskip("plotly")
+    pytest.importorskip("matplotlib")
     import tsdynamics as ts
 
     data = {"x": [-1, 0, 1], "y": [1, 2, 3]}
@@ -280,6 +286,7 @@ def test_plotly_symlog_axes_warn_and_fall_back_without_changing_the_scale(tmp_pa
 
 @pytest.mark.parametrize("scale", ["log", "symlog", "categorical"])
 def test_threejs_nonlinear_or_categorical_axes_are_never_silently_linear(tmp_path, scale):
+    pytest.importorskip("matplotlib")
     import tsdynamics as ts
 
     spec = ts.viz.draw({"x": [1, 2], "y": [1, 2]}, "line")
@@ -296,6 +303,7 @@ def test_threejs_nonlinear_or_categorical_axes_are_never_silently_linear(tmp_pat
 
 
 def test_matplotlib_three_dimensional_fonts_and_axis_sizes_follow_the_theme():
+    pytest.importorskip("matplotlib")
     import tsdynamics as ts
 
     spec = ts.viz.draw({"x": [1, 2], "y": [1, 2], "z": [1, 2]}, "line3d")
@@ -311,6 +319,7 @@ def test_matplotlib_three_dimensional_fonts_and_axis_sizes_follow_the_theme():
 
 
 def test_matplotlib_three_dimensional_grid_visibility_and_opacity_follow_the_spec():
+    pytest.importorskip("matplotlib")
     import tsdynamics as ts
 
     spec = ts.viz.draw({"x": [1, 2], "y": [1, 2], "z": [1, 2]}, "line3d")
@@ -324,6 +333,7 @@ def test_matplotlib_three_dimensional_grid_visibility_and_opacity_follow_the_spe
 
 @pytest.mark.parametrize("primitive", ["bars", "histogram"])
 def test_matplotlib_bar_like_marks_preserve_explicit_draw_order(primitive):
+    pytest.importorskip("matplotlib")
     import tsdynamics as ts
 
     spec = ts.viz.draw({"x": [0, 1], "y": [1, 2]}, primitive, zorder=8)
@@ -331,6 +341,7 @@ def test_matplotlib_bar_like_marks_preserve_explicit_draw_order(primitive):
 
 
 def test_matplotlib_coloured_lines_respect_zero_width_and_dash_style():
+    pytest.importorskip("matplotlib")
     import tsdynamics as ts
 
     base = {"x": [0, 1, 2], "y": [0, 1, 2], "c": [0, 1, 2]}
