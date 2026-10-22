@@ -14,10 +14,10 @@ old payloads.
 
 Schema
 ------
-The serialized text is a JSON object with two top-level keys::
+The serialized text is a JSON object with two required top-level keys::
 
     {
-        "schema_version": 3,
+        "schema_version": 4,
         "spec": { ... Plot.to_dict() ... }
     }
 
@@ -30,8 +30,11 @@ The serialized text is a JSON object with two top-level keys::
   (produced before the styling overhaul) loads cleanly: the new fields
   (``theme``, enriched ``Axis``/``Legend``/``Colorbar``) are absent → default
   values (``theme=None``, ``grid=None``, etc.).
-- ``"spec"`` — the exact output of :meth:`Plot.to_dict`; rebuilt with
-  :meth:`Plot.from_dict`.
+- ``"spec"`` — the output of :meth:`Plot.to_dict`, with nonfinite numbers
+  replaced by ``null``; rebuilt with :meth:`Plot.from_dict`.
+- ``"nonfinite"`` — an optional list of paths and values (``"nan"``,
+  ``"+inf"`` or ``"-inf"``) restoring those numbers. Paths are relative to
+  ``"spec"``. Ordinary ``null`` values and literal metadata are unaffected.
 
 :func:`from_json` (:func:`to_json` (spec)) reproduces the spec — every layer,
 axis, annotation, color range, and ``meta`` field survives, and array data
@@ -41,7 +44,9 @@ returns as :class:`numpy.ndarray`.
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Mapping
+from copy import deepcopy
 from typing import Any
 
 from ._visibility import listing_dir
@@ -72,8 +77,8 @@ __dir__ = listing_dir(__all__)
 #:       (``label_size``).  All new fields are optional with
 #:       :meth:`~tsdynamics.viz.spec.PlotSpec.from_dict`-tolerated defaults, so a
 #:       v1 payload loads without error (old fields are absent → default values).
-#:   3 — web-export overhaul (stream VIZ-WEB-EXPORT).  This bump is about the
-#:       **threejs geometry payload**, which stamps the same version: it gained a
+#:   3 — web-export overhaul (stream VIZ-WEB-EXPORT).  This bump was about the
+#:       **threejs geometry payload**, which originally shared this version: it gained a
 #:       vertex cap (``metadata.resample``) and shed three redundant blocks — a
 #:       ``"line"`` geometry no longer carries an ``indices`` buffer (a polyline's
 #:       vertex order is its draw order), a scalar ``"c"`` channel replaces the
@@ -82,6 +87,9 @@ __dir__ = listing_dir(__all__)
 #:       gone.  A v2 threejs payload still loads in the reference loader, which
 #:       accepts both spellings.  The ``PlotSpec`` envelope itself is unchanged,
 #:       so :func:`from_json` reads a v1 / v2 / v3 document identically.
+#:   4 — standards-compliant nonfinite numbers: ``null`` placeholders plus an
+#:       envelope sidecar restore NaN and signed infinities without colliding
+#:       with user metadata. The threejs geometry schema remains independently 3.
 #:
 #: **Not a bump — the v6 vocabulary narrowing.**  The v6 surgery removed seven
 #: never-produced semantic kinds from :class:`~tsdynamics.viz.spec.PlotKind`
@@ -94,13 +102,77 @@ __dir__ = listing_dir(__all__)
 #: rather than loading.  That is the intended, loud behaviour for a sanctioned v6
 #: break — nothing in any released version ever *wrote* one of those kinds, so a
 #: real payload carrying one would have to be hand-authored.
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 #: The envelope key carrying the integer schema version.
 _VERSION_KEY = "schema_version"
 
 #: The envelope key carrying the :meth:`PlotSpec.to_dict` payload.
 _SPEC_KEY = "spec"
+
+_NONFINITE_KEY = "nonfinite"
+_NONFINITE_VALUES = {"nan": math.nan, "+inf": math.inf, "-inf": -math.inf}
+
+
+def _encode_nonfinite(value: Any, path: list[str | int], records: list[dict[str, Any]]) -> Any:
+    """Replace nonfinite numbers without introducing reserved tags into user data."""
+    if isinstance(value, float) and not math.isfinite(value):
+        word = "nan" if math.isnan(value) else "+inf" if value > 0 else "-inf"
+        records.append({"path": path, "value": word})
+        return None
+    if isinstance(value, Mapping):
+        return {key: _encode_nonfinite(item, [*path, key], records) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [
+            _encode_nonfinite(item, [*path, index], records) for index, item in enumerate(value)
+        ]
+    return value
+
+
+def _restore_nonfinite(spec: Mapping[str, Any], records: Any) -> dict[str, Any]:
+    """Restore only validated null locations in a private copy of the spec."""
+    if not isinstance(records, list):
+        raise ValueError("Plot nonfinite sidecar must be a list of path/value records.")
+    restored = deepcopy(dict(spec))
+    seen: set[tuple[str | int, ...]] = set()
+    for record in records:
+        if not isinstance(record, Mapping) or set(record) != {"path", "value"}:
+            raise ValueError("Each Plot nonfinite record must contain exactly 'path' and 'value'.")
+        path, word = record["path"], record["value"]
+        if (
+            not isinstance(path, list)
+            or not path
+            or any(type(part) not in (str, int) for part in path)
+            or not isinstance(word, str)
+            or word not in _NONFINITE_VALUES
+        ):
+            raise ValueError(
+                "Plot nonfinite records need a nonempty path and value nan, +inf or -inf."
+            )
+        if tuple(path) in seen:
+            raise ValueError("Plot nonfinite sidecar contains a duplicate path.")
+        seen.add(tuple(path))
+        target: Any = restored
+        for index, part in enumerate(path):
+            container: Any = target
+            if (
+                isinstance(target, dict)
+                and isinstance(part, str)
+                and part in target
+                or isinstance(target, list)
+                and type(part) is int
+                and 0 <= part < len(target)
+            ):
+                child = container[part]
+            else:
+                raise ValueError("Plot nonfinite sidecar path does not address an existing value.")
+            if index == len(path) - 1:
+                if child is not None:
+                    raise ValueError("Plot nonfinite sidecar paths must address null placeholders.")
+                container[part] = _NONFINITE_VALUES[word]
+            else:
+                target = child
+    return restored
 
 
 def to_dict_envelope(spec: PlotSpec) -> dict[str, Any]:
@@ -114,11 +186,17 @@ def to_dict_envelope(spec: PlotSpec) -> dict[str, Any]:
     Returns
     -------
     dict
-        ``{"schema_version": SCHEMA_VERSION, "spec": spec.to_dict()}`` — a nested
-        mapping of plain ``str`` / ``float`` / ``list`` values, ready for
-        :func:`json.dumps`.
+        A nested mapping ready for strict :func:`json.dumps`, with an optional
+        ``nonfinite`` sidecar preserving NaN and signed infinities.
     """
-    return {_VERSION_KEY: SCHEMA_VERSION, _SPEC_KEY: spec.to_dict()}
+    records: list[dict[str, Any]] = []
+    envelope = {
+        _VERSION_KEY: SCHEMA_VERSION,
+        _SPEC_KEY: _encode_nonfinite(spec.to_dict(), [], records),
+    }
+    if records:
+        envelope[_NONFINITE_KEY] = records
+    return envelope
 
 
 def from_dict_envelope(envelope: Mapping[str, Any]) -> Plot:
@@ -168,6 +246,10 @@ def from_dict_envelope(envelope: Mapping[str, Any]) -> Plot:
         )
     if not isinstance(spec_dict, Mapping) or "kind" not in spec_dict:
         raise ValueError("not a Plot JSON payload: 'spec' must be a plot mapping carrying 'kind'.")
+    if _SPEC_KEY in envelope and _NONFINITE_KEY in envelope:
+        if envelope.get(_VERSION_KEY) != 4:
+            raise ValueError("Plot nonfinite sidecar requires schema_version 4.")
+        spec_dict = _restore_nonfinite(spec_dict, envelope[_NONFINITE_KEY])
     return PlotSpec.from_dict(spec_dict)
 
 
@@ -188,7 +270,7 @@ def to_json(spec: PlotSpec, *, indent: int | None = None) -> str:
         A JSON document ``{"schema_version": ..., "spec": ...}`` that
         :func:`from_json` reads back into an equal spec.
     """
-    return json.dumps(to_dict_envelope(spec), indent=indent)
+    return json.dumps(to_dict_envelope(spec), indent=indent, allow_nan=False)
 
 
 def from_json(text: str) -> Plot:
@@ -213,9 +295,19 @@ def from_json(text: str) -> Plot:
     ValueError
         If ``text`` is not valid JSON, or not a recognizable spec payload.
     """
-    loaded = json.loads(text)
+    constants: list[str] = []
+
+    def legacy_constant(word: str) -> float:
+        constants.append(word)
+        return {"NaN": math.nan, "Infinity": math.inf, "-Infinity": -math.inf}[word]
+
+    loaded = json.loads(text, parse_constant=legacy_constant)
     if not isinstance(loaded, dict):
         raise ValueError(
             f"not a PlotSpec JSON payload: expected a JSON object, got {type(loaded).__name__}."
+        )
+    if loaded.get(_VERSION_KEY) == 4 and constants:
+        raise ValueError(
+            "Plot schema 4 requires standard JSON; encode nonfinite values in its sidecar."
         )
     return from_dict_envelope(loaded)

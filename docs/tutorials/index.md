@@ -1,87 +1,132 @@
 ---
-description: End-to-end journeys through TSDynamics — each tutorial wires several tools together on one system, from the equations you write to a finished, literature-grounded result.
+title: Tutorials
+description: Guided experiments in chaos, bifurcations, reconstruction, multistability and noise, with runnable code and scientific figures.
+hide:
+  - toc
 ---
 
-<span class="ts-kicker">Tutorials · Overview</span>
+<div class="tsd-page-intro" markdown="1">
 
-# Tutorials
+<span class="tsd-eyebrow">Guided experiments</span>
 
-End-to-end journeys through the library. Where the [analysis pages](../analysis/index.md)
-each isolate a single tool and the [system catalogue](../systems/index.md) each
-document a single model, a tutorial wires several together on one system — from
-the equations you write to a finished result you could put in a paper, every
-number reproducible and every claim traceable to the literature.
+# Learn by doing
 
-Each one is self-contained and runnable end to end: paste the blocks in order,
-keep the pinned initial conditions, and you get the numbers and figures shown.
-Read them in any order — but if you are new, start with the seven-task page
-below, then follow the arc most nonlinear-dynamics courses take, from *what is
-chaos* to *how do I find it in real data*.
+Start with a question. Run the model, make a figure, then use the numerical
+tools to investigate what you see. Each tutorial connects the equations to a
+complete experiment, with code you can run in order.
 
-## Start here
+[Start with seven tasks](seven-tasks.md){ .md-button .md-button--primary }
+[Explore the plotting guide](../visualization/index.md){ .md-button }
 
-- [**Seven tasks in one sitting**](seven-tasks.md) — the cold-start page.
-  Simulate a system; test it for chaos; draw a bifurcation diagram of a map
-  *and* of a flow; find fixed points and read their stability; paint basins;
-  animate a phase portrait over a vector field; define a system of your own.
-  Seven things, one page, with examples to run in sequence.
+</div>
 
-## The journeys
+<figure class="tsd-showcase" markdown="1">
 
-### Understanding chaos
+![Four real library outputs: a Lorenz phase portrait, logistic bifurcations, a component time series and a noisy mean-reverting trajectory](../assets/figures/tutorials/overview.svg){ loading=lazy }
 
-- [**Anatomy of a chaotic attractor**](chaotic-attractor.md) — define the Lorenz
-  system, integrate it, plot the butterfly, then quantify evidence for chaos: watch two
-  neighbouring states diverge, compute the Lyapunov spectrum, read the
-  Kaplan–Yorke dimension, and cross-check it against the correlation dimension.
-  The vocabulary the rest of the toolkit is built on.
-- [**The road to chaos**](bifurcations.md) — where does chaos come *from*? Sweep
-  the logistic map's growth rate and watch a fixed point period-double onto the
-  textbook onsets $r_1 = 3$ and $r_2 = 1+\sqrt6$, cascade into chaos, and open a
-  period-3 window. Then do the same for a *flow* — a Rössler bifurcation diagram
-  through a Poincaré section.
+<figcaption><span class="tsd-caption-label">One library, many questions</span><br>Geometry, parameter changes, time evolution and noise. These panels are assembled with the same <code>|</code> and <code>/</code> operators used in the visualization guide.</figcaption>
+</figure>
 
-### Working from data
+## Your first complete workflow
 
-- [**Reconstruction from one signal**](reconstruction.md) — you have a single
-  recorded channel $x(t)$ and no equations. Rebuild the attractor by delay
-  embedding, choose the delay and dimension with principled heuristics, then
-  measure the fractal dimension and a data-driven Lyapunov exponent from the
-  recording alone — and check both against the ground truth.
-- [**Poincaré sections & return maps**](poincare-return-maps.md) — section a flow
-  to turn it into a discrete map, then expose the one-dimensional map hiding
-  inside a strange attractor — the famous Lorenz $z$-maxima cusp.
+The [seven-task introduction](seven-tasks.md) takes you from a first trajectory
+to chaos indicators, bifurcation diagrams, equilibria, basins and an animated
+phase portrait. Finish by defining a system of your own. Use it as a tour of the
+library, then choose a deeper experiment below.
 
-### Global structure & noise
+## Choose an experiment
 
-- [**Basins & multistability**](basins-multistability.md) — a bistable
-  oscillator has two possible fates. Find both attractors, paint the basins that
-  decide which initial conditions reach each one, quantify the boundary, then
-  tilt the potential and watch a basin annihilate at a tipping point.
-- [**Noise-driven dynamics**](noise-driven.md) — add noise. Integrate a single
-  stochastic path, gather ensemble statistics, watch noise drive Kramers escape
-  between two wells, and check it against the analytic laws.
+<div class="tsd-feature-grid tsd-tutorial-grid" markdown="1">
 
-## How to read them
+<article class="tsd-feature-card" markdown="1">
 
-Every tutorial follows the same discipline:
+[![The two lobes of the Lorenz attractor](../assets/figures/viz/kind-phase-3d.svg){ loading=lazy }](chaotic-attractor.md)
 
-- **The system is defined once.** A class with `variables`, `params` and a
-  symbolic right-hand side — the [definition contract](../start/concepts.md) —
-  or a built-in from the [catalogue](../systems/index.md). Everything downstream
-  composes over that one object.
-- **Every number is reproducible.** Snippets pass an explicit `ic=` (or `seed=`
-  for anything stochastic), so the printed values are exactly what the code
-  produces. Paste and run; you should see the same figures.
-- **Every claim cites its source.** The onsets, exponents and dimensions quoted
-  are literature values, and the See-also links point to the [analysis
-  reference](../analysis/index.md) page where each tool is documented in full.
+<span class="tsd-card-meta">Chaotic flows</span>
 
-More journeys are added as the library grows.
+### [Anatomy of a chaotic attractor](chaotic-attractor.md)
 
-## See also
+Watch nearby states separate. Read a Lyapunov spectrum, inspect the dimension
+estimate, and turn the trajectory into a movie.
 
-- [Analysis](../analysis/index.md) — the quantifier reference each tutorial draws on
-- [Systems](../systems/index.md) — the 177 built-in models the journeys run on
-- [The mental model](../start/concepts.md) — the definition contract in depth
-- [Visualization](../visualization/index.md) — the plotting layer every figure is built with
+</article>
+
+<article class="tsd-feature-card" markdown="1">
+
+[![The logistic map's branching orbit diagram](../assets/figures/analysis/orbit-diagram.svg){ loading=lazy }](bifurcations.md)
+
+<span class="tsd-card-meta">Parameter sweeps</span>
+
+### [The road to chaos](bifurcations.md)
+
+Find period doubling and periodic windows. Begin with a map, then build a
+Rössler sweep through a Poincaré section.
+
+</article>
+
+<article class="tsd-feature-card" markdown="1">
+
+[![The measured and delay-coordinate views of a Rössler record](../assets/figures/tutorials/reconstruction-compare.svg){ loading=lazy }](reconstruction.md)
+
+<span class="tsd-card-meta">Working from data</span>
+
+### [Reconstruction from one signal](reconstruction.md)
+
+Choose a delay and embedding dimension from diagnostic curves. Rebuild a
+state-space picture and inspect data-driven estimates.
+
+</article>
+
+<article class="tsd-feature-card" markdown="1">
+
+[![A flow section and the folded geometry of its return map](../assets/figures/tutorials/return-map.svg){ loading=lazy }](poincare-return-maps.md)
+
+<span class="tsd-card-meta">Reduced dynamics</span>
+
+### [Poincaré sections and return maps](poincare-return-maps.md)
+
+Turn a flow into a map of crossings. Reveal structure hidden inside a
+three-dimensional orbit.
+
+</article>
+
+<article class="tsd-feature-card" markdown="1">
+
+[![Two differently coloured basins of attraction in the Duffing plane](../assets/figures/tutorials/basins-image.svg){ loading=lazy }](basins-multistability.md)
+
+<span class="tsd-card-meta">Global structure</span>
+
+### [Basins and multistability](basins-multistability.md)
+
+Find competing attractors, map their basins, then tilt the system and watch
+one possible outcome disappear.
+
+</article>
+
+<article class="tsd-feature-card" markdown="1">
+
+[![A noisy double-well path beside the potential that shapes its motion](../assets/figures/tutorials/double-well-switching.svg){ loading=lazy }](noise-driven.md)
+
+<span class="tsd-card-meta">Stochastic models</span>
+
+### [Noise-driven dynamics](noise-driven.md)
+
+Compare sample paths with ensemble statistics and analytic laws. Distinguish
+barrier recrossings from completed transitions between wells.
+
+</article>
+
+</div>
+
+## Make the experiment your own
+
+Run the blocks in order with the stated initial conditions and seeds. Inspect
+the figures before interpreting a number, then change a parameter, observation
+window or plotting style and repeat. Numerical values are illustrative estimates;
+chaotic trajectories and fitted quantities can vary with solver settings,
+software versions and the length of the record.
+
+Keep the [analysis reference](../analysis/index.md) nearby for assumptions and
+options. Use [plot composition](../visualization/composition.md) to assemble a
+figure, [styling](../visualization/styling.md) to give it a consistent look, and
+[animation](../visualization/animation.md) to explain how the motion unfolds.

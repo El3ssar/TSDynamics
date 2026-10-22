@@ -1,10 +1,8 @@
 """Generate the Visualization-page showcase figures by dogfooding ``ts.viz``.
 
-Every figure on this page is built through the **real** visualization API — the
-``Trajectory.__plot_spec__`` / ``system.__plot_spec__`` seam, the
-``ts.viz.plot`` composition seam, the fluent ``PlotSpec`` tweaks, the ``Theme``
-system, and the ``Animation`` modifier — never raw matplotlib.  That keeps the
-docs honest: the pictures are produced by the code the page teaches.
+Every drawing is built through the public plotting, composition, styling and
+animation APIs. The prominent examples are executed directly from their marked
+Markdown fences, so the code readers copy also generates the displayed result.
 
 House style
 -----------
@@ -13,19 +11,22 @@ made the active default, so every spec inherits the brand palette (teal
 ``#11857A`` / indigo ``#574FCF`` + warm accents), IBM Plex label text, and a
 transparent background.  Sequential colour data uses ``viridis``; cyclic data
 uses ``twilight``.  The specs are rendered through the matplotlib backend and
-saved as transparent SVGs (``svg.fonttype=none`` keeps the text as ``<text>`` so
-the site's IBM Plex webfont applies); the one animation is a small looping GIF.
+saved as SVGs (``svg.fonttype=none`` keeps labels as text with a portable font
+stack). The new scientific examples use an opaque paper background and generic
+sans-serif labels. Movies use a solid dark stage; the linked-view MP4 has a
+poster extracted from the actual encoded movie.
 
 Every trajectory is integrated from an **explicit initial condition** so the
 committed figure is exactly reproducible.  Outputs are static assets under
-``docs/assets/figures/viz/``; re-run after changing a generator::
+``docs/assets/figures/viz/``; regenerate selected examples with::
 
-    .venv/bin/python docs/_tooling/make_viz_figures.py
+    uv run python docs/_tooling/make_viz_figures.py --only compose-nested animation-linked
 """
 
 from __future__ import annotations
 
 import pathlib
+import re
 import subprocess
 
 OUT = pathlib.Path(__file__).resolve().parents[1] / "assets" / "figures" / "viz"
@@ -631,6 +632,67 @@ FIGURES = {
     "spatial-field": fig_spatial_field,
 }
 
+# The authored examples are the source of truth for these prominent figures.
+# Both the documentation fence gate and this generator execute the same text.
+DOCUMENTED_FIGURES = {
+    "first-plot": "index.md",
+    "compose-operators": "composition.md",
+    "compose-nested": "composition.md",
+    "style-recipe": "styling.md",
+}
+
+
+def documented_example(slug: str, page: str) -> str:
+    """Read the executable fence immediately after an example's stable marker."""
+    source = (OUT.parents[2] / "visualization" / page).read_text()
+    match = re.search(
+        rf"<!-- tsd-example: {re.escape(slug)} -->\s*```python\n(.*?)```",
+        source,
+        re.DOTALL,
+    )
+    if match is None:
+        raise ValueError(f"Missing documented example {slug!r} in {page}")
+    return match.group(1)
+
+
+def render_documented_figure(slug: str, page: str):
+    """Render the page's actual example, with its deliberate theme intact."""
+    namespace = {}
+    exec(compile(documented_example(slug, page), f"{page}:{slug}", "exec"), namespace)
+    output = OUT / f"{slug}.svg"
+    _save_svg(namespace["figure"], output, transparent=False)
+    return output
+
+
+def make_linked_movie():
+    """Export the documented linked view as a controlled MP4 and a matching poster."""
+    namespace = {}
+    source = documented_example("animation-linked", "animation.md")
+    exec(compile(source, "animation.md:animation-linked", "exec"), namespace)
+    movie = namespace["movie"]
+    path = OUT / "animation-linked.mp4"
+    movie.save(path, dpi=120)
+    # Use an actual frame of the exported movie, not a different static drawing.
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-ss",
+            "2",
+            "-i",
+            str(path),
+            "-frames:v",
+            "1",
+            str(OUT / "animation-linked-poster.png"),
+        ],
+        check=True,
+    )
+    return path
+
+
 #: Animated outputs (written as GIF rather than SVG).
 GIF_FIGURES = {
     "animation-lorenz-reveal": fig_animation,
@@ -671,20 +733,40 @@ def make_threejs_demo():
 
 def main():
     """Render every Visualization figure to docs/assets/figures/viz/<slug>.{svg,gif}."""
+    import argparse
+
+    choices = [*FIGURES, *GIF_FIGURES, *DOCUMENTED_FIGURES, "animation-linked", "threejs-demo"]
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--only", nargs="+", choices=choices, help="Render only these examples.")
+    args = parser.parse_args()
+    selected = set(args.only or choices)
     plt = _prepare()
     OUT.mkdir(parents=True, exist_ok=True)
     for slug, fn in FIGURES.items():
+        if slug not in selected:
+            continue
         plt.close("all")
         out = OUT / f"{slug}.svg"
         fn(plt, str(out))
         print(f"  ok {slug:26} {out.stat().st_size:>8} bytes  (svg)")
     for slug, fn in GIF_FIGURES.items():
+        if slug not in selected:
+            continue
         plt.close("all")
         out = OUT / f"{slug}.gif"
         fn(plt, out)
         print(f"  ok {slug:26} {out.stat().st_size:>8} bytes  (gif)")
-    demo = make_threejs_demo()
-    print(f"  ok {'threejs-demo':26} {demo.stat().st_size:>8} bytes  (json)")
+    for slug, page in DOCUMENTED_FIGURES.items():
+        if slug in selected:
+            plt.close("all")
+            output = render_documented_figure(slug, page)
+            print(f"  ok {slug:26} {output.stat().st_size:>8} bytes  (svg)")
+    if "animation-linked" in selected:
+        output = make_linked_movie()
+        print(f"  ok {'animation-linked':26} {output.stat().st_size:>8} bytes  (mp4)")
+    if "threejs-demo" in selected:
+        demo = make_threejs_demo()
+        print(f"  ok {'threejs-demo':26} {demo.stat().st_size:>8} bytes  (json)")
 
 
 if __name__ == "__main__":

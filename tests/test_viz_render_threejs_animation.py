@@ -110,18 +110,16 @@ def test_both_html_exporters_derive_the_same_playback_duration():
 
 
 def test_fps_reaches_the_plotly_realtime_html(tmp_path, traj):
-    """``.animate(fps=)`` changes the stride of the ``requestAnimationFrame`` comet.
-
-    The loop advances ``STRIDE`` samples per browser frame, chosen so the whole
-    series takes the playback duration — so a faster ``fps`` is a bigger stride.
-    """
+    """``.animate(fps=)`` reaches the elapsed-time playback clock in HTML."""
     pytest.importorskip("plotly")
-    strides = {}
+    durations = {}
     for tag, fps in (("fast", 60.0), ("slow", 10.0)):
         out = tmp_path / f"{tag}.html"
         ts.plot(traj, animate=True).animate(fps=fps).save(str(out))
-        strides[tag] = int(re.search(r"STRIDE\s*=\s*(\d+)", out.read_text(encoding="utf-8"))[1])
-    assert strides["fast"] > strides["slow"], strides
+        durations[tag] = float(
+            re.search(r"DURATION\s*=\s*([\d.]+)", out.read_text(encoding="utf-8"))[1]
+        )
+    assert durations["fast"] == pytest.approx(durations["slow"] / 6.0)
 
 
 def test_a_short_curve_is_no_longer_stretched_over_twelve_seconds():
@@ -144,11 +142,16 @@ def test_an_animated_composite_exports_statically_and_says_so(traj):
     ``_lower_composite``: the payload came out tiled and static with **no** warning,
     so ``animate=True`` vanished between the call and the file.
     """
-    comp = ts.plot(ts.plot(traj, "phase_portrait"), ts.plot(traj, "psd"), layout="row")
+    comp = ts.plot(
+        ts.plot(traj, "phase_portrait"), ts.plot(traj, "time_series", components="x"), layout="row"
+    )
     assert _animation_block(comp) is None  # a static composite: nothing to say
 
     animated = ts.plot(
-        ts.plot(traj, "phase_portrait"), ts.plot(traj, "psd"), layout="row", animate=True
+        ts.plot(traj, "phase_portrait"),
+        ts.plot(traj, "time_series", components="x"),
+        layout="row",
+        animate=True,
     )
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")

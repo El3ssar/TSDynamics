@@ -27,11 +27,14 @@ The pieces
 
 from __future__ import annotations
 
+import math
 import numbers
 import warnings
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, Literal, cast
+
+import numpy as np
 
 from .._utils.lookup import is_hashable
 from ._visibility import dir_without, listing_dir
@@ -92,7 +95,7 @@ def _validate_unit_interval(value: Any) -> float:
     of ``1.0`` (it is almost always a caller mistake), so it raises rather than
     silently coercing.
     """
-    if isinstance(value, bool):
+    if isinstance(value, (bool, np.bool_)):
         raise ValueError(f"expected a value in [0, 1], got bool {value!r}")
     v = float(value)
     if not (0.0 <= v <= 1.0):
@@ -106,10 +109,10 @@ def _validate_positive(value: Any) -> float:
     A ``bool`` (``True``/``False``) is rejected — a line/marker size is a magnitude,
     not a flag, so ``True`` raises rather than silently becoming ``1.0``.
     """
-    if isinstance(value, bool):
+    if isinstance(value, (bool, np.bool_)):
         raise ValueError(f"expected a non-negative number, got bool {value!r}")
     v = float(value)
-    if v < 0.0:
+    if not math.isfinite(v) or v < 0.0:
         raise ValueError(f"expected a non-negative number, got {value!r}")
     return v
 
@@ -201,7 +204,9 @@ def _validate_marker(value: Any) -> str:
 
 
 def _validate_bool(value: Any) -> bool:
-    """Coerce ``value`` to a plain ``bool``."""
+    """Accept a boolean switch, preserving the meaning of False across every door."""
+    if not isinstance(value, (bool, np.bool_)):
+        raise ValueError(f"expected True or False, got {value!r}")
     return bool(value)
 
 
@@ -282,9 +287,9 @@ def _build_style_keys() -> dict[str, StyleKey]:
         StyleKey(
             name="linewidth",
             aliases=("lw",),
-            honored_by=_ALL_BACKENDS,
+            honored_by=frozenset({"matplotlib", "plotly"}),
             validate=_validate_positive,
-            doc="line width (pt)",
+            doc="line width (pt); threejs WebGL lines are limited to one device pixel",
         ),
         StyleKey(
             name="linestyle",
@@ -462,7 +467,7 @@ def normalize_style(style: Mapping[str, Any], *, warn: bool = True) -> dict[str,
         if spec.validate is not None:
             try:
                 value = spec.validate(value)
-            except ValueError as exc:
+            except (TypeError, ValueError, OverflowError) as exc:
                 raise ValueError(f"invalid value for style key {canonical!r}: {exc}") from exc
         out[canonical] = value
     if unknown and warn:
@@ -576,8 +581,66 @@ class Theme:
     layout_engine: LayoutEngineName | None = None
     autostyle: bool = True
 
+    def __post_init__(self) -> None:
+        """Validate output settings before registration or a delayed backend draw."""
+        from tsdynamics.errors import InvalidParameterError
+
+        def invalid(name: str, value: Any, rule: str) -> None:
+            raise InvalidParameterError(f"theme.{name}={value!r} {rule}.")
+
+        if not isinstance(self.name, str) or not self.name.strip():
+            invalid("name", self.name, "must be a non-empty name")
+        palette = (self.palette,) if isinstance(self.palette, str) else self.palette
+        if not isinstance(palette, Sequence) or any(not isinstance(c, str) for c in palette):
+            invalid("palette", self.palette, "must be a sequence of colour strings")
+        object.__setattr__(self, "palette", tuple(palette))
+        for name in ("grid", "autostyle"):
+            value = getattr(self, name)
+            try:
+                object.__setattr__(self, name, _validate_bool(value))
+            except ValueError:
+                invalid(name, value, "must be True or False")
+        for name in ("font_size", "title_size", "line_width", "marker_size", "dpi"):
+            value = getattr(self, name)
+            if value is not None:
+                try:
+                    normalized = _validate_positive(value)
+                    if name == "dpi" and normalized == 0:
+                        raise ValueError
+                except (TypeError, ValueError, OverflowError):
+                    invalid(
+                        name,
+                        value,
+                        "must be finite and positive"
+                        if name == "dpi"
+                        else "must be finite and non-negative",
+                    )
+                object.__setattr__(self, name, normalized)
+        if self.grid_alpha is not None:
+            try:
+                object.__setattr__(self, "grid_alpha", _validate_unit_interval(self.grid_alpha))
+            except (TypeError, ValueError, OverflowError):
+                invalid("grid_alpha", self.grid_alpha, "must be an opacity in [0, 1]")
+        if self.figsize is not None:
+            try:
+                if len(self.figsize) != 2:
+                    raise ValueError
+                size = tuple(_validate_positive(v) for v in self.figsize)
+                if any(v == 0 for v in size):
+                    raise ValueError
+            except (TypeError, ValueError, OverflowError):
+                invalid("figsize", self.figsize, "must contain two finite positive inch dimensions")
+            object.__setattr__(self, "figsize", size)
+        if self.layout_engine is not None and (
+            not isinstance(self.layout_engine, str)
+            or self.layout_engine not in ("constrained", "compressed", "tight")
+        ):
+            invalid(
+                "layout_engine", self.layout_engine, "must be constrained, compressed, or tight"
+            )
+
     def __dir__(self) -> list[str]:
-        """Expose the sixteen fields; hide the three construction/serialization helpers.
+        """Expose the theme fields; hide construction/serialization helpers.
 
         ``styling.md`` reads ``.palette`` ``.font_family`` ``.title_size``
         ``.background`` ``.name`` straight off a theme, so every field stays.
@@ -625,15 +688,15 @@ class Theme:
             font_family=d.get("font_family"),
             font_size=d.get("font_size"),
             title_size=d.get("title_size"),
-            grid=bool(d.get("grid", False)),
+            grid=d.get("grid", False),
             grid_color=d.get("grid_color"),
             grid_alpha=d.get("grid_alpha"),
             line_width=d.get("line_width"),
             marker_size=d.get("marker_size"),
-            figsize=(float(figsize[0]), float(figsize[1])) if figsize is not None else None,
+            figsize=figsize,
             dpi=d.get("dpi"),
             layout_engine=cast("LayoutEngineName | None", d.get("layout_engine")),
-            autostyle=bool(d.get("autostyle", True)),
+            autostyle=d.get("autostyle", True),
         )
 
     def merged(self, **overrides: Any) -> Theme:
@@ -841,7 +904,7 @@ def set_theme(theme: str | Theme) -> None:
         register_theme(theme)
         _ACTIVE = theme.name
         return
-    if theme not in THEMES:
+    if not is_hashable(theme) or theme not in THEMES:
         raise InvalidParameterError(
             f"unknown theme {theme!r}; registered themes are {', '.join(themes())}"
         )
@@ -901,7 +964,7 @@ class _ThemeRegistry:
             all four" promise was false.  ``get(name)`` is how you reach the
             record, which is the same lesson everywhere.
         """
-        unknown = [k for k in filters if not hasattr(Theme, k) and k not in Theme.__annotations__]
+        unknown = [k for k in filters if k not in Theme.__annotations__]
         if unknown:
             from tsdynamics.errors import InvalidParameterError
 
@@ -984,7 +1047,7 @@ class _ThemeRegistry:
 
     def __contains__(self, name: object) -> bool:
         """Whether ``name`` is a registered theme."""
-        return name in THEMES
+        return is_hashable(name) and name in THEMES
 
     def __repr__(self) -> str:
         """List the registered themes and name the active one."""
@@ -1026,6 +1089,12 @@ class _StyleTable:
 
     def get(self, name: str) -> StyleKey:
         """Return one :class:`StyleKey`, resolving an alias to its canonical key."""
+        if not isinstance(name, str):
+            from tsdynamics.errors import InvalidParameterError
+
+            raise InvalidParameterError(
+                f"a style key is a name, got {name!r}; use ts.viz.styles.names()."
+            )
         canonical = _ALIAS_INDEX.get(name, name)
         if canonical not in STYLE_KEYS:
             from tsdynamics.errors import InvalidParameterError

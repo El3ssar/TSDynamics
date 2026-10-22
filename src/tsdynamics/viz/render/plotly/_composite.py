@@ -38,17 +38,13 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING, Any
 
-import numpy as np
-
 from ..._visibility import listing_dir
-from ...spec import PlotSpec
+from ...spec import Layout, PlotSpec
 from . import _threed
 from ._core import _build_2d_layout, _theme_layout, build_2d_traces
 
 if TYPE_CHECKING:
     import plotly.graph_objects as go
-
-    from ...spec import Layout
 
 __all__ = ["has_nested_panels", "render_composite"]
 
@@ -63,18 +59,7 @@ def _composite_grid(layout: Layout | None, n: int) -> tuple[int, int]:
     ``rows`` / ``cols`` (or a near-square fill), ``"stack"`` (default) → one
     column.
     """
-    mode = getattr(layout, "mode", "stack") if layout is not None else "stack"
-    if mode == "row":
-        return 1, n
-    if mode == "grid":
-        rows = getattr(layout, "rows", None)
-        cols = getattr(layout, "cols", None)
-        if rows and cols:
-            return int(rows), int(cols)
-        c = int(np.ceil(np.sqrt(n)))
-        r = int(np.ceil(n / c))
-        return r, c
-    return n, 1  # "stack" (default): one column
+    return (layout if layout is not None else Layout()).grid(n)
 
 
 def _cell_indices(n: int, rows: int, cols: int) -> list[tuple[int, int]]:
@@ -232,7 +217,7 @@ def _apply_cell_axes(fig: go.Figure, panel: PlotSpec, row: int, col: int) -> Non
     y_dict = dict(layout.get("yaxis", {}))
     # An "equal" aspect anchors y to the panel's *own* x-axis, not the figure's.
     if y_dict.get("scaleanchor") == "x":
-        y_dict["scaleanchor"] = subplot.xaxis.anchor or _axis_ref(x_name)
+        y_dict["scaleanchor"] = _axis_ref(x_name)
     update: dict[str, Any] = {x_name: x_dict, y_name: y_dict}
     fig.update_layout(**update)
     # Per-panel annotations (vline / hline / text / span) are paper-referenced in

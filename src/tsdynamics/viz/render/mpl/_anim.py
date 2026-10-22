@@ -142,7 +142,12 @@ def _spec_dt(spec: PlotSpec) -> float | None:
 
 def _times(spec: PlotSpec, layer_x: np.ndarray | None, n: int) -> np.ndarray:
     """Return a per-sample time vector for the clock: a time-like x channel, else t0 + i·dt."""
-    if layer_x is not None and layer_x.shape[0] == n and np.all(np.diff(layer_x) >= 0):
+    if (
+        spec.kind in (PlotKind.TIME_SERIES, PlotKind.SPACETIME)
+        and layer_x is not None
+        and layer_x.shape[0] == n
+        and np.all(np.diff(layer_x) >= 0)
+    ):
         return np.asarray(layer_x, dtype=float)
     dt = _spec_dt(spec) or 1.0
     t0 = float(spec.meta.get("t0", 0.0)) if isinstance(spec.meta, dict) else 0.0
@@ -151,9 +156,7 @@ def _times(spec: PlotSpec, layer_x: np.ndarray | None, n: int) -> np.ndarray:
 
 def _animated_marks() -> frozenset[PlotKind]:
     """Layer marks the reveal animator drives (curves; others are drawn static)."""
-    return frozenset(
-        {PlotKind.LINE, PlotKind.LINE3D, PlotKind.SCATTER, PlotKind.MARKERS, PlotKind.IMAGE}
-    )
+    return frozenset({PlotKind.LINE, PlotKind.LINE3D, PlotKind.SCATTER, PlotKind.IMAGE})
 
 
 def _is_measuring(renderer: Any) -> bool:
@@ -736,9 +739,11 @@ class _PanelUpdater:
         #: foreground.  Empty means nothing on this panel moves.
         self.artists = artists
 
-    def update(self, frame: int) -> Any:
+    def update(self, frame: int, *, frame_index: int | None = None) -> Any:
         """Advance to playback frame ``frame`` (mapped through the head schedule)."""
-        return self._update_fn(self._frame_seq[frame])
+        return self._update_fn(
+            self._frame_seq[frame], frame if frame_index is None else frame_index
+        )
 
 
 def _build_panel_animation(fig: Figure, ax: Any, spec: PlotSpec, *, three_d: bool) -> _PanelUpdater:
@@ -776,6 +781,19 @@ def _build_panel_animation(fig: Figure, ax: Any, spec: PlotSpec, *, three_d: boo
     drivers = [d.drive for d in built if d is not None]
     artists: list[Artist] = [a for d in built if d is not None for a in d.artists]
 
+    from ._core import _apply_colorbar, _apply_legend
+
+    mappable = next(
+        (
+            artist
+            for artist in reversed([*ax.collections, *ax.images])
+            if artist.get_array() is not None
+        ),
+        None,
+    )
+    _apply_colorbar(fig, ax, mappable, spec.colorbar, spec.meta, theme=theme)
+    _apply_legend(ax, spec, theme)
+
     _apply_animated_annotations(ax, spec, three_d=three_d)
 
     base_azim = _base_azim(spec) if three_d else None
@@ -784,14 +802,14 @@ def _build_panel_animation(fig: Figure, ax: Any, spec: PlotSpec, *, three_d: boo
     if clock_artist is not None:
         artists.append(clock_artist)
 
-    def update(i: int) -> Any:
+    def update(i: int, frame: int) -> Any:
         for driver in drivers:
             driver(i, tail)
         if three_d and base_azim is not None and anim.spin:
             frac = i / max(1, n_samples - 1)
             ax.view_init(elev=_base_elev(spec), azim=base_azim + 360.0 * anim.spin * frac)
         if clock_artist is not None and clock_times is not None:
-            clock_artist.set_text(anim.clock_format.format(t=float(clock_times[i])))
+            clock_artist.set_text(anim.clock_format.format(t=float(clock_times[i]), i=frame))
         return []
 
     return _PanelUpdater(head_idx, update, artists)
@@ -995,11 +1013,36 @@ def _curve_driver(
     x = np.asarray(layer.data["x"], dtype=float)
     y = np.asarray(layer.data["y"], dtype=float)
     z = np.asarray(layer.data["z"], dtype=float) if "z" in layer.data else None
-    color = layer.style.get("color")
-    lw = layer.style.get("lw", layer.style.get("linewidth", 2.0))
+    if three_d and z is None:
+        z = np.zeros_like(x)
+    from ...producers import autostyle_enabled
+    from ._core import _line_kwargs
+
+    if not len(x):
+        return _LayerDriver(lambda i, tail: None, ())
+    kw = _line_kwargs(layer, _resolve_theme(spec), n=len(x), autostyle=autostyle_enabled(spec))
+    color = kw.setdefault(
+        "color", ax._get_lines.get_next_color() if "color" not in kw else kw["color"]
+    )
+    lw = kw.get("linewidth", 2.0)
 
     # Head style: a point on a portrait; a vertical sweep line on a time series.
     series_like = kind in (PlotKind.TIME_SERIES, PlotKind.SPACETIME)
+
+    if PlotKind(layer.kind) is PlotKind.SCATTER or ("c" in layer.data and len(x) > 1):
+        return _collection_curve_driver(
+            ax,
+            layer,
+            spec,
+            anim,
+            x,
+            y,
+            z,
+            color,
+            three_d=three_d,
+            n_clock=n_clock,
+            series_like=series_like,
+        )
 
     # With a windowed trail, draw the full curve once, faintly — the static,
     # context "attractor backdrop" the comet sweeps over (matches the plotly
@@ -1016,16 +1059,18 @@ def _curve_driver(
                 ax.plot(x, y, color=color, lw=1.0, alpha=alpha)
 
     # Fading-comet (glowing-tail) trail is opt-in via ``.trail(fade=True)``.
-    if anim.trail_fade and not series_like:
-        return _fade_comet_driver(ax, x, y, z, color, lw, anim, three_d=three_d, n_clock=n_clock)
+    if anim.trail_fade and not series_like and len(x) > 1:
+        return _fade_comet_driver(
+            ax, x, y, z, color, lw, anim, three_d=three_d, n_clock=n_clock, style=kw
+        )
 
     if three_d:
-        (line,) = ax.plot([], [], [], color=color, lw=lw, label=layer.label)
+        (line,) = ax.plot([], [], [], **kw)
         head = ax.plot(
             [], [], [], anim.head_symbol, color=anim.head_color or color, ms=anim.head_size
         )[0]
     else:
-        (line,) = ax.plot([], [], color=color, lw=lw, label=layer.label)
+        (line,) = ax.plot([], [], **kw)
         head = ax.plot([], [], anim.head_symbol, color=anim.head_color or color, ms=anim.head_size)[
             0
         ]
@@ -1059,6 +1104,97 @@ def _curve_driver(
     return _LayerDriver(drive, moving)
 
 
+def _collection_curve_driver(
+    ax: Any,
+    layer: Any,
+    spec: PlotSpec,
+    anim: Animation,
+    x: np.ndarray,
+    y: np.ndarray,
+    z: np.ndarray | None,
+    color: Any,
+    *,
+    three_d: bool,
+    n_clock: int,
+    series_like: bool,
+) -> _LayerDriver:
+    """Animate the static renderer's point/coloured-line artists without changing their meaning."""
+    from matplotlib import colors as mcolors
+
+    points = PlotKind(layer.kind) is PlotKind.SCATTER
+    layer = dataclasses.replace(layer, style={"color": color, **layer.style})
+    if anim.trail_kind is not None and not series_like and anim.backdrop and anim.backdrop_alpha:
+        context = dataclasses.replace(
+            layer, label=None, style={**layer.style, "alpha": anim.backdrop_alpha}
+        )
+        _draw_static_layer(ax, context, spec, three_d=three_d)
+    _draw_static_layer(ax, layer, spec, three_d=three_d)
+    artist = ax.collections[-1]
+    c = np.asarray(layer.data["c"], dtype=float) if "c" in layer.data else None
+    if c is not None:
+        artist.norm.autoscale_None(c)
+    sizes = np.asarray(layer.data["size"]) if "size" in layer.data else None
+    faces = np.asarray(artist.get_facecolors())
+    edges = np.asarray(artist.get_edgecolors())
+    opacity = artist.get_alpha()
+    head = ax.plot(
+        *([[], [], []] if three_d else [[], []]),
+        anim.head_symbol,
+        color=anim.head_color or color,
+        ms=anim.head_size,
+    )[0]
+    head.set_visible(anim.head and not series_like)
+    vline = ax.axvline(x[0], color=anim.head_color or color) if anim.head and series_like else None
+    clock = _local_clock(len(x), n_clock or len(x))
+
+    def drive(i: int, tail: int | None) -> None:
+        i, tail = clock(i, tail)
+        lo = 0 if tail is None else max(0, i - tail)
+        stop = i + 1 if points else i
+        if points:
+            artist.set_offsets(np.column_stack([x[lo : i + 1], y[lo : i + 1]]))
+            if three_d:
+                assert z is not None
+                artist._offsets3d = (x[lo : i + 1], y[lo : i + 1], z[lo : i + 1])
+            if sizes is not None:
+                artist.set_sizes(sizes[lo : i + 1])
+        else:
+            coords = [x[lo : i + 1], y[lo : i + 1]]
+            if three_d:
+                assert z is not None
+                coords.append(z[lo : i + 1])
+            vertices = np.column_stack(coords)
+            artist.set_segments(np.stack([vertices[:-1], vertices[1:]], axis=1))
+        values = c[lo:stop] if c is not None else None
+        if anim.trail_fade and not series_like:
+            artist.set_array(None)
+            artist.set_alpha(None)
+            count = max(0, stop - lo)
+            rgba = (
+                artist.cmap(artist.norm(values))
+                if values is not None
+                else np.tile(mcolors.to_rgba(color), (count, 1))
+            )
+            rgba[:, 3] *= np.linspace(0.05, 1.0, count)
+            if opacity is not None:
+                rgba[:, 3] *= opacity
+            if points:
+                artist.set_facecolor(rgba if faces.size else "none")
+                artist.set_edgecolor(rgba if edges.size else "none")
+            else:
+                artist.set_color(rgba)
+        elif values is not None:
+            artist.set_array(values)
+        if anim.head and not series_like:
+            _set_head(head, x, y, z, i, three_d)
+            if c is not None and anim.head_color is None:
+                head.set_color(artist.cmap(artist.norm(c[i])))
+        if vline is not None:
+            vline.set_xdata([x[i], x[i]])
+
+    return _LayerDriver(drive, (artist, head) if vline is None else (artist, head, vline))
+
+
 def _set_head(
     head: Any, x: np.ndarray, y: np.ndarray, z: np.ndarray | None, i: int, three_d: bool
 ) -> None:
@@ -1080,6 +1216,7 @@ def _fade_comet_driver(
     *,
     three_d: bool,
     n_clock: int = 0,
+    style: dict[str, Any] | None = None,
 ) -> _LayerDriver:
     """Drive a glowing comet: a fading per-segment-alpha trail + a bright head.
 
@@ -1109,6 +1246,13 @@ def _fade_comet_driver(
             0
         ]
     head.set_visible(anim.head)
+    style = style or {}
+    if "linestyle" in style:
+        lc.set_linestyle(style["linestyle"])
+    if "zorder" in style:
+        lc.set_zorder(style["zorder"])
+    if "label" in style:
+        lc.set_label(style["label"])
     clock = _local_clock(len(x), n_clock or len(x))
 
     def drive(i: int, tail: int | None) -> None:
@@ -1123,6 +1267,7 @@ def _fade_comet_driver(
             segs = np.stack([pts[:-1], pts[1:]], axis=1)
             rgba = np.tile([*base, 1.0], (len(segs), 1))
             rgba[:, 3] = np.linspace(0.05, 1.0, len(segs))  # fade tail→head
+            rgba[:, 3] *= style.get("alpha", 1.0)
             lc.set_segments(list(segs))
             lc.set_color(rgba)
         else:
@@ -1279,6 +1424,17 @@ def _draw_static_layer(ax: Axes, layer: Any, spec: PlotSpec, *, three_d: bool) -
     from ._core import MARK_DISPATCH, _preset_for
 
     if three_d:
+        from ._threed import _draw_line3d, _draw_scatter3d, _draw_surface3d
+
+        drawer_3d = {
+            PlotKind.LINE: _draw_line3d,
+            PlotKind.LINE3D: _draw_line3d,
+            PlotKind.SCATTER: _draw_scatter3d,
+            PlotKind.MARKERS: _draw_scatter3d,
+            PlotKind.SURFACE3D: _draw_surface3d,
+        }.get(PlotKind(layer.kind))
+        if drawer_3d is not None:
+            drawer_3d(ax, layer, spec, _resolve_theme(spec))
         return
     drawer = MARK_DISPATCH.get(PlotKind(layer.kind))
     if drawer is not None:
@@ -1362,7 +1518,7 @@ def _apply_static_labels(ax: Any, spec: PlotSpec, *, three_d: bool) -> None:
         # where its own ``.png`` had dark navy ones.
         from ._threed import _apply_3d_panes
 
-        _apply_3d_panes(ax, theme)
+        _apply_3d_panes(ax, theme, spec)
     if not three_d and spec.aspect == "equal":
         ax.set_aspect("equal", adjustable="box")
     if spec._axes_hidden():
@@ -1424,16 +1580,38 @@ def _lockstep(panel_anim: Animation | None, master: Animation) -> Animation:
     )
 
 
+def _animation_tree(
+    spec: PlotSpec, inherited: Animation, overrides: dict[str, Any] | None = None
+) -> PlotSpec:
+    """Resolve nested animation context, including explicit whole-figure tweaks.
+
+    Unchanged per-panel looks survive composition; a later figure-level .trail,
+    .head, .clock or .camera call overrides exactly the fields the caller set.
+    Copies keep this render-time inheritance out of the caller's child specs.
+    """
+    animation = _lockstep(spec.animation, inherited)
+    local = {
+        key: getattr(animation, key)
+        for key in spec.meta.get("_animation_overrides", ())
+        if key in Animation.__dataclass_fields__
+    }
+    changes = {**local, **(overrides or {})}
+    if spec.animation is None and spec.kind is PlotKind.TIME_SERIES and "head" not in changes:
+        animation = dataclasses.replace(animation, head=False)
+    animation = dataclasses.replace(animation, **changes)
+    panels = [_animation_tree(panel, animation, changes) for panel in spec.panels]
+    return dataclasses.replace(spec, animation=animation, panels=panels)
+
+
 def _render_composite_animation(
     spec: PlotSpec, *, figsize: tuple[float, float] | None
 ) -> FuncAnimation:
     """Animate a composite: tile the panels and advance them all on one clock."""
-    from . import _threed
-    from ._core import _composite_grid
+    from ._core import _leaf_extent, _place_composite
 
     anim = spec.animation or Animation()
-    panels = spec.panels
-    rows, cols = _composite_grid(spec.layout, len(panels))
+    resolved = _animation_tree(spec, anim)
+    rows, cols = _leaf_extent(spec)
     composite_theme = _resolve_theme(spec)
     figsize, dpi, layout_engine = figure_geometry(spec, figsize, theme=composite_theme)
     if figsize is None:
@@ -1444,7 +1622,8 @@ def _render_composite_animation(
         fig.patch.set_facecolor(composite_theme.background)
 
     updaters: list[_PanelUpdater] = []
-    for i, panel in enumerate(panels):
+
+    def draw_leaf(fig: Any, ax: Any, panel: PlotSpec, theme: Any, three_d: bool) -> None:
         # Resolve the effective animation/theme LOCALLY — never mutate the caller's
         # panel specs. A panel inherits the composite's clock/animation and theme
         # when it carries none of its own; the resolved values are threaded into a
@@ -1452,18 +1631,21 @@ def _render_composite_animation(
         effective = dataclasses.replace(
             panel,
             animation=_lockstep(panel.animation, anim),
-            _theme=panel._theme or composite_theme,
+            _theme=theme,
         )
-        three_d = _threed.is_three_d(effective)
-        ax = fig.add_subplot(rows, cols, i + 1, projection="3d" if three_d else None)
         updaters.append(_build_panel_animation(fig, ax, effective, three_d=three_d))
+
+    _place_composite(fig, None, resolved, composite_theme, draw_leaf=draw_leaf)
     _apply_suptitle(fig, spec, composite_theme)
 
     n_steps = max((u.n_steps for u in updaters), default=2)
 
     def update(frame: int) -> Any:
         for u in updaters:
-            u.update(min(frame, u.n_steps - 1))  # clamp shorter panels to their last frame
+            # Every panel traverses its own sample schedule over the whole movie.
+            # Clamping the shared index made a short panel finish immediately.
+            local_frame = round(frame * (u.n_steps - 1) / max(1, n_steps - 1))
+            u.update(local_frame, frame_index=frame)
         return []
 
     dynamic = [a for u in updaters for a in u.artists]

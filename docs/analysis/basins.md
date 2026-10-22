@@ -68,8 +68,9 @@ sys.run(final_time=60.0, dt=0.05, ic=[-1.5, 0.5]).y[-1]   # ≈ [-1.0, 0.0]
 ```
 
 That two stable states coexist is what makes the basin question meaningful.
-(The delay and stochastic families are **not** supported here — their state is
-not a finite-dimensional point the cell tessellation can bin — and raise a clear
+(The delay and stochastic families are **not** supported here: a DDE needs its
+history, while an SDE needs stochastic-attractor methods beyond this deterministic
+recurrence algorithm. These inputs raise a clear
 `TypeError`.)
 
 ## Locating attractors
@@ -253,8 +254,12 @@ The three metrics, in one place:
 === "basin_entropy"
 
     The basin entropy $S_b$ and boundary basin entropy $S_{bb}$ (Daza et al.
-    2016) measure label diversity per box; **$S_{bb} > \ln 2$ is a sufficient
-    condition for a fractal boundary**, exposed as `.fractal_boundary`.
+    2016) measure label diversity per box. `.fractal_boundary` records whether
+    the **$S_{bb} > \ln 2$ criterion** is met at the supplied resolution.
+    Its geometric interpretation needs a resolved boundary partition: a coarse
+    box can span several separate smooth boundaries and contain three colours.
+    Check grid and box-scale convergence; a single finite image cannot prove
+    asymptotic fractality, and failing the criterion does not prove smoothness.
 
     ```python
     import numpy as np

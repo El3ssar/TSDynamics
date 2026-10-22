@@ -1,4 +1,5 @@
 ---
+title: Anatomy of a chaotic attractor
 description: A complete walkthrough of a chaotic flow — define the Lorenz system, integrate it, plot the butterfly, then quantify evidence for chaos with sensitive dependence, the Lyapunov spectrum, the Kaplan–Yorke dimension, and a correlation-dimension cross-check.
 ---
 
@@ -45,8 +46,8 @@ lor.variables    # ('x', 'y', 'z')  — named components
 
 !!! note "Pin the initial condition"
     The Lorenz class ships with `default_ic = None`, which means a bare
-    a bare `run()` picks a *random* start. Every snippet below passes an
-    explicit `ic=[1.0, 1.0, 1.0]` so the printed numbers reproduce exactly. Make
+    `run()` picks a *random* start. Every snippet below passes an
+    explicit `ic=[1.0, 1.0, 1.0]` so the experiment has a stated starting point. Make
     this a habit whenever you quote a value: pin the IC (and, for anything
     stochastic, the `seed=`).
 
@@ -82,7 +83,7 @@ floating in space":
 
 <figure class="ts-fig" markdown>
 ![The Lorenz attractor as a 3-D phase portrait with hidden axes](../assets/figures/viz/kind-phase-3d.svg){ loading=lazy }
-<figcaption><span class="lbl">FIG 1</span> · the Lorenz butterfly — a 3-D phase portrait of the integrated trajectory, axes hidden with <code>style(axes=False)</code> and framed with <code>camera(elev=22, azim=-60)</code>. Two lobes, a dense fractal weave, and a trajectory that never repeats or self-intersects: the visual signature of a strange attractor.</figcaption>
+<figcaption><span class="lbl">FIG 1</span> · the Lorenz butterfly — a 3-D phase portrait of a finite trajectory, axes hidden with <code>style(axes=False)</code> and framed with <code>camera(elev=22, azim=-60)</code>. The two-lobed geometry motivates the numerical checks below; a picture alone does not establish chaos.</figcaption>
 </figure>
 
 </div>
@@ -93,10 +94,11 @@ the defining property.
 
 ## 3. The defining property: sensitive dependence
 
-Chaos is **sensitive dependence on initial conditions**: two states that start
-imperceptibly close separate exponentially fast, so any uncertainty in the
-present is amplified without limit and long-term prediction becomes impossible —
-*even though the equations are perfectly deterministic*. We can watch it
+One signature of chaos is **sensitive dependence on initial conditions**:
+nearby states can separate exponentially over a useful range of scales, so
+initial uncertainty limits prediction *even when the equations are deterministic*.
+On a bounded attractor, finite separations eventually saturate at the size of
+the attractor. We can watch this happen
 directly. Integrate from two initial conditions one part in a billion apart and
 track the distance between them:
 
@@ -108,6 +110,13 @@ sep = np.linalg.norm(a.y - b.y, axis=1)      # distance vs time
 a.t[np.argmax(sep > 1.0)]      # ≈ 34.4  — time for the gap to reach order 1
 sep[-1]                        # ≈ 20    — fully decorrelated by t = 45
 ```
+
+<figure class="tsd-showcase" markdown="1">
+
+![Two nearby Lorenz trajectories initially overlap; a logarithmic distance plot below shows growth followed by saturation](../assets/figures/tutorials/chaos-separation.svg){ loading=lazy }
+
+<figcaption><span class="tsd-caption-label">Read both views</span><br>The component signals hide the initial difference. The logarithmic distance makes its growth visible, then shows why a long-time straight-line fit would be misleading.</figcaption>
+</figure>
 
 The two trajectories are visually identical for a while, then the gap explodes:
 a $10^{-9}$ initial difference grows to order 1 by $t \approx 34$ and to the
@@ -136,18 +145,26 @@ print(spec)
 # LyapunovSpectrum  λ = [0.9081, -0.001005, -14.57]   chaotic · D_KY = 2.062   (Lorenz)
 ```
 
+<figure class="tsd-showcase" markdown="1">
+
+![The three finite-time Lorenz Lyapunov exponents, showing expansion, a near-neutral direction and contraction](../assets/figures/tutorials/lyapunov-readout.svg){ loading=lazy }
+
+<figcaption>The result is plottable directly with <code>ts.plot(spec)</code>. These are finite-time estimates: increase the averaging window and check whether the rates settle before quoting them.</figcaption>
+</figure>
+
 Read the signs — they are a fingerprint of the dynamics:
 
-- $\lambda_1 \approx +0.90 > 0$: **one expanding direction.** A single positive
-  exponent *is* the working definition of chaos. Its value is the exponential
+- $\lambda_1 \approx +0.90 > 0$: **one expanding direction.** A persistent positive
+  rate on this bounded orbit supports sensitive dependence. Its value is the exponential
   rate we just watched in the separation experiment: $e^{0.9\,t}$ grows a
   $10^{-9}$ gap to order 1 in roughly $\ln(10^9)/0.9 \approx 23$ time units, the
   right order of magnitude for the $t \approx 34$ we measured (the early growth
   is slower than the asymptotic rate).
-- $\lambda_2 \approx 0$: the **neutral direction *along* the flow**. Every
-  continuous system has one — perturb a state forward or back along its own
-  trajectory and it neither grows nor shrinks. It lands just above zero
-  numerically rather than exactly on it.
+- $\lambda_2 \approx 0$: the **neutral direction *along* the flow**. For a bounded
+  non-equilibrium orbit of an autonomous flow, a time shift follows the same
+  motion. Its asymptotic exponent is zero under the usual regularity conditions;
+  a finite-time estimate can lie on either side of zero. Equilibria and explicitly
+  forced systems need separate reasoning.
 - $\lambda_3 \approx -14.6 < 0$: a **strongly contracting direction.** This is
   what pins the motion onto a thin attractor instead of filling space.
 
@@ -161,9 +178,9 @@ float(np.sum(np.asarray(spec)))     # ≈ -13.667
 -(10.0 + 1.0 + 8/3)                 #    -13.667  — phase-space volume shrinks at this rate
 ```
 
-Perfect agreement: the flow contracts a phase-space volume by a factor
-$e^{-13.667}$ per unit time, which is why *any* blob of initial conditions
-collapses onto the zero-volume attractor.
+This is an independent consistency check: phase-space volumes contract by
+$e^{-13.667}$ per unit time. Volume contraction establishes dissipative behaviour;
+it does not by itself establish chaos or identify the attracting set.
 
 !!! tip "Only need the top exponent?"
     Ask for one: `ts.analysis.lyapunov_spectrum(lor, k=1, ic=[1.0, 1.0, 1.0])`.
@@ -174,10 +191,10 @@ collapses onto the zero-volume attractor.
 
 ## 5. The attractor's dimension — two ways
 
-A strange attractor is not a smooth surface: it folds a bounded volume onto a
-set with structure at every scale, and its honest "size" is a *non-integer*
-dimension. The Lyapunov spectrum already contains it. The **Kaplan–Yorke
-dimension** interpolates between the expanding and contracting directions —
+A strange attractor can have non-integer geometric dimension. The **Kaplan–Yorke
+dimension** is a related estimate derived from the stretching rates, rather
+than a direct measurement of that geometry. It interpolates between the
+expanding and contracting directions —
 $D_{KY} = j + (\lambda_1 + \dots + \lambda_j)/|\lambda_{j+1}|$ at the point
 where the cumulative exponent sum crosses zero (Kaplan & Yorke, 1979):
 
@@ -186,10 +203,11 @@ spec.kaplan_yorke        # ≈ 2.062
 ts.analysis.kaplan_yorke_dimension([0.908, -0.001, -14.57])   # ≈ 2.062  — the same, from the bare numbers
 ```
 
-$D_{KY} \approx 2.06$: the Lorenz attractor is *just* more than a two-dimensional
-surface — a sheet with enough fractal crinkle to nudge it past dimension 2.
+$D_{KY} \approx 2.06$ is the dimension suggested by this spectrum. Relating a
+Lyapunov dimension to a geometric dimension requires additional assumptions;
+the different definitions need not agree for a general system.
 
-Now confirm it *independently*, without any Jacobian, by measuring the geometry
+Now compare it with a geometric estimate, without any Jacobian, by measuring the geometry
 of the point cloud directly. The [correlation
 dimension](../analysis/dimensions.md) (Grassberger & Procaccia, 1983) counts how
 the fraction of close point-pairs scales with radius:
@@ -199,17 +217,17 @@ cloud = ts.systems.Lorenz().run(final_time=200.0, dt=0.02, ic=[1.0, 1.0, 1.0]).y
 ts.analysis.correlation_dimension(cloud, theiler=200)     # ≈ 2.06
 ```
 
-The two numbers agree to two decimal places from completely different routes —
-one from the dynamics (tangent-space stretching), one from the static geometry
-(pairwise distances). When a dynamical and a geometric estimate of the
-attractor's dimension concur, you can trust both. (The `theiler=200` window
-excludes temporally-adjacent samples, which sit spuriously close on a densely
-sampled flow and would otherwise bias the estimate — always set it for a flow.)
+The two routes ask related questions using different data: tangent-space
+stretching versus pairwise distances. Agreement is a useful cross-check, not a
+validation certificate. Inspect the correlation-sum scaling region and vary
+record length, radius range and Theiler window. Here `theiler=200` excludes
+nearby-in-time pairs that would bias a densely sampled flow; its appropriate
+size depends on the correlation time and sampling interval.
 
 ## 6. Watch it draw itself
 
 Finally, for a talk or a paper's supplementary material, the same spec animates:
-a reveal-comet traces the trajectory as it is integrated, a fading tail behind
+a reveal-comet traces the already computed trajectory, a fading tail behind
 the moving head.
 
 <div class="ts-ref" markdown>
@@ -217,7 +235,7 @@ the moving head.
 <div class="ts-item" markdown>
 ```python
 (ts.plot(traj, animate=True)
-     .animate(n_frames=120, fps=30)
+     .animate(n_frames=240, fps=30)
      .trail(("time", 6.0), fade=True)     # 6-time-unit fading tail
      .head(color="#F5A623")               # amber "current state" dot
      .style(axes=False)
@@ -232,8 +250,8 @@ animation model.
 </div>
 
 <figure class="ts-fig" markdown>
-![Animated reveal of the Lorenz attractor drawing itself in](../assets/figures/viz/animation-lorenz-reveal.gif){ loading=lazy }
-<figcaption><span class="lbl">FIG 2</span> · the same trajectory as a looping reveal comet — a fading trail follows the amber current-state marker as the butterfly draws itself in. One <code>Plot</code>, one <code>.save("…gif")</code>.</figcaption>
+![A still view of the Lorenz attractor](../assets/figures/viz/kind-phase-3d.svg){ loading=lazy }
+<figcaption><span class="lbl">Animation recipe</span> · a fading trail follows the current-state marker. With 240 frames at 30 fps the exported movie lasts eight seconds. See the animation guide for controllable video previews, camera motion and longer presentations.</figcaption>
 </figure>
 
 </div>
@@ -243,8 +261,8 @@ animation model.
 From a catalogue system and half a dozen calls you gathered numerical evidence
 for chaos: the attractor drawn, sensitive dependence witnessed, the
 Lyapunov spectrum computed with its signs read, the phase-volume contraction
-checked against theory, and the fractal dimension pinned down two independent
-ways. Every result carries its settings in `traj.meta` / the result's `.meta`,
+checked against theory, and two related dimension estimates compared.
+Every result carries its settings in `traj.meta` / the result's `.meta`,
 so the whole thing is reproducible and auditable.
 
 That is the arc the library is built for: **define the system once, then compose

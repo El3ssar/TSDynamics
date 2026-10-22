@@ -53,6 +53,7 @@ from __future__ import annotations
 
 import json
 import os
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -107,6 +108,27 @@ _BACKEND_NAME = "threejs"
 
 #: The MIME type the exporter tags its payload with (a JSON document).
 _MIMETYPE = "application/json"
+
+
+@dataclass(frozen=True)
+class _ThreejsCapabilities(RendererCapabilities):
+    """The geometry payload tiles flat panels; nested layouts need a drawing backend."""
+
+    def can_render_spec(self, spec: PlotSpec) -> bool:
+        if self._decline_reason(spec) is not None:
+            return False
+        return super().can_render_spec(spec)
+
+    def _decline_reason(self, spec: PlotSpec) -> str | None:
+        from ._lower import _unsupported_axes, _unsupported_marks
+
+        if any(panel.is_composite for panel in spec.panels):
+            return "nested panels"
+        if scales := _unsupported_axes(spec):
+            return f"axis scales {', '.join(scales)}"
+        if marks := _unsupported_marks(spec):
+            return f"layer marks {', '.join(marks)}"
+        return None
 
 
 def _check_page_extension(out: Path) -> None:
@@ -195,7 +217,7 @@ def register(registry: Registry) -> bool:
     # truth about this backend.  Declaring the formats only on the module constant
     # left ``caps.can_save(".html")`` answering False for the one backend whose
     # whole purpose is writing an embeddable ``.html``.
-    capabilities = RendererCapabilities.all_kinds(
+    capabilities = _ThreejsCapabilities.all_kinds(
         _BACKEND_NAME,
         supports_3d=True,
         web_export=True,

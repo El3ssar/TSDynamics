@@ -25,7 +25,9 @@ image's background is viridis-zero, a dark theme's is near-black, and a basins
 image has no white in it at all.  Taking the most common colour in the region
 means :func:`ink_fraction` reads "how much of this panel is not the flat
 backdrop" on every transform, every primitive and every theme, with no table of
-per-plot expectations to maintain.
+per-plot expectations to maintain.  Transparent pixels are composited on a white
+page first: their stored RGB is not the colour a reader sees, and an invisible
+pixel must never count as ink.
 
 **Robust properties, never hashes.**  Fonts, matplotlib versions and layout
 solvers all move pixels.  Everything here answers one of three questions — *is
@@ -191,16 +193,25 @@ def _panels(fig: Any, height: int) -> tuple[Box, ...]:
 # ---------------------------------------------------------------------------
 
 
+def _visible_rgb(rgba: np.ndarray) -> np.ndarray:
+    """Read RGB pixels as displayed on a white page, including their opacity."""
+    rgb = rgba[..., :3]
+    if rgba.shape[-1] < 4 or np.all(rgba[..., 3] == 255):
+        return rgb
+    alpha = rgba[..., 3:4].astype(np.float64) / 255.0
+    return np.rint(rgb * alpha + 255.0 * (1.0 - alpha)).astype(np.uint8)
+
+
 def background(rgba: np.ndarray) -> tuple[int, int, int]:
     """The most common RGB triple — whatever this plot's backdrop happens to be."""
-    flat = rgba[..., :3].reshape(-1, 3)
+    flat = _visible_rgb(rgba).reshape(-1, 3)
     common, _ = collections.Counter(map(tuple, flat)).most_common(1)[0]
     return (int(common[0]), int(common[1]), int(common[2]))
 
 
 def ink_fraction(rgba: np.ndarray) -> float:
     """Fraction of pixels more than :data:`TOL` from the background colour."""
-    flat = rgba[..., :3].reshape(-1, 3).astype(np.int16)
+    flat = _visible_rgb(rgba).reshape(-1, 3).astype(np.int16)
     if flat.size == 0:  # pragma: no cover - defensive
         return 0.0
     bg = np.array(background(rgba), dtype=np.int16)
@@ -214,7 +225,7 @@ def dark_fraction(rgba: np.ndarray) -> float:
     in ``Greys``) it is exactly "how much of the picture is a recurrent point",
     which is the number the data says it should be.
     """
-    lum = rgba[..., :3].astype(np.float64).mean(axis=-1).ravel()
+    lum = _visible_rgb(rgba).astype(np.float64).mean(axis=-1).ravel()
     if lum.size == 0 or lum.max() - lum.min() < 1.0:  # pragma: no cover - flat region
         return 0.0
     return float((lum < 0.5 * (lum.min() + lum.max())).mean())
@@ -228,7 +239,7 @@ def _delta(a: Picture | np.ndarray, b: Picture | np.ndarray) -> np.ndarray:
         raise AssertionError(
             f"cannot compare renders of different size: {left.shape} / {right.shape}"
         )
-    delta = np.abs(left[..., :3].astype(np.int16) - right[..., :3].astype(np.int16))
+    delta = np.abs(_visible_rgb(left).astype(np.int16) - _visible_rgb(right).astype(np.int16))
     return delta.max(axis=-1) > TOL
 
 

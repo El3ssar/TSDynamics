@@ -106,7 +106,20 @@ def _canon_style(layer: Layer) -> dict[str, Any]:
     Renderers call with ``warn=False`` — the dispatcher already emitted the
     consolidated :class:`~tsdynamics.viz.render.caps.VisualizationDegraded`.
     """
-    return normalize_style(layer.style, warn=False)
+    result = normalize_style(layer.style, warn=False)
+    if "color" in result:
+        result["color"] = _plotly_colour(result["color"])
+    return result
+
+
+def _plotly_colour(value: Any) -> Any:
+    """Translate the shared numeric RGB/RGBA form to Plotly's CSS spelling."""
+    if isinstance(value, (tuple, list, np.ndarray)) and len(value) in (3, 4):
+        rgb = [float(channel) * 255 for channel in value[:3]]
+        if len(value) == 4:
+            return f"rgba({rgb[0]:g},{rgb[1]:g},{rgb[2]:g},{float(value[3]):g})"
+        return f"rgb({rgb[0]:g},{rgb[1]:g},{rgb[2]:g})"
+    return value
 
 
 # ---------------------------------------------------------------------------
@@ -275,11 +288,11 @@ def _colorbar_dict(spec: PlotSpec) -> dict[str, Any] | None:
         return None
     out: dict[str, Any] = {}
     if cbar.label:
-        out["title"] = cbar.label
+        out["title"] = {"text": cbar.label}
     if cbar.ticks is not None:
         out["tickvals"] = [float(t) for t in cbar.ticks]
     if cbar.label_size is not None:
-        out["titlefont"] = {"size": float(cbar.label_size)}
+        out.setdefault("title", {})["font"] = {"size": float(cbar.label_size)}
     return out
 
 
@@ -362,7 +375,7 @@ def _build_line(layer: Layer, spec: PlotSpec) -> list[go.BaseTraceType]:
         marker: dict[str, Any] = {
             "color": c,
             "colorscale": _colorscale(spec, layer),
-            "showscale": True,
+            "showscale": spec.colorbar is not None and spec.colorbar.show,
             **_clim_kwargs(spec),
         }
         cbar = _colorbar_dict(spec)
@@ -382,15 +395,23 @@ def _build_line(layer: Layer, spec: PlotSpec) -> list[go.BaseTraceType]:
         ]
         _apply_zorder(traces, style)
         return traces
+    marker = {}
+    symbol = _marker_symbol(style) if style.get("marker") not in (None, "none") else None
+    if symbol is not None:
+        marker["symbol"] = symbol
+        marker["size"] = _marker_size(style, theme)
+        if "color" in style:
+            marker["color"] = style["color"]
     traces = [
         go.Scatter(
             x=x,
             y=y,
-            mode="lines",
+            mode="lines+markers" if symbol is not None else "lines",
             line=_line_style(layer, theme, n=n, autostyle=auto),
             name=layer.label,
             showlegend=layer.label is not None,
             opacity=_line_opacity(style, n, autostyle=auto),
+            marker=marker,
         )
     ]
     _apply_zorder(traces, style)
@@ -422,7 +443,7 @@ def _build_scatter(layer: Layer, spec: PlotSpec) -> list[go.BaseTraceType]:
     if c is not None:
         marker["color"] = c
         marker["colorscale"] = _colorscale(spec, layer)
-        marker["showscale"] = True
+        marker["showscale"] = spec.colorbar is not None and spec.colorbar.show
         marker.update(_clim_kwargs(spec))
         cbar = _colorbar_dict(spec)
         if cbar is not None:
@@ -456,6 +477,7 @@ def _build_image(layer: Layer, spec: PlotSpec) -> list[go.BaseTraceType]:
     img = np.asarray(z, dtype=float)
     kw: dict[str, Any] = {
         "z": img,
+        "opacity": _opacity(_canon_style(layer)),
         "colorscale": _colorscale(spec, layer),
         **{k.replace("c", "z", 1): v for k, v in _clim_kwargs(spec).items()},
     }
@@ -569,11 +591,11 @@ def _rgba(color: str | None, alpha: float) -> str:
         elif c.startswith("#") and len(c) == 4:
             with contextlib.suppress(ValueError):
                 r, g, b = int(c[1] * 2, 16), int(c[2] * 2, 16), int(c[3] * 2, 16)
-        elif c.lower().startswith("rgb(") and c.endswith(")"):
-            parts = c[4:-1].split(",")
-            if len(parts) == 3:
+        elif c.lower().startswith(("rgb(", "rgba(")) and c.endswith(")"):
+            parts = c[c.index("(") + 1 : -1].split(",")
+            if len(parts) in (3, 4):
                 with contextlib.suppress(ValueError):
-                    r, g, b = (int(float(p)) for p in parts)
+                    r, g, b = (int(float(p)) for p in parts[:3])
         else:
             # A CSS name (e.g. "blue") — resolve its channels so the alpha is
             # genuinely honored rather than dropped.  matplotlib's color table is
@@ -620,7 +642,7 @@ def _build_area(layer: Layer, spec: PlotSpec) -> list[go.BaseTraceType]:
     style = _canon_style(layer)
     color = style.get("color")
     # fillalpha (AREA-only) is the band opacity; default 0.3 when unset.
-    fillalpha = float(style.get("fillalpha", 0.3))
+    fillalpha = float(style.get("fillalpha", style.get("alpha", 0.3)))
     # fill=False suppresses the shaded band (edges / line still draw).
     show_fill = bool(style.get("fill", True))
     fillcolor = _rgba(color, fillalpha) if show_fill else None
@@ -642,7 +664,14 @@ def _build_area(layer: Layer, spec: PlotSpec) -> list[go.BaseTraceType]:
     theme = _resolve_theme(spec)
     if y is not None and "lo" in layer.data:
         traces.append(
-            go.Scatter(x=x, y=y, mode="lines", line=_line_style(layer, theme), showlegend=False)
+            go.Scatter(
+                x=x,
+                y=y,
+                mode="lines",
+                line=_line_style(layer, theme),
+                opacity=_opacity(style),
+                showlegend=False,
+            )
         )
     _apply_zorder(traces, style)
     return traces
@@ -716,11 +745,17 @@ def _build_quiver(layer: Layer, spec: PlotSpec) -> list[go.BaseTraceType]:
             y=seg_y,
             mode="lines",
             line={"color": color} if color is not None else {},
+            opacity=_opacity(style),
             name=layer.label,
             showlegend=layer.label is not None,
         ),
         go.Scatter(
-            x=xe, y=ye, mode="markers", marker={"size": 4, "color": color}, showlegend=False
+            x=xe,
+            y=ye,
+            mode="markers",
+            marker={"size": 4, "color": color},
+            opacity=_opacity(style),
+            showlegend=False,
         ),
     ]
     _apply_zorder(traces, style)
@@ -798,11 +833,7 @@ def _axis_layout(axis: Axis, theme: Theme | None = None) -> dict[str, Any]:
             if theme.grid_color is not None:
                 out["gridcolor"] = theme.grid_color
             if theme.grid_alpha is not None:
-                # plotly uses ``gridwidth`` for grid line width, not alpha; express
-                # alpha as opacity on the *line color* via rgba when we have a hex.
-                # For simplicity store it as a layout meta and apply via ``gridcolor``
-                # only if we can.  The safe path: leave plotly to alpha-blend normally.
-                pass  # grid_alpha honored by mpl; plotly gridcolor handles it visually
+                out["gridcolor"] = _rgba(theme.grid_color or "#b0b0b0", theme.grid_alpha)
 
     # Axis ink / color (spine, label, ticks).
     ink = axis.color

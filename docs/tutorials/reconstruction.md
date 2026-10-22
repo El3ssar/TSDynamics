@@ -1,4 +1,5 @@
 ---
+title: Reconstruction from one signal
 description: You have one recorded signal x(t) and no equations — reconstruct the attractor by Takens delay embedding, choose the delay and dimension with principled heuristics, and measure the correlation dimension and a data-driven Lyapunov exponent from the recording alone.
 ---
 
@@ -17,50 +18,53 @@ $x(t)$ back to the geometry and invariants of the system that produced it. We
 will **reconstruct** the attractor from the single channel, choose the two
 reconstruction parameters with principled heuristics, and measure the
 attractor's fractal dimension and its largest Lyapunov exponent *from the
-recording* — then check every recovered number against the truth we threw away.
+recording* — then compare these finite-data estimates with the full-state model.
 
-To keep it honest and reproducible we *generate* the mystery signal from a known
-system (the Rössler flow) and then immediately throw the model away, keeping only
-one component. Everything after that line uses the scalar alone — so we can check
-every recovered number against the truth at the end.
+We generate the signal from the Rössler flow and analyse one observed channel,
+keeping its sampling times. The full trajectory is set aside for a comparison
+at the end; the reconstruction itself uses no equations.
 
 ```python
 import tsdynamics as ts
 
 # generate a trajectory, then keep ONLY the x channel — pretend this is all you recorded
 full = ts.systems.Rossler().run(final_time=400.0, dt=0.05, ic=[1.0, 0.0, 0.0])
-x = full.y[1000:, 0]        # a single scalar signal, transient dropped
+signal = full.after(50.0)["x",]  # a one-column Trajectory, retaining its times
+x = signal.y[:, 0]              # scalar samples; transient dropped
 x.shape                     # (7001,)
 ```
 
-From here on, `x` is the only thing we touch.
+All the estimates below use `x`; `signal` retains the same channel's time axis
+for plotting. A single name, `trajectory["x"]`, returns an array; the one-name tuple
+`trajectory["x",]` keeps a `Trajectory` and its time axis.
 
 ## 1. The theorem that makes it possible
 
-You would think one channel throws away most of the state. Takens' embedding
-theorem (Takens, 1981) says otherwise: from one *generic* observable of a
-deterministic system you can reconstruct a trajectory whose attractor is
-diffeomorphic to the true one — same topology, same invariants — simply by
-stacking time-delayed copies of the single signal into a vector,
+Delay reconstruction stacks copies of one signal into a vector,
 
 $$
 \mathbf{y}_i = \big(x_i,\; x_{i+\tau},\; x_{i+2\tau},\; \dots,\; x_{i+(m-1)\tau}\big).
 $$
 
-Two choices make the reconstruction faithful: the **delay** $\tau$ and the
-**embedding dimension** $m$. The
-[delay-embedding tools](../analysis/embedding.md) give a principled way to pick
-each.
+The classical [Takens theorem](https://doi.org/10.1007/BFb0091924) concerns
+generic smooth dynamics and observables on a compact $d$-dimensional manifold:
+under its assumptions, $2d+1$ delay coordinates give an embedding. It does not
+certify a finite noisy recording or promise that an arbitrary three-coordinate
+projection is faithful.
+
+In practice we choose a **delay** $\tau$ and an **embedding dimension** $m$ using
+diagnostic curves, then test sensitivity to those choices. The
+[delay-embedding tools](../analysis/embedding.md) provide the heuristics below.
 
 ## 2. Choose the delay
 
 The delay trades two failures against each other. Too small, and $x_i$ and
 $x_{i+\tau}$ are nearly identical — the reconstruction collapses onto the
 diagonal. Too large, and on a chaotic signal they become causally unrelated — the
-geometry folds noise into itself. The recommended criterion is the **first local
-minimum of the time-delayed mutual information** (Fraser & Swinney, 1986): the
-lag at which the next coordinate adds the most *new* information while staying
-dynamically related to the current one.
+geometry folds noise into itself. A common heuristic is the **first local
+minimum of the time-delayed mutual information** (Fraser & Swinney, 1986).
+It seeks delayed coordinates with reduced redundancy; it does not guarantee
+an optimal reconstruction.
 
 ```python
 tau = ts.analysis.optimal_delay(x, method="mi", max_delay=120)   # 25 samples
@@ -81,23 +85,30 @@ which sees nonlinear dependence the autocorrelation misses.
 The dimension must be large enough to **unfold** the attractor — to remove the
 false crossings a too-flat projection creates where two distant states happen to
 overlap. **Cao's method** (Cao, 1997) and **Kennel's false nearest neighbours**
-(Kennel et al., 1992) both detect the smallest $m$ at which those artefacts
-vanish, unified behind `embedding_dimension`:
+(Kennel et al., 1992) inspect neighbour relationships to suggest a candidate
+$m$, unified behind `embedding_dimension`:
 
 ```python
 m_fnn = ts.analysis.embedding_dimension(x, method="fnn", delay=tau, max_dim=8)
-int(m_fnn)              # 3   — Kennel FNN; matches Rössler's true dimension
+int(m_fnn)              # 3   — the threshold-based candidate for this record
+m_fnn.saturated        # inspect whether the requested threshold was reached
 
 m_cao = ts.analysis.embedding_dimension(x, method="cao", delay=tau, max_dim=8)
 int(m_cao)             # 4   — Cao's conservative saturation threshold
 # m_cao.plot()         # the E1/E2 saturation curves, with the chosen m marked
 ```
 
-The two estimators need not agree to the integer — Cao's saturation threshold and
-Kennel's tolerance are conservative in different directions — so on a marginal
-case read $m$ off the *shape* of the diagnostic curve rather than trusting a
-single number, and when in doubt embed one dimension higher. Here FNN recovers
-the true dimension 3 exactly; we take $m = 3$.
+The two estimators use different criteria and need not agree. Inspect their
+curves and whether the stopping criterion was reached; a selected candidate is
+not a theorem about the smallest possible embedding. Here we use $m=3$ as a
+practical reconstruction and compare it with nearby choices.
+
+<figure class="tsd-showcase" markdown="1">
+
+![The mutual-information delay curve beside Cao's embedding-dimension diagnostic](../assets/figures/tutorials/reconstruction-diagnostics.svg){ loading=lazy }
+
+<figcaption><span class="tsd-caption-label">Keep the evidence beside the choice</span><br>Use <code>ts.plot(mi)</code> and <code>ts.plot(m_cao)</code> to inspect the curves behind the estimates. Repeat with longer records and nearby delays before settling on a reconstruction.</figcaption>
+</figure>
 
 ## 4. Reconstruct — one channel becomes an attractor
 
@@ -108,7 +119,7 @@ With both parameters chosen, `embed` builds the matrix of delay vectors:
 <div class="ts-item" markdown>
 ```python
 emb = ts.analysis.embed(x, dimension=3, delay=tau)
-emb.shape               # (6947, 3) — one reconstructed state per row, in time order
+emb.shape               # (6951, 3) for tau=25 — one reconstructed state per row
 ```
 
 The returned `Embedding` behaves as that bare array, so it drops straight into
@@ -122,31 +133,32 @@ directly, you can eyeball the reconstruction with the plotting front door:
 # the x(t) vs x(t - tau) delay portrait, straight from the series.
 # `delay=` is in SAMPLES (what optimal_delay returned); `delay_time=` is the
 # same lag in time units — here delay_time = tau * 0.05 would be equivalent.
-ts.plot(full["x"], "delay_embedding", delay=tau).save("delay.png")
+ts.plot(signal, "delay_embedding", delay=tau).save("delay.png")
 ```
 </div>
 
 <figure class="ts-fig" markdown>
-![A delay-coordinate reconstruction of a flow from one channel](../assets/figures/viz/kind-delay.svg){ loading=lazy }
-<figcaption><span class="lbl">FIG 1</span> · a delay embedding — x(t) against x(t − τ) — built from a single recorded channel. The <code>delay_embedding</code> transform also takes <code>delay_time=</code> in <em>time units</em> (here τ = 25 samples × dt = 1.25). The loop is the reconstructed attractor: same topology as the true state space, from one signal.</figcaption>
+![The Rössler orbit in measured x-y coordinates beside a delay-coordinate view of its x channel](../assets/figures/tutorials/reconstruction-compare.svg){ loading=lazy }
+<figcaption><span class="lbl">FIG 1</span> · the Rössler record in two coordinate systems. The delayed view uses one channel; the shapes need not look identical. A lag of 25 samples at dt=0.05 corresponds to 1.25 time units.</figcaption>
 </figure>
 
 </div>
 
 ## 5. Measure the attractor — from the reconstruction
 
-Now the payoff. Takens guarantees the reconstruction preserves the *invariants*,
-so any quantity that depends only on the attractor's geometry or dynamics can be
-computed from the embedded cloud — no equations needed.
+We can now apply point-cloud and time-series estimators to the reconstruction.
+Their finite-data accuracy still depends on sampling, reconstruction quality,
+noise, neighbour selection and the fitted scale range.
 
 **Fractal dimension.** The [correlation dimension](../analysis/dimensions.md)
 (Grassberger & Procaccia, 1983) reads off the point cloud directly. On a
 reconstructed *flow* you must set a Theiler window, because temporally adjacent
-samples sit spuriously close and bias the estimate downward — a few delays is a
-safe choice:
+samples sit spuriously close and bias the estimate downward. A window of one
+delay is an initial choice here; check its sensitivity rather than treating it
+as a universally sufficient exclusion:
 
 ```python
-ts.analysis.correlation_dimension(emb, theiler=tau)     # ≈ 1.74   (Rössler D2, from x alone)
+ts.analysis.correlation_dimension(emb, theiler=tau)     # a finite-record estimate
 ```
 
 **Largest Lyapunov exponent.** [`lyapunov_from_data`](../analysis/lyapunov.md)
@@ -159,19 +171,19 @@ res = ts.analysis.lyapunov_from_data(x, dimension=3, delay=tau, dt=0.05, k_max=8
 res.times, res.divergence      # the S(k) curve — plot it, find the linear stretch
 ```
 
-The curve $S(k)$ rises, flattens, then climbs into a clean linear region roughly
-between look-ahead times $0.3$ and $1.3$ (sample indices 6–26). The exponent is
-the slope of *that* stretch, not of the whole curve — fit it explicitly:
+Inspect $S(k)$ for a credible approximately linear interval before saturation.
+The fitted slope depends on the interval. The following is one candidate window
+for this example (indices 6–26, or times 0.3–1.3), which you should compare with
+nearby windows:
 
 ```python
 res = ts.analysis.lyapunov_from_data(x, dimension=3, delay=tau, dt=0.05, k_max=80, fit=(6, 26))
-float(res)             # ≈ 0.074   per unit time — positive, so chaotic
+float(res)             # approximately 0.06 per unit time in this finite record
 ```
 
 !!! warning "Never quote the automatic fit blind"
-    On a flow the divergence curve typically overshoots before it settles, so the
-    default automatic fit **overestimates** (here it returns $\approx 0.13$, well
-    above the truth). The estimate is only as good as the scaling region you
+    A divergence curve can have several slopes before it saturates, so the
+    automatic interval can give a biased estimate. The result is only as good as the scaling region you
     choose — always look at `res.times` vs `res.divergence` and pass an explicit
     `fit=(lo, hi)` before quoting a publishable value. This is *the* place
     from-data exponents go wrong.
@@ -179,25 +191,24 @@ float(res)             # ≈ 0.074   per unit time — positive, so chaotic
 **How did we do?** We can cheat now and check against the model we threw away:
 
 ```python
-# the truth, from the full state and the equations
-ts.analysis.correlation_dimension(full.y[1000:], theiler=tau)                     # ≈ 1.75
+# a second estimate, from the full state and the equations
+ts.analysis.correlation_dimension(full.y[1000:], theiler=tau)
 ts.analysis.lyapunov_spectrum(ts.systems.Rossler(), k=1, ic=[1.0, 0.0, 0.0])  # ≈ 0.07
 ```
 
-$D_2 = 1.74$ from one channel versus $1.75$ from the full state; $\lambda \approx
-0.074$ from the recording versus the true $\approx 0.06$–$0.07$ (literature:
-$0.071$). One scalar signal, and we recovered both invariants to within their
-estimation error.
+The full-state and reconstructed dimension estimates are close for this record,
+but both can share finite-length and scale-selection bias. Their agreement does
+not establish the asymptotic dimension. Likewise, compare the data-driven slope
+with longer variational calculations and inspect fit sensitivity before claiming
+an uncertainty interval.
 
 ## What you built
 
 Starting from a single scalar channel with the model discarded, you rebuilt the
-attractor by delay embedding, chose $\tau$ and $m$ from mutual information and
-false-nearest-neighbours, measured the correlation dimension ($1.74$) and the
-largest Lyapunov exponent ($0.074$ per unit time) *from the recording*, and
-checked both against the ground truth we had thrown away. This is the standard
-route from an experimental time series to a defensible statement about the
-system behind it.
+state-space view by delay embedding, chose candidate $\tau$ and $m$ from mutual
+information and false-nearest-neighbours, and inspected dimension and separation
+rate estimates from the recording. The full-state comparison is a useful
+diagnostic; convergence, noise and scaling checks remain part of the experiment.
 
 ## See also
 

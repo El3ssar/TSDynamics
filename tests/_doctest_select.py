@@ -210,12 +210,7 @@ EXEMPT_PAGES: dict[str, str] = {}
 
 #: page -> why it is nightly-only.  These pass, but each runs minutes of
 #: simulation, so they stay out of the change-scoped inner loop.
-SLOW_PAGES: dict[str, str] = {
-    "visualization/composition.md": (
-        "~240 s: builds many multi-panel composites, several of them 3-D"
-    ),
-    "visualization/animation.md": ("~105 s: renders animations, including an mp4/gif encode"),
-}
+SLOW_PAGES: dict[str, str] = {}
 
 
 def discover_doc_pages() -> tuple[str, ...]:

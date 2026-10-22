@@ -16,6 +16,7 @@ reproducible: the same explicit initial conditions / seeds appear in both.
 
 from __future__ import annotations
 
+import argparse
 import pathlib
 
 OUT = pathlib.Path(__file__).resolve().parents[1] / "assets" / "figures" / "tutorials"
@@ -361,6 +362,150 @@ def fig_double_well_switching(plt, out_path):
     plt.close(fig)
 
 
+def _save_plot(plot, out_path, *, size=(1120, 440)):
+    """Keep tutorial illustrations on one readable, reproducible paper surface."""
+    plot.theme(
+        "minimal",
+        background="#fbfcfd",
+        foreground="#243240",
+        font_family="sans-serif",
+        font_size=10,
+        title_size=12,
+        palette=[TEAL, INDIGO, AMBER, ROSE],
+    ).save(str(out_path), size=size)
+
+
+def fig_first_figure(plt, out_path):
+    """Render the seven-task introduction's exact two-panel public-API example."""
+    import tsdynamics as ts
+
+    traj = ts.systems.Lorenz(ic=[1, 1, 1]).run(final_time=100.0, dt=0.01)
+    phase = ts.plot(traj, components=["x", "z"], color=TEAL, linewidth=0.6)
+    signal = ts.plot(traj, components="x", color=INDIGO, linewidth=0.7)
+    phase.relabel(title="Geometry in state space")
+    signal.relabel(title="The same orbit through time")
+    _save_plot(phase | signal, out_path)
+    plt.close("all")
+
+
+def fig_chaos_separation(plt, out_path):
+    """Neighbouring Lorenz orbits: visible agreement, then finite-scale separation."""
+    import numpy as np
+
+    import tsdynamics as ts
+
+    model = ts.systems.Lorenz()
+    a = model.run(final_time=45.0, dt=0.01, ic=[1, 1, 1])
+    b = model.run(final_time=45.0, dt=0.01, ic=[1 + 1e-9, 1, 1])
+    paths = ts.plot(a, b, components="x", linewidth=0.8, legend=False).recolor(TEAL, INDIGO)
+    paths.relabel(title="Two almost identical starts")
+    separation = ts.viz.draw(
+        {"x": a.t, "y": np.linalg.norm(a.y - b.y, axis=1)},
+        "line",
+        color=INDIGO,
+        linewidth=1.3,
+        xlabel="time",
+        ylabel="distance between states",
+        title="Separation grows, then saturates",
+        yscale="log",
+    )
+    separation.hline(1.0, color=AMBER, linestyle="--", linewidth=0.9)
+    _save_plot(paths / separation, out_path, size=(1120, 640))
+    plt.close("all")
+
+
+def fig_reconstruction_diagnostics(plt, out_path):
+    """Inspect delay/dimension heuristics rather than only printing their answers."""
+    import tsdynamics as ts
+
+    full = ts.systems.Rossler().run(final_time=400.0, dt=0.05, ic=[1, 0, 0])
+    x = full.y[1000:, 0]
+    mi = ts.analysis.mutual_information(x, max_delay=120)
+    cao = ts.analysis.embedding_dimension(x, method="cao", delay=mi.optimal_lag, max_dim=8)
+    delay_plot = ts.plot(mi).relabel(title="Choose a delay from the curve")
+    dimension_plot = ts.plot(cao).relabel(title="Check dimension saturation")
+    _save_plot(delay_plot | dimension_plot, out_path)
+    plt.close("all")
+
+
+def fig_reconstruction_compare(plt, out_path):
+    """Compare the tutorial's Rössler signal in measured and delayed coordinates."""
+    import tsdynamics as ts
+
+    observed = ts.systems.Rossler().run(final_time=400.0, dt=0.05, ic=[1, 0, 0]).after(50.0)
+    tau = ts.analysis.optimal_delay(observed.y[:, 0], method="mi", max_delay=120)
+    original = ts.plot(observed, components=["x", "y"], color=TEAL, linewidth=0.6)
+    original.relabel(title="Two coordinates from the full state")
+    recovered = ts.plot(observed["x",], "delay_embedding", delay=tau, color=INDIGO, linewidth=0.6)
+    recovered.relabel(title="Delayed copies of one channel")
+    _save_plot(original | recovered, out_path)
+    plt.close("all")
+
+
+def fig_lyapunov_readout(plt, out_path):
+    """Plot the actual finite-time result used by the Lorenz tutorial."""
+    import tsdynamics as ts
+
+    result = ts.analysis.lyapunov_spectrum(
+        ts.systems.Lorenz(ic=[1, 1, 1]), final_time=300.0, dt=0.05, transient=40.0
+    )
+    _save_plot(ts.plot(result), out_path, size=(1000, 440))
+    plt.close("all")
+
+
+def fig_tutorial_overview(plt, out_path):
+    """Four scientific questions assembled with the public layout operators."""
+    import numpy as np
+
+    import tsdynamics as ts
+
+    traj = ts.systems.Lorenz(ic=[1, 1, 1]).run(final_time=60, dt=0.02)
+    geometry = ts.plot(traj, components=["x", "z"], color=TEAL, linewidth=0.6)
+    geometry.relabel(title="Explore geometry")
+    signal = ts.plot(traj, components="x", color=INDIGO, linewidth=0.7)
+    signal.relabel(title="Read the motion")
+    diagram = ts.analysis.orbit_diagram(
+        ts.systems.Logistic(),
+        "r",
+        np.linspace(2.8, 4.0, 120),
+        points_per_value=40,
+        transient=500,
+    )
+    bifurcations = ts.plot(diagram, color=TEAL, markersize=0.6, alpha=0.65)
+    bifurcations.relabel(title="Find transitions")
+    path = ts.systems.OrnsteinUhlenbeck().run(final_time=15, dt=0.02, ic=[2], seed=2)
+    noise = ts.plot(path, color=INDIGO, linewidth=0.9).relabel(title="Work with noise")
+    _save_plot((geometry | bifurcations) / (signal | noise), out_path, size=(1120, 720))
+    plt.close("all")
+
+
+def fig_logistic_windows(plt, out_path):
+    """Four finite records show what branches in the logistic diagram represent."""
+    import tsdynamics as ts
+
+    panels = []
+    for r, label, color in (
+        (2.8, "one level", TEAL),
+        (3.2, "two alternating levels", INDIGO),
+        (3.55, "eight levels", TEAL),
+        (3.9, "no short period resolved", INDIGO),
+    ):
+        orbit = ts.systems.Logistic(r=r).run(steps=120, transient=1000, ic=[0.2])
+        panels.append(
+            ts.plot(
+                orbit,
+                components="x",
+                color=color,
+                linewidth=0.8,
+                marker="o",
+                markersize=2,
+                title=f"r = {r}: {label}",
+            )
+        )
+    _save_plot((panels[0] | panels[1]) / (panels[2] | panels[3]), out_path, size=(1120, 680))
+    plt.close("all")
+
+
 FIGURES = {
     "basins-image": fig_basins_image,
     "basins-continuation": fig_basins_continuation,
@@ -368,14 +513,28 @@ FIGURES = {
     "return-map": fig_return_map,
     "ou-ensemble": fig_ou_ensemble,
     "double-well-switching": fig_double_well_switching,
+    "first-figure": fig_first_figure,
+    "chaos-separation": fig_chaos_separation,
+    "reconstruction-diagnostics": fig_reconstruction_diagnostics,
+    "reconstruction-compare": fig_reconstruction_compare,
+    "lyapunov-readout": fig_lyapunov_readout,
+    "overview": fig_tutorial_overview,
+    "logistic-windows": fig_logistic_windows,
 }
 
 
 def main():
     """Render every tutorial figure to docs/assets/figures/tutorials/<slug>.svg."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--only", nargs="+", choices=sorted(FIGURES), help="Render selected figures"
+    )
+    args = parser.parse_args()
     plt = _style()
     OUT.mkdir(parents=True, exist_ok=True)
     for slug, fn in FIGURES.items():
+        if args.only and slug not in args.only:
+            continue
         plt.close("all")
         out = OUT / f"{slug}.svg"
         fn(plt, str(out))

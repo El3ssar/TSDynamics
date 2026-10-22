@@ -42,6 +42,7 @@ from ._common import (
     _recurrence_grid,
     _region_example,
     coerce_region,
+    positive_seed_count,
     reject_unknown_fsm,
 )
 from .attractors import (
@@ -773,6 +774,7 @@ def basin_fractions(
     complements the linear-stability paradigm", *Nature Physics* **9**, 89 (2013).
     """
     _reject_unsupported(system, "basin_fractions")
+    n_seeds = positive_seed_count(n_seeds)
     reject_unknown_fsm(fsm, analysis="basin_fractions")
     region = coerce_region(region, analysis="basin_fractions", system=system, want_grid=False)
     cellgrid = _recurrence_grid(region, resolution)

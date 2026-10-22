@@ -1,4 +1,4 @@
-"""Poincaré sections from systems (exact crossings) or trajectories (interpolation)."""
+"""Poincaré sections from systems (refined crossings) or trajectories (interpolation)."""
 
 from __future__ import annotations
 
@@ -176,9 +176,13 @@ def poincare_section(
     start = _seeded_ic(system, ic, seed) if ic is None else np.asarray(ic, dtype=float)
     if start is not None:
         system = system.copy()
+        # Automatic plane selection probes fresh runs of a copy. Pin the chosen
+        # start on this private clone so that probe and actual section use the
+        # same orbit, without changing the caller's configured initial state.
+        system.ic = np.asarray(start, dtype=float).copy()
         system.reinit(start)
     pmap = PoincareMap(system, plane, direction=direction, dt=dt, max_time=max_time)
-    return pmap.run(crossings, transient=skip_crossings)
+    return pmap.run(crossings, ic=start, transient=skip_crossings)
 
 
 def _reject_axes_pair(subject: Any, plane: tuple[Any, ...] | None) -> None:

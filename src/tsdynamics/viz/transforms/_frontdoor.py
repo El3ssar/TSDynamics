@@ -86,7 +86,7 @@ def _as_call(sel: Any) -> Any:
 
 
 def _flatten_positionals(things: tuple[Any, ...]) -> list[Any]:
-    """Splice every list/tuple **of plottables** into the positional stream.
+    """Splice comparison containers while preserving declared aggregate subjects.
 
     CONTRACT §6.2's grammar table says a ``list``/``tuple`` of plottables is
     unwrapped to subjects, so ``plot([a, b]) == plot(a, b)``.  It used to hold
@@ -101,9 +101,14 @@ def _flatten_positionals(things: tuple[Any, ...]) -> list[Any]:
     a numeric list (``plot([0.1, 0.2, 0.3])`` is one series) and the recorded
     ``(times, estimates)`` pair some transforms take.  The sole-argument spelling
     keeps :func:`~tsdynamics.viz.compose.unwrap_container`'s older, looser rule.
+
+    A selected transform that accepts the whole container but none of its
+    individual members consumes one aggregate instead. This lets an ensemble
+    transform summarize a trajectory list without drawing separate false bands.
     """
     if len(things) == 1:
         return unwrap_container(things)
+    records = [get(_selector_name(thing)) for thing in things if _is_selector(thing)]
     out: list[Any] = []
     for thing in things:
         if (
@@ -111,6 +116,14 @@ def _flatten_positionals(things: tuple[Any, ...]) -> list[Any]:
             and len(thing) > 0
             and _as_call(thing) is thing
             and all(_plot_spec_of(item) is not None for item in thing)
+            # Existing subject metadata distinguishes an aggregate from a
+            # comparison: an array/batch transform admits the container but
+            # refuses its individual trajectories. Do not split that cohort.
+            and not any(
+                record.accepts_subject(thing)
+                and not any(record.accepts_subject(item) for item in thing)
+                for record in records
+            )
         ):
             out.extend(thing)
         else:
@@ -389,7 +402,7 @@ def _pair_up(
         raise InvalidParameterError(
             f"transform(s) {orphans} were named but none of the {len(subjects)} subject(s) "
             f"can be handed to them: they need {' / '.join(needed)}. "
-            f"Pass one — ts.plot(lorenz, {orphans[0]!r}) — or drop the transform."
+            f"Pass one — ts.plot(compatible_subject, {orphans[0]!r}) — or drop the transform."
         )
     return pairs
 

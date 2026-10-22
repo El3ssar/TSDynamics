@@ -90,7 +90,7 @@ make test                                # change-scoped fast tier
 
 ```bash
 uv sync --group docs                              # mkdocs + material + mkdocstrings
-TSD_DOCS_FIGURES=0 uv run mkdocs build --strict   # fast, figure-less validation
+TSD_DOCS_FIGURES=0 TSD_DOCS_PROPS=0 uv run mkdocs build --strict  # fast layout check
 uv run mkdocs serve                               # live preview at 127.0.0.1:8000
 ```
 
@@ -98,10 +98,14 @@ The build must pass `--strict` (CI enforces it). One build-time convention is
 worth knowing:
 
 - **The system catalogue documents itself.** `hooks/docs_autogen.py` renders one
-  page per registered system — equations from the symbolic definition, a
-  parameter table, the `reference`, and a cached phase portrait — so a new system
-  needs no hand-written page. `TSD_DOCS_FIGURES=0` skips the (slow) figure
-  rendering during local previews.
+  page per built-in system, including equations, parameter descriptions,
+  runnable examples, static and animated views, and measured diagnostics with
+  their conditions. New importable models get bounded automatic measurements;
+  unsupported or unfinished results are explained explicitly. There is no
+  hand-written system page or navigation entry. See
+  [the generated-page workflow](adding-a-system.md#what-the-generated-page-includes).
+  `TSD_DOCS_FIGURES=0` skips illustration rendering; `TSD_DOCS_PROPS=0` skips new
+  measurements. Matching recorded diagnostics remain available in either mode.
 
 When you add an analysis, add its prose page under
 `docs/analysis/`, an mkdocstrings stanza on the matching `docs/reference/*` page,

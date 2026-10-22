@@ -501,7 +501,6 @@ def _spectrum_core(
     occ = [_min_cover_occupancy(points, e, mins, offsets) for e in scales]
     x = np.log(scales)
     mask = _informative_mask(occ, n, scales, diam, min_occupancy, min_resolution)
-    where = np.nonzero(mask)[0]
 
     # Read once, outside the loop: every order is measured on the same point
     # set, so a whole spectrum must warn about a runaway orbit exactly once.
@@ -515,9 +514,13 @@ def _spectrum_core(
             estimate=fit.slope,
             stderr=fit.stderr,
             kind="generalized",
-            abscissa=x,
-            ordinate=y,
-            fit_region=(int(where[fit.lo]), int(where[fit.hi])),
+            # The mask can contain holes when box alignment changes the
+            # occupancy near its cutoff. Endpoint indices into the full curve
+            # would re-include rejected scales, so plots and R² would describe
+            # a different fit from the reported estimate.
+            abscissa=x[mask],
+            ordinate=y[mask],
+            fit_region=(fit.lo, fit.hi),
             intercept=fit.intercept,
             q=float(q),
             meta={

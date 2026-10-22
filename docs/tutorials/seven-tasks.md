@@ -1,4 +1,5 @@
 ---
+title: Seven tasks in one sitting
 description: Seven tasks in one sitting — simulate a system, test it for chaos, draw a bifurcation diagram of a map and of a flow, find fixed points, paint basins, animate a phase portrait over a vector field, and define a system of your own. Every line runs.
 ---
 
@@ -72,6 +73,21 @@ Draw it:
 ```python
 ts.plot(traj, color="#4B3F9E", title="Lorenz")
 ```
+
+Give the same data two views, side by side:
+
+```python
+phase = ts.plot(traj, components=["x", "z"], color="#11857A")
+signal = ts.plot(traj, components="x", color="#574FCF")
+(phase | signal).save("first-figure.svg")
+```
+
+<figure class="tsd-showcase" markdown="1">
+
+![A Lorenz x-z phase portrait beside the x component evolving through time](../assets/figures/tutorials/first-figure.svg){ loading=lazy }
+
+<figcaption><span class="tsd-caption-label">A figure is an expression</span><br><code>a | b</code> places panels beside each other; <code>a / b</code> stacks them; <code>a + b</code> overlays compatible views. Parentheses let you combine arrangements. Continue with the <a href="../../visualization/composition/">composition guide</a> for examples and axis sharing.</figcaption>
+</figure>
 
 ---
 
@@ -185,8 +201,7 @@ fps.eigenvalues[0]     # the Jacobian spectrum at that point
 fps.is_stable[0]       # False
 ```
 
-**Regions are plain bounds** — one `(lo, hi)` pair per state component, and never
-a library type:
+**Regions accept plain bounds** — one `(lo, hi)` pair per state component:
 
 ```python
 vdp = ts.systems.VanDerPol(params={"mu": 1.0})
@@ -195,8 +210,9 @@ print(ts.analysis.fixed_points(vdp, region=[(-3, 3), (-3, 3)]))
 #     [0] x* = [0. 0.]  unstable  Re(λ)max = +0.5
 ```
 
-A single unstable equilibrium in a bounded 2-D flow means the orbits have to go
-*somewhere*: that is the limit cycle you will see in §6.
+For Van der Pol, the unstable origin is consistent with trajectories spiralling
+out toward the known limit cycle in §6. A numerical root search alone does not
+prove that it found every equilibrium or classify every possible long-term orbit.
 
 For a map, `periodic_orbits` finds period-$p$ orbits the same way, and
 `fixed_points(..., method="interval")` replaces multi-start Newton with a
@@ -249,8 +265,7 @@ print(ts.analysis.basin_entropy(basins.labels))
 
 `Sbb > ln 2` is the basin-entropy criterion for a **fractal** boundary under
 its sampling assumptions; a finite grid alone is not a proof. Here the criterion
-is not met, consistent with a
-smooth manifold separates the wells. And if you want the shares without the
+is not met, consistent with a smooth manifold separating the wells. And if you want the shares without the
 image, Monte-Carlo them instead (basin stability, Menck et al. 2013):
 
 ```python
@@ -327,7 +342,7 @@ class RosenzweigMacArthur(ts.ContinuousSystem):
 ```
 
 That is the whole contract. `variables` names the components and **`dim` follows
-from it**; `params` are runtime values, so changing one is free. The body builds
+from it**; ordinary `params` are runtime values, so changing one reuses the compiled equations. The body builds
 **symbolic** expressions — plain arithmetic plus `symengine` functions (`sin`,
 `exp`, `sqrt`, …) — and `u(i)` reads component `i`. It is lowered to the Rust
 engine once, not called sample by sample, so NumPy and a Python `if` on the state

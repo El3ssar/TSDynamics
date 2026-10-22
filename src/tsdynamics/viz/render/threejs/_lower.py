@@ -28,14 +28,14 @@ micro-optimisation.  Three decisions keep it small, each measured:
   triangulation, not a restatement of vertex order.
 - **A scalar ``c`` channel instead of pre-expanded per-vertex RGB.**  Emitting
   three floats per vertex to encode one scalar was 38.6% of the payload; the
-  loader owns the colour ramp (and, for the brand comet, ignores it entirely).
+  loader owns the colour ramp and applies it to static and animated geometry.
 
 Schema
 ------
 The payload is a JSON object::
 
     {
-        "schema_version": <int>,            # tsdynamics.viz.export.SCHEMA_VERSION
+        "schema_version": 3,                # independent geometry schema
         "kind": "<PlotSpec.kind value>",    # the semantic spec kind
         "title": "<plot title>",
         "geometries": [ <geometry>, ... ],  # one per drawable layer
@@ -67,9 +67,11 @@ The payload is a JSON object::
                 "loop": <bool>,
                 "pingpong": <bool>,
                 "trail_length_samples": <int | null>,   # null ⇒ persistent trail
+                "backdrop": <bool>,
+                "backdrop_alpha": <float>,
                 "head": <bool>,
                 "head_size": <float>,
-                "head_color": [<r>, <g>, <b>] | null,
+                "head_color": "<CSS color>" | [<r>, <g>, <b>] | null,
                 "n_samples": <int>               # vertices on the longest animated line
             }
         }
@@ -77,7 +79,7 @@ The payload is a JSON object::
 
 A static (non-animated) spec carries **no** ``animation`` key in ``metadata``.
 When ``spec.animation`` is present the geometry buffers are unchanged: the loader
-animates by rewriting a fixed-length trail window over the full-curve backdrop, so
+animates by changing a draw range over the full-curve backdrop, so
 no positions are re-uploaded and no per-vertex time attribute is needed (the line
 vertices are already the natural reveal order).  ``n_samples`` and
 ``trail_length_samples`` are reported **in capped vertices** — after the cap the
@@ -89,7 +91,6 @@ that the three.js backend honors::
 
     "material": {
         "color":       "<CSS string | null>",   # explicit layer color
-        "linewidth":   <float | null>,          # line width (pt)
         "markersize":  <float | null>,          # point size (pt)
         "alpha":       <float | null>,          # 0..1 opacity
         "zorder":      <int | null>             # maps to THREE renderOrder
@@ -198,7 +199,6 @@ import numpy as np
 
 from ..._resample import resample_arclength, uniform_subsample_indices
 from ..._visibility import listing_dir
-from ...export import SCHEMA_VERSION
 from ...spec import PlotKind
 from ...style import normalize_style
 from ..caps import VisualizationDegraded
@@ -210,6 +210,9 @@ if TYPE_CHECKING:
 __all__ = ["DEFAULT_DECIMALS", "DEFAULT_MAX_POINTS", "lower_spec"]
 
 __dir__ = listing_dir(__all__)
+
+# Geometry has its own browser contract, independent of the reloadable Plot IR.
+_GEOMETRY_SCHEMA_VERSION = 3
 
 #: Default ceiling on the vertices of any single geometry.  40 000 vertices of a
 #: line is a cheap ``THREE.Line`` and — resampled by **arc length** — holds the
@@ -237,6 +240,27 @@ _GEOMETRY_TYPE: dict[PlotKind, str] = {
     PlotKind.MARKERS: "points",
     PlotKind.SURFACE3D: "surface",
 }
+
+
+def _unsupported_marks(spec: PlotSpec) -> list[str]:
+    """List marks with no geometry representation, including every child panel."""
+    return sorted(
+        {str(layer.kind) for layer in spec.layers if layer.kind not in _GEOMETRY_TYPE}
+        | {mark for panel in spec.panels for mark in _unsupported_marks(panel)}
+    )
+
+
+def _unsupported_axes(spec: PlotSpec) -> list[str]:
+    """List axis mappings that cannot be represented by raw geometry."""
+    return sorted(
+        {
+            axis.scale
+            for axis in (spec.x, spec.y, spec.z)
+            if axis is not None and axis.scale != "linear"
+        }
+        | {scale for panel in spec.panels for scale in _unsupported_axes(panel)}
+    )
+
 
 #: Geometry types the reference loader can play a reveal comet on: a ``"line"``
 #: (a swept curve) and a ``"points"`` cloud (a trailing swarm — the loader's
@@ -348,7 +372,33 @@ def lower_spec(
     report = _CapReport(max_points=max_points)
     if spec.is_composite:
         spec = _degrade_animated_composite(spec)
+    if scales := _unsupported_axes(spec):
+        from tsdynamics.errors import InvalidParameterError
+
+        raise InvalidParameterError(
+            f"threejs cannot represent axis scales {', '.join(scales)} without changing the "
+            "coordinate meaning. Use plot.render('matplotlib') or plot.save('figure.svg'), "
+            "or preserve the complete Plot with plot.save('plot.json')."
+        )
+    unsupported = _unsupported_marks(spec)
+    if unsupported:
+        from tsdynamics.errors import InvalidParameterError
+
+        raise InvalidParameterError(
+            f"threejs cannot represent layer marks {', '.join(unsupported)}; exporting would "
+            "omit part of the figure. Use plot.render('matplotlib') or "
+            "plot.save('figure.svg') to draw every layer, or plot.save('plot.json') "
+            "to preserve the complete Plot as data."
+        )
     if spec.is_composite:
+        if any(panel.is_composite for panel in spec.panels):
+            from tsdynamics.errors import InvalidParameterError
+
+            raise InvalidParameterError(
+                "threejs export supports flat panel layouts and cannot represent nested panels. "
+                "Use plot.render('matplotlib') or plot.save('figure.svg') for the nested figure; "
+                "use ts.plot(a, b, c, layout='row') to build a flat threejs layout."
+            )
         payload = _lower_composite(spec, report, decimals)
     else:
         payload = _lower_single(spec, report, decimals)
@@ -473,7 +523,7 @@ def _lower_single(spec: PlotSpec, report: _CapReport, decimals: int | None) -> d
 
     bounds = _bounds(geometries)
     metadata: dict[str, Any] = {
-        "schema_version": SCHEMA_VERSION,
+        "schema_version": _GEOMETRY_SCHEMA_VERSION,
         "labels": _axis_labels(spec),
         "bounds": bounds,
         "camera": _camera(spec, bounds),
@@ -483,7 +533,7 @@ def _lower_single(spec: PlotSpec, report: _CapReport, decimals: int | None) -> d
     if animation is not None:
         metadata["animation"] = animation
     return {
-        "schema_version": SCHEMA_VERSION,
+        "schema_version": _GEOMETRY_SCHEMA_VERSION,
         "kind": spec.kind.value,
         "title": spec.title,
         "geometries": geometries,
@@ -507,13 +557,22 @@ def _lower_composite(spec: PlotSpec, report: _CapReport, decimals: int | None) -
     """
     panels_in = spec.panels
     rows, cols = _composite_grid(spec.layout, len(panels_in))
+    lowered = [_lower_single(panel, report, decimals) for panel in panels_in]
+    span = max(
+        (
+            sub["metadata"]["bounds"][axis][1] - sub["metadata"]["bounds"][axis][0]
+            for sub in lowered
+            for axis in ("x", "y")
+        ),
+        default=1.0,
+    )
+    pitch = max(span, 1.0) * 1.2
 
     panels_out: list[dict[str, Any]] = []
     placed_geometries: list[dict[str, Any]] = []
-    for i, panel in enumerate(panels_in):
-        sub = _lower_single(panel, report, decimals)
+    for i, (panel, sub) in enumerate(zip(panels_in, lowered, strict=True)):
         row, col = divmod(i, cols) if cols else (i, 0)
-        offset = _panel_offset(sub["metadata"]["bounds"], row, col)
+        offset = _panel_offset(sub["metadata"]["bounds"], row, col, pitch=pitch)
         panels_out.append(
             {
                 "index": i,
@@ -532,13 +591,13 @@ def _lower_composite(spec: PlotSpec, report: _CapReport, decimals: int | None) -
 
     bounds = _bounds(placed_geometries)
     metadata = {
-        "schema_version": SCHEMA_VERSION,
+        "schema_version": _GEOMETRY_SCHEMA_VERSION,
         "layout": _layout_dict(spec.layout, rows, cols),
         "bounds": bounds,
         "camera": _camera(spec, bounds),
     }
     return {
-        "schema_version": SCHEMA_VERSION,
+        "schema_version": _GEOMETRY_SCHEMA_VERSION,
         "kind": spec.kind.value,
         "title": spec.title,
         "geometries": [],
@@ -574,7 +633,9 @@ def _composite_grid(layout: Layout | None, n: int) -> tuple[int, int]:
     return n, 1  # "stack" (default): one column
 
 
-def _panel_offset(bounds: dict[str, list[float]], row: int, col: int) -> list[float]:
+def _panel_offset(
+    bounds: dict[str, list[float]], row: int, col: int, *, pitch: float
+) -> list[float]:
     """Local-origin translation placing a panel at grid cell ``(row, col)``.
 
     Each panel is centred on its own bounds, then translated so that adjacent
@@ -582,10 +643,6 @@ def _panel_offset(bounds: dict[str, list[float]], row: int, col: int) -> list[fl
     z untouched.  The span scale keeps panels from overlapping regardless of their
     individual extents.
     """
-    span_x = bounds["x"][1] - bounds["x"][0]
-    span_y = bounds["y"][1] - bounds["y"][0]
-    span = max(span_x, span_y, 1.0)
-    pitch = span * 1.2  # a small gutter between cells
     cx = (bounds["x"][0] + bounds["x"][1]) / 2.0
     cy = (bounds["y"][0] + bounds["y"][1]) / 2.0
     return [col * pitch - cx, -row * pitch - cy, 0.0]
@@ -650,9 +707,12 @@ def _lower_layer(
         # A surface is a triangulated grid: thinning it would need a 2-D mesh
         # decimation, not a 1-D resample, so the cap deliberately does not apply.
         return _lower_surface(layer, palette_color=palette_color, decimals=decimals)
-    return _lower_line_or_points(
+    geometry = _lower_line_or_points(
         layer, geom_type, palette_color=palette_color, max_points=max_points, decimals=decimals
     )
+    if geometry is not None and layer.kind == PlotKind.MARKERS:
+        geometry["reveal"] = False  # annotation glyphs stay visible throughout a movie
+    return geometry
 
 
 def _lower_line_or_points(
@@ -807,7 +867,7 @@ def _parse_rgb(color: Any) -> tuple[float, float, float] | None:
 def _material_style(layer: Layer, *, palette_color: str | None = None) -> dict[str, Any]:
     """Extract the three.js-honored per-layer style keys into a ``material`` dict.
 
-    The three.js backend honors: ``color``, ``linewidth``, ``markersize``,
+    The three.js backend honors: ``color``, ``markersize``,
     ``alpha``, and ``zorder`` (mapped to ``renderOrder`` by the loader).
     ``linestyle``, marker *shape*, and ``cmap`` are excluded from the backend's
     ``honored_by`` set and are **not** serialized here — the loader owns a fixed
@@ -836,16 +896,14 @@ def _material_style(layer: Layer, *, palette_color: str | None = None) -> dict[s
     """
     canon = normalize_style(layer.style, warn=False)
     # Resolve the color: explicit style > palette auto-color.
-    color: str | None = canon.get("color")
+    color: Any = canon.get("color")
     if color is None and palette_color is not None:
         color = palette_color
-    lw = canon.get("linewidth")
     ms = canon.get("markersize")
     alpha = canon.get("alpha")
     zorder = canon.get("zorder")
     return {
-        "color": str(color) if color is not None else None,
-        "linewidth": float(lw) if lw is not None else None,
+        "color": _head_color(color),
         "markersize": float(ms) if ms is not None else None,
         "alpha": float(alpha) if alpha is not None else None,
         "zorder": int(zorder) if zorder is not None else None,
@@ -1008,10 +1066,13 @@ def _animation_metadata(spec: PlotSpec, geometries: list[dict[str, Any]]) -> dic
     return {
         "fps": float(anim.fps),
         "duration": _playback_seconds(anim, n_samples),
+        "reverse_duration": anim._reverse_seconds(n_samples),
         "n_frames": None if anim.n_frames is None else int(anim.n_frames),
         "loop": bool(anim.loop),
         "pingpong": bool(anim.pingpong),
         "trail_length_samples": trail,
+        "backdrop": bool(anim.backdrop),
+        "backdrop_alpha": float(anim.backdrop_alpha),
         "head": bool(anim.head),
         "head_size": float(anim.head_size),
         "head_color": _head_color(anim.head_color),
@@ -1042,20 +1103,21 @@ def _warn_unrevealable(spec: PlotSpec) -> None:
     kind = spec.kind.value if hasattr(spec.kind, "value") else str(spec.kind)
     warnings.warn(
         f"threejs export: the animation on this {kind!r} spec was dropped — its "
-        "reveal comet needs a line (LINE / LINE3D) geometry, but the spec has only "
-        "surface layers. Exporting a static payload instead.",
+        "reveal comet needs a line (LINE / LINE3D) or orbit point-cloud geometry; "
+        "annotation markers and surface layers stay static. Exporting a static payload instead.",
         VisualizationDegraded,
         stacklevel=4,
     )
 
 
-def _head_color(color: Any) -> list[float] | None:
-    """Coerce the head color to a plain ``[r, g, b]`` list, or ``None``.
+def _head_color(color: Any) -> str | list[float] | None:
+    """Keep a CSS colour or coerce an RGB sequence to a plain triple.
 
-    Reuses :func:`_parse_rgb` (an RGB / RGBA sequence → a triple; a named-color
-    string / ``None`` → ``None``) but returns a JSON-friendly ``list`` so the
-    animation block stays plain-list / plain-float like the rest of the payload.
+    Reuses :func:`_parse_rgb` for numeric sequences; named colours stay CSS strings
+    understood by THREE.Color, without importing an optional plotting library.
     """
+    if isinstance(color, str):
+        return color
     rgb = _parse_rgb(color)
     return None if rgb is None else [rgb[0], rgb[1], rgb[2]]
 
@@ -1071,7 +1133,7 @@ def _animated_sample_count(geometries: list[dict[str, Any]]) -> tuple[int, int]:
     for geom in geometries:
         # A points cloud has no chord to sweep, but the reference loader plays it
         # as a trailing swarm, so it counts as revealable alongside lines.
-        if geom["type"] not in _REVEALABLE_GEOMETRY:
+        if geom["type"] not in _REVEALABLE_GEOMETRY or not geom.get("reveal", True):
             continue
         if geom["n_vertices"] > n:
             n = int(geom["n_vertices"])

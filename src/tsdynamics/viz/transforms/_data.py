@@ -198,7 +198,8 @@ def _curvature(t: np.ndarray, pts: np.ndarray) -> np.ndarray:
         np.clip(s1 * np.einsum("ij,ij->i", r2, r2) - np.einsum("ij,ij->i", r1, r2) ** 2, 0.0, None)
     )
     den = np.power(s1, 1.5)
-    return np.asarray(np.divide(num, den, out=np.zeros_like(num), where=den > 1e-12), dtype=float)
+    valid = (den > 0.0) & np.isfinite(den) & np.isfinite(num)
+    return np.asarray(np.divide(num, den, out=np.zeros_like(num), where=valid), dtype=float)
 
 
 #: Named per-point colour fields: ``name -> f(t, drawn_points) -> (T,) values`` for
@@ -681,8 +682,16 @@ def _delay_labels(series: Any, components: Any, label: str, lag: int) -> tuple[s
             name = _label(_component_index(components, names, y.shape[1]), names)
         elif isinstance(components, str):
             name = components
-    dt = getattr(series, "dt", None)
-    if dt is None:
+    is_trajectory = (
+        getattr(series, "t", None) is not None and getattr(series, "y", None) is not None
+    )
+    if is_trajectory:
+        from tsdynamics.data.trajectory import _axis_dt
+
+        dt = _axis_dt(np.asarray(series.t, dtype=float))
+    else:
+        dt = getattr(series, "dt", None)
+    if dt is None and not is_trajectory:
         meta = getattr(series, "meta", None)
         dt = meta.get("dt") if isinstance(meta, dict) else None
     try:
@@ -1410,6 +1419,8 @@ def spatial_field(
     _, y, _, _ = _split_traj(source)
     shape, labels = _resolve_field_shape(source, field_shape)
     block = _select_field_block(y, shape, labels, components)
+    block_index = _field_block_index(y, shape, labels, components)
+    field_name = labels[block_index] if labels else "u"
     frames = block.reshape(block.shape[0], *shape)
     meta = {**_meta(source), "field_shape": tuple(int(n) for n in shape)}
     title = _title(source)
@@ -1433,7 +1444,7 @@ def spatial_field(
             primitives=("image", "surface3d", "contour"),
             aspect="equal",
             title=title,
-            color_label="u",
+            color_label=field_name,
             # Fix the colour range across *all* frames so an animated movie never
             # re-scales between frames; a static render uses the same range.
             clim=(float(finite.min()), float(finite.max())) if finite.size else None,
@@ -1444,8 +1455,8 @@ def spatial_field(
         "spatial_field",
         make_frame(FrameSpace.GRID2, ("x",), ndim=1),
         channels={"x": np.arange(final.shape[0], dtype=float), "y": final, "frames": frames},
-        label="u(x)",
-        axis_labels=("x", "u"),
+        label=f"{field_name}(x)",
+        axis_labels=("x", field_name),
         chosen_primitive="line",
         primitives=("line", "points"),
         title=title,
@@ -1482,6 +1493,21 @@ def _select_field_block(
 ) -> np.ndarray:
     """Slice the chosen field block (shape ``(T, prod(shape))``) out of the state."""
     cells = int(np.prod(shape))
+    block = _field_block_index(y, shape, labels, components)
+    lo = block * cells
+    return y[:, lo : lo + cells]
+
+
+def _field_block_index(
+    y: np.ndarray,
+    shape: tuple[int, ...],
+    labels: tuple[str, ...] | None,
+    components: int | str | None,
+) -> int:
+    """Resolve the selected field once for consistent data and quantity labels."""
+    from tsdynamics.errors import InvalidParameterError
+
+    cells = int(np.prod(shape))
     n_blocks = max(1, y.shape[1] // cells) if cells else 1
     if labels is not None:
         n_blocks = len(labels)
@@ -1500,9 +1526,14 @@ def _select_field_block(
                 f"unknown field block {components!r}; declared field_labels: {labels}"
             ) from None
     else:
-        block = int(components) % n_blocks
-    lo = block * cells
-    return y[:, lo : lo + cells]
+        index = int(components)
+        if index != components or not -n_blocks <= index < n_blocks:
+            raise InvalidParameterError(
+                f"field block {components!r} is out of range for {n_blocks} fields. "
+                "Select a declared field label or an index in that range."
+            )
+        block = index % n_blocks
+    return block
 
 
 #: Read by ``tsdynamics.viz.producers`` — the migrated names, so the shim module

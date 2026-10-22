@@ -129,6 +129,15 @@ def test_grid_explicit_rows_cols_honoured():
     assert len(fig.data) == 3
 
 
+def test_equal_aspect_anchors_each_panel_to_its_own_x_axis():
+    panels = [_ts_panel(label) for label in ("a", "b")]
+    for panel in panels:
+        panel.aspect = "equal"
+    fig = _render(_composite(panels, mode="row"))
+    assert fig.layout.yaxis.scaleanchor == "x"
+    assert fig.layout.yaxis2.scaleanchor == "x2"
+
+
 # ---------------------------------------------------------------------------
 # 3-D and mixed panels (scene cells)
 # ---------------------------------------------------------------------------

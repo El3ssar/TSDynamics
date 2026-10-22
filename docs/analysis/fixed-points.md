@@ -203,12 +203,18 @@ a small basin, so seed it well: `transient` forward-integrates the guess onto a
 stable cycle first (widening the Newton basin), and the guess itself defaults to
 an [`estimate_period`](#estimating-a-period) read of a burn-in trajectory.
 
+This shooting method requires an autonomous right-hand side. Explicit forcing
+is refused: for $x'=\cos t$, returning to $x=0$ at $t=\pi$ does not make $\pi$
+the period of $x(t)=\sin t$. Include the forcing phase in an autonomous
+extension, or find cycles of a stroboscopic map sampled at the forcing period.
+
 !!! note "Centres are degenerate"
     A conservative centre — an undamped harmonic oscillator, for instance — has a
-    *continuum* of periodic orbits, so the shooting Jacobian is singular and
-    Newton collapses onto the equilibrium. `periodic_orbits` detects the
-    zero-amplitude collapse (`min_amplitude`) and raises: shooting needs an
-    isolated, hyperbolic cycle, not a member of a family.
+    *continuum* of periodic orbits, so the shooting Jacobian can be singular.
+    Newton may fail or collapse onto the equilibrium; the zero-amplitude check
+    (`min_amplitude`) rejects that collapse. It does not certify isolation:
+    an already closed member of a periodic family can also satisfy the closure
+    test. Check the nontrivial multipliers before interpreting stability.
 
 ## Estimating a period
 
@@ -228,7 +234,13 @@ ts.analysis.estimate_period(signal, dt=0.01, method="fft")
 
 Both estimators refine the peak parabolically to sub-sample resolution, so a
 coarse grid still gives an accurate period. The result is a `ScalarResult` —
-`float(result)` is the number, and it carries the diagnostic curve for plotting.
+`float(result)` is the number and its metadata records the method and sampling
+step. Inspect the original signal with `ts.plot(traj, "autocorrelation")` or
+`ts.plot(traj, "psd")`; the scalar result does not retain that diagnostic curve.
+
+Both methods assume uniform sampling. An irregular trajectory axis raises
+instead of being silently averaged into one step. Resample onto a uniform grid,
+or supply `dt=` explicitly when the rows should be interpreted at that spacing.
 
 ## The numbers, and the records behind them
 

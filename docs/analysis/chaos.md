@@ -22,7 +22,7 @@ indicators and longer observation windows to cross-check a conclusion.
 |---|---|---|---|
 | [`gali`](#gali-generalized-alignment-index) | tangent-vector volume | exponential decay | Hamiltonian tori: constant / power law; dissipative cycles can also decay exponentially |
 | [`zero_one_test`](#the-01-test) | scalar $K \in [-1, 1]$ | $K \approx 1$ | $K \approx 0$ |
-| [`expansion_entropy`](#expansion-entropy) | $H$ (topological entropy) | $H > 0$ | $H \approx 0$ |
+| [`expansion_entropy`](#expansion-entropy) | expansion entropy $H_0$ | asymptotic $H_0 > 0$ | check horizon, region and survivor statistics |
 
 Maps use the compiled analytic Jacobian; flows use a self-contained RK4
 variational core. Both are backend-free (the fast tier — no engine compile
@@ -159,9 +159,13 @@ phase portrait.
 
 ## Expansion entropy
 
-`expansion_entropy` estimates the **topological entropy** $H$ — and, for a
-smooth system, the sum of the positive Lyapunov exponents — from the growth of
-a derivative-volume integral over a chosen region (Hunt & Ott 2015). Writing
+`expansion_entropy` estimates **expansion entropy** $H_0$ from the growth of
+a derivative-volume integral over a chosen region. Hunt & Ott relate it to
+topological entropy under additional assumptions; smoothness alone does not
+make it equal to the sum of positive Lyapunov exponents along an arbitrary
+orbit. Those exponents describe a trajectory or invariant measure, while this
+integral samples a whole restraining region. See the
+[original paper](https://arxiv.org/abs/1501.07896). Writing
 $G(A)$ for the product of the singular values of $A$ that exceed 1 (the volume
 the linearised dynamics expand a unit ball into, restricted to expanding
 directions),
@@ -185,7 +189,7 @@ ts.analysis.expansion_entropy(ts.systems.Tent(params={"mu": 1.0}),
                      [(0.0, 1.0)], n_samples=200, n=18).entropy
 # ≈ 0.6931  ( = ln 2 )
 
-# Hénon map: reproduces its topological entropy
+# Hénon map: a finite-time expansion-entropy estimate
 h = ts.analysis.expansion_entropy(ts.systems.Henon(), [(-1.6, 1.6), (-0.5, 0.5)],
                          n_samples=400, n=12)
 float(h)              # ≈ 0.447   (h_top ≈ 0.465, Newhouse–Pignataro)
@@ -205,6 +209,11 @@ ts.analysis.expansion_entropy(ts.systems.Lorenz(), [(-20.0, 20.0), (-25.0, 25.0)
 
 The `ExpansionEntropyResult` carries `entropy`, `stderr`, the
 `times` / `ordinate` curve, `n_samples`, `n_survivors` and `fit_region`.
+`stderr` measures the line-fit residuals, not uncertainty from Monte-Carlo
+sampling, integration or the choice of region. Check several sample counts,
+regions and horizons before interpreting a positive finite-time slope as
+evidence of asymptotic chaos. A ball remains a ball for sampling and survivor
+tests; it is not replaced by its enclosing box.
 As with every scaling estimate, inspect the growth curve and pass
 `fit_range=(lo, hi)` to pin the linear region for a publishable number — a
 short horizon keeps the raw (un-renormalised) tangent product from overflowing,

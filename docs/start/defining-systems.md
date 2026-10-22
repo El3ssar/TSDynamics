@@ -117,9 +117,9 @@ ts.analysis.estimate_period(fhn.run(final_time=400, dt=0.05, ic=[-1.0, 1.0])["v"
 # ≈ 39  — the relaxation-oscillation period
 ```
 
-That is the entire loop: define the math once, and every quantifier — Lyapunov
-spectra, Poincaré sections, bifurcation diagrams, dimensions, basins — composes
-over it without another line of glue.
+Define the math once, then use the analyses that support that family and its
+capabilities. `ts.analysis.find(fhn)` lists them; no per-model analysis adapter
+is needed.
 
 ## Variable-dimension systems
 
@@ -175,8 +175,9 @@ sm.run(steps=3000, ic=[0.1, 0.1]).y.shape     # (3000, 2)
 **`_jacobian` is optional.** Defining a map is *writing `_step`*, exactly as
 defining a flow is writing `_equations`: the Jacobian is derived symbolically
 from the step by the same trace the engine already performs. Write one by hand
-only when the step cannot be traced (a Python `if` on the state), or when a
-one-sided slope on a discontinuity is the meaningful answer:
+as an independent check, or when a one-sided slope on a discontinuity is the
+meaningful answer. It does not make an untraceable `_step` executable: the engine
+still needs to trace the step itself.
 
 ```python
 # skip-doctest — a class-body fragment, shown in place
@@ -226,7 +227,8 @@ dw = DoubleWellSDE()
 traj = dw.run(final_time=100.0, dt=0.01, seed=1)   # seed → reproducible path
 ```
 
-Like maps, `_drift`/`_diffusion` take parameters positionally. Running an SDE
+The engine supplies `_drift`/`_diffusion` parameters by name, as for an ODE;
+keyword-only parameters are supported. Running an SDE
 uses a fixed-step scheme (`solver="euler_maruyama"` by default, `"milstein"` for
 strong order 1 with componentwise diffusion $g_k(X_k,t)$). The Wiener increment
 has standard deviation $\sqrt{dt}$; `dt` sets the numerical step, and `seed=`
@@ -289,15 +291,21 @@ through the same registry.
 
 For a system contributed to the library itself, registration is what wires it
 into everything at once: the bulk test suite sweeps it, and the docs build
-generates its page — equations rendered to LaTeX, a static figure, an
-interactive 3-D viewer for 3-D flows — directly from the class. Adding a system
-to the catalogue *is* adding its tests and its documentation. The optional
+generates the same complete page used throughout the catalogue: LaTeX equations,
+parameter descriptions, a runnable example, a static figure, an animated orbit
+or field, and measured diagnostics with their conditions and limitations.
+Importable new models are measured automatically in a bounded worker; unsupported
+results and timeouts are explained on the page. Adding a system to the catalogue
+wires in this test and documentation infrastructure. The optional
 metadata that enriches that page — `_reference` and `_doi` for the citation,
 `_known_lyapunov` for a literature-value test, `_default_ic` for a robust
 starting point — is declared as class attributes alongside `params` and
 `variables`. They are underscored because they are *facts the library reads*, not
 part of the tab surface of the system you get back: `system.info` is where you
-read them again.
+read them again. A NumPy-style `Parameters` section in the class docstring also
+supplies the generated parameter descriptions. See
+[Adding a system](../project/adding-a-system.md#what-the-generated-page-includes)
+for the full documentation workflow and preview controls.
 
 ---
 

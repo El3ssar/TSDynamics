@@ -53,6 +53,38 @@ _SYSTEM_METHODS = ("step", "state", "reinit", "run")
 #: into every ``trusted`` flag downstream of it.
 RUNAWAY_KEY = "unbounded"
 
+# Relative spread accepted in a time grid assembled by floating-point addition.
+_UNIFORM_TIME_AXIS_SPREAD = 1e-9
+
+
+def sampling_interval(data: Any, *, analysis: str) -> float | None:
+    """Read a positive uniform sampling interval, refusing an irregular time axis.
+
+    The selected rows' time axis outranks the original run metadata. Arrays have
+    no time axis and return ``None``; an axis too short to measure a step may
+    fall back to its recorded setting.
+    """
+    times = getattr(data, "t", None)
+    if times is None:
+        return None
+    axis = np.asarray(times, dtype=float)
+    if axis.ndim != 1 or axis.size < 2:
+        meta = getattr(data, "meta", None)
+        recorded = meta.get("dt") if meta is not None and hasattr(meta, "get") else None
+        return None if recorded is None else float(recorded)
+    steps = np.diff(axis)
+    step = float(np.median(steps))
+    spread = float(np.max(np.abs(steps - step))) / abs(step) if step else np.inf
+    if not np.isfinite(steps).all() or step <= 0.0 or spread > _UNIFORM_TIME_AXIS_SPREAD:
+        from tsdynamics.errors import InvalidParameterError
+
+        raise InvalidParameterError(
+            f"{analysis}: this trajectory's time axis is not uniformly spaced, "
+            "so it has no single sampling interval. Resample onto a uniform grid, "
+            "or pass dt explicitly to interpret the rows at the spacing you intend."
+        )
+    return step
+
 
 class RunawayOrbitWarning(UserWarning):
     """The measured data is a **runaway orbit**, so there is no attractor in it.
@@ -322,7 +354,7 @@ def reject_data(system: Any, *, analysis: str, sibling: str | None = None) -> No
     lyapunov_spectrum() needs a system, and got measured data (ndarray): it is
     a property of the equations, not of a point set.
         ts.analysis.lyapunov_from_data(traj)
-        ts.analysis.find(traj)   # the 24 that take a trajectory
+        ts.analysis.find(traj)   # the 26 that take a trajectory
     """
     if not is_data(system):
         return

@@ -1105,6 +1105,73 @@ def test_find_subject_advertises_only_what_that_subject_can_be_handed() -> None:
     assert "psd" in ts.viz.transforms.find(subject=np.sin(np.linspace(0, 40, 400)))
 
 
+def test_transform_discovery_reuses_explicit_analysis_family_and_type_support():
+    import tsdynamics as ts
+
+    deterministic_only = {
+        "gali_curves",
+        "lyapunov_convergence",
+        "flow_speed",
+        "vector_field",
+        "nullclines",
+        "streamlines",
+        "ftle",
+        "escape_time",
+        "transient_time",
+        "trace_determinant",
+        "fixed_points",
+        "floquet_multipliers",
+    }
+    sde = set(ts.viz.transforms.find(subject=ts.systems.OrnsteinUhlenbeck()))
+    dde = set(ts.viz.transforms.find(subject=ts.systems.MackeyGlass()))
+    ode = set(ts.viz.transforms.find(subject=ts.systems.Lorenz()))
+    discrete = set(ts.viz.transforms.find(subject=ts.systems.Henon()))
+    assert not deterministic_only & sde
+    assert "lyapunov_spectrum" not in sde
+    assert "orbit_diagram" not in sde
+    assert not deterministic_only & dde
+    assert {"lyapunov_spectrum", "poincare_section", "orbit_diagram"} <= dde
+    assert {"lyapunov_convergence", "gali_curves", "vector_field"} <= ode
+    assert {"lyapunov_convergence", "gali_curves"} <= discrete
+    assert "vector_field" not in discrete
+    assert "gali_curves" not in ts.viz.transforms.find(subject=ts.systems.Logistic())
+
+
+def test_transform_discovery_preserves_the_supported_opaque_stepper_spectrum():
+    import tsdynamics as ts
+
+    wrapped = ts.WrappedSystem(lambda state, n: 0.5 * state, dim=2, family="map", ic=[1, 1])
+    offered = set(ts.viz.transforms.find(subject=wrapped))
+    assert "lyapunov_spectrum" in offered
+    assert not {"gali_curves", "lyapunov_convergence", "fixed_points"} & offered
+    result = ts.viz.geometry(wrapped, "lyapunov_spectrum", k=1, n=100, transient=10)
+    np.testing.assert_allclose(result.meta["exponents"], [np.log(0.5)], atol=1e-7)
+
+
+def test_plugin_discovery_without_registered_analysis_support_stays_unrestricted(scratch_registry):
+    import tsdynamics as ts
+
+    @scratch_registry(
+        source="model", frame="state2", kind="phase_portrait_2d", primitives=("line",)
+    )
+    def legacy_support_plugin(subject):
+        return {"x": [0.0, 1.0], "y": [0.0, 1.0]}
+
+    @scratch_registry(
+        source="model",
+        frame="state2",
+        kind="phase_portrait_2d",
+        primitives=("line",),
+        analysis="unrelated_plugin.gali",
+    )
+    def external_support_plugin(subject):
+        return {"x": [0.0, 1.0], "y": [0.0, 1.0]}
+
+    offered = ts.viz.transforms.find(subject=ts.systems.OrnsteinUhlenbeck())
+    assert "legacy_support_plugin" in offered
+    assert "external_support_plugin" in offered
+
+
 def test_a_user_primitive_can_be_applied_to_a_shipped_transform() -> None:
     """The extension point's missing half — ``ts.viz.transforms.allow``.
 

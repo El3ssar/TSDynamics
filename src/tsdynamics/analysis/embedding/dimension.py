@@ -9,8 +9,8 @@ delay reconstruction unfolds the attractor (no self-intersections):
   is added.  The dimension-averaged ratio :math:`E_1(d)=E(d+1)/E(d)` rises to and
   then **saturates at** :math:`1`; the smallest :math:`d` past which it stops
   changing is the minimum embedding dimension.  A second quantity
-  :math:`E_2(d)` stays :math:`\approx 1` for *random* data and so separates
-  determinism from noise — the advantage of Cao's method over a single threshold.
+  :math:`E_2(d)` can help assess stochastic contamination. Neither curve alone
+  certifies determinism from a finite recording.
 - **Kennel's false nearest neighbours** (Kennel, Brown & Abarbanel, 1992).  A
   neighbour is *false* if adding a coordinate pushes it far apart (its proximity
   was a projection artefact).  The false-neighbour fraction falls to zero at the
@@ -111,6 +111,8 @@ class EmbeddingDimension(AnalysisResult):
         the repr then says so instead of presenting the ceiling as the answer
         (measured: ``m = 10`` reported with :math:`E_1 = 0.6`, nowhere near
         saturation, with no flag).
+        It is also ``False`` when no dimension met the requested threshold:
+        an interior minimum is only a best candidate, not evidence of saturation.
 
         Returns
         -------
@@ -118,6 +120,8 @@ class EmbeddingDimension(AnalysisResult):
         """
         dims = np.asarray(self.dims)
         if dims.size < 2:
+            return False
+        if self.meta and self.meta.get("threshold_reached") is False:
             return False
         return int(self.dimension) < int(dims[-1])
 
@@ -130,6 +134,11 @@ class EmbeddingDimension(AnalysisResult):
         dims = np.asarray(self.dims)
         if dims.size < 2 or self.saturated:
             return None
+        if self.meta and self.meta.get("threshold_reached") is False:
+            return (
+                f"⚠ did not saturate — criterion not met through m = {int(dims[-1])}; "
+                f"m = {int(self.dimension)} is only the best candidate"
+            )
         return f"⚠ did not saturate — m = {int(self.dimension)} is the largest tried; raise max_dim"
 
     def _derived(self) -> dict[str, Any]:
@@ -332,9 +341,9 @@ def cao_dimension(
     r"""Cao's averaged-false-neighbour minimum embedding dimension.
 
     The recommended estimator, and what ``embedding_dimension(x, method="cao")``
-    (the generic door) calls: Cao's :math:`E_1` saturates on its own, with no
-    rejection threshold to pick, where :func:`false_nearest_neighbors` needs
-    ``rtol`` / ``atol`` chosen for the data.
+    (the generic door) calls. Cao's :math:`E_1` plateau is selected using
+    ``threshold``; :func:`false_nearest_neighbors` instead uses neighbour
+    rejection tolerances and a false-neighbour-fraction threshold.
 
     Parameters
     ----------
@@ -376,9 +385,10 @@ def cao_dimension(
     samples make :math:`R_d` arbitrarily small, so the per-point ratio
     :math:`a(i, 1) = R_{d+1}/R_d` can blow up and inflate the mean by orders of
     magnitude.  This corrupts only the *first* point of the diagnostic curve and
-    does **not** affect the recommended dimension :math:`m`, which is read off the
-    saturation plateau past :math:`d = 1` (use a Theiler window of a few
-    autocorrelation times to mitigate the artefact).
+    can also bias the recommended dimension if the threshold is crossed there.
+    Inspect the full curve and use a Theiler window of a few autocorrelation
+    times to mitigate the artefact; threshold crossing is a finite-data
+    heuristic, not a guarantee that the reconstruction is unfolded.
 
     References
     ----------
@@ -401,6 +411,10 @@ def cao_dimension(
     if max_dim < 2:
         raise ValueError("max_dim must be >= 2 (E1 compares consecutive dimensions).")
     w = int(theiler)
+    if w < 0:
+        raise ValueError("theiler must be non-negative; negative windows would admit self-matches.")
+    if not np.isfinite(threshold) or threshold <= 0.0:
+        raise ValueError("threshold must be finite and positive.")
 
     big = max_dim + 1  # need E up to d = max_dim + 1 to form E1(max_dim)
     rows = x.size - big * tau
@@ -435,7 +449,13 @@ def cao_dimension(
         delay=tau,
         afn_e1=e1,
         afn_e2=e2,
-        meta={"analysis": "cao_dimension", "method": "cao", "delay": int(tau)},
+        meta={
+            "analysis": "cao_dimension",
+            "method": "cao",
+            "delay": int(tau),
+            "threshold": float(threshold),
+            "threshold_reached": bool(reached.size),
+        },
     )
 
 
@@ -520,6 +540,10 @@ def false_nearest_neighbors(
     if max_dim < 1:
         raise ValueError("max_dim must be >= 1.")
     w = int(theiler)
+    if w < 0:
+        raise ValueError("theiler must be non-negative; negative windows would admit self-matches.")
+    if not np.isfinite(threshold) or not 0.0 <= threshold <= 1.0:
+        raise ValueError("threshold is a false-neighbour fraction and must lie in [0, 1].")
 
     r_attractor = float(np.std(x))
     if r_attractor == 0.0:
@@ -554,7 +578,13 @@ def false_nearest_neighbors(
         method="fnn",
         delay=tau,
         fnn_fraction=fractions,
-        meta={"analysis": "false_nearest_neighbors", "method": "fnn", "delay": int(tau)},
+        meta={
+            "analysis": "false_nearest_neighbors",
+            "method": "fnn",
+            "delay": int(tau),
+            "threshold": float(threshold),
+            "threshold_reached": bool(reached.size),
+        },
     )
 
 
@@ -576,9 +606,10 @@ def embedding_dimension(
     estimators keep their own names and their own citations, so
     ``embedding_dimension(x, method="cao")`` and ``cao_dimension(x)`` return the
     *identical* object; type whichever reads better at your call site.  Reach for
-    :func:`cao_dimension` first if you have no reason to prefer otherwise — Cao's
-    :math:`E_1` needs no threshold to be chosen for it, which is the usual
-    difficulty with :func:`false_nearest_neighbors`.
+    :func:`cao_dimension` first if you have no reason to prefer otherwise.
+    Its default :math:`E_1` plateau threshold and the FNN tolerances are
+    heuristics; inspect their diagnostic curves and sensitivity to those
+    settings before treating a candidate dimension as resolved.
 
     Parameters
     ----------

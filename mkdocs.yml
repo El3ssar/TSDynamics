@@ -83,6 +83,7 @@ extra_css:
   # GitHub-dark syntax highlighting for fenced code blocks — loaded AFTER
   # extra.css so it is the final word on code-block token colours.
   - assets/brand/mkdocs/code-github-dark.css
+  - assets/brand/mkdocs/docs-design.css
   - https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css
 
 extra_javascript:
@@ -133,6 +134,7 @@ plugins:
 # emitted as virtual files and patched into the nav (see hooks/docs_autogen.py).
 hooks:
   - hooks/inventories.py
+  - hooks/docs_design.py
   - hooks/docs_autogen.py
 
 markdown_extensions:
@@ -150,6 +152,8 @@ markdown_extensions:
   - pymdownx.superfences
   - pymdownx.highlight:
       anchor_linenums: true
+      pygments_lang_class: true
+      auto_title: true
   - pymdownx.inlinehilite
   - pymdownx.details
   - pymdownx.tabbed:
@@ -248,6 +252,7 @@ nav:
 # ::test_no_blanket_tree_exclusions_over_content fail if this list grows.
 exclude_docs: |
   # Tooling and non-page assets — never rendered as documentation.
+  overrides/
   _tooling/
   _static/
   css/

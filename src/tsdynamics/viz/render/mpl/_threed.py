@@ -182,6 +182,8 @@ def _draw_line3d(ax: Any, layer: Any, spec: PlotSpec, theme: Any) -> Any:
         lc.set_array(_f(c)[:-1])
         if "lw" in kw:
             lc.set_linewidth(kw["lw"])
+        if "linestyle" in kw:
+            lc.set_linestyle(kw["linestyle"])
         if "alpha" in kw:
             lc.set_alpha(kw["alpha"])
         if "zorder" in kw:
@@ -237,6 +239,7 @@ def _draw_scatter3d(ax: Any, layer: Any, spec: PlotSpec, theme: Any) -> Any:
         # canonical ``markersize`` means the same thing in 2-D and 3-D.
         scatter_kw["s"] = float(kw["ms"]) ** 2
     if c is not None:
+        scatter_kw.pop("color", None)
         scatter_kw["c"] = _f(c)
         scatter_kw["cmap"] = _cmap(spec, layer)
         scatter_kw["norm"] = _norm(spec)
@@ -251,7 +254,15 @@ def _draw_surface3d(ax: Any, layer: Any, spec: PlotSpec, theme: Any) -> Any:
         xx, yy = np.meshgrid(x, y)
     else:
         xx, yy = x, y
-    surf = ax.plot_surface(xx, yy, z, cmap=_cmap(spec, layer) or "viridis", norm=_norm(spec))
+    style = normalize_style(layer.style, warn=False)
+    surf = ax.plot_surface(
+        xx,
+        yy,
+        z,
+        cmap=_cmap(spec, layer) or "viridis",
+        norm=_norm(spec),
+        **{key: style[key] for key in ("alpha", "zorder", "linewidth") if key in style},
+    )
     return surf
 
 
@@ -329,7 +340,7 @@ def _apply_3d_annotations(ax: Any, spec: PlotSpec, theme: Any) -> None:
     ax.set_zlim3d(zlo, zhi)
 
 
-def _apply_3d_panes(ax: Any, theme: Any) -> None:
+def _apply_3d_panes(ax: Any, theme: Any, spec: PlotSpec | None = None) -> None:
     """Theme the three background panes + grid of an ``mplot3d`` axes.
 
     Without this a dark theme produced a **light-grey 3-D box floating in a dark
@@ -337,17 +348,24 @@ def _apply_3d_panes(ax: Any, theme: Any) -> None:
     but ``mplot3d`` draws its own ``xaxis.pane`` / ``yaxis.pane`` / ``zaxis.pane``
     quads, which keep matplotlib's own light default regardless of the theme.
     """
+    import matplotlib as mpl
+    from matplotlib.colors import to_rgba
+
     background = theme.background
-    if background is None and theme.grid_color is None:
-        return
-    for axis in (ax.xaxis, ax.yaxis, ax.zaxis):
+    specs = (spec.x, spec.y, spec.z) if spec is not None else (None, None, None)
+    flags = [
+        axis.grid if axis is not None and axis.grid is not None else theme.grid for axis in specs
+    ]
+    ax.grid(any(flags))
+    for axis, show_grid in zip((ax.xaxis, ax.yaxis, ax.zaxis), flags, strict=True):
         pane = getattr(axis, "pane", None)
         if pane is not None and background is not None:
             pane.set_facecolor(background)
             pane.set_edgecolor(theme.grid_color or theme.foreground or background)
             pane.set_alpha(1.0)
-        if theme.grid_color is not None:
-            axis._axinfo["grid"]["color"] = theme.grid_color
+        axis._axinfo["grid"]["linewidth"] = mpl.rcParams["grid.linewidth"] if show_grid else 0.0
+        grid_color = theme.grid_color or mpl.rcParams["grid.color"]
+        axis._axinfo["grid"]["color"] = to_rgba(grid_color, alpha=theme.grid_alpha)
 
 
 def _apply_3d_scale_and_ticks(ax: Any, axis: Any, which: str) -> None:
@@ -397,27 +415,39 @@ def _apply_3d_axes(ax: Any, spec: PlotSpec, theme: Any) -> None:
     if theme.font_size is not None:
         label_kw["fontsize"] = float(theme.font_size)
 
-    ax.set_xlabel(spec.x.label, **label_kw)
-    ax.set_ylabel(spec.y.label, **label_kw)
-    if spec.z is not None:
-        ax.set_zlabel(spec.z.label, **label_kw)
+    if theme.font_family is not None:
+        label_kw["fontfamily"] = theme.font_family
     # Scales and ticks BEFORE the limits: setting a log scale resets the view
     # interval, so a limit applied first would be thrown away.
     for axis, which in ((spec.x, "x"), (spec.y, "y"), (spec.z, "z")):
+        if axis is None:
+            continue
+        own_label = dict(label_kw)
+        if axis.label_size is not None:
+            own_label["fontsize"] = axis.label_size
+        if axis.color is not None:
+            own_label["color"] = axis.color
+        getattr(ax, f"set_{which}label")(axis.label, **own_label)
         _apply_3d_scale_and_ticks(ax, axis, which)
+        tick_kw = {}
+        if axis.tick_size is not None or theme.font_size is not None:
+            tick_kw["labelsize"] = axis.tick_size if axis.tick_size is not None else theme.font_size
+        if axis.tick_rotation is not None:
+            tick_kw["rotation"] = axis.tick_rotation
+        if axis.color is not None or theme.foreground is not None:
+            tick_kw["colors"] = axis.color if axis.color is not None else theme.foreground
+        if theme.font_family is not None:
+            tick_kw["labelfontfamily"] = theme.font_family
+        ax.tick_params(axis=which, **tick_kw)
     if spec.x.limits is not None:
         ax.set_xlim(*spec.x.limits)
     if spec.y.limits is not None:
         ax.set_ylim(*spec.y.limits)
     if spec.z is not None and spec.z.limits is not None:
         ax.set_zlim(*spec.z.limits)
-    if spec.title:
-        title_kw: dict[str, Any] = {}
-        if theme.foreground is not None:
-            title_kw["color"] = theme.foreground
-        if theme.title_size is not None:
-            title_kw["fontsize"] = float(theme.title_size)
-        ax.set_title(spec.title, **title_kw)
+    from ._core import apply_title
+
+    apply_title(ax, spec, theme)
     ax.set_box_aspect((1.0, 1.0, 1.0))
     elev, azim = _DEFAULT_ELEV, _DEFAULT_AZIM
     camera = spec.meta.get("camera") if isinstance(spec.meta, dict) else None
@@ -427,8 +457,6 @@ def _apply_3d_axes(ax: Any, spec: PlotSpec, theme: Any) -> None:
     ax.view_init(elev=elev, azim=azim)
     if spec._axes_hidden():
         ax.set_axis_off()
-    if theme.foreground is not None:
-        ax.tick_params(colors=theme.foreground, which="both")
 
 
 def render_3d(spec: PlotSpec, *, figsize: tuple[float, float] | None = None) -> Figure:
@@ -490,7 +518,7 @@ def _draw_3d_panel(fig: Any, ax: Any, spec: PlotSpec, theme: Theme | None = None
             mappable = produced
 
     _apply_3d_axes(ax, spec, theme)
-    _apply_3d_panes(ax, theme)
+    _apply_3d_panes(ax, theme, spec)
     # 3-D used to silently drop ``spec.annotations`` — the 2-D core applied them,
     # this one never called any helper — so a reference line / marked value on a
     # 3-D spec (106 of the 136 catalogue ODEs are 3-D) vanished with no warning.

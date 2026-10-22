@@ -1,4 +1,5 @@
 ---
+title: Poincaré sections and return maps
 description: A Poincaré-to-return-map walkthrough — section the Rössler flow, present it as a discrete map, build its first-return map, then reproduce the famous Lorenz z-maxima cusp that exposes the 1-D dynamics hiding inside a strange attractor.
 ---
 
@@ -7,16 +8,18 @@ description: A Poincaré-to-return-map walkthrough — section the Rössler flow
 # Poincaré sections & return maps
 
 A three-dimensional strange attractor looks like an impenetrable tangle of
-wire. Yet buried inside many of them is a **one-dimensional map** — a single
-humped curve $v_{n+1} = F(v_n)$ that governs the whole thing. This tutorial is
+wire. A scalar return plot can sometimes reveal an approximately
+**one-dimensional map** — a curve relating successive observed values,
+$v_{n+1} \approx F(v_n)$. This tutorial is
 the two-step descent that finds it: first Poincaré's trick of watching only
 where the flow pierces a surface (dropping one dimension and turning the flow
 into a discrete map), then the return map that reads the surviving dynamics off
 a recurring scalar. We do it on the Rössler flow, then reproduce Lorenz's 1963
-result — the $z$-maxima cusp — the observation that started the whole subject.
+result — the $z$-maxima cusp — a compact view of its complicated flow.
 
-Everything below is reproducible: initial conditions and seeds are pinned, and
-each printed value is what the shown code returns.
+Initial conditions and seeds are specified. The printed values illustrate a
+particular finite run; chaotic trajectories and crossing estimates can vary
+with integration settings and software versions.
 
 ## 1. A surface of section
 
@@ -28,8 +31,7 @@ points, a torus a closed loop, a strange attractor a structured cloud one
 dimension lower than the flow.
 
 [`poincare_section`](../analysis/poincare.md) does this for a live system. We
-first settle onto the attractor (so the transient does not pollute the section),
-then section the Rössler flow on the plane $y = 0$, keeping only upward
+section the Rössler flow on the plane $y = 0$, keeping only upward
 crossings:
 
 ```python
@@ -42,17 +44,16 @@ section = ts.analysis.poincare_section(
     ros,
     plane=("y", 0.0, "up"),         # section y = 0, crossed with ẏ > 0
     crossings=500,
+    skip_crossings=50,
     dt=0.02,
-    seed=0,
+    ic=[1.0, 1.0, 1.0],
 )
 
 print(section)
 # PoincareSection(crossings=500, dim=3)
 
 section.y[:3, [0, 2]]               # (x, z) at the first three crossings
-# array([[1.2932, 0.0449],
-#        [2.3779, 0.0578],
-#        [4.3606, 0.1081]])
+# A (3, 2) array of crossing coordinates.
 ```
 
 The `plane=("y", 0.0, "up")` spelling names the axis by its `variables` entry
@@ -64,17 +65,18 @@ crossing states plus a `.to_dict()` / `.plot` surface. Because it is a
 trajectory, `section["x"]` and `ts.plot(section)` work on it unchanged.
 
 Under the hood this marches the whole attractor and refines every crossing with
-cubic Hermite interpolation in a **single Rust engine call** — roughly two orders
-of magnitude faster than a per-`dt` Python loop.
+cubic Hermite interpolation in a single Rust engine call for supported explicit
+ODE kernels. This avoids a Python callback at every integration step. Other
+families and methods use the documented fallback.
 
 <figure class="ts-fig" markdown>
 ![Rössler flow crossed by the plane y=0; crossings collapse to a thin sheet](../assets/figures/tutorials/poincare-section.svg){ loading=lazy }
-<figcaption><span class="lbl">FIG 1</span> · the Rössler flow (faint indigo, $x$–$z$ projection) crossed by the plane $y = 0$. The teal crossings collapse from the full band onto a thin, near-one-dimensional sheet — the geometric statement that the attractor is <em>almost</em> two-dimensional, and its section <em>almost</em> a curve. That near-1-D-ness is what makes the return map in §3 single-valued.</figcaption>
+<figcaption><span class="lbl">FIG 1</span> · the Rössler flow (faint indigo, $x$–$z$ projection) crossed by the plane $y = 0$. The teal crossings collapse from the full band onto a thin, near-one-dimensional sheet — a useful visual reduction of this run. A thin projection suggests a low-dimensional description; it does not by itself determine the attractor dimension.</figcaption>
 </figure>
 
 ## 2. The section as a discrete map
 
-The same section is also a **derived system** you can hand to any map analysis.
+The same section is also a **derived system** you can hand to analyses supporting its stepping protocol.
 [`.poincare()`](../analysis/poincare.md) wraps the flow and presents crossing
 $n \mapsto$ crossing $n+1$ as a `DiscreteMap`-shaped object:
 
@@ -89,7 +91,7 @@ len(sec.y)              # 500 crossings (after discarding the first 50)
 
 Here `transient` counts **crossings** to discard, not time — the glossary
 distinction that keeps section transients separate from integration transients.
-Because a `PoincareMap` *is* a map, you can drive the whole discrete toolkit
+Because a `PoincareMap` *is* a map, you can use compatible discrete analyses
 through it. An [`orbit_diagram`](../analysis/orbit-diagrams.md) over a control
 parameter of the wrapped flow, for instance, is a genuine **bifurcation diagram
 of the flow** — the period-doubling cascade you would otherwise have to read off
@@ -111,11 +113,12 @@ with `kind="poincare"` does this on the same section:
 ```python
 rm = ts.analysis.return_map(ros, "x", kind="poincare",
                             plane=("y", 0.0), direction=+1,
-                            n=500, dt=0.02, seed=0)
+                            n=500, dt=0.02, skip_crossings=50,
+                            ic=[1.0, 1.0, 1.0])
 
 len(rm)                 # 499  — one pair per consecutive crossing
-rm.current[:3]          # array([1.2932, 2.3779, 4.3606])   (x_n)
-rm.successor[:3]        # array([2.3779, 4.3606, 7.8082])   (x_{n+1})
+rm.current[:3]          # x_n at three successive crossings
+rm.successor[:3]        # x_{n+1}, shifted by one crossing
 ```
 
 `rm.current` / `rm.successor` are the scatter arrays $(x_n, x_{n+1})$; iterate
@@ -124,8 +127,9 @@ rm.successor[:3]        # array([2.3779, 4.3606, 7.8082])   (x_{n+1})
 $v_{n+1} = v_n$ drawn in, and `rm.cobweb()` gives the cobweb-plot variant.
 
 Plotted (Fig 2, left) the Rössler return map is a single-valued curve with one
-smooth hump — the flow's chaos is organised by an effectively one-dimensional,
-noninvertible map, exactly as the thin section in Fig 1 promised.
+smooth hump. This supports an approximately one-dimensional description for
+this observable and parameter regime; the plotted scalar projection need not
+be an exact, globally single-valued return law.
 
 ## 4. The Lorenz z-maxima cusp
 
@@ -148,28 +152,27 @@ zc.successor[:3]        # array([38.309, 43.115, 34.766])   (z_{n+1}^max)
 ```
 
 Plotted (Fig 2, right), the 532 pairs fall on a sharp tent — the famous
-**cusp map**. This is Lorenz's punchline: the strange attractor, for all its
-apparent complexity, hides a one-dimensional map with a single unstable fixed
-point (where the curve crosses the diagonal) whose slope exceeds one in
-magnitude everywhere — the analytic fingerprint of chaos. `return_map` sharpens
-each maximum by parabolic interpolation, so a coarse `dt` still lands the peaks
-accurately.
+**cusp map**. The cusp makes successive maxima easy to compare and suggests a useful reduced
+map. A finite scatter plot does not establish a globally expanding map, the
+number of fixed points, or a proof of chaos. `return_map` refines resolved
+maxima by parabolic interpolation; reduce `dt` and compare the result to check
+peak timing and avoid missing extrema.
 
 <figure class="ts-fig" markdown>
 ![Two return maps: Rössler section return set (left) and the Lorenz z-maxima cusp (right)](../assets/figures/tutorials/return-map.svg){ loading=lazy }
-<figcaption><span class="lbl">FIG 2</span> · first-return maps of two flows, each with the diagonal $v_{n+1}=v_n$ dashed. <strong>Left:</strong> the Rössler section's $x$-return map (teal) — a single-valued unimodal curve. <strong>Right:</strong> the Lorenz $z$-maxima cusp (indigo) — the sharp tent Lorenz drew in 1963. Where each curve crosses the diagonal is an unstable fixed point of the reduced 1-D dynamics; the steep slope there is the mechanism of the chaos.</figcaption>
+<figcaption><span class="lbl">FIG 2</span> · first-return maps of two flows, each with the diagonal $v_{n+1}=v_n$ dashed. <strong>Left:</strong> the Rössler section's $x$-return map (teal) — a single-valued unimodal curve. <strong>Right:</strong> the Lorenz $z$-maxima cusp (indigo) — the sharp tent Lorenz drew in 1963. Diagonal intersections are candidate fixed points of a scalar reduced model. Their stability requires an appropriate local fit and a valid reduction.</figcaption>
 </figure>
 
 ## Reading the result
 
 - **A tight, single-valued curve** (both panels of Fig 2) means the asymptotic
-  motion is effectively governed by a 1-D map — you can study the flow's chaos
-  with the entire theory of one-dimensional maps (fixed points, their slopes,
-  the [orbit diagram](../analysis/orbit-diagrams.md), symbolic dynamics).
+  a one-dimensional approximation may be useful. Check how the apparent curve
+  changes with the observable, sampling and numerical accuracy before using
+  one-dimensional map theory.
 - **A filled, multi-valued cloud** means it is not 1-D — the section is genuinely
   two- or higher-dimensional, and the return map is only a projection. That is
-  itself diagnostic: it says the attractor's dimension exceeds two by more than a
-  little.
+  a limitation of this scalar reduction. Noise, transient data, the chosen
+  observable and projection overlap can also produce thickness.
 - **Extrema vs Poincaré.** `kind="max"`/`"min"` need no plane — they read peaks
   of one coordinate (Lorenz's construction). `kind="poincare"` reads the
   observable at section crossings and needs a `plane`. Use extrema when a
@@ -181,8 +184,8 @@ accurately.
 | Situation | What to do |
 |---|---|
 | First crossings look transient | Settle first (integrate, take `y[-1]` as `ic`) or pass `skip_crossings=` / `transient=` (crossings, not time). |
-| Return map is a fuzzy band, not a curve | The attractor is not near-1-D on this observable — try a different component, or accept it as evidence of higher dimension. |
-| `dt` too coarse, peaks missed | In `kind="poincare"` `dt` only has to not *skip* a crossing; in extremum mode the peak is parabolically sharpened, so a coarse grid is usually fine — but a `dt` larger than the oscillation will still lose maxima. |
+| Return map is a fuzzy band, not a curve | The attractor is not near-1-D on this observable — try a different component, or inspect noise, transients and projection overlap before drawing a dimensional conclusion. |
+| `dt` too coarse, peaks missed | In `kind="poincare"` `dt` only has to not *skip* a crossing; in extremum mode interpolation refines a resolved peak but cannot recover missed maxima. Compare a finer grid in both cases. |
 | Section on a stiff / DDE flow | The engine fast path needs a numeric RHS and an explicit method; stiff defaults, DDEs and `backend="reference"` fall back to the (correct, slower) Python loop automatically. |
 
 ## See also

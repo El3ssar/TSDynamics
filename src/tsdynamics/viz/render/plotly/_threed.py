@@ -35,7 +35,7 @@ import numpy as np
 from ..._visibility import listing_dir
 from ...producers import autostyle_enabled, autostyle_line
 from ...spec import PlotKind, PlotSpec
-from ...style import Theme, normalize_style
+from ...style import Theme
 
 if TYPE_CHECKING:
     import plotly.graph_objects as go
@@ -65,7 +65,9 @@ def _resolve_theme(spec: PlotSpec) -> Theme:
 
 def _canon_style(layer: Any) -> dict[str, Any]:
     """Return the normalized (canonical-key) style dict for a layer."""
-    return normalize_style(layer.style, warn=False)
+    from ._core import _canon_style as canonical
+
+    return canonical(layer)
 
 
 def _f(arr: Any) -> np.ndarray:
@@ -75,20 +77,18 @@ def _f(arr: Any) -> np.ndarray:
 
 def _xyz(layer: Any) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
     """Resolve the ``(x, y, z)`` coordinate triple for a 3-D mark, or ``None``."""
-    if "x" not in layer.data or "y" not in layer.data or "z" not in layer.data:
+    if "x" not in layer.data or "y" not in layer.data:
         return None
-    return _f(layer.data["x"]), _f(layer.data["y"]), _f(layer.data["z"])
+    x, y = _f(layer.data["x"]), _f(layer.data["y"])
+    z = _f(layer.data["z"]) if "z" in layer.data else np.zeros_like(x)
+    return x, y, z
 
 
-def _colorscale(spec: PlotSpec, layer: Any) -> str | None:
+def _colorscale(spec: PlotSpec, layer: Any) -> Any:
     """Pick the plotly colorscale: layer style > spec colorbar cmap > ``None``."""
-    style = _canon_style(layer)
-    cmap = style.get("cmap")
-    if cmap is not None:
-        return str(cmap)
-    if spec.colorbar is not None and spec.colorbar.cmap is not None:
-        return spec.colorbar.cmap
-    return None
+    from ._core import _colorscale as resolve
+
+    return resolve(spec, layer)
 
 
 def _colorbar_dict(spec: PlotSpec) -> dict[str, Any] | None:
@@ -98,11 +98,11 @@ def _colorbar_dict(spec: PlotSpec) -> dict[str, Any] | None:
         return None
     out: dict[str, Any] = {}
     if cbar.label:
-        out["title"] = cbar.label
+        out["title"] = {"text": cbar.label}
     if cbar.ticks is not None:
         out["tickvals"] = [float(t) for t in cbar.ticks]
     if cbar.label_size is not None:
-        out["titlefont"] = {"size": float(cbar.label_size)}
+        out.setdefault("title", {})["font"] = {"size": float(cbar.label_size)}
     return out
 
 
@@ -152,7 +152,7 @@ def _build_line3d(layer: Any, spec: PlotSpec) -> list[go.BaseTraceType]:
         marker: dict[str, Any] = {
             "color": _f(c),
             "colorscale": _colorscale(spec, layer),
-            "showscale": True,
+            "showscale": spec.colorbar is not None and spec.colorbar.show,
             **_clim_kwargs(spec),
         }
         cbar = _colorbar_dict(spec)
@@ -273,7 +273,7 @@ def _build_scatter3d(layer: Any, spec: PlotSpec) -> list[go.BaseTraceType]:
     if c is not None:
         marker["color"] = _f(c)
         marker["colorscale"] = _colorscale(spec, layer)
-        marker["showscale"] = True
+        marker["showscale"] = spec.colorbar is not None and spec.colorbar.show
         marker.update(_clim_kwargs(spec))
         cbar = _colorbar_dict(spec)
         if cbar is not None:
@@ -314,6 +314,7 @@ def _build_surface3d(layer: Any, spec: PlotSpec) -> list[go.BaseTraceType]:
         "x": x,
         "y": y,
         "colorscale": _colorscale(spec, layer),
+        "opacity": float(_canon_style(layer).get("alpha", 1.0)),
         # go.Surface takes cmin/cmax directly (it has NO zmin/zmax — those belong
         # to Heatmap/Contour/Image), so pass the colour range verbatim.
         **_clim_kwargs(spec),
@@ -397,27 +398,9 @@ def _scene(spec: PlotSpec) -> dict[str, Any]:
 
 def _scene_axis(axis: Any, theme: Theme | None = None) -> dict[str, Any]:
     """Build one plotly ``scene`` axis dict (title + range + theming)."""
-    out: dict[str, Any] = {}
-    if axis.label:
-        title: dict[str, Any] = {"text": axis.label}
-        if axis.label_size is not None:
-            title["font"] = {"size": float(axis.label_size)}
-        elif theme is not None and theme.font_size is not None:
-            title["font"] = {"size": float(theme.font_size)}
-        if theme is not None and theme.foreground is not None:
-            title.setdefault("font", {})["color"] = theme.foreground
-        out["title"] = title
-    if axis.limits is not None:
-        out["range"] = [float(axis.limits[0]), float(axis.limits[1])]
-    # Foreground ink for axis ticks / lines.
-    if theme is not None and theme.foreground is not None:
-        out["tickcolor"] = theme.foreground
-        out["linecolor"] = theme.foreground
-    if axis.tick_size is not None:
-        out["tickfont"] = {"size": float(axis.tick_size)}
-    elif theme is not None and theme.font_size is not None:
-        out["tickfont"] = {"size": float(theme.font_size)}
-    return out
+    from ._core import _axis_layout
+
+    return _axis_layout(axis, theme)
 
 
 def build_3d_traces(spec: PlotSpec) -> list[go.BaseTraceType]:

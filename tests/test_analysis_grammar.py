@@ -155,7 +155,7 @@ class TestARedundantNameSaysWhyItExists:
             ("correlation_dimension", "Not the same estimator"),
             ("correlation_sum", "the *curve*"),
             ("kaplan_yorke_dimension", "spectrum.kaplan_yorke"),
-            ("cao_dimension", "no rejection threshold to pick"),
+            ("cao_dimension", "plateau is selected using"),
             ("false_nearest_neighbors", "explicit, interpretable rejection criterion"),
             ("embedding_dimension", "identical"),
         ],

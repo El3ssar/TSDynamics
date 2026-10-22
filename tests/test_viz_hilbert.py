@@ -31,6 +31,55 @@ from tsdynamics.viz.transforms import hilbert as hp  # noqa: E402
 
 HILBERT_TRANSFORMS = ("hilbert", "hilbert_fourier", "hilbert_difference", "hilbert_labels")
 
+
+@pytest.mark.parametrize("side", [15, 16])
+def test_fourier_axes_place_conjugate_tone_peaks_at_their_signed_image_modes(side):
+    yy, xx = np.mgrid[:side, :side]
+    image = np.cos(2.0 * np.pi * (3 * xx + 2 * yy) / side)
+    result = geometry(image.ravel(), "hilbert_fourier", curve="rowmajor", fit="square")
+    field = result.channels["z"].values
+    xs, ys = result.channels["x"].values, result.channels["y"].values
+    positions = np.argpartition(field.ravel(), -2)[-2:]
+    peaks = {
+        (round(float(xs[col])), round(float(ys[row])))
+        for row, col in zip(*np.unravel_index(positions, field.shape), strict=True)
+    }
+    assert peaks == {(-3, -2), (3, 2)}
+    # A unit cosine has two Fourier amplitudes N²/2 before log1p.
+    np.testing.assert_allclose(field.ravel()[positions], np.log1p(side * side / 2.0))
+    assert xs[side // 2] == 0.0
+    assert ys[side // 2] == 0.0
+
+
+@pytest.mark.parametrize("view", ["hilbert", "hilbert_labels", "hilbert_difference"])
+def test_non_fourier_views_keep_pixel_coordinates(view):
+    result = geometry(np.arange(25.0), view, curve="rowmajor", fit="square")
+    np.testing.assert_array_equal(result.channels["x"].values, np.arange(5.0))
+    np.testing.assert_array_equal(result.channels["y"].values, np.arange(5.0))
+
+
+def test_fourier_pixels_do_not_claim_an_original_sample_identity():
+    with pytest.raises(InvalidParameterError, match="no single sample index"):
+        geometry(np.arange(16.0), "hilbert_fourier", curve="snake", with_sample_index=True)
+
+
+@pytest.mark.parametrize("side", [1, 2, 3, 8])
+def test_difference_map_averages_only_real_neighbors_including_at_edges(side):
+    labels = np.arange(side * side).reshape(side, side)
+    expected = np.zeros((side, side))
+    for row in range(side):
+        for col in range(side):
+            neighbors = [
+                abs(int(labels[r, c]) - int(labels[row, col]))
+                for r in range(max(0, row - 1), min(side, row + 2))
+                for c in range(max(0, col - 1), min(side, col + 2))
+                if (r, c) != (row, col)
+            ]
+            expected[row, col] = np.mean(neighbors) if neighbors else 0.0
+    result = geometry(np.arange(side * side), "hilbert_difference", curve="rowmajor", fit="square")
+    np.testing.assert_allclose(result.channels["z"].values, expected)
+
+
 #: Skips the tests that need the forty real curves.  The in-tree orderings are
 #: always exercised, so this file is meaningful with or without the extra.
 needs_extra = pytest.mark.skipif(

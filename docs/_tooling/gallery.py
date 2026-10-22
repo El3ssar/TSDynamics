@@ -27,10 +27,10 @@ claim true.  Curating a :class:`Showcase` for it only makes the picture better.
 Caching
 -------
 Content-addressed under ``.cache/docs-gallery``, exactly like
-:mod:`figures` and :mod:`threejs_viewer`: the key is
-``sha256(setup ‖ call ‖ RENDERER_VERSION ‖ library version)``.  A cache hit does
-not even import the library subject — the snippet is never executed — so a warm
-docs build pays nothing for the gallery.  CI persists ``.cache/`` between builds.
+:mod:`figures` and :mod:`threejs_viewer`: each key combines its exact snippet and
+recipe version with portable semantic Python/native model, numerical and drawing
+sources. Prose and release stamps do not invalidate unchanged figures. A cache
+hit does not execute the snippet or integrate its subject. CI persists this cache.
 
 Standalone use::
 
@@ -42,6 +42,7 @@ Standalone use::
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import pathlib
 import sys
@@ -56,8 +57,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 CACHE_DIR = ROOT / ".cache" / "docs-gallery"
 
 #: Bump when the *rendering* changes (theme, size, dpi) so every cached figure
-#: is re-rendered.  The snippet text and the library version are already in the
-#: key, so ordinary content changes need no bump.
+#: is re-rendered. Snippet and implementation changes are already in the key.
 RENDERER_VERSION = "gallery-4"  # Regenerate analysis plots after the tangent-frame repair.
 
 #: Where the figures live on the site.  They are registered as *generated* files
@@ -632,9 +632,10 @@ SHOWCASE: dict[str, Showcase] = {
         "batch = band.run(final_time=12.0, dt=0.01)",
         call='ts.plot(batch, "ensemble_fan")',
         caption=(
-            "Forty Lorenz starts within 0.05 of each other, drawn as their median and "
-            "spread. The band is invisible at first and then opens out — sensitive "
-            "dependence, as a picture of an ensemble rather than of two orbits."
+            "Forty Lorenz starts with independent Gaussian offsets of standard "
+            "deviation 0.05 per coordinate, drawn as their x median and 10th–90th "
+            "percentile envelope. The band opens as this ensemble spreads; it is "
+            "a descriptive range across these starts, not a confidence interval."
         ),
     ),
     "scaling_fit": Showcase(
@@ -1007,15 +1008,11 @@ class Build:
         }
 
 
-def _library_version() -> str:
-    import tsdynamics
-
-    return str(tsdynamics.__version__)
-
-
 def cache_key(setup: str, call: str) -> str:
     """Content hash of one cell: its exact snippet, the renderer, the library."""
-    blob = "\n".join([setup, call, RENDERER_VERSION, _library_version()])
+    import figures
+
+    blob = "\n".join([setup, call, RENDERER_VERSION, figures._library_render_fingerprint()])
     return hashlib.sha256(blob.encode()).hexdigest()[:16]
 
 
@@ -1053,6 +1050,27 @@ def _prepare_matplotlib():
     )
     set_theme("tsdynamics-gallery")
     return plt
+
+
+@contextlib.contextmanager
+def _render_style():
+    """Keep documentation styling local to this build, including on failure."""
+    import logging
+
+    import matplotlib
+
+    from tsdynamics.viz import get_theme, set_theme
+
+    previous_theme = get_theme()
+    font_logger = logging.getLogger("matplotlib.font_manager")
+    previous_level = font_logger.level
+    with matplotlib.rc_context():
+        try:
+            _prepare_matplotlib()
+            yield
+        finally:
+            set_theme(previous_theme)
+            font_logger.setLevel(previous_level)
 
 
 def _check_snippet(setup: str, call: str) -> None:
@@ -1173,14 +1191,19 @@ def render_all(*, only: set[str] | None = None, force: bool = False, figures: bo
         ``False`` builds the page structure and snippets with no figures at all —
         what ``TSD_DOCS_FIGURES=0`` asks for.
     """
+    if not figures:
+        return _render_all(only=only, force=force, figures=False)
+    with _render_style():
+        return _render_all(only=only, force=force, figures=True)
+
+
+def _render_all(*, only: set[str] | None, force: bool, figures: bool) -> Build:
+    """Build cells inside the caller's scoped drawing state."""
     from tsdynamics.analysis._result_viz import VisualizationNotInstalled
     from tsdynamics.viz.transforms import transforms
 
     build = Build()
     ns_cache: dict[str, dict[str, Any]] = {}
-    if figures:
-        _prepare_matplotlib()
-
     for record in transforms():
         if only is not None and record.name not in only:
             continue

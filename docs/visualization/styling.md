@@ -1,4 +1,5 @@
 ---
+title: Styling and themes
 description: The visualization styling and theme system — the canonical per-layer style vocabulary, alias/validation choke point, every fluent tweak, the four built-in themes, the global default, and the per-backend honoring contract.
 ---
 
@@ -6,59 +7,53 @@ description: The visualization styling and theme system — the canonical per-la
 
 # Styling & themes
 
-Every plot TSDynamics produces is a backend-agnostic
-[`Plot`](index.md): a *semantic* description of a figure — what to draw and
-what it means — rendered on demand by matplotlib, plotly, or the
-[three.js / JSON exporters](backends.md). Nothing about a spec is tied to a
-drawing library, which is exactly what lets one figure render identically
-everywhere.
+<div class="tsd-page-intro" markdown="1">
 
-The **styling layer** controls how that figure *looks* — line colours and widths,
-markers, opacity, gridlines, fonts, backgrounds — through one **canonical,
-validated, introspectable** vocabulary that every visual backend honors
-consistently. This page is the full reference: the style keys, the theme system,
-every fluent tweak, and the honest per-backend honoring contract.
+Use a theme for the whole figure, then change only what helps the reader: a
+colour that separates two curves, a thinner line that reveals structure, or an
+axis label that makes the units explicit. The data stays in the same `Plot`.
 
-There are two levers, and they compose:
+</div>
 
-- **Per-layer style** — the look of one drawable (a line, a scatter, an image):
-  `color`, `linewidth`, `marker`, `alpha`, … Set with [`.style(...)`](#style) /
-  [`.recolor(...)`](#recolor).
-- **The figure-level [`Theme`](#themes)** — palette, font, background, grid, and
-  line / marker defaults shared across the whole figure. Set with
-  [`.theme(...)`](#theme) and its conveniences
-  [`.palette`/`.grid`/`.font`/`.background`/`.size`](#palette-grid-font-background-size),
-  or globally with [`themes.use`](#the-global-default).
-
-A theme is applied **first** — it auto-colours every layer that carries no
-explicit colour — and per-layer style then overrides it. All of these are
-**fluent tweaks**: they mutate the spec and return it, so they chain in any order
-and render the same on every backend.
-
+<!-- tsd-example: style-recipe -->
 ```python
 import tsdynamics as ts
 
-p = (
-    ts.plot(ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]), components=["x", "z"])
-    .theme("dark")                    # figure-level look
-    .gridlines()                      # gridlines on
-    .recolor("crimson")               # this layer's colour
-    .style(lw=2, linestyle="dashed")  # this layer's line
-)
-p.save("lorenz-dark.png")             # matplotlib (by extension)
+trajectory = ts.systems.Lorenz(ic=[1, 1, 1]).run(final_time=40, dt=0.02)
+plain = ts.plot(trajectory, components=["x", "z"], title="Default colours")
+plain.theme("publication").font(family="sans-serif")
+
+styled = ts.plot(trajectory, components=["x", "z"], title="A deliberate style")
+styled.theme("publication").font(family="sans-serif").recolor("#11857A")
+styled.style(lw=0.9, alpha=0.85).gridlines(color="#94A0AA", alpha=0.2)
+figure = (plain | styled).size(10, 4)
 ```
 
-<figure markdown>
-![Two panels of the same Lorenz x–z portrait: a bare default spec on the left, and on the right the same data restyled with a teal recolor, thicker semi-transparent line, faint grid, and a warm off-white background](../assets/figures/viz/styling.svg){ loading=lazy }
-<figcaption>The same Lorenz <code>(x, z)</code> portrait, twice. <b>Left:</b> a bare <code>ts.plot(traj)</code> — default palette, no grid, backend background. <b>Right:</b> the identical trajectory after one chained recipe — <code>.recolor("#11857A")</code>, <code>.style(lw=2.2, alpha=0.85)</code>, <code>.gridlines(color="#9aa7b0", alpha=0.4)</code>, <code>.background("#faf7f2")</code>. The <em>data</em> is byte-for-byte identical; only the presentation layer changed, and the same recipe would render the same on plotly.</figcaption>
+<figure class="tsd-showcase" markdown="1">
+![The same Lorenz x-z trajectory shown with publication defaults and with a thinner teal line and a light grid](../assets/figures/viz/style-recipe.svg){ loading=lazy }
+<figcaption>One trajectory, two presentations. The code above produces both
+panels; colour, line weight and the grid change, while every data sample stays
+the same.</figcaption>
 </figure>
 
-Everything below is runnable as shown. Where a snippet prints a value it pins an
-explicit initial condition (`ic=`), because most catalogue systems have
-`default_ic=None` and draw a fresh random start each run — a reproducible figure
-needs a reproducible orbit.
+A theme supplies figure-wide defaults such as background, fonts and palette.
+An explicit layer style takes precedence. Fluent methods mutate the plot and
+return it, so a short chain is enough to keep related figures consistent.
 
----
+```python
+figure.relabel(title="Two presentations of one orbit")
+figure[1].relabel(x="x", y="z")
+```
+
+For a composite, set the outer theme **before** panel-level palette, font or
+grid overrides. A panel's own theme wins over the outer theme. Select a panel
+with `figure[i]` when it needs its own labels or colour; use the composite's
+`.size(...)` to set the exported figure's width and height in inches.
+
+Supported styling carries across renderers, but the output is not pixel
+identical. Features such as line dashes and font controls have backend-specific
+support. The capability warning names an unsupported option rather than
+silently promising it was rendered. See [backends and export](backends.md).
 
 ## The style vocabulary
 
@@ -70,7 +65,7 @@ guesswork about what a key accepts or where it lands.
 | Canonical | Aliases | Honored by | Meaning |
 | --- | --- | --- | --- |
 | `color` | `c` | mpl, plotly, three.js | line / marker / fill colour (CSS name, hex, or rgb tuple) |
-| `linewidth` | `lw` | mpl, plotly, three.js | line width, pt (≥ 0) |
+| `linewidth` | `lw` | mpl, plotly | line width, pt (≥ 0); WebGL lines remain one device pixel |
 | `linestyle` | `ls` | mpl, plotly | one of `solid`, `dashed`, `dotted`, `dashdot` |
 | `marker` | — | mpl, plotly | one of `circle`, `square`, `triangle`, `diamond`, `cross`, `x`, `star`, `none` |
 | `markersize` | `ms`, `s` | mpl, plotly, three.js | marker size, pt (≥ 0) |
@@ -80,8 +75,8 @@ guesswork about what a key accepts or where it lands.
 | `fillalpha` | — | mpl, plotly | fill opacity in `[0, 1]` — `AREA` marks only |
 | `zorder` | — | mpl, plotly, three.js | integer draw order (three.js maps it to `renderOrder`) |
 
-The table is not lore — it is generated from the live `STYLE_KEYS` table, and you
-can read the same facts off it directly:
+The table follows the live `STYLE_KEYS` registry. You can inspect its accepted
+names and backend support directly:
 
 ```pycon
 >>> import tsdynamics as ts
@@ -172,7 +167,7 @@ everywhere.
 ## Fluent tweak methods
 
 Every tweak mutates the spec and **returns `self`**, so they chain top to bottom
-in any order and render identically on every backend. They split into three
+and retain the same underlying data. Renderer support is described below. They split into three
 groups: the **axis/label** tweaks, the **per-layer style** tweaks, and the
 **figure-level theme** tweaks.
 
@@ -495,7 +490,7 @@ faithfully *serialises* every field — so it is exempt from this negotiation.)
 | Style key | matplotlib | plotly | three.js |
 | --- | :---: | :---: | :---: |
 | `color` | ✓ | ✓ | ✓ |
-| `linewidth` | ✓ | ✓ | ✓ |
+| `linewidth` | ✓ | ✓ | — (one device pixel) |
 | `markersize` | ✓ | ✓ | ✓ |
 | `alpha` | ✓ | ✓ | ✓ |
 | `zorder` | ✓ | ✓ | ✓ (→ `renderOrder`) |
@@ -506,7 +501,7 @@ faithfully *serialises* every field — so it is exempt from this negotiation.)
 
 The notable gaps:
 
-- **three.js** does not honor `linestyle`, marker *shape*, or an arbitrary
+- **three.js** does not honor line width, `linestyle`, marker *shape*, or an arbitrary
   `cmap` — it draws solid lines, points (size honored, shape not), and a fixed
   built-in colour ramp.
 - **`fill` / `fillalpha`** apply to `AREA` marks (a band, a filled region) only.
@@ -539,7 +534,7 @@ with no warning at all. You can introspect a key's reach up front:
 ['matplotlib', 'plotly', 'threejs']
 ```
 
-For a fully portable figure (including three.js), prefer `color` / `linewidth` /
+For styling shared with three.js, prefer `color` /
 `markersize` / `alpha` / `zorder`, which every backend honors.
 
 ---
@@ -550,9 +545,10 @@ The v5 redesign makes the style vocabulary a **closed, validated set**. Calls th
 silently worked on the old v3 matplotlib path — because they were forwarded
 straight to matplotlib — now go through `normalize_style` and raise a `ValueError`
 **at the call site** if the value is not in the canonical vocabulary. This is
-deliberate: the same spec must render the same on plotly and the three.js / JSON
-exporters, so a knob only matplotlib understands cannot be allowed through. The
-trade is a louder upgrade for a portable, predictable spec.
+deliberate: one validated spelling travels through the supported backends,
+whose capability contracts say which effects they honor. A Matplotlib-only
+keyword cannot silently enter that shared vocabulary. Unsupported effects issue
+the degradation warning described above.
 
 ```python
 # skip-doctest — the first call deliberately shows what now RAISES

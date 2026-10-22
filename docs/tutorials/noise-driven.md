@@ -1,4 +1,5 @@
 ---
+title: Noise-driven dynamics
 description: A stochastic-dynamics walkthrough — run a single noisy path, gather statistics with ensemble(), watch noise drive Kramers escape between the wells of a double-well potential, and compare everything against the deterministic skeleton and the analytic laws.
 ---
 
@@ -20,8 +21,9 @@ $g_k$. This tutorial walks the three things you actually do with one: **integrat
 a path**, **gather ensemble statistics**, and **study noise-induced transitions**
 — checking each against the analytic law and the deterministic limit.
 
-Every number below is reproducible: paths and ensembles are seeded, and each
-printed value is what the shown code returns.
+Paths and ensembles are seeded. Keep the numerical scheme and step size with
+the seed when reproducing an experiment; the quoted samples are illustrative,
+and ensemble statistics carry sampling error.
 
 ## 1. A single path
 
@@ -144,22 +146,35 @@ dw = ts.systems.DoubleWell(params={"a": 1.0, "b": 1.0, "sigma": 0.5})
 path = dw.run(final_time=200.0, dt=0.01, ic=[-1.0], seed=1)
 x = path.y[:, 0]
 
-# barrier hops = sign changes of x (the state crossing x = 0)
-int(np.sum(np.diff(np.sign(x)) != 0))   # 70   — this realisation hops 70 times
+# Sampled barrier crossings include rapid recrossings near x = 0.
+int(np.sum(np.diff(np.sign(x)) != 0))
 round((x < 0).mean(), 3)                # 0.962 — but spends 96% of its time left
 ```
 
-The path hops 70 times yet lives mostly in the left well: it starts there, and at
-$\sigma = 0.5$ each escape is rare enough that it mostly falls back. The escape
-rate is governed by **Kramers' law** — the mean residence time is exponential in
-the barrier-height-to-noise ratio, $\sim \exp(2\,\Delta U / \sigma^2)$ — so a
-modest increase in $\sigma$ multiplies the hopping. Turn the noise up and count
-again:
+Crossing $x=0$ is not the same as completing a transition to the other well:
+a noisy path can recross the barrier repeatedly before reaching either minimum.
+Count arrivals at well cores instead, remembering the last core visited:
+
+```python
+def well_transitions(values, core=0.75):
+    labels = np.where(values > core, 1, np.where(values < -core, -1, 0))
+    visits = labels[labels != 0]   # ignore the barrier region between the cores
+    return int(np.count_nonzero(visits[1:] != visits[:-1]))
+
+well_transitions(x)
+```
+
+The threshold defines the event you count: check sensitivity to both `core` and
+the time step. In the weak-noise regime, [Kramers' theory](https://www.mit.edu/~kardar/research/seminars/translocation/Kramers1940.pdf)
+predicts a mean escape time with leading exponential dependence
+$\exp(2\,\Delta U/\sigma^2)$ for this noise convention, together with a
+potential-dependent prefactor. A short single-path count does not validate that
+asymptotic law. Turn the noise up and compare completed transitions:
 
 ```python
 x8 = ts.systems.DoubleWell(params={"a": 1.0, "b": 1.0, "sigma": 0.8}) \
         .run(final_time=200.0, dt=0.01, ic=[-1.0], seed=1).y[:, 0]
-int(np.sum(np.diff(np.sign(x8)) != 0))  # 324  — 4.6× the hops of σ = 0.5
+well_transitions(x8)
 ```
 
 <figure class="ts-fig" markdown>
@@ -198,12 +213,15 @@ finals = finals[~np.isnan(finals).any(axis=1)]
 
 round(finals.mean(), 4)                 # 1.6585  vs  exp(μT)          = 1.6487
 round(float(np.median(finals)), 4)      # 1.3356  vs  exp((μ-σ²/2)T)   = 1.3165
-bool((finals > 0).all())                # True   — every path stayed positive
+bool((finals > 0).all())                # final samples are positive in this experiment
 ```
 
 Because $g = \sigma X$ is state-dependent, this is where **Milstein** actually
 differs from Euler–Maruyama — for a serious moment estimate at coarse `dt`, prefer
-`solver="milstein"`.
+`solver="milstein"` and check convergence as the step shrinks. The exact GBM
+solution is positive; a generic finite-step numerical scheme does not inherit
+that property automatically, and checking final values does not inspect the
+whole path.
 
 ## 5. The deterministic skeleton
 

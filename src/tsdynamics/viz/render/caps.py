@@ -133,7 +133,17 @@ _BACKEND_ANIMATION_GAPS: dict[str, frozenset[str]] = {
 #: and the exporter no longer emits it) and font / grid / title presentation is a browser
 #: concern that is not wired into the three.js scene — every one of these is a gap.
 _THREEJS_THEME_GAPS: frozenset[str] = frozenset(
-    {"foreground", "font_family", "font_size", "title_size", "grid", "grid_color", "grid_alpha"}
+    {
+        "foreground",
+        "font_family",
+        "font_size",
+        "title_size",
+        "grid",
+        "grid_color",
+        "grid_alpha",
+        "line_width",
+        "marker_size",
+    }
 )
 
 #: Per-backend theme presentation gaps.
@@ -452,7 +462,15 @@ def style_honoring_gaps(spec: PlotSpec, backend_name: str) -> list[str]:
     if theme_gaps:
         t = spec.resolved_theme
         base = _baseline_theme()
-        for field in ("foreground", "font_family", "font_size", "title_size", "grid_color"):
+        for field in (
+            "foreground",
+            "font_family",
+            "font_size",
+            "title_size",
+            "grid_color",
+            "line_width",
+            "marker_size",
+        ):
             if field in theme_gaps:
                 value = getattr(t, field)
                 if value is not None and value != getattr(base, field):

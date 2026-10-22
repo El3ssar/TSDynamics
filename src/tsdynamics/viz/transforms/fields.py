@@ -7,16 +7,15 @@ why they arrive together:
 ===================  ===========  =====================================================
 transform            source       what the colour means
 ===================  ===========  =====================================================
-``ftle``             ``model``    finite-time Lyapunov exponent; ridges are LCS
+``ftle``             ``model``    finite-time stretching on an initial-state slice
 ``escape_time``      ``model``    time to leave the window (fractal boundaries)
 ``transient_time``   ``model``    time to settle onto an attractor
 ``invariant_density``  ``data``   the natural measure of the attractor
 ===================  ===========  =====================================================
 
-The first three are cheap because the engine already fans an ensemble out over
-its thread pool: 10,201 initial conditions integrated to :math:`T = 1` is a few
-milliseconds, so an FTLE field is that one call plus :func:`numpy.gradient` and
-a 2x2 eigenvalue in closed form.
+The first three reuse ensemble integration and the analysis module's reductions.
+Their cost depends on the system, integration horizon, grid and solver; plotting
+does not replace those computations with a separate numerical implementation.
 
 ``invariant_density`` is the odd one out and belongs here anyway: it is the same
 *shape* of answer (a scalar over a region) computed from data instead of from
@@ -129,7 +128,7 @@ def _demo_orbit() -> Any:
     presentation=Presentation(aspect="equal", cmap="inferno", autocolor=True),
     analysis="tsdynamics.analysis.planar.ftle_field",
     example=lambda primitive: (_demo_flow(), {**_DEMO_WINDOW, "grid": 12, "final_time": 1.0}),
-    doc="The finite-time Lyapunov exponent field; its ridges are the LCS.",
+    doc="Finite-time stretching over an initial-state slice; ridges are LCS candidates.",
 )
 def ftle(
     system: Any,
@@ -143,19 +142,19 @@ def ftle(
     backward: bool = False,
     **integrate_kwargs: Any,
 ) -> Geometry:
-    r"""Paint the finite-time Lyapunov exponent field — whose ridges are the LCS.
+    r"""Paint finite-time stretching over a two-dimensional initial-state slice.
 
     Every lattice point is integrated for a time :math:`T`; the in-plane
-    deformation gradient of that flow map is taken by finite differences, and the
+    full-state deformation gradient of that restricted flow map is taken by finite differences, and the
     colour is :math:`\log\sqrt{\lambda_{\max}(F^\top F)} / |T|` — the largest
     stretching a small blob at that point experiences over the horizon.
 
-    **The ridges are the Lagrangian coherent structures**: forward time draws the
-    *repelling* ones (stable manifolds, and for a multistable system the basin
-    boundary itself), ``backward=True`` the *attracting* ones.  Overlaying a
-    forward FTLE field on a basin diagram of the same system is the check that
-    the field is right, and it is a good deal more informative than either alone
-    — the basin image says *which*, the FTLE ridge says *how sharply*.
+    Ridges are candidates for Lagrangian coherent structures, not certificates:
+    identifying a material transport barrier requires additional geometric and
+    dynamical conditions. Forward and backward horizons emphasize different
+    stretching histories. For a higher-dimensional system, only the two initial
+    slice directions are perturbed, while separation is measured in the full
+    final state; this is not the unrestricted full-dimensional FTLE.
 
     Parameters
     ----------

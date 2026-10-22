@@ -10,7 +10,7 @@ of it are registered here:
 
 ===================== ==========================================================
 ``hilbert``           the data image itself
-``hilbert_fourier``   its centred 2-D power spectrum (periodicity as symmetry)
+``hilbert_fourier``   its centred 2-D log-amplitude spectrum (periodicity as symmetry)
 ``hilbert_difference`` the locality-loss field: **where the curve's locality
                       breaks**, i.e. which neighbouring pixels are far apart in
                       the record
@@ -261,17 +261,24 @@ def _difference_from_labels(labels: np.ndarray) -> np.ndarray:
     barriers, and for a row-major layout the whole field is one huge plateau,
     which is the point of drawing it.
     """
-    padded = np.pad(labels.astype(float), 1, mode="edge")
     total = np.zeros(labels.shape, dtype=float)
+    count = np.zeros(labels.shape, dtype=int)
+    rows, cols = labels.shape
     for dy in (-1, 0, 1):
         for dx in (-1, 0, 1):
             if dx == 0 and dy == 0:
                 continue
-            total += np.abs(
-                padded[1 + dy : 1 + dy + labels.shape[0], 1 + dx : 1 + dx + labels.shape[1]]
-                - labels
+            target = (
+                slice(max(0, -dy), min(rows, rows - dy)),
+                slice(max(0, -dx), min(cols, cols - dx)),
             )
-    return total / 8.0
+            neighbor = (
+                slice(max(0, dy), min(rows, rows + dy)),
+                slice(max(0, dx), min(cols, cols + dx)),
+            )
+            total[target] += np.abs(labels[neighbor].astype(float) - labels[target])
+            count[target] += 1
+    return np.divide(total, count, out=np.zeros_like(total), where=count > 0)
 
 
 def _fourier_of(image: np.ndarray) -> np.ndarray:
@@ -504,6 +511,13 @@ def _hilbert_geometry(
     primitives: tuple[str, ...],
 ) -> Geometry:
     """Build the geometry shared by the four ``hilbert*`` transforms."""
+    if view == "fourier" and with_sample_index:
+        from tsdynamics.errors import InvalidParameterError
+
+        raise InvalidParameterError(
+            "a Fourier pixel combines the whole input image, so it has no single sample "
+            "index. Use with_sample_index=True on the original hilbert image instead."
+        )
     values, spacing, meta, title = series_of(
         subject,
         components=components,
@@ -516,7 +530,11 @@ def _hilbert_geometry(
     field, index, side, resolved = _layout(
         values, curve=curve, view=view, granularity=int(granularity), fit=fit
     )
-    axis = np.arange(side, dtype=float)
+    axis = (
+        np.fft.fftshift(np.fft.fftfreq(side)) * side
+        if view == "fourier"
+        else np.arange(side, dtype=float)
+    )
     extra: dict[str, Any] = {
         "curve": str(curve),
         "curve_source": "in-tree" if curve in ORDERINGS else _EXTRA,
@@ -669,7 +687,7 @@ def hilbert(
     primitives=("image", "contour", "surface3d"),
     presentation=_PRESENTATION,
     example=_demo_options,
-    doc="The centred 2-D power spectrum of a Hilbert plot — periodicity as symmetry.",
+    doc="The centred 2-D log-amplitude spectrum of a Hilbert plot — periodicity as symmetry.",
 )
 def hilbert_fourier(
     subject: Any,
@@ -683,12 +701,18 @@ def hilbert_fourier(
     dt: float | None = None,
     steps: int | None = None,
 ) -> Geometry:
-    """Draw the **Fourier map**: the centred 2-D spectrum of the Hilbert plot's image.
+    """Draw the **Fourier map**: the centred log-amplitude spectrum of the data image.
 
     A hidden periodicity in the record becomes a bright, symmetric pattern here,
     because the curve maps a period into a repeated 2-D motif.  Returned as
     ``log(1 + |F|)`` so faint structure survives the dynamic range, with the DC
     component removed.
+
+    The signed ``k_x`` / ``k_y`` axes count cycles across the square image.
+    These are spatial modes of the chosen layout, not temporal frequencies of
+    the original record. A Fourier pixel combines the entire image and has no
+    single sample index; ``with_sample_index=True`` therefore raises for this
+    view. Inspect the original :func:`hilbert` image for its sample-index map.
 
     Parameters
     ----------

@@ -8,7 +8,7 @@ Owned by stream **A-ORBIT**.  Cooperating concerns share this subpackage:
   :class:`~tsdynamics.derived.StroboscopicMap` it is the bifurcation diagram of
   a flow.  :meth:`OrbitDiagram.periods` / :meth:`OrbitDiagram.bifurcation_points`
   quantify the cascade.
-- :func:`poincare_section` — surfaces of section from a system (exact, root-
+- :func:`poincare_section` — surfaces of section from a system (root-
   refined crossings) or a :class:`~tsdynamics.data.Trajectory` (interpolated).
 - :func:`return_map` (:class:`ReturnMap`) — the first-return / next-amplitude
   map of a recurring observable (Lorenz, 1963), exposing the one-dimensional
@@ -36,6 +36,7 @@ __all__ = [
 # (CONTRACT §7.7), through the public ``ts.analysis.register`` door.
 _register(
     orbit_diagram,
+    families=("ode", "map", "dde"),
     subjects=("system",),
     area="orbits",
     returns=OrbitDiagram,
@@ -45,7 +46,8 @@ _register(
 )
 _register(
     poincare_section,
-    subjects=("system",),
+    families=("ode", "dde"),
+    subjects=("flow", "trajectory"),
     area="orbits",
     returns=PoincareSection,
     keywords="surface section crossings plane transversal",
@@ -53,7 +55,8 @@ _register(
 )
 _register(
     return_map,
-    subjects=("system",),
+    families=("ode", "dde", "sde"),
+    subjects=("flow", "trajectory", "array"),
     area="orbits",
     returns=ReturnMap,
     keywords="first return next amplitude cusp lorenz",

@@ -70,6 +70,8 @@ class _PlotlyCapabilities(RendererCapabilities):
         """Decline an animated / NESTED composite and a field movie; else defer to the base."""
         from ._composite import has_nested_panels
 
+        if self._decline_reason(spec) is not None:
+            return False
         if spec.is_composite and spec.is_animated:
             return False
         if has_nested_panels(spec):
@@ -77,6 +79,13 @@ class _PlotlyCapabilities(RendererCapabilities):
         if spec.is_animated and spec.kind == PlotKind.SPATIAL_FIELD:
             return False
         return super().can_render_spec(spec)
+
+    def _decline_reason(self, spec: PlotSpec) -> str | None:
+        if any(axis is not None and axis.scale == "symlog" for axis in (spec.x, spec.y, spec.z)):
+            return "symlog axes"
+        return next(
+            (reason for panel in spec.panels if (reason := self._decline_reason(panel))), None
+        )
 
     def can_save(self, ext: str, *, animated: bool = False) -> bool:
         """Whether plotly writes ``ext``; ``.html`` only, and never a *movie*.

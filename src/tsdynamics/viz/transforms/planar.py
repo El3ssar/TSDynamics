@@ -132,7 +132,7 @@ _DEMO_WINDOW: dict[str, Any] = {"xlim": (0.0, 8.0), "ylim": (0.0, 6.0)}
     presentation=Presentation(aspect="equal"),
     analysis="tsdynamics.analysis.planar.nullclines",
     example=lambda primitive: (_demo_flow(), {**_DEMO_WINDOW, "grid": 41}),
-    doc="The curves f_i = 0 on a 2-D slice; their crossings are the equilibria.",
+    doc="The curves f_i = 0 on a 2-D slice; crossings zero the selected components.",
 )
 def nullclines(
     system: Any,
@@ -147,7 +147,9 @@ def nullclines(
     r"""Draw the nullclines of a 2-D slice — one labelled curve per component.
 
     Where :math:`\dot x = 0` the flow is vertical; where :math:`\dot y = 0` it is
-    horizontal; where they cross, it stops.  That last fact is the check worth
+    horizontal; in a planar system their crossings are equilibria. For a slice
+    of a larger state space, off-plane derivatives can remain nonzero at those
+    crossings. The planar case is the check worth
     making every time: overlay ``fixed_points`` and the equilibrium markers must
     sit exactly on the crossings, and the two were computed by entirely separate
     code (marching squares over a lattice versus multi-start Newton).
@@ -327,9 +329,9 @@ def vector_field(
     normalize : bool, optional
         Unit-length arrows.  Default ``True``.
     color_by : {"speed"}, optional
-        Colour the arrows by a scalar.  ``"speed"`` uses the **true** magnitude
-        ``|f|``, so a normalized field still shows where the flow is fast — the
-        best of both pictures.  ``None`` (default) draws plain arrows.
+        Colour the arrows by the magnitude of their two selected RHS components.
+        In a larger system this is projected in-plane speed, not the full-state
+        magnitude. ``None`` (default) draws plain arrows.
 
     Returns
     -------
@@ -369,10 +371,10 @@ def vector_field(
         if color_by != "speed":
             raise InvalidParameterError(
                 f"color_by={color_by!r} is not a field this transform computes; the only "
-                "colour channel a direction field carries is 'speed' (the true |f|)."
+                "colour channel a direction field carries is 'speed' (the in-plane magnitude)."
             )
         channels["c"] = field.speed.ravel()
-        color_label = "|f|"
+        color_label = "in-plane speed" if system.dim > 2 else "|f|"
     return Geometry(
         "vector_field",
         make_frame(FrameSpace.STATE2, field.labels),
@@ -405,7 +407,7 @@ def vector_field(
     presentation=Presentation(aspect="equal", cmap="viridis", autocolor=True),
     analysis="tsdynamics.analysis.planar.flow_field",
     example=lambda primitive: (_demo_flow(), {**_DEMO_WINDOW, "grid": 12}),
-    doc="The speed |f| of the flow as a scalar backdrop.",
+    doc="The magnitude of the selected in-plane RHS components as a scalar backdrop.",
 )
 def flow_speed(
     system: Any,
@@ -417,19 +419,20 @@ def flow_speed(
     grid: int | tuple[int, int] = 121,
     log: bool = False,
 ) -> Geometry:
-    r"""Draw the speed :math:`\|f\|` of a 2-D slice as a scalar backdrop.
+    r"""Draw the speed of the two selected RHS components as a scalar backdrop.
 
     The natural companion to a direction field: normalizing the arrows throws
     the magnitude away, and this puts it back as a colour field underneath.  Its
-    near-zero valleys locate the equilibria and the slow branches of a
-    relaxation oscillator; its ridges are where the flow is fast.
+    near-zero valleys locate slow in-plane motion. Only in a planar system or
+    an invariant plane does zero projected speed identify a full equilibrium;
+    a higher-dimensional trajectory may still move out of the slice.
 
     What correct looks like
     -----------------------
-    The image cell at row ``i``, column ``j`` is :math:`\|f\|` at
-    ``(x[j], y[i])`` — rows are ``y``, columns are ``x``.  Its dark valleys
-    must coincide with the crossings of :func:`nullclines`, because an
-    equilibrium is exactly where the speed vanishes; overlay the two and check.
+    The image cell at row ``i``, column ``j`` is the norm of the selected
+    RHS components at ``(x[j], y[i])`` — rows are ``y``, columns are ``x``.
+    Its zeros coincide with the selected nullcline intersections; calling those
+    full equilibria additionally requires every off-plane derivative to vanish.
     Gate: ``tests/test_viz_truth.py::TestAFieldPlotIsThePictureOfTheRightHandSide``.
 
     Parameters
@@ -452,11 +455,11 @@ def flow_speed(
     """
     field = _planar.flow_field(system, plane=plane, at=at, xlim=xlim, ylim=ylim, grid=grid)
     values = field.speed
-    label = "|f|"
+    label = "in-plane speed" if system.dim > 2 else "|f|"
     if log:
         with np.errstate(divide="ignore", invalid="ignore"):
             values = np.log10(np.where(values > 0.0, values, np.nan))
-        label = "log10 |f|"
+        label = f"log10 {label}"
     return Geometry(
         "flow_speed",
         make_frame(FrameSpace.STATE2, field.labels),
@@ -680,7 +683,7 @@ def trace_determinant(
 
     The classic teaching figure, and one nothing in Python ships.  Every planar
     linearization is a single point :math:`(\tau, \Delta)` and its whole
-    qualitative behaviour is read off from where that point falls:
+    linearized behaviour is read off from where that point falls:
 
     - :math:`\Delta < 0` (below the horizontal axis): **saddle**;
     - above the parabola :math:`\Delta = \tau^2/4`: complex eigenvalues, a
@@ -705,8 +708,10 @@ def trace_determinant(
     *block*, and the axes say so: they read ``tr J|xy`` / ``det J|xy`` and the
     call warns once (:class:`~tsdynamics.viz.render.VisualizationDegraded`).
     Lorenz's origin plots at :math:`(-11, -270)` — the block's pair — where the
-    full 3x3 Jacobian has :math:`(-13.667, +720)`; the *verdict* (saddle) is
-    right, the numbers are the slice's.  The full spectrum is
+    full 3x3 Jacobian has :math:`(-13.667, +720)`. A block's classification can
+    disagree with the full equilibrium's stability when off-plane directions or
+    couplings matter. A nonhyperbolic boundary also needs a nonlinear test.
+    The full spectrum is
     ``ts.analysis.fixed_points(system).eigenvalues``.
 
     Parameters
@@ -776,9 +781,15 @@ def trace_determinant(
             primitive="line",
         ),
     ]
+    restricted = system.dim > 2
     for name in dict.fromkeys(result.classes):
         mask = np.array([cls == name for cls in result.classes], dtype=bool)
-        parts.append(Part({"x": result.trace[mask], "y": dets[mask]}, label=name))
+        parts.append(
+            Part(
+                {"x": result.trace[mask], "y": dets[mask]},
+                label=f"{name} (2-D block)" if restricted else name,
+            )
+        )
 
     return Geometry(
         "trace_determinant",
@@ -787,5 +798,11 @@ def trace_determinant(
         axis_labels=axis_names,
         axis_limits=(result.trace_range, (det_lo - 0.05 * span, det_hi + 0.05 * span)),
         legend=True,
-        meta=dict(result.meta),
+        title="Trace–determinant: frozen 2-D block"
+        if restricted
+        else "Linear trace–determinant classification",
+        meta={
+            **result.meta,
+            "stability_scope": "frozen_block" if restricted else "full_linearization",
+        },
     )

@@ -215,18 +215,21 @@ def _spectrum_parts(eig: np.ndarray, *, continuous: bool, symbol: str) -> list[P
     if eig.size == 0:
         return []
     if continuous:
-        inside = eig.real < 0.0
+        rate = eig.real
         in_label = rf"$\mathrm{{Re}}\,{symbol} < 0$ (contracting)"
-        out_label = rf"$\mathrm{{Re}}\,{symbol} \geq 0$ (expanding)"
+        out_label = rf"$\mathrm{{Re}}\,{symbol} > 0$ (expanding)"
+        neutral_label = rf"$\mathrm{{Re}}\,{symbol} = 0$ (linear test inconclusive)"
     else:
-        inside = np.abs(eig) < 1.0
+        rate = np.abs(eig) - 1.0
         in_label = rf"$|{symbol}| < 1$ (contracting)"
-        out_label = rf"$|{symbol}| \geq 1$ (expanding)"
+        out_label = rf"$|{symbol}| > 1$ (expanding)"
+        neutral_label = rf"$|{symbol}| = 1$ (linear test inconclusive)"
 
     parts: list[Part] = []
     for mask, label, style in (
-        (inside, in_label, _STABLE_STYLE),
-        (~inside, out_label, _UNSTABLE_STYLE),
+        (rate < 0.0, in_label, _STABLE_STYLE),
+        (rate > 0.0, out_label, _UNSTABLE_STYLE),
+        (rate == 0.0, neutral_label, {"marker": "diamond", "markersize": 7.5}),
     ):
         if not bool(np.any(mask)):
             continue
@@ -317,11 +320,10 @@ def _fixed_point_spectrum(
             )
         jac, continuous = _jacobian_at(subject, at)
         eig = np.linalg.eigvals(jac)
-        kind = "equilibrium" if continuous else "fixed point"
         return (
             eig,
             continuous,
-            f"{type(subject).__name__} {kind} at {_point_label(at)}",
+            f"{type(subject).__name__} Jacobian at {_point_label(at)}",
             {
                 "analysis": "jacobian",
                 "at": np.asarray(at, dtype=float).tolist(),
@@ -334,7 +336,14 @@ def _fixed_point_spectrum(
         eig = _as_complex(subject.eigenvalues)
         continuous = bool(getattr(subject, "continuous", True))
         kind = "equilibrium" if continuous else "fixed point"
-        state = "stable" if bool(getattr(subject, "stable", False)) else "unstable"
+        classifier = getattr(subject, "_linear_classification", None)
+        state = (
+            classifier()
+            if callable(classifier)
+            else "stable"
+            if bool(getattr(subject, "stable", False))
+            else "unstable"
+        )
         return (
             eig,
             continuous,
@@ -352,12 +361,21 @@ def _fixed_point_spectrum(
             )
         eig = np.concatenate([_as_complex(m.eigenvalues) for m in members])
         continuous = bool(getattr(members[0], "continuous", True))
-        n_stable = sum(1 for m in members if bool(getattr(m, "stable", False)))
+        states = [
+            m._linear_classification()
+            if callable(getattr(m, "_linear_classification", None))
+            else "stable"
+            if bool(getattr(m, "stable", False))
+            else "unstable"
+            for m in members
+        ]
+        counts = {state: states.count(state) for state in dict.fromkeys(states)}
+        summary = ", ".join(f"{count} {state}" for state, count in counts.items())
         word = "equilibria" if continuous else "fixed points"
         return (
             eig,
             continuous,
-            f"{len(members)} {word} — {n_stable} stable, {len(members) - n_stable} unstable",
+            f"{len(members)} {word} — {summary}",
             {
                 "analysis": "fixed_points",
                 "continuous": continuous,
@@ -582,7 +600,7 @@ def _example_periodic_orbit(_primitive: str) -> tuple[Any, dict[str, Any]]:
     default_primitive="points",
     primitives=("points", "line"),
     presentation=Presentation(aspect="equal"),
-    analysis="tsdynamics.analysis.fixedpoints.periodic_orbit",
+    analysis="tsdynamics.analysis.periodic_orbits",
     example=_example_periodic_orbit,
     doc="A periodic orbit's monodromy spectrum on the unit circle, trivial one marked.",
 )

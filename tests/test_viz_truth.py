@@ -87,6 +87,19 @@ class TestASpectrumPeaksWhereTheSignalOscillates:
 
     DT = 0.01
 
+    def test_a_constant_state_preserves_zero_power_and_renders_without_log_warnings(self, tmp_path):
+        import warnings
+
+        data = np.ones(64)
+        geometry = ts.viz.geometry(data, "psd", method="periodogram")
+        np.testing.assert_array_equal(_channel(geometry, "y"), np.zeros(33))
+        assert geometry.axis_scales == ("linear", "linear")
+        path = tmp_path / "constant-psd.png"
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)
+            ts.plot(data, "psd", method="periodogram").save(path, backend="mpl")
+        assert path.stat().st_size > 0
+
     def _series(self, freqs, amps):
         t = np.arange(0.0, 200.0, self.DT)
         return sum(a * np.sin(2 * np.pi * f * t) for f, a in zip(freqs, amps, strict=True))
@@ -142,6 +155,21 @@ class TestAutocorrelationFindsThePeriod:
 class TestReturnTimesOfAPeriodicOrbitAreThePeriod:
     """``return_time`` must report the period, in time units."""
 
+    @pytest.mark.parametrize("direction", ["up", "down", "both"])
+    def test_grazing_a_level_does_not_invent_directed_crossings(self, direction):
+        from tsdynamics.errors import InvalidInputError
+
+        with pytest.raises(InvalidInputError, match="0 time"):
+            ts.viz.geometry(
+                np.tile([1.0, 0.0], 6), "return_time", threshold=0.0, direction=direction
+            )
+
+    def test_exact_level_samples_are_one_crossing_when_the_sign_really_changes(self):
+        result = ts.viz.geometry(
+            np.tile([-1.0, 0.0, 1.0, 0.0], 6), "return_time", threshold=0.0, direction="both"
+        )
+        np.testing.assert_array_equal(result.meta["return_times"], np.full(10, 2.0))
+
     def test_every_return_of_a_sinusoid_is_one_period(self):
         dt, period = 0.01, 5.0
         t = np.arange(0.0, 100.0, dt)
@@ -155,6 +183,16 @@ class TestReturnTimesOfAPeriodicOrbitAreThePeriod:
         # …and the drawn histogram's mode is there too.
         centres, counts = _channel(g, "x"), _channel(g, "y")
         assert centres[int(np.argmax(counts))] == pytest.approx(period, abs=0.05)
+
+
+def test_zero_one_translation_plot_preserves_an_inconclusive_estimator_verdict():
+    from tsdynamics.analysis.results import ZeroOneResult
+
+    result = ZeroOneResult(value=0.5, p=np.arange(5.0), q=np.zeros(5))
+    assert result.chaotic is None
+    picture = ts.viz.geometry(result, "zero_one_pq_plane")
+    assert picture.meta["verdict"] == "inconclusive"
+    assert "inconclusive" in picture.title
 
 
 # ---------------------------------------------------------------------------

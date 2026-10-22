@@ -34,7 +34,7 @@ import numpy as np
 
 from tsdynamics.errors import ConvergenceError, InvalidParameterError, remedy
 
-from .._common import reject_system, runaway_meta
+from .._common import reject_system, runaway_meta, sampling_interval
 from .._result import ScalingResult
 
 __all__ = ["LyapunovFromData", "ScalingRegionWarning", "lyapunov_from_data"]
@@ -699,12 +699,6 @@ def _auto_fit_region(x: np.ndarray, y: np.ndarray) -> tuple[tuple[int, int] | No
     return (best[2], best[3]), peak
 
 
-#: How far a trajectory's widest sample gap may stray from the typical one
-#: (relative) and still count as a uniformly-sampled time axis.  Output grids are
-#: built by accumulation, so the last gap can differ by a few ULP.
-_UNIFORM_TIME_AXIS_SPREAD = 1e-9
-
-
 def _sampling_interval_of(data: Any) -> float | None:
     """Read the sampling interval a *trajectory* already knows, or ``None``.
 
@@ -728,31 +722,7 @@ def _sampling_interval_of(data: Any) -> float | None:
     no exception.  ``traj.dt`` is the single reading; ``meta["dt"]`` is consulted
     only when there is no usable axis to read.
     """
-    meta = getattr(data, "meta", None)
-    t = getattr(data, "t", None)
-    if meta is None or t is None:
-        return None
-    derived = getattr(data, "dt", None)  # the Trajectory's own, axis-derived reading
-    if derived is not None:
-        return float(derived)
-    times = np.asarray(t, dtype=float)
-    if times.ndim != 1 or times.size < 2:
-        recorded = meta.get("dt") if hasattr(meta, "get") else None
-        return None if recorded is None else float(recorded)
-    steps = np.diff(times)
-    step = float(np.median(steps))
-    # A uniformity check, not a solver tolerance: how far the widest gap strays
-    # from the typical one, relative to the typical one.
-    spread = float(np.max(np.abs(steps - step))) / abs(step) if step else np.inf
-    if step <= 0.0 or spread > _UNIFORM_TIME_AXIS_SPREAD:
-        # A non-uniform time axis has no single sampling interval, and quietly
-        # assuming one is how a wrong exponent gets reported as a right one.
-        raise InvalidParameterError(
-            "lyapunov_from_data: this trajectory's time axis is not uniformly "
-            "spaced, so it has no single sampling interval to read. Pass the one "
-            "you mean explicitly, e.g. lyapunov_from_data(data, dt=0.01)."
-        )
-    return step
+    return sampling_interval(data, analysis="lyapunov_from_data")
 
 
 def lyapunov_from_data(

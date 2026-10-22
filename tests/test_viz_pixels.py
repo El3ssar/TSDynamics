@@ -321,8 +321,30 @@ def _flat_then_busy():
     return ts.Trajectory(t=t, y=y.reshape(-1, 1))
 
 
-def test_moving_the_x_window_moves_what_is_drawn():
+def test_transparent_pixel_measurements_use_visible_colours():
+    """An invisible RGB value is not ink; changing its opacity changes the picture."""
+    transparent = np.full((10, 10, 4), [0, 0, 0, 0], dtype=np.uint8)
+    marked = transparent.copy()
+    marked[0, :, 3] = 255
+    assert px.background(transparent) == (255, 255, 255)
+    assert px.ink_fraction(transparent) == 0.0
+    assert px.ink_fraction(marked) == pytest.approx(0.1)
+    assert px.dark_fraction(marked) == pytest.approx(0.1)
+    assert px.difference(transparent, marked) == pytest.approx(0.1)
+
+
+@pytest.mark.parametrize("transparent", [False, True], ids=["opaque", "transparent"])
+def test_moving_the_x_window_moves_what_is_drawn(transparent):
     """``xlim=`` selects part of the data, and the picture shows that part."""
+    # Documentation renderers legitimately use transparent backgrounds.  The
+    # measurement must count visible ink under either setting, rather than the
+    # uncomposited RGB stored beside partially transparent antialiasing pixels.
+    matplotlib.rcParams.update(
+        {
+            "axes.facecolor": "none" if transparent else "white",
+            "figure.facecolor": "none" if transparent else "white",
+        }
+    )
     traj = _flat_then_busy()
     frame = {"ylim": (-1.2, 1.2)}
     flat = px.render(ts.plot(traj, xlim=(0.0, 4.5), **frame))

@@ -23,8 +23,8 @@ scene per frame (janky, and it fights the camera even with ``uirevision``):
   + play-button + slider figure (the only option for a returned ``Figure`` with no
   HTML wrapper to host a script).  Functional, but the HTML export is the smooth one.
 
-Scope (this release): curve layers (``LINE`` / ``LINE3D`` / ``SCATTER`` /
-``MARKERS``).  The 3-D camera *spin* and the time clock are matplotlib-only for now
+Scope (this release): curve layers (``LINE`` / ``LINE3D`` / ``SCATTER``).
+Annotation glyphs (``MARKERS``) remain static. The 3-D camera *spin* and the time clock are matplotlib-only for now
 (here the user drives the camera directly); an animated spacetime image renders
 through matplotlib.  A spec with no animatable curve layer falls back to a static
 figure.
@@ -40,7 +40,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from ..._visibility import listing_dir
-from ...spec import Axis, PlotKind, PlotSpec
+from ...spec import PlotKind, PlotSpec
 
 if TYPE_CHECKING:
     import plotly.graph_objects as go
@@ -87,249 +87,168 @@ _REALTIME_JS = """
 (function() {
   var gd = document.getElementById('{plot_id}');
   if (!gd || !window.Plotly) { console.warn('tsd-anim: no graph div / Plotly'); return; }
-  var LAYERS = __LAYERS__, WINDOW = __WINDOW__, STRIDE = __STRIDE__;
-  var IS3D = __IS3D__, N = __N__, LOOP = __LOOP__, PINGPONG = __PINGPONG__;
-  // Cache the full curve arrays from the initial figure.
-  // Read the curve from plotly's DECODED data (gd._fullData): plotly serialises a
-  // numpy array into a base64 typed-array *spec* object ({dtype, bdata}) and stores
-  // THAT in gd.data[i].x — which has no .slice — while gd._fullData[i].x is the
-  // decoded Float64Array.  Normalise each axis once into a real array so the
-  // per-frame .slice(lo, hi+1) (and the head index read) always works regardless of
-  // plotly's storage format.  (Without this the loop throws on frame 0 and the
-  // curve stays static — issue #464.)
+  var LAYERS = __LAYERS__, WINDOW = __WINDOW__, N = __N__;
+  var DURATION = __DURATION_MS__, REVERSE_DURATION = __REVERSE_DURATION_MS__, LOOP = __LOOP__;
+  var IS3D = __IS3D__, PERSISTENT = __PERSISTENT__;
   function asArray(v) {
     if (v == null) { return []; }
-    // A real Array / typed array (Float64Array …) already slices.
     if (typeof v.slice === 'function' && typeof v.length === 'number') { return v; }
-    // A plotly base64 typed-array spec ({dtype, bdata}) or any iterable → realise it.
     if (v.bdata != null && typeof Plotly.dataArray === 'function') {
-      try { return Plotly.dataArray(v); } catch (e) { /* fall through */ }
+      try { return Plotly.dataArray(v); } catch (e) { /* decoded fallback below */ }
     }
-    var a = Array.from(v);
-    if (a.length) { return a; }
-    // Never hand back an unsliceable {bdata} spec — an empty realisation of one
-    // becomes [] so no downstream .slice / index can throw.
-    return v.bdata != null ? [] : v;
+    return Array.from(v);
   }
   var decoded = gd._fullData || gd.data;
   var full = LAYERS.map(function(m) {
-    // Prefer plotly's decoded data (Float64Array); fall back to the raw figure data.
-    var d = (decoded && decoded[m.ctx] != null) ? decoded[m.ctx] : gd.data[m.ctx];
-    var raw = gd.data[m.ctx];
-    return {
-      x: asArray(d.x != null ? d.x : raw.x),
-      y: asArray(d.y != null ? d.y : raw.y),
-      z: asArray(d.z != null ? d.z : raw.z),
-    };
+    var d = decoded[m.ctx] || gd.data[m.ctx], raw = gd.data[m.ctx];
+    var f = {x: asArray(d.x || raw.x), y: asArray(d.y || raw.y)};
+    if (IS3D) { f.z = asArray(d.z || raw.z); }
+    if (m.c) { f.c = asArray((d.marker || raw.marker).color); }
+    if (m.size) { f.size = asArray((d.marker || raw.marker).size); }
+    m.n = Math.min(m.n, f.x.length, f.y.length, IS3D ? f.z.length : m.n);
+    m.last = 0;
+    m.window = PERSISTENT ? m.n : Math.max(1, Math.round(WINDOW * (m.n - 1) / Math.max(1, N - 1))) + 1;
+    return f;
   });
-  console.info('tsd-anim: starting', {N: N, window: WINDOW, stride: STRIDE, is3d: IS3D});
-
-  // --- A minimal, always-visible play/pause + restart control overlay --------
-  // (so the animation is obviously alive and controllable without devtools).
   if (getComputedStyle(gd).position === 'static') { gd.style.position = 'relative'; }
   var bar = document.createElement('div');
+  bar.setAttribute('role', 'group'); bar.setAttribute('aria-label', 'Animation controls');
   bar.style.cssText = 'position:absolute;left:10px;bottom:10px;z-index:10;display:flex;'
-    + 'gap:6px;align-items:center;font:12px system-ui,sans-serif;color:#888;'
-    + 'user-select:none;';
-  function mkBtn(txt) {
+    + 'gap:6px;align-items:center;font:12px system-ui,sans-serif;color:#888;user-select:none;';
+  function mkBtn(txt, label) {
     var b = document.createElement('button');
-    b.textContent = txt;
+    b.textContent = txt; b.type = 'button'; b.setAttribute('aria-label', label); b.title = label;
     b.style.cssText = 'cursor:pointer;border:1px solid #8888;border-radius:6px;'
       + 'background:rgba(127,127,127,.12);color:inherit;width:30px;height:26px;'
       + 'font-size:13px;line-height:1;padding:0;';
     return b;
   }
-  var playBtn = mkBtn('❚❚'), restartBtn = mkBtn('↺');
-  var readout = document.createElement('span');
-  bar.appendChild(playBtn); bar.appendChild(restartBtn); bar.appendChild(readout);
-  gd.appendChild(bar);
-
-  // --- Drag detection: suspend the stream for the whole gesture --------------
-  // `dragging` gates the loop (see frame()).  We flip it on a CAPTURE-phase
-  // pointerdown on the graph div, which fires before plotly's own canvas handler —
-  // so the stream is already suspended by the time the orbit gesture begins and not
-  // one extendTraces replot lands mid-drag to cancel it.  Resume on pointerup /
-  // pointercancel anywhere (a drag often ends with the pointer off the canvas), and
-  // — belt and braces — on plotly's own relayout (fired when it commits the camera).
-  var dragging = false, userPaused = false, dead = false;
-  function endDrag() { dragging = false; }
-  if (typeof gd.addEventListener === 'function') {
-    gd.addEventListener('pointerdown', function(e) {
-      if (bar.contains(e.target)) { return; }  // overlay buttons are not a drag
-      dragging = true;
-    }, true);
-    // Wheel-zoom also replots the gl3d scene; suspend it for the scroll burst so the
-    // zoom stays smooth, then resume shortly after the wheel goes quiet.
-    var wheelTimer = null;
-    gd.addEventListener('wheel', function() {
-      dragging = true;
-      if (wheelTimer) { clearTimeout(wheelTimer); }
-      wheelTimer = setTimeout(endDrag, 250);
-    }, true);
+  var playBtn = mkBtn('❚❚', 'Pause animation'), restartBtn = mkBtn('↺', 'Restart animation');
+  var readout = document.createElement('span'); readout.textContent = '0%';
+  bar.appendChild(playBtn); bar.appendChild(restartBtn); bar.appendChild(readout); gd.appendChild(bar);
+  var dragging = false, dead = false, busy = false, wheelTimer = null, rafId = null;
+  var userPaused = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  var position = 0, direction = 1, lastTime = null, reset = false, generation = 0;
+  function showPlayState() {
+    playBtn.textContent = userPaused ? '▶' : '❚❚';
+    playBtn.setAttribute('aria-label', userPaused ? 'Play animation' : 'Pause animation');
   }
-  if (typeof window.addEventListener === 'function') {
-    window.addEventListener('pointerup', endDrag, true);
-    window.addEventListener('pointercancel', endDrag, true);
+  showPlayState();
+  function endDrag() { dragging = false; lastTime = null; }
+  function beginDrag(e) { if (!bar.contains(e.target)) { dragging = true; lastTime = null; } }
+  function wheel() {
+    dragging = true; lastTime = null;
+    if (wheelTimer) { clearTimeout(wheelTimer); }
+    wheelTimer = setTimeout(endDrag, 250);
   }
-
-  // Mirror the LIVE camera into gd.layout during a drag so the first resumed redraw
-  // keeps the pose the user dragged to (no snap-back): a gl3d redraw restores the
-  // camera from gd.layout under uirevision, but a drag only *commits* it on release.
-  // Pure data mirror (no relayout/redraw issued) → no recursion, no flicker.  The
-  // relayout handler also clears `dragging` as a backstop for pointerup.
+  function mirrorCam(e) {
+    if (e && e['scene.camera']) {
+      if (!gd.layout.scene) { gd.layout.scene = {}; }
+      gd.layout.scene.camera = e['scene.camera'];
+    }
+  }
+  function relayout(e) { mirrorCam(e); endDrag(); }
+  gd.addEventListener('pointerdown', beginDrag, true); gd.addEventListener('wheel', wheel, true);
+  window.addEventListener('pointerup', endDrag, true); window.addEventListener('pointercancel', endDrag, true);
   if (typeof gd.on === 'function') {
-    var mirrorCam = function(e) {
-      if (e && e['scene.camera']) {
-        if (!gd.layout.scene) { gd.layout.scene = {}; }
-        gd.layout.scene.camera = e['scene.camera'];
-      }
-    };
-    gd.on('plotly_relayouting', mirrorCam);
-    gd.on('plotly_relayout', function(e) { mirrorCam(e); endDrag(); });
+    gd.on('plotly_relayouting', mirrorCam); gd.on('plotly_relayout', relayout);
   }
-
-  // Stream the comet by MUTATING the trace buffers in place.  Plotly.extendTraces
-  // appends the next points to the comet line (trimmed to a WINDOW-length sliding
-  // window via maxPoints) and advances the single-point head (maxPoints 1).
-  var i = 1;
-  // A plain-Array slice (not a typed-array slice) so the appended chunk matches the
-  // comet trace's own plain-array data — extendTraces rejects a type mismatch.
-  function slc(a, lo, hi) { return Array.prototype.slice.call(a, lo, hi + 1); }
-  function pushRange(lo, hi) {
-    for (var l = 0; l < LAYERS.length; l++) {
-      var m = LAYERS[l], f = full[l];
-      var ext = IS3D
-        ? {x: [slc(f.x, lo, hi)], y: [slc(f.y, lo, hi)], z: [slc(f.z, lo, hi)]}
-        : {x: [slc(f.x, lo, hi)], y: [slc(f.y, lo, hi)]};
-      try {
-        Plotly.extendTraces(gd, ext, [m.comet], WINDOW);
+  function cleanup() {
+    gd.removeEventListener('pointerdown', beginDrag, true); gd.removeEventListener('wheel', wheel, true);
+    window.removeEventListener('pointerup', endDrag, true); window.removeEventListener('pointercancel', endDrag, true);
+    if (typeof gd.removeListener === 'function') {
+      gd.removeListener('plotly_relayouting', mirrorCam); gd.removeListener('plotly_relayout', relayout);
+    }
+    if (wheelTimer) { clearTimeout(wheelTimer); }
+  }
+  function schedule() { if (rafId === null && !dead) { rafId = requestAnimationFrame(frame); } }
+  function stop() {
+    dead = true; userPaused = true; showPlayState();
+    if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
+  }
+  function failed(e) { console.error('tsd-anim: trace update failed', e); stop(); }
+  function endpoint() {
+    if (direction > 0 && REVERSE_DURATION > 0) { direction = -1; return; }
+    else if (LOOP) { direction = 1; position = 0; reset = true; }
+    else { stop(); }
+    lastTime = null;
+  }
+  function indices(lo, hi, reverse) {
+    var out = [];
+    if (reverse) { for (var j = lo; j >= hi; j--) { out.push(j); } }
+    else { for (var k = lo; k <= hi; k++) { out.push(k); } }
+    return out;
+  }
+  function paint(target, atEnd) {
+    var tasks = [], ticket = generation, resetting = reset;
+    reset = false; busy = true;
+    try {
+      LAYERS.forEach(function(m, l) {
+        var f = full[l], j = Math.min(m.n - 1, Math.max(0, Math.round(target * (m.n - 1))));
+        if (m.n < 1 || (!resetting && j === m.last)) { return; }
+        var reverse = j < m.last;
+        var lo = reverse ? Math.min(m.last - 1, j + m.window - 1) : Math.max(m.last + 1, j - m.window + 1);
+        var ix = resetting ? [j] : indices(lo, j, reverse);
+        var update = {};
+        ['x', 'y', 'z'].forEach(function(key) {
+          if (f[key]) { update[key] = [ix.map(function(k) { return f[key][k]; })]; }
+        });
+        if (m.c) { update['marker.color'] = [ix.map(function(k) { return f.c[k]; })]; }
+        if (m.size) { update['marker.size'] = [ix.map(function(k) { return f.size[k]; })]; }
+        // One in-flight batch at a time; a slow WebGL redraw cannot queue a request flood.
+        tasks.push(resetting ? Plotly.restyle(gd, update, [m.comet])
+                             : Plotly.extendTraces(gd, update, [m.comet], m.window));
         if (m.head >= 0) {
-          var eh = IS3D
-            ? {x: [[f.x[hi]]], y: [[f.y[hi]]], z: [[f.z[hi]]]}
-            : {x: [[f.x[hi]]], y: [[f.y[hi]]]};
-          Plotly.extendTraces(gd, eh, [m.head], 1);
+          var point = {};
+          ['x', 'y', 'z'].forEach(function(key) { if (f[key]) { point[key] = [[f[key][j]]]; } });
+          if (m.c) { point['marker.color'] = f.c[j]; }
+          tasks.push(Plotly.restyle(gd, point, [m.head]));
         }
-      } catch (e) {
-        console.error('tsd-anim: extendTraces failed', e);
-        return false;
-      }
-    }
-    return true;
+        m.last = j;
+      });
+    } catch (e) { busy = false; failed(e); return; }
+    Promise.all(tasks).then(function() {
+      busy = false;
+      if (ticket !== generation) { return; }
+      readout.textContent = Math.round(100 * target) + '%';
+      if (atEnd) { endpoint(); }
+    }).catch(function(e) { busy = false; failed(e); });
   }
-  function seedStart() {
-    // Reset the comet + head to the first sample (one in-place redraw, once per
-    // loop) so the windowed comet does not draw a line back across the attractor.
-    for (var l = 0; l < LAYERS.length; l++) {
-      var m = LAYERS[l], f = full[l];
-      var s = IS3D ? {x: [[f.x[0]]], y: [[f.y[0]]], z: [[f.z[0]]]}
-                   : {x: [[f.x[0]]], y: [[f.y[0]]]};
-      Plotly.restyle(gd, s, [m.comet]);
-      if (m.head >= 0) { Plotly.restyle(gd, s, [m.head]); }
-    }
-    i = 0;
-  }
-  // Reverse phase (pingpong): re-seed the comet at the LAST sample and stream the
-  // window backward toward sample 0.  extendTraces appends in reverse-index order,
-  // so the comet travels back across the same curve.
-  function seedEnd() {
-    for (var l = 0; l < LAYERS.length; l++) {
-      var m = LAYERS[l], f = full[l];
-      var s = IS3D ? {x: [[f.x[N - 1]]], y: [[f.y[N - 1]]], z: [[f.z[N - 1]]]}
-                   : {x: [[f.x[N - 1]]], y: [[f.y[N - 1]]]};
-      Plotly.restyle(gd, s, [m.comet]);
-      if (m.head >= 0) { Plotly.restyle(gd, s, [m.head]); }
-    }
-    i = N - 1;
-  }
-  // One always-scheduled rAF loop.  Keeping the clock alive (rather than
-  // stopping/restarting it) makes resume instant — flipping a flag is all it takes.
-  // While dragging (or user-paused) the frame does ZERO trace work, so the gl3d
-  // orbit is never fought by a replot.  `direction` is +1 on the forward sweep and
-  // -1 on the pingpong reverse sweep; `loop`/`pingpong` decide what happens at an
-  // endpoint (mirror the mpl contract: loop=False stops, pingpong reverses).
-  var direction = 1;
-  function frame() {
+  function frame(now) {
+    rafId = null;
     if (dead) { return; }
-    requestAnimationFrame(frame);
-    if (userPaused || dragging) { return; }
-    if (direction > 0) {
-      var lo = i + 1, hi = Math.min(i + STRIDE, N - 1);
-      if (lo <= hi && !pushRange(lo, hi)) {
-        dead = true; userPaused = true; playBtn.textContent = '▶'; return;
-      }
-      readout.textContent = Math.round(100 * hi / (N - 1)) + '%';
-      i = hi;
-      if (i >= N - 1) { atForwardEnd(); }
-    } else {
-      var lo2 = i - 1, hi2 = Math.max(i - STRIDE, 0);
-      if (lo2 >= hi2 && !pushRangeRev(lo2, hi2)) {
-        dead = true; userPaused = true; playBtn.textContent = '▶'; return;
-      }
-      readout.textContent = Math.round(100 * hi2 / (N - 1)) + '%';
-      i = hi2;
-      if (i <= 0) { atReverseEnd(); }
-    }
+    if (gd.isConnected === false) { stop(); cleanup(); return; }
+    schedule();
+    if (userPaused || dragging || document.hidden) { lastTime = null; return; }
+    if (lastTime === null) { lastTime = now; }
+    var delta = Math.max(0, now - lastTime); lastTime = now;
+    var legDuration = direction > 0 ? DURATION : REVERSE_DURATION;
+    position = Math.min(1, Math.max(0, position + direction * delta / legDuration));
+    var atEnd = direction > 0 ? position >= 1 : position <= 0;
+    if (!busy) { paint(position, atEnd); }
   }
-  // Append samples lo..hi in DESCENDING order (the reverse comet).
-  function pushRangeRev(lo, hi) {
-    for (var l = 0; l < LAYERS.length; l++) {
-      var m = LAYERS[l], f = full[l];
-      var xs = [], ys = [], zs = [];
-      for (var k = lo; k >= hi; k--) {
-        xs.push(f.x[k]); ys.push(f.y[k]); if (IS3D) { zs.push(f.z[k]); }
-      }
-      var ext = IS3D ? {x: [xs], y: [ys], z: [zs]} : {x: [xs], y: [ys]};
-      try {
-        Plotly.extendTraces(gd, ext, [m.comet], WINDOW);
-        if (m.head >= 0) {
-          var eh = IS3D
-            ? {x: [[f.x[hi]]], y: [[f.y[hi]]], z: [[f.z[hi]]]}
-            : {x: [[f.x[hi]]], y: [[f.y[hi]]]};
-          Plotly.extendTraces(gd, eh, [m.head], 1);
-        }
-      } catch (e) {
-        console.error('tsd-anim: extendTraces failed', e);
-        return false;
-      }
-    }
-    return true;
-  }
-  // Reached the last forward sample.  pingpong → reverse; else loop → restart;
-  // else stop at the end (loop=False, mpl repeat=False parity).
-  function atForwardEnd() {
-    if (PINGPONG) { direction = -1; return; }
-    if (LOOP) { seedStart(); } else { stopAtEnd(); }
-  }
-  // Reached sample 0 on the reverse sweep (pingpong only).  loop → forward again;
-  // else stop at the start.
-  function atReverseEnd() {
-    if (LOOP) { direction = 1; seedStart(); } else { stopAtEnd(); }
-  }
-  function stopAtEnd() {
-    dead = true; userPaused = true; playBtn.textContent = '▶';
+  function restart() {
+    generation++; direction = 1; position = 0; lastTime = null; reset = true;
+    if (dead) { dead = false; userPaused = false; }
+    showPlayState(); schedule();
   }
   playBtn.onclick = function() {
-    userPaused = !userPaused;
-    playBtn.textContent = userPaused ? '▶' : '❚❚';
+    if (dead) { restart(); return; }
+    userPaused = !userPaused; lastTime = null; showPlayState();
   };
-  restartBtn.onclick = function() {
-    direction = 1; seedStart(); readout.textContent = '0%';
-    // Revive a loop that stopped at the end (loop=False) and resume playing.
-    if (dead) { dead = false; userPaused = false; playBtn.textContent = '❚❚';
-      requestAnimationFrame(frame); }
-  };
-  requestAnimationFrame(frame);
+  restartBtn.onclick = restart;
+  schedule();
 })();
 """
 
 #: Layer marks the plotly reveal animator drives (curves).
-_CURVE_MARKS = frozenset({PlotKind.LINE, PlotKind.LINE3D, PlotKind.SCATTER, PlotKind.MARKERS})
+_CURVE_MARKS = frozenset({PlotKind.LINE, PlotKind.LINE3D, PlotKind.SCATTER})
 
 #: A constant ``uirevision`` token — pinning it preserves the camera across frames.
 _UIREVISION = "tsd-anim"
 
 
-def _data_range(spec: PlotSpec, channel: str) -> list[float] | None:
+def _data_range(spec: PlotSpec, channel: str, *, logarithmic: bool = False) -> list[float] | None:
     """Return the padded min/max of ``channel`` across layers, for a fixed range."""
     lo, hi = np.inf, -np.inf
     for layer in spec.layers:
@@ -338,6 +257,8 @@ def _data_range(spec: PlotSpec, channel: str) -> list[float] | None:
             continue
         a = np.asarray(arr, dtype=float)
         a = a[np.isfinite(a)]
+        if logarithmic:
+            a = np.log10(a[a > 0])
         if a.size:
             lo, hi = min(lo, float(a.min())), max(hi, float(a.max()))
     if not (np.isfinite(lo) and np.isfinite(hi)):
@@ -350,7 +271,11 @@ def _data_range(spec: PlotSpec, channel: str) -> list[float] | None:
 
 def _curve_layers(spec: PlotSpec) -> list[Any]:
     """Return the animatable curve layers of ``spec`` (in draw order)."""
-    return [lyr for lyr in spec.layers if PlotKind(lyr.kind) in _CURVE_MARKS]
+    return [
+        lyr
+        for lyr in spec.layers
+        if PlotKind(lyr.kind) in _CURVE_MARKS and np.asarray(lyr.data.get("y", [])).size
+    ]
 
 
 def _sample_count(layers: list[Any]) -> int:
@@ -360,7 +285,45 @@ def _sample_count(layers: list[Any]) -> int:
         arr = lyr.data.get("x", lyr.data.get("y"))
         if arr is not None:
             n = max(n, int(np.asarray(arr).shape[0]))
-    return max(n, 2)
+    return max(n, 1)
+
+
+def _traces(spec: PlotSpec, layers: list[Any], *, three_d: bool) -> list[Any]:
+    """Use the static renderer's mark/style rules for animation as well."""
+    subset = dataclasses.replace(spec, layers=layers, animation=None)
+    if three_d:
+        from ._threed import build_3d_traces
+
+        return build_3d_traces(subset)
+    from ._core import build_2d_traces
+
+    return build_2d_traces(subset)
+
+
+def _curve_templates(spec: PlotSpec, curves: list[Any], *, three_d: bool) -> list[Any]:
+    templates = []
+    palette = spec.resolved_theme.palette
+    for i, layer in enumerate(curves):
+        template = _traces(spec, [layer], three_d=three_d)[0].to_plotly_json()
+        if palette:
+            color = palette[i % len(palette)]
+            for key in ("line", "marker"):
+                template.setdefault(key, {}).setdefault("color", color)
+        c = layer.data.get("c")
+        if c is not None:
+            values = np.asarray(c, dtype=float)
+            finite = values[np.isfinite(values)]
+            if finite.size:
+                marker = template.setdefault("marker", {})
+                marker.setdefault("cmin", float(finite.min()))
+                marker.setdefault("cmax", float(finite.max()))
+        templates.append(template)
+    return templates
+
+
+def _static_traces(spec: PlotSpec, curves: list[Any], *, three_d: bool) -> list[Any]:
+    ids = {id(layer) for layer in curves}
+    return _traces(spec, [layer for layer in spec.layers if id(layer) not in ids], three_d=three_d)
 
 
 def build_animated_figure(spec: PlotSpec) -> go.Figure:
@@ -369,9 +332,7 @@ def build_animated_figure(spec: PlotSpec) -> go.Figure:
 
     anim = spec.animation
     assert anim is not None
-    three_d = spec.z is not None or any(
-        PlotKind(lyr.kind) in (PlotKind.LINE3D, PlotKind.SURFACE3D) for lyr in spec.layers
-    )
+    three_d = spec.is_three_d
     curves = _curve_layers(spec)
     if not curves:
         # Nothing to reveal — hand back a static figure (the final frame).
@@ -392,16 +353,22 @@ def build_animated_figure(spec: PlotSpec) -> go.Figure:
         dt_f = None
     tail = anim.tail_samples(dt_f)
     arrays = [_curve_arrays(lyr) for lyr in curves]
+    if three_d:
+        for arr in arrays:
+            arr.setdefault("z", np.zeros_like(arr["x"]))
+    templates = _curve_templates(spec, curves, three_d=three_d)
 
     # Base traces: a faint full-curve context (only when windowed) + the comet at
     # frame 0.  Record the comet trace indices so frames update *only* those (the
     # context stays put → small frames, and the camera/uirevision is undisturbed).
-    base: list[Any] = []
+    base: list[Any] = _static_traces(spec, curves, three_d=three_d)
     comet_idx: list[int] = []
-    for arr, layer in zip(arrays, curves, strict=True):
-        if tail is not None:
-            base.append(_context_trace(arr, layer, three_d=three_d))
-        for trace in _comet_traces(arr, layer, heads[0], tail, anim, three_d=three_d):
+    for arr, layer, template in zip(arrays, curves, templates, strict=True):
+        if tail is not None and anim.backdrop and anim.backdrop_alpha > 0:
+            base.append(_context_trace(template, anim, three_d=three_d))
+        for trace in _comet_traces(
+            arr, layer, heads[0], tail, anim, three_d=three_d, template=template, n_clock=n
+        ):
             comet_idx.append(len(base))
             base.append(trace)
 
@@ -409,8 +376,10 @@ def build_animated_figure(spec: PlotSpec) -> go.Figure:
         go.Frame(
             data=[
                 t
-                for arr, layer in zip(arrays, curves, strict=True)
-                for t in _comet_traces(arr, layer, idx, tail, anim, three_d=three_d)
+                for arr, layer, template in zip(arrays, curves, templates, strict=True)
+                for t in _comet_traces(
+                    arr, layer, idx, tail, anim, three_d=three_d, template=template, n_clock=n
+                )
             ],
             traces=comet_idx,
             name=str(k),
@@ -431,86 +400,74 @@ def _curve_arrays(layer: Any) -> dict[str, np.ndarray]:
     }
     if "z" in layer.data:
         out["z"] = np.asarray(layer.data["z"], dtype=float)
+    for key in ("c", "size"):
+        if key in layer.data:
+            out[key] = np.asarray(layer.data[key], dtype=float)
     return out
 
 
-def _context_trace(arr: dict[str, np.ndarray], layer: Any, *, three_d: bool) -> Any:
+def _context_trace(template: dict[str, Any], anim: Any, *, three_d: bool) -> Any:
     """Build the full curve drawn once, faintly — the static rotatable backdrop."""
     import plotly.graph_objects as go
 
-    color = layer.style.get("color")
-    line = {"color": color, "width": 1.5} if color else {"width": 1.5}
-    common = dict(mode="lines", line=line, opacity=0.25, showlegend=False, hoverinfo="skip")
-    if three_d:
-        return go.Scatter3d(x=arr["x"], y=arr["y"], z=arr["z"], **common)
-    return go.Scatter(x=arr["x"], y=arr["y"], **common)
+    payload = dict(template)
+    payload.update(
+        opacity=anim.backdrop_alpha if anim.backdrop and anim.trail_kind is not None else 0.0,
+        showlegend=False,
+        hoverinfo="skip",
+    )
+    payload["marker"] = {**payload.get("marker", {}), "showscale": False}
+    return (go.Scatter3d if three_d else go.Scatter)(**payload)
 
 
 def _comet_traces(
-    arr: dict[str, np.ndarray], layer: Any, head: int, tail: int | None, anim: Any, *, three_d: bool
+    arr: dict[str, np.ndarray],
+    layer: Any,
+    head: int,
+    tail: int | None,
+    anim: Any,
+    *,
+    three_d: bool,
+    template: dict[str, Any],
+    n_clock: int,
 ) -> list[Any]:
     """Build the animated comet for one layer at sample ``head`` (windowed trail + head)."""
     import plotly.graph_objects as go
 
+    n_local = len(arr["x"])
+    ratio = (n_local - 1) / max(1, n_clock - 1)
+    head = min(n_local - 1, max(0, round(head * ratio)))
+    tail = None if tail is None else max(1, round(tail * ratio))
     lo = 0 if tail is None else max(0, head - tail)
     sl = slice(lo, head + 1)
-    color = layer.style.get("color")
-    width = layer.style.get("lw", layer.style.get("linewidth", 3))
-    out: list[Any] = []
-    if three_d:
-        out.append(
-            go.Scatter3d(
-                # Plain lists (not numpy → not a base64 typed-array spec) so the
-                # real-time driver's Plotly.extendTraces can append to the comet.
-                x=arr["x"][sl].tolist(),
-                y=arr["y"][sl].tolist(),
-                z=arr["z"][sl].tolist(),
-                mode="lines",
-                line={"color": color, "width": width} if color else {"width": width},
-                name=layer.label or "",
-                showlegend=layer.label is not None,
-            )
+    trace_type = go.Scatter3d if three_d else go.Scatter
+    payload = dict(template)
+    for key in ("x", "y", "z"):
+        if key in arr:
+            payload[key] = arr[key][sl].tolist()
+    marker = dict(payload.get("marker", {}))
+    if "c" in arr:
+        marker["color"] = arr["c"][sl].tolist()
+    if "size" in arr:
+        marker["size"] = arr["size"][sl].tolist()
+    payload["marker"] = marker
+    out = [trace_type(**payload)]
+    if anim.head:
+        from ._core import _plotly_colour
+
+        color = _plotly_colour(
+            anim.head_color or layer.style.get("color") or template.get("line", {}).get("color")
         )
-        if anim.head:
-            out.append(
-                go.Scatter3d(
-                    x=[arr["x"][head]],
-                    y=[arr["y"][head]],
-                    z=[arr["z"][head]],
-                    mode="markers",
-                    marker={"size": anim.head_size, "color": anim.head_color or color},
-                    showlegend=False,
-                )
-            )
-    else:
-        out.append(
-            go.Scatter(
-                # Plain lists so the real-time driver's Plotly.extendTraces can append.
-                x=arr["x"][sl].tolist(),
-                y=arr["y"][sl].tolist(),
-                mode="lines",
-                line={"color": color, "width": width} if color else {"width": width},
-                name=layer.label or "",
-                showlegend=layer.label is not None,
-            )
-        )
-        if anim.head:
-            out.append(
-                go.Scatter(
-                    x=[arr["x"][head]],
-                    y=[arr["y"][head]],
-                    mode="markers",
-                    marker={"size": anim.head_size, "color": anim.head_color or color},
-                    showlegend=False,
-                )
-            )
+        head_marker = {**marker, "size": anim.head_size, "color": color, "showscale": False}
+        if anim.head_color is None and "c" in arr:
+            head_marker["color"] = float(arr["c"][head])
+        point = {key: [arr[key][head]] for key in ("x", "y", "z") if key in arr}
+        out.append(trace_type(**point, mode="markers", marker=head_marker, showlegend=False))
     return out
 
 
 def _apply_layout(fig: go.Figure, spec: PlotSpec, anim: Any, *, three_d: bool) -> None:
     """Camera-locked layout: fixed ranges, play / pause, slider, real transitions."""
-    from ._core import _theme_layout
-
     frame_ms = 1000.0 / float(anim.fps) if anim.fps > 0 else 40.0
     # 2-D tweens the head glide between frames; 3-D has no trace tween (rely on the
     # dense frame schedule), so its transition stays instantaneous.
@@ -568,55 +525,8 @@ def _apply_layout(fig: go.Figure, spec: PlotSpec, anim: Any, *, three_d: bool) -
         "margin": {"t": 40, "r": 10, "b": 10, "l": 10},
     }
 
-    # Apply theme-level presentation (background, font).
-    theme = spec.resolved_theme
-    layout.update(_theme_layout(theme))
-
-    if spec.title:
-        layout["title"] = {"text": spec.title}
-
-    if three_d:
-        layout["scene"] = {
-            "uirevision": _UIREVISION,  # the load-bearing bit: keep the camera while playing
-            "xaxis": {"title": {"text": spec.x.label}, "range": _data_range(spec, "x")},
-            "yaxis": {"title": {"text": spec.y.label}, "range": _data_range(spec, "y")},
-            "zaxis": {
-                "title": {"text": spec.z.label if spec.z is not None else ""},
-                "range": _data_range(spec, "z"),
-            },
-        }
-    else:
-        layout["xaxis"] = _axis(spec.x, _data_range(spec, "x"))
-        layout["yaxis"] = _axis(spec.y, _data_range(spec, "y"))
-        if spec.aspect == "equal":
-            layout["yaxis"]["scaleanchor"] = "x"
-            layout["yaxis"]["scaleratio"] = 1
-    _maybe_hide_layout_axes(layout, spec, three_d=three_d)
+    layout = {**_fixed_layout(spec, three_d=three_d), **layout}
     fig.update_layout(**layout)
-
-
-def _maybe_hide_layout_axes(layout: dict[str, Any], spec: PlotSpec, *, three_d: bool) -> None:
-    """Honor ``style(axes=False)`` on a plotly animation layout dict (in place)."""
-    if not spec._axes_hidden():
-        return
-    if three_d:
-        for k in ("xaxis", "yaxis", "zaxis"):
-            if k in layout["scene"]:
-                layout["scene"][k]["visible"] = False
-    else:
-        layout["xaxis"]["visible"] = False
-        layout["yaxis"]["visible"] = False
-
-
-def _axis(axis: Axis, data_range: list[float] | None) -> dict[str, Any]:
-    """Return a 2-D plotly axis dict (label + fixed range from the spec or data)."""
-    rng = list(axis.limits) if axis.limits is not None else data_range
-    out: dict[str, Any] = {"title": {"text": axis.label}}
-    if rng is not None:
-        out["range"] = rng
-    if axis.scale in ("log", "symlog"):
-        out["type"] = "log"
-    return out
 
 
 def animated_html(
@@ -647,9 +557,7 @@ def animated_html(
 
     anim = spec.animation
     assert anim is not None
-    three_d = spec.z is not None or any(
-        PlotKind(lyr.kind) in (PlotKind.LINE3D, PlotKind.SURFACE3D) for lyr in spec.layers
-    )
+    three_d = spec.is_three_d
     curves = _curve_layers(spec)
     if not curves:  # nothing to animate — write the static figure
         # ``dataclasses.replace`` clones the spec by reference; the old
@@ -663,6 +571,10 @@ def animated_html(
         return _to_html(static, full_html=bool(full_html), include_plotlyjs=include_plotlyjs)
 
     arrays = [_curve_arrays(lyr) for lyr in curves]
+    if three_d:
+        for arr in arrays:
+            arr.setdefault("z", np.zeros_like(arr["x"]))
+    templates = _curve_templates(spec, curves, three_d=three_d)
     n = _sample_count(curves)
     dt = spec.meta.get("dt") if isinstance(spec.meta, dict) else None
     try:
@@ -674,12 +586,19 @@ def animated_html(
 
     # One faint static context trace (the full curve, read by the JS loop) + a comet
     # (trail + head) per layer.  ``layers_meta`` tells the loop which trace is which.
-    base: list[Any] = []
-    layers_meta: list[dict[str, int]] = []
-    for arr, layer in zip(arrays, curves, strict=True):
-        meta: dict[str, int] = {"ctx": len(base)}
-        base.append(_context_trace(arr, layer, three_d=three_d))
-        comet = _comet_traces(arr, layer, 1, window, anim, three_d=three_d)
+    base: list[Any] = _static_traces(spec, curves, three_d=three_d)
+    layers_meta: list[dict[str, Any]] = []
+    for arr, layer, template in zip(arrays, curves, templates, strict=True):
+        meta: dict[str, Any] = {
+            "ctx": len(base),
+            "n": len(arr["x"]),
+            "c": "c" in arr,
+            "size": "size" in arr,
+        }
+        base.append(_context_trace(template, anim, three_d=three_d))
+        comet = _comet_traces(
+            arr, layer, 0, window, anim, three_d=three_d, template=template, n_clock=n
+        )
         meta["comet"] = len(base)
         base.append(comet[0])
         meta["head"] = -1
@@ -691,17 +610,17 @@ def animated_html(
     fig = go.Figure(data=base)
     _realtime_layout(fig, spec, three_d=three_d)
 
-    # Speed: traverse the whole series in ~duration seconds at the browser's 60 fps.
+    # Elapsed active time determines progress independently of display refresh.
     duration = playback_seconds(anim, n)
-    stride = max(1, round(n / (duration * 60.0)))
     js = (
         _REALTIME_JS.replace("__LAYERS__", json.dumps(layers_meta))
         .replace("__WINDOW__", str(int(window)))
-        .replace("__STRIDE__", str(int(stride)))
+        .replace("__DURATION_MS__", repr(float(duration * 1000.0)))
+        .replace("__REVERSE_DURATION_MS__", repr(float(anim._reverse_seconds(n) * 1000.0)))
+        .replace("__PERSISTENT__", "true" if tail is None else "false")
         .replace("__IS3D__", "true" if three_d else "false")
         .replace("__N__", str(int(n)))
         .replace("__LOOP__", "true" if anim.loop else "false")
-        .replace("__PINGPONG__", "true" if anim.pingpong else "false")
     )
     if path is not None:
         return _write_html(
@@ -716,36 +635,32 @@ def animated_html(
     )
 
 
-def _realtime_layout(fig: go.Figure, spec: PlotSpec, *, three_d: bool) -> None:
-    """Apply fixed ranges + title for the real-time animation (no frames / play button)."""
-    from ._core import _theme_layout
-
-    layout: dict[str, Any] = {
-        "margin": {"t": 40, "r": 10, "b": 10, "l": 10},
-        "uirevision": _UIREVISION,
-    }
-
-    # Apply theme-level presentation (background, font).
-    theme = spec.resolved_theme
-    layout.update(_theme_layout(theme))
-
-    if spec.title:
-        layout["title"] = {"text": spec.title}
+def _fixed_layout(spec: PlotSpec, *, three_d: bool) -> dict[str, Any]:
+    """Keep the static plot's axes, annotations, legend and theme during playback."""
     if three_d:
-        layout["scene"] = {
-            "uirevision": _UIREVISION,
-            "xaxis": {"title": {"text": spec.x.label}, "range": _data_range(spec, "x")},
-            "yaxis": {"title": {"text": spec.y.label}, "range": _data_range(spec, "y")},
-            "zaxis": {
-                "title": {"text": spec.z.label if spec.z is not None else ""},
-                "range": _data_range(spec, "z"),
-            },
-        }
+        from ._threed import render_3d
+
+        static = dataclasses.replace(spec, layers=[], animation=None)
+        layout = dict(render_3d(static).layout.to_plotly_json())
+        layout.pop("template", None)
+        axes = layout["scene"]
+        axes["uirevision"] = _UIREVISION
     else:
-        layout["xaxis"] = _axis(spec.x, _data_range(spec, "x"))
-        layout["yaxis"] = _axis(spec.y, _data_range(spec, "y"))
-        if spec.aspect == "equal":
-            layout["yaxis"]["scaleanchor"] = "x"
-            layout["yaxis"]["scaleratio"] = 1
-    _maybe_hide_layout_axes(layout, spec, three_d=three_d)
-    fig.update_layout(**layout)
+        from ._core import _build_2d_layout
+
+        layout = _build_2d_layout(spec)
+        axes = layout
+    for channel in ("x", "y", "z") if three_d else ("x", "y"):
+        key = channel + "axis"
+        axis = axes.setdefault(key, {})
+        if "range" not in axis:
+            rng = _data_range(spec, channel, logarithmic=axis.get("type") == "log")
+            if rng is not None:
+                axis["range"] = rng
+    layout.update(uirevision=_UIREVISION, margin={"t": 40, "r": 10, "b": 10, "l": 10})
+    return layout
+
+
+def _realtime_layout(fig: go.Figure, spec: PlotSpec, *, three_d: bool) -> None:
+    """Apply the same fixed presentation to HTML and returned-figure animations."""
+    fig.update_layout(**_fixed_layout(spec, three_d=three_d))

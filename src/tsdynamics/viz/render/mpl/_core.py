@@ -61,7 +61,7 @@ from tsdynamics.errors import InvalidParameterError
 
 from ..._visibility import listing_dir
 from ...producers import autostyle_enabled, autostyle_line, autostyle_marker
-from ...spec import Annotation, Axis, Colorbar, Layer, PlotKind, PlotSpec
+from ...spec import Annotation, Axis, Colorbar, Layer, Layout, PlotKind, PlotSpec
 from ...style import Theme, normalize_style
 from .. import normalize_kind
 from ..caps import RenderResult
@@ -590,9 +590,11 @@ def _draw_colored_line(
     auto_lw, auto_alpha = autostyle_line(
         int(y.size), line_width=theme.line_width, enabled=autostyle_enabled(spec)
     )
-    lw = canon.get("linewidth") or auto_lw
+    lw = canon.get("linewidth", auto_lw)
     if lw is not None:
         lc.set_linewidth(float(lw))
+    if "linestyle" in canon:
+        lc.set_linestyle(_LINESTYLE_MPL.get(str(canon["linestyle"]), canon["linestyle"]))
     if "zorder" in canon:
         lc.set_zorder(int(canon["zorder"]))
     if "alpha" in canon:
@@ -867,6 +869,8 @@ def _draw_histogram(
         kw["alpha"] = float(canon["alpha"])
     if layer.label is not None:
         kw["label"] = layer.label
+    if "zorder" in canon:
+        kw["zorder"] = canon["zorder"]
     if y is not None:
         # Pre-binned: draw counts at the given centres as a bar histogram.
         width = float(np.median(np.diff(x))) if x.size >= 2 else 1.0
@@ -895,6 +899,8 @@ def _draw_bar(
         kw["color"] = canon["color"]
     if "alpha" in canon:
         kw["alpha"] = float(canon["alpha"])
+    if "zorder" in canon:
+        kw["zorder"] = canon["zorder"]
     if layer.label is not None:
         kw["label"] = layer.label
     ax.bar(x, y, **kw)
@@ -930,6 +936,8 @@ def _draw_area(
     kw: dict[str, Any] = {"alpha": float(fill_alpha)}
     if "color" in canon:
         kw["color"] = canon["color"]
+    if "zorder" in canon:
+        kw["zorder"] = canon["zorder"]
     # A band and the line through it are ONE series, so exactly one of the two
     # artists carries the legend label.  Both did, and matplotlib legends every
     # labelled artist: measured, a 2-attractor continuation produced FOUR
@@ -943,7 +951,7 @@ def _draw_area(
     if show_fill:
         ax.fill_between(x, lo, hi, **kw)
     if centre is not None:
-        line_kw: dict[str, Any] = {k: v for k, v in kw.items() if k == "color"}
+        line_kw = _line_kwargs(layer, theme, n=int(centre.size), autostyle=autostyle_enabled(spec))
         if layer.label is not None:
             line_kw["label"] = layer.label
         ax.plot(x, centre, **line_kw)
@@ -971,6 +979,9 @@ def _draw_errorbar(
         kw["color"] = canon["color"]
     if "alpha" in canon:
         kw["alpha"] = float(canon["alpha"])
+    for key in ("zorder", "linewidth", "markersize"):
+        if key in canon:
+            kw[key] = canon[key]
     if layer.label is not None:
         kw["label"] = layer.label
     ax.errorbar(x, y, yerr=err, **kw)
@@ -995,11 +1006,21 @@ def _draw_quiver(
     if c is not None:
         cmap = _resolve_cmap(spec, layer, preset)
         norm = _make_norm(_resolve_norm(spec, preset), spec.clim)
-        q = ax.quiver(x, y, u, v, c, cmap=cmap, norm=norm)
+        q = ax.quiver(
+            x,
+            y,
+            u,
+            v,
+            c,
+            cmap=cmap,
+            norm=norm,
+            **{key: canon[key] for key in ("alpha", "zorder") if key in canon},
+        )
         return q
     kw: dict[str, Any] = {}
     if "color" in canon:
         kw["color"] = canon["color"]
+    kw.update({key: canon[key] for key in ("alpha", "zorder") if key in canon})
     ax.quiver(x, y, u, v, **kw)
     return None
 
@@ -1720,18 +1741,7 @@ def _hide_inner_tick_labels(axes: list[Axes], *, share_x: bool, share_y: bool) -
 
 def _composite_grid(layout: Any, n: int) -> tuple[int, int]:
     """Return the ``(rows, cols)`` subplot grid for a composite's :class:`Layout`."""
-    mode = getattr(layout, "mode", "stack")
-    if mode == "row":
-        return 1, n
-    if mode == "grid":
-        rows = getattr(layout, "rows", None)
-        cols = getattr(layout, "cols", None)
-        if rows and cols:
-            return int(rows), int(cols)
-        c = int(np.ceil(np.sqrt(n)))
-        r = int(np.ceil(n / c))
-        return r, c
-    return n, 1  # "stack" (default): one column
+    return (layout if layout is not None else Layout()).grid(n)
 
 
 def _leaf_extent(spec: PlotSpec) -> tuple[int, int]:
@@ -1763,6 +1773,8 @@ def _place_composite(
     cell: Any,
     spec: PlotSpec,
     inherited_theme: Theme,
+    *,
+    draw_leaf: Callable[[Figure, Axes, PlotSpec, Theme, bool], None] | None = None,
 ) -> list[Axes]:
     """Draw one composite level into ``cell``, recursing into nested composites.
 
@@ -1807,7 +1819,7 @@ def _place_composite(
         effective_theme = panel._theme if panel._theme is not None else theme
         sub = gs[i // cols, i % cols]
         if panel.is_composite:
-            flat.extend(_place_composite(fig, sub, panel, effective_theme))
+            flat.extend(_place_composite(fig, sub, panel, effective_theme, draw_leaf=draw_leaf))
             continue
         threed = _threed.is_three_d(panel)
         sub_kw: dict[str, Any] = {}
@@ -1818,7 +1830,11 @@ def _place_composite(
                 sub_kw["sharey"] = anchor
         ax = fig.add_subplot(sub, projection=("3d" if threed else None), **sub_kw)
         flat.append(ax)
-        if threed:
+        if draw_leaf is not None:
+            draw_leaf(fig, ax, panel, effective_theme, threed)
+            if not threed and anchor is None:
+                anchor = ax
+        elif threed:
             _threed._draw_3d_panel(fig, ax, panel, effective_theme)
         else:
             produced = _draw_2d_panel(fig, ax, panel, effective_theme, colorbar=not share_color)

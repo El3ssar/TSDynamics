@@ -1,18 +1,17 @@
 ---
-description: The figure conventions the TSDynamics catalogue follows — viridis for sequential fields, twilight for cyclic phase, the teal and indigo brand accents, IBM Plex labels, one figure per concept, and how colorbars and legends are handled — so your plots come out paper-ready.
+title: Figure conventions
+description: Choose meaningful color, readable labels, comparable scales and the right export format for a scientific figure.
 ---
 
 <span class="ts-kicker">Visualization · Conventions</span>
 
 # Figure conventions
 
-Every figure in this documentation — the [system catalogue](../systems/index.md)
-pages, the [analysis](../analysis/index.md) results, the examples throughout the
-[visualization](index.md) section — follows one small, consistent set of rules.
-They are not decoration. Perceptually uniform colormaps, a disciplined accent
-palette, honest colorbars, and one idea per figure are what make a plot *readable
-in a paper* — legible in greyscale, safe for colour-blind readers, and truthful
-about magnitude.
+The [catalogue](../systems/index.md) and [examples](index.md) aim to make one
+useful fact visible at a time. Meaningful color, readable labels and comparable
+scales matter more than decoration. A page illustration can emphasize an orbit's
+shape; a quantitative figure also needs its coordinates, units and sampling
+conditions. Check the exported artifact at the size where readers will use it.
 
 This page is the house style, so your figures can match it. The mechanics for
 *applying* any of this — `.recolor`, `.style`, `.theme`, `.grid` — live in
@@ -47,15 +46,12 @@ deliberate reason.
     or a sibling for exactly this reason. If you find yourself reaching for a
     rainbow, reach for viridis instead.
 
-## The brand palette is sampled from the colormaps
+## Keep comparisons easy to follow
 
-The two TSDynamics accent colours are not arbitrary — they are *sampled from the
-house colormaps*, which is why line plots and field images sit together
-harmoniously:
+The documentation's accent colors sit comfortably beside the field colormaps:
 
-- **Teal `#11857A`** — the primary. It is viridis at ≈ 0.50 (its green-teal
-  middle). Use it for the main trace, the object of interest, links and marks.
-- **Indigo `#574FCF`** — the accent. It is twilight at ≈ 0.30. Use it for a
+- **Teal `#11857A`** — use it for the main trace, the object of interest, links and marks.
+- **Indigo `#574FCF`** — use it for a
   second series, integrator state, highlights, the "other" thing in a comparison.
 - **Amber `#ffb000`** — a warm highlight for a moving head, an event marker, a
   reference value against a cool field. Reserved for the *one thing the eye
@@ -74,12 +70,13 @@ thing teal, big thing indigo, or reference teal, perturbed indigo). For three or
 more, fall back to a full themed [palette](styling.md#palette-grid-font-background-size) rather than
 hand-picking hues.
 
-## Type: IBM Plex, and label everything
+## Label the quantity, then check the typography
 
-Labels are set in **IBM Plex Sans** (body) and **IBM Plex Mono** (values and
-code) to match the documentation. Every axis carries a label, and a scalar
-colour channel carries a colorbar with a label — an unlabelled axis or an
-unlabelled colour ramp is an unfinished figure.
+The site's body and code use IBM Plex. Plot themes choose their own type;
+the scientific SVG examples use generic sans-serif labels so they stay readable
+on machines without an installed scientific font. `.font(family="sans-serif")`
+sets that choice explicitly. For quantitative figures, label every axis and
+scalar color channel. Add physical units where the model has them.
 
 ```python
 (
@@ -98,8 +95,8 @@ see [themes](styling.md#themes).
 
 A figure should make exactly one point. The catalogue holds to this strictly:
 
-- **The attractor's shape** → a clean 3-D phase portrait with `.style(axes=False)`
-  — no ticks competing with the geometry.
+- **An orbit's shape** → a clean phase portrait, optionally with `.style(axes=False)`
+  for an illustrative thumbnail. Keep labels for a quantitative comparison.
 - **A comparison** → an [overlay](plotting.md#composing-panels) (two orbits on
   one plane, teal vs indigo) *or* a small-multiples [grid](plotting.md#composing-panels)
   (one system per panel) — never both crammed into a single busy axes.
@@ -145,10 +142,10 @@ spec_b.colorize(clim=(-12.0, 15.0))
   dense spacetime image or a high-resolution field is better as a `.png` at a
   publication `dpi` (300+). `.save(path)` picks the backend from the extension;
   set resolution with `.size(dpi=300)` or `save(..., dpi=300)`.
-- **Transparent backgrounds** let a figure sit on any page or slide colour. The
-  documentation figures are transparent; for your own, leave the background unset
-  (the default) rather than baking in white, unless the **publication** theme's
-  explicit white is what you want.
+- **Choose the background with the ink.** Transparent output can suit a slide,
+  but dark labels become unreadable on a dark surface. The new scientific
+  examples use an explicit light paper surface; movies use a solid dark stage
+  with light labels. Preview either format on its intended background.
 
 ```python
 ts.plot(lor).style(axes=False).size(dpi=300).save("lorenz.png")

@@ -6,8 +6,8 @@ believing it:
 
 ``lyapunov_spectrum``
     The exponents as an ordered stem plot against the :math:`\lambda = 0` line,
-    with the Kaplan--Yorke dimension in the title.  Chaos is "a stem crosses
-    zero", read directly.
+    with a supported Kaplan--Yorke estimate in the title. Positive finite-time
+    rates show expansion; a chaos interpretation needs boundedness and convergence.
 ``lyapunov_convergence``
     The **running** Benettin estimate against time.  This is how you *show* that
     an exponent converged instead of asserting it: the curve flattens, or it
@@ -17,8 +17,9 @@ believing it:
     Hamiltonian-torus power-law reference whose assumptions are explicit.
 ``zero_one_pq_plane``
     The :math:`(p_c, q_c)` translation plane of the Gottwald--Melbourne test.
-    The reason the test is trusted is that the answer is *visible*: a bounded
-    blob is regular, a Brownian sprawl is chaotic.
+    The geometry helps assess the indicator: regular deterministic records
+    typically stay bounded and chaotic ones diffuse. Noise can also diffuse;
+    finite records and unsuitable sampling can leave the verdict inconclusive.
 ``scaling_fit``
     The log--log curve of any :class:`~tsdynamics.analysis.ScalingResult` with
     the fitted window **delimited**, plus two inspection views
@@ -113,9 +114,9 @@ _LOG_FLOOR = 1e-16
 
 def _is_system(subject: Any) -> bool:
     """Whether ``subject`` looks like a dynamical system rather than data."""
-    return hasattr(subject, "dim") and (
-        hasattr(subject, "_equations") or hasattr(subject, "_step") or hasattr(subject, "_drift")
-    )
+    from tsdynamics.analysis._common import is_system
+
+    return is_system(subject)
 
 
 def _given(**options: Any) -> dict[str, Any]:
@@ -242,8 +243,8 @@ def lyapunov_spectrum(
     r"""Draw the Lyapunov exponents, ordered and stemmed from the :math:`\lambda = 0` line.
 
     The one thing a spectrum plot has to make unmistakable is the **sign** of
-    each exponent, because that is the whole classification: one positive
-    exponent is chaos, two is hyperchaos, none is regular motion.  So every
+    each exponent. Positive finite-time rates indicate expanding directions;
+    interpreting them as chaos requires a bounded orbit and a convergence check. Every
     exponent is stemmed from zero and the zero line is drawn as geometry (not an
     annotation, so the data-export backends keep it).  The Kaplan--Yorke
     dimension implied by the spectrum is put in the title, where it belongs next
@@ -253,8 +254,9 @@ def lyapunov_spectrum(
     -----------------------
     The stem heights are the estimator's own numbers — compare against
     ``ts.analysis.lyapunov_spectrum(system)`` and they agree to the last bit.
-    For a flow one exponent sits on the zero line (the direction along the
-    orbit); for a dissipative system the sum is negative.  Gate:
+    A bounded nonstationary autonomous flow has an asymptotic neutral direction
+    along its orbit; equilibria need not have a zero exponent. Finite-time
+    estimates may retain a residual near zero. Gate:
     ``tests/test_viz_truth.py::TestTheSpectrumPlotDrawsTheEstimatorsOwnExponents``.
 
     Parameters
@@ -433,7 +435,7 @@ def _example_convergence(_primitive: str) -> tuple[Any, dict[str, Any]]:
     name="lyapunov_convergence",
     # It runs the tangent dynamics (a measured orbit cannot answer it) — or reads a
     # recorded ``(times, estimates)`` pair, which arrives as a plain array.
-    subjects=("system", "array"),
+    subjects=("ContinuousSystem", "DiscreteMap", "TangentSystem", "array"),
     source="data",
     kind=PlotKind.DIAGNOSTIC_CURVE,
     frame=FrameSpace.SCALING,
@@ -620,8 +622,10 @@ def gali_curves(
 ) -> Geometry:
     r"""GALI\ :sub:`k` against time on log axes, with the power-law reference drawn.
 
-    The Generalized Alignment Index separates order from chaos by *how* it
-    decays, so the figure has to make the decay law readable.  Both axes are
+    The Generalized Alignment Index measures the alignment of tangent vectors,
+    so the figure makes its decay law readable. Exponential alignment also
+    occurs on regular attracting cycles; collapse alone does not prove chaos.
+    Both axes are
     :math:`\log_{10}` (in the data — see this module's docstring), which turns
     the regular-orbit prediction
 
@@ -850,7 +854,8 @@ def zero_one_pq_plane(
 
     The 0--1 test drives a skew translation with the observable and asks whether
     the translation variables stay **bounded** (regular) or **diffuse** like a
-    Brownian path (chaotic).  The indicator :math:`K` is a number summarising
+    Brownian path (compatible with chaos, but also with stochastic noise).
+    The indicator :math:`K` is a number summarising
     that; this is the picture it summarises, and looking at it is the standard
     guard against the test's known failure mode — an oversampled observable,
     whose plane drifts smoothly instead of diffusing.
@@ -923,7 +928,14 @@ def zero_one_pq_plane(
         )
 
     k_value = float(result)
-    verdict = "chaotic" if k_value > 0.5 else "regular"
+    classification = getattr(result, "chaotic", None)
+    verdict = (
+        "chaotic"
+        if classification is True
+        else "regular"
+        if classification is False
+        else "inconclusive"
+    )
     parts = [
         Part({"x": p, "y": q}, label="$(p_c, q_c)$"),
         Part(
@@ -1085,9 +1097,14 @@ def scaling_fit(subject: Any, *, view: str = "fit") -> Geometry:
         )
 
     x, y, lo, hi, slope, intercept, stderr = _scaling_pieces(subject)
-    xlabel, ylabel = _SCALING_LABELS.get(
-        str(getattr(subject, "kind", "")), (r"$\log$ scale", r"$\log$ measure")
-    )
+    if hasattr(subject, "times") and hasattr(subject, "divergence"):
+        # A data-derived Lyapunov fit is semi-log: its horizontal coordinate is
+        # elapsed time, not log time. Preserve the estimator's actual units.
+        xlabel, ylabel = "time", "mean log divergence $S(k)$"
+    else:
+        xlabel, ylabel = _SCALING_LABELS.get(
+            str(getattr(subject, "kind", "")), ("abscissa", "ordinate")
+        )
     n_fit = hi - lo + 1
     slope_label = rf"slope = {slope:.4g} $\pm$ {stderr:.2g}"
 

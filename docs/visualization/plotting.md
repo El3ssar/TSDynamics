@@ -1,5 +1,6 @@
 ---
-description: Transforms and primitives — the default view and how it is chosen, the 38 registered plot transforms, the 16 primitives that draw them, the declared compatibility matrix, the arrays escape hatch, and the one-decorator recipe for a transform of your own.
+title: Transforms and primitives
+description: Choose a view, change its drawing primitive, and add a transform of your own with the declared compatibility contract.
 ---
 
 <span class="ts-kicker">Visualization · Transforms & primitives</span>
@@ -432,6 +433,9 @@ as "`color` is not a valid `run()` keyword".
 
 ## Composing panels
 
+For a visual introduction to `+`, `|`, `/` and nested layouts, start with
+[composition](composition.md). The call-based equivalents follow here.
+
 A single call with one subject builds **one panel**. To arrange several things
 into one figure — overlaid on shared axes, or tiled — hand `ts.plot` more of
 them, with a `layout=`. It returns a `Plot` that itself renders:
@@ -487,7 +491,7 @@ lor = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]).run(final_time=60.0, dt=0.01)
 
 <figure markdown>
 ![An animated GIF of the Lorenz attractor drawing itself in: a bright amber head sweeps the two wings, trailing a fading comet tail on a dark stage, axes hidden](../assets/figures/viz/animation-lorenz-reveal.gif){ loading=lazy }
-<figcaption>A looping reveal-comet of the Lorenz attractor: <code>animate=True</code> + <code>.trail(("time", 6.0), fade=True)</code> gives a fading 6-time-unit tail behind an amber <code>.head</code>, axes hidden and drawn on the brand dark stage. matplotlib writes <code>.mp4</code>/<code>.gif</code>; plotly exports a real-time rotatable-while-playing <code>.html</code>. See <a href="animation.md">Animation</a> for the field movie, the spinning attractor, and more.</figcaption>
+<figcaption>A looping reveal-comet of the Lorenz attractor: <code>animate=True</code> + <code>.trail(("time", 6.0), fade=True)</code> gives a fading 6-time-unit tail behind an amber <code>.head</code>, axes hidden and drawn on the brand dark stage. matplotlib writes <code>.mp4</code>/<code>.gif</code>; plotly exports a real-time rotatable-while-playing <code>.html</code>. See <a href="../animation/">Animation</a> for the field movie, the spinning attractor, and more.</figcaption>
 </figure>
 
 !!! tip "Animate on a solid background"
