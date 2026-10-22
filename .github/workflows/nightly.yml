@@ -33,7 +33,13 @@ jobs:
         run: uv python install 3.12
 
       - name: Install ffmpeg (documentation video exports)
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+        run: |
+          # Match the docs build: avoid slow downloads from the hosted Azure mirror.
+          if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
+            sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list.d/ubuntu.sources
+          fi
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends ffmpeg
 
       # The full tier executes the composition and animation documentation,
       # including SVG/GIF/MP4 exports. Exercise those examples with their extras
