@@ -184,3 +184,48 @@ def test_rendering_a_showcase_never_closes_the_callers_pyplot_figure(tmp_path, m
         assert plt.fignum_exists(figure.number)
     finally:
         plt.close(figure)
+
+
+def test_fingerprint_ignores_cargo_outputs_but_tracks_real_sources_without_git(
+    tmp_path, monkeypatch
+):
+    paths = {
+        "src/tsdynamics/viz/spec.py": "VALUE = 1\n",
+        "src/tsdynamics/systems/continuous/chaotic_attractors.py": "RATE = 2\n",
+        "crates/tsdyn-example/src/lib.rs": "pub fn rate() -> i32 { 2 }\n",
+        "crates/tsdyn-example/build.rs": "fn main() {}\n",
+        "docs/_tooling/make_interactive_showcase.py": "VERSION = 1\n",
+        "docs/js/interactive-showcase.js": "const ready = true;\n",
+    }
+
+    def write(name, content):
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content)
+        return path
+
+    for name, content in paths.items():
+        write(name, content)
+    monkeypatch.setattr(showcase, "ROOT", tmp_path)
+    monkeypatch.setattr(
+        showcase, "__file__", str(tmp_path / "docs/_tooling/make_interactive_showcase.py")
+    )
+    monkeypatch.setattr(showcase, "ENHANCEMENT", tmp_path / "docs/js/interactive-showcase.js")
+    original = showcase.renderer_fingerprint()
+    for name in (
+        "crates/tsdyn-example/target/debug/build/cranelift/out/generated.rs",
+        "crates/target/debug/build/serde/out/private.rs",
+        "crates/target/fixture/src/lib.rs",
+        "crates/tsdyn-example/benches/speed.rs",
+    ):
+        write(name, "// local-only compiler output or benchmark\n")
+    assert showcase.renderer_fingerprint() == original
+
+    write("crates/tsdyn-example/src/lib.rs", "pub fn rate() -> i32 { 3 }\n")
+    changed = showcase.renderer_fingerprint()
+    assert changed != original
+    write("crates/tsdyn-example/src/new_module.rs", "pub const RATE: i32 = 4;\n")
+    added = showcase.renderer_fingerprint()
+    assert added != changed
+    write("crates/tsdyn-example/build.rs", 'fn main() { println!("cargo:rustc-cfg=fast"); }\n')
+    assert showcase.renderer_fingerprint() != added

@@ -4,7 +4,7 @@
     "interactive-orbit": {
       "backend": "threejs",
       "source_sha256": "7ce3a2c185b280326542759d5effc61059518e69472eb5482c9c9ba8d4091323",
-      "renderer_sha256": "20d11e3ce36dab5eaea01cf53516514af506e39ffc8e6306e869005fec032f76",
+      "renderer_sha256": "65f166cab7b60a6c2765d05210700f0ec88677449cf251f82fdcf0ea58c62de4",
       "html_sha256": "33ec334d574b39137ebcbdcd9c016c31449117244aa61e5c27fe71734f8055bc",
       "poster_sha256": "2d97d1bffcd76a9682b8881b9fed47448f842b09eff5748cdbf30a04d16ae900",
       "forward_seconds": 16.0
@@ -12,8 +12,8 @@
     "interactive-trace": {
       "backend": "plotly",
       "source_sha256": "bfb51bedbb53b888e4f633e66c149842c59d22b2f3047c71172c09e5d8b88eff",
-      "renderer_sha256": "20d11e3ce36dab5eaea01cf53516514af506e39ffc8e6306e869005fec032f76",
-      "html_sha256": "8574ea4cefae63e908af6659d7b285f0a6178ec5ff7888170d5f3dc62d227407",
+      "renderer_sha256": "65f166cab7b60a6c2765d05210700f0ec88677449cf251f82fdcf0ea58c62de4",
+      "html_sha256": "899cd985c9b244b3696a75b97803083929814a1be9e43458449fa70ea7dde968",
       "poster_sha256": "8c66136ced59faf1b0e6fcf417355a9cd6fcdb7dfcd64241c30e39654d57878a",
       "forward_seconds": 16.0
     }

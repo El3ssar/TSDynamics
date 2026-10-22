@@ -28,6 +28,18 @@ def _hash(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _rust_sources() -> list[Path]:
+    """Read production crate sources, never Cargo's generated target/build trees.
+
+    Keep discovery independent of Git so the freshness guard also works in a
+    source archive and notices new source modules before they are staged.
+    """
+    crates = ROOT / "crates"
+    paths = [path for source in crates.glob("tsdyn-*/src") for path in source.rglob("*.rs")]
+    paths += list(crates.glob("tsdyn-*/build.rs"))
+    return sorted(paths)
+
+
 def renderer_fingerprint() -> str:
     """Track web drawing semantics, the wrapper and data/model acquisition code."""
     source = ROOT / "src/tsdynamics"
@@ -36,7 +48,7 @@ def renderer_fingerprint() -> str:
     paths += [source / "systems/continuous/chaotic_attractors.py"]
     paths += sorted((source / "families").rglob("*.py"))
     paths += sorted((source / "_engine").rglob("*.py"))
-    paths += sorted((ROOT / "crates").rglob("*.rs"))
+    paths += _rust_sources()
     paths += [Path(__file__), ENHANCEMENT]
     digest = hashlib.sha256()
     for path in paths:
