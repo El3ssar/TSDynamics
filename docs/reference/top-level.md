@@ -83,7 +83,7 @@ address (see the ladder below).
 
 | Go here | For | When you would |
 | ------- | --- | -------------- |
-| [`ts.analysis`](analysis.md) | the 50 quantifiers + `find` + `register` + `results` | always — this is where analyses live |
+| [`ts.analysis`](analysis.md) | quantifiers, `find`, `register`, and `results` | finding or running an analysis |
 | [`ts.systems`](../systems/index.md) | the 177 models, plus `names()` / `find()` / `get()` | `ts.systems.Lorenz()` |
 | [`ts.viz`](../visualization/index.md) | `Plot`, `draw`, `grid`, `geometry`, `transforms`, `primitives`, `themes`, `renderers`, `spec` | you are styling, composing, exporting or extending a plot |
 | [`ts.analysis.results`](analysis.md) | the 32 result classes | annotating a function that returns one |

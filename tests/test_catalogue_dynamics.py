@@ -583,6 +583,7 @@ NEUTRAL_TAGS = frozenset(
         "spatiotemporal",
         "switching",
         "synchronization",
+        "thermostatted",
     }
 )
 
@@ -797,6 +798,11 @@ def test_every_behaviour_tag_is_classified() -> None:
     )
     stale = sorted(known - seen - {"non-smooth"})
     assert not stale, f"behaviour tag(s) {stale} are classified here but no longer used"
+
+
+def test_thermostatting_does_not_assert_a_default_orbit_is_chaotic_or_regular() -> None:
+    """A model mechanism does not determine the sign of its leading exponent."""
+    assert behaviour_claim("NoseHoover") == CLAIM_NONE
 
 
 def test_the_gate_names_the_systems_it_cannot_judge() -> None:
@@ -1044,6 +1050,17 @@ def _leading_exponent(entry: Any) -> float:
     ic = reference_ic(entry)
     if entry.family == "map":
         return float(ts.analysis.lyapunov_spectrum(system, k=1, n=20_000, ic=ic)[0])
+    if entry.name == "HyperLu":
+        # The complete-frame protocol also used by the recorded diagnostics
+        # stays on the bounded hyperchaotic branch. With one tangent, dt=.05
+        # and a 50-unit transient, the extended adaptive error norm selects a
+        # numerically different orbit that escapes after t~350 and cannot
+        # substantiate an attractor claim, however positive its growth is.
+        spectrum = ts.analysis.lyapunov_spectrum(
+            system, k=system.dim, ic=ic, dt=0.1, transient=100.0, final_time=400.0
+        )
+        assert not spectrum.unbounded, "HyperLu's reference measurement left its bounded orbit"
+        return float(spectrum[0])
     return float(
         ts.analysis.lyapunov_spectrum(
             system, k=1, ic=ic, dt=DT_FLOW, transient=50.0, final_time=400.0

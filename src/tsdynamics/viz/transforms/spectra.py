@@ -13,9 +13,8 @@ believing it:
     an exponent converged instead of asserting it: the curve flattens, or it
     does not.
 ``gali_curves``
-    :math:`\mathrm{GALI}_k` against time on log axes with the analytic
-    power-law reference drawn, so order (a curve tracking a power law, or
-    holding constant) separates from chaos (a curve plunging away from it).
+    :math:`\mathrm{GALI}_k` against time on log axes, with an optional
+    Hamiltonian-torus power-law reference whose assumptions are explicit.
 ``zero_one_pq_plane``
     The :math:`(p_c, q_c)` translation plane of the Gottwald--Melbourne test.
     The reason the test is trusted is that the answer is *visible*: a bounded
@@ -50,12 +49,17 @@ References
 .. [3] Skokos, Ch., Bountis, T. C. & Antonopoulos, Ch. (2007). "Geometrical
    properties of local dynamics in Hamiltonian systems: the Generalized
    Alignment Index (GALI) method."  *Physica D*, 231, 30-54.  (The
-   :math:`t^{-(k-s)}` power law drawn as the reference.)
+   definition and asymptotic alignment analysis.)
 .. [4] Gottwald, G. A. & Melbourne, I. (2004). "A new test for chaos in
    deterministic systems."  *Proc. R. Soc. A*, 460, 603-611.
 .. [5] Grassberger, P. & Procaccia, I. (1983). "Characterization of Strange
    Attractors."  *Phys. Rev. Lett.*, 50, 346-349.  (The log--log scaling region
    this delimits.)
+.. [6] Skokos, Ch., Bountis, T. & Antonopoulos, Ch. (2008). "Detecting chaos,
+   determining the dimensions of tori and predicting slow diffusion in
+   Fermi--Pasta--Ulam lattices by the Generalized Alignment Index method."
+   *European Physical Journal Special Topics*, 165, 5-14.
+   https://arxiv.org/abs/0802.1646 (The three-branch torus law.)
 """
 
 from __future__ import annotations
@@ -192,11 +196,12 @@ def _resolve_exponents(subject: Any, options: dict[str, Any]) -> tuple[np.ndarra
             "passed is already computed."
         )
     values = getattr(subject, "values", subject)
-    exps = np.atleast_1d(np.asarray(values, dtype=float)).ravel()
-    if exps.size == 0:
+    exps = np.asarray(values, dtype=float)
+    if exps.ndim != 1 or exps.size == 0 or not np.isfinite(exps).all():
         raise InvalidInputError(
-            "lyapunov_spectrum has no exponents to draw. Pass a system, a LyapunovSpectrum, "
-            "or a non-empty array of exponents."
+            "lyapunov_spectrum needs a non-empty, finite, one-dimensional spectrum "
+            f"to draw; got shape {exps.shape}. Pass a system, a LyapunovSpectrum, "
+            "or an array of exponents."
         )
     return exps, dict(getattr(subject, "meta", None) or {})
 
@@ -307,7 +312,15 @@ def lyapunov_spectrum(
         )
     )
 
+    # A positive leading exponent alone does not determine a dimension. Preserve
+    # the estimator's evidence when plotting a partial/forced-system spectrum;
+    # flattening to an array must not turn an unavailable dimension into k.
+    dimension_supported = meta.get("autonomous") is not False and not (
+        meta.get("spectrum_complete") is False and float(np.sum(exps)) >= 0.0
+    )
     try:
+        if not dimension_supported:
+            raise ValueError("the reported spectrum does not determine a dimension")
         dky: float | None = float(kaplan_yorke_dimension(exps))
     except Exception:  # an incomplete / non-finite spectrum has no dimension
         dky = None
@@ -537,6 +550,11 @@ def _gali_results(subject: Any, k: Any, options: dict[str, Any]) -> list[Any]:
     if not _is_system(subject):
         members = list(subject) if isinstance(subject, (list, tuple)) else []
         if members and all(hasattr(m, "times") and hasattr(m, "k") for m in members):
+            if options:
+                raise InvalidInputError(
+                    f"gali_curves got option(s) {sorted(options)}, which configure the "
+                    "estimator; they only apply when the subject is a system."
+                )
             return members
         raise InvalidInputError(
             "gali_curves needs a system, a GALIResult, or a sequence of GALIResults; got a "
@@ -557,6 +575,20 @@ def _example_gali(_primitive: str) -> tuple[Any, dict[str, Any]]:
     return GALIResult(k=2, times=t, values=1.0 / t, is_discrete=False), {}
 
 
+def _gali_reference_slope(order: int, frequencies: int, degrees: int) -> int:
+    """Compute the Hamiltonian torus law, Skokos et al. (2008), equation (14).
+
+    The middle branch alone, -(k-s), is insufficient when the deviation frame
+    approaches the full 2N-dimensional phase space: that branch then decays
+    twice as fast. A dissipative limit cycle need not obey any of these laws.
+    """
+    if order <= frequencies:
+        return 0
+    if order <= 2 * degrees - frequencies:
+        return -(order - frequencies)
+    return -2 * (order - degrees)
+
+
 @plot_transform(
     name="gali_curves",
     subjects=("system", "GALIResult"),
@@ -569,13 +601,14 @@ def _example_gali(_primitive: str) -> tuple[Any, dict[str, Any]]:
     primitives=("line", "points"),
     analysis="tsdynamics.analysis.chaos.gali",
     example=_example_gali,
-    doc="GALI_k against time on log axes, with the analytic power-law reference.",
+    doc="GALI_k against time on log axes, with an optional Hamiltonian-torus guide.",
 )
 def gali_curves(
     subject: Any,
     *,
     k: int | Sequence[int] = 2,
-    frequencies: int = 1,
+    frequencies: int = 0,
+    degrees_of_freedom: int | None = None,
     reference_at: float = 0.5,
     floor: float = _LOG_FLOOR,
     final_time: float | None = None,
@@ -592,11 +625,15 @@ def gali_curves(
     :math:`\log_{10}` (in the data — see this module's docstring), which turns
     the regular-orbit prediction
 
-    .. math:: \mathrm{GALI}_k(t) \propto t^{-(k-s)}
+    .. math:: \mathrm{GALI}_k(t) \propto t^{p},\qquad
+              p = \begin{cases}0 & k\le s,\\
+                  -(k-s) & s<k\le 2N-s,\\
+                  -2(k-N) & 2N-s<k\le 2N.\end{cases}
 
-    for an orbit on an :math:`s`-frequency torus (Skokos et al. 2007) into a
-    straight line of known slope.  That reference is drawn, anchored to the
-    start of each curve: a regular orbit tracks it, a chaotic one — which decays
+    for an orbit on an :math:`s`-frequency torus in a :math:`2N`-dimensional
+    Hamiltonian phase space (Skokos et al. 2008) into a straight line of known
+    slope. The optional reference is anchored to the middle of each curve:
+    a compatible regular orbit tracks it, a chaotic one — which decays
     *exponentially* — plunges away from it and hits the floor.
 
     Parameters
@@ -609,12 +646,16 @@ def gali_curves(
         ``2``; pass ``(2, 3, 4)`` for the usual family.
     frequencies : int, optional
         The number of frequencies :math:`s` the power-law reference assumes.
-        Default ``1`` (a periodic orbit / limit cycle), giving slope
-        :math:`-(k-1)`.  Pass ``0`` to omit the reference.  **The power law is
-        the Hamiltonian regular-orbit prediction**: a dissipative system's
-        regular orbit decays exponentially instead, so the guide is a reference
-        line, never a fit.  For a 2-degree-of-freedom Hamiltonian orbit on a
-        2-torus (Hénon--Heiles) pass ``frequencies=2``.
+        Default ``0`` omits the guide: a generic dissipative system does not
+        obey a Hamiltonian torus law. For a 2-degree-of-freedom Hamiltonian
+        orbit on a 2-torus (Hénon--Heiles), pass ``frequencies=2``. The guide
+        states an assumed regular-orbit law, never a fitted classification.
+    degrees_of_freedom : int, optional
+        Hamiltonian degrees of freedom :math:`N`, half the phase-space
+        dimension. Inferred from the system or result's state-variable metadata
+        when available; required for a bare result without that metadata when
+        ``frequencies`` is nonzero. The assumed torus must satisfy
+        :math:`1\le s\le N` and the GALI order :math:`k\le 2N`.
     reference_at : float, optional
         Where along the record the reference guide touches its curve, as a
         fraction (default ``0.5``, the middle sample).  A guide anchored at the
@@ -646,6 +687,27 @@ def gali_curves(
     --------
     >>> ts.plot(ts.systems.Lorenz(), "gali_curves", k=(2, 3))  # doctest: +SKIP
     """
+    from tsdynamics.errors import InvalidParameterError
+
+    if (
+        isinstance(frequencies, bool)
+        or not isinstance(frequencies, (int, np.integer))
+        or frequencies < 0
+    ):
+        raise InvalidParameterError(
+            "frequencies must be a non-negative integer (0 omits the guide)."
+        )
+    if degrees_of_freedom is not None and (
+        isinstance(degrees_of_freedom, bool)
+        or not isinstance(degrees_of_freedom, (int, np.integer))
+        or degrees_of_freedom < 1
+    ):
+        raise InvalidParameterError("degrees_of_freedom must be a positive integer.")
+    if not np.isfinite(floor) or floor <= 0.0:
+        raise InvalidParameterError("floor must be finite and positive before taking log10(GALI).")
+    if not np.isfinite(reference_at) or not 0.0 <= reference_at <= 1.0:
+        raise InvalidParameterError("reference_at must be a fraction between 0 and 1.")
+
     results = _gali_results(
         subject,
         k,
@@ -669,8 +731,23 @@ def gali_curves(
         logv = np.log10(np.maximum(v, floor))
         parts.append(Part({"x": logt, "y": logv}, label=rf"$\mathrm{{GALI}}_{{{order}}}$"))
 
-        slope = -(order - int(frequencies))
-        if frequencies and slope <= 0:
+        if frequencies:
+            degrees = degrees_of_freedom
+            if degrees is None:
+                variables = (getattr(res, "meta", None) or {}).get("variables", ())
+                dimension = getattr(subject, "dim", None) if _is_system(subject) else len(variables)
+                if not dimension or dimension % 2:
+                    raise InvalidParameterError(
+                        "A Hamiltonian GALI guide needs the 2N-dimensional phase space. "
+                        "Pass degrees_of_freedom=N, or frequencies=0 to omit the guide."
+                    )
+                degrees = int(dimension) // 2
+            if frequencies > degrees or order > 2 * degrees:
+                raise InvalidParameterError(
+                    "The Hamiltonian GALI guide requires frequencies <= degrees_of_freedom "
+                    "and k <= 2 * degrees_of_freedom."
+                )
+            slope = _gali_reference_slope(order, frequencies, degrees)
             # Anchor the guide *on* the curve, at the sample ``reference_at`` of
             # the way through the record, so its slope is compared against the
             # data next to it.  Anchoring at the first sample instead pushes the
@@ -719,6 +796,7 @@ def gali_curves(
             "analysis": "gali",
             "k": orders,
             "frequencies": int(frequencies),
+            "degrees_of_freedom": degrees_of_freedom,
             "floor": float(floor),
             "final": [float(np.asarray(r.values)[-1]) for r in results if np.size(r.values)],
         },

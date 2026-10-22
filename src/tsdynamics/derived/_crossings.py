@@ -108,7 +108,7 @@ def engine_eligible(system: Any, backend: str | None) -> bool:
     from tsdynamics import _solvers as solvers
 
     try:
-        name = solvers.resolve(getattr(system, "_default_method", "rk45")).name
+        name = solvers.resolve(getattr(system, "_default_method", "rk45")).kernel
     except Exception:
         return False
     return name in _EXPLICIT_METHODS

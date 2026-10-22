@@ -53,6 +53,26 @@ DEFAULT_REGION_RESOLUTION = 100
 # ---------------------------------------------------------------------------
 
 
+def _region_vector(value: Any, name: str) -> np.ndarray:
+    """Read one finite coordinate vector, including scalar 1-D regions."""
+    vector = np.atleast_1d(np.asarray(value, dtype=float))
+    if vector.ndim != 1 or vector.size == 0 or not np.isfinite(vector).all():
+        raise ValueError(f"{name} must be a non-empty, finite, one-dimensional coordinate vector")
+    return vector
+
+
+def _grid_count(value: Any) -> int:
+    """Refuse fractional counts before any public region reader truncates them."""
+    try:
+        count = int(value)
+        valid = not isinstance(value, (bool, np.bool_)) and count == value and count >= 1
+    except (TypeError, ValueError, OverflowError):
+        valid = False
+    if not valid:
+        raise ValueError(f"Grid counts must be whole numbers >= 1, got {value!r}")
+    return count
+
+
 def _coerce_query(u: Any, dim: int) -> tuple[np.ndarray, bool]:
     """Coerce a containment query to a 2-D ``(n, dim)`` array.
 
@@ -88,13 +108,15 @@ class Box:
     Parameters
     ----------
     lo, hi : array_like, shape (dim,)
-        Per-axis lower and upper corners.  Coerced to ``float`` arrays; ``hi``
-        must be ``>= lo`` componentwise.
+        Finite, non-empty coordinate vectors for the lower and upper corners.
+        Scalars describe a one-dimensional box. ``hi`` must be ``>= lo``
+        componentwise.
 
     Raises
     ------
     ValueError
-        If ``lo`` and ``hi`` differ in shape, or ``hi < lo`` on any axis.
+        If the bounds are not finite coordinate vectors, differ in shape,
+        or have ``hi < lo`` on any axis.
 
     Examples
     --------
@@ -109,8 +131,8 @@ class Box:
     hi: np.ndarray
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "lo", np.asarray(self.lo, dtype=float))
-        object.__setattr__(self, "hi", np.asarray(self.hi, dtype=float))
+        object.__setattr__(self, "lo", _region_vector(self.lo, "Box lo"))
+        object.__setattr__(self, "hi", _region_vector(self.hi, "Box hi"))
         if self.lo.shape != self.hi.shape:
             raise ValueError("Box lo and hi must have the same shape")
         if np.any(self.hi < self.lo):
@@ -158,14 +180,16 @@ class Ball:
     Parameters
     ----------
     center : array_like, shape (dim,)
-        Ball centre.  Coerced to a ``float`` array.
+        Finite, non-empty coordinate vector for the centre. A scalar describes
+        a one-dimensional ball.
     r : float
-        Radius; must be strictly positive.
+        Radius; must be finite and strictly positive.
 
     Raises
     ------
     ValueError
-        If ``r <= 0``.
+        If the centre is not a finite coordinate vector or the radius is not
+        finite and positive.
 
     Examples
     --------
@@ -180,9 +204,11 @@ class Ball:
     r: float
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "center", np.asarray(self.center, dtype=float))
-        if self.r <= 0:
-            raise ValueError("Ball radius must be positive")
+        object.__setattr__(self, "center", _region_vector(self.center, "Ball center"))
+        radius = float(self.r)
+        if not np.isfinite(radius) or radius <= 0:
+            raise ValueError("Ball radius must be finite and positive")
+        object.__setattr__(self, "r", radius)
 
     @property
     def dim(self) -> int:
@@ -218,22 +244,25 @@ class Grid:
     """Regular grid: ``counts[i]`` points spanning ``[lo_i, hi_i]`` per axis.
 
     A regular Cartesian lattice over an axis-aligned box: axis ``i`` carries
-    ``counts[i]`` evenly spaced nodes spanning ``[lo_i, hi_i]`` (inclusive of
-    both endpoints).  Use :func:`grid_points` to enumerate the lattice nodes and
+    ``counts[i]`` evenly spaced nodes spanning ``[lo_i, hi_i]``, including both
+    endpoints when there are at least two nodes; a one-node axis contains only
+    its lower bound. Use :func:`grid_points` to enumerate the lattice nodes and
     :func:`region` for a terse ``(lo, hi, n)``-per-axis constructor.
 
     Parameters
     ----------
     lo, hi : array_like, shape (dim,)
-        Per-axis lower and upper bounds of the bounding box.
+        Finite, non-empty coordinate vectors for the bounding box, with
+        ``hi >= lo`` componentwise. Scalars describe a one-dimensional grid.
     counts : tuple of int
-        Number of nodes per axis; each must be ``>= 1``.
+        Number of nodes per axis; each must be a whole number ``>= 1``.
 
     Raises
     ------
     ValueError
-        If ``lo``, ``hi``, and ``counts`` disagree in length, or any count
-        is ``< 1``.
+        If the bounds are not finite coordinate vectors, are reversed,
+        disagree in length with ``counts``, or any count is not a positive
+        whole number.
 
     Examples
     --------
@@ -249,13 +278,13 @@ class Grid:
     counts: tuple[int, ...]
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "lo", np.asarray(self.lo, dtype=float))
-        object.__setattr__(self, "hi", np.asarray(self.hi, dtype=float))
-        object.__setattr__(self, "counts", tuple(int(c) for c in self.counts))
+        object.__setattr__(self, "lo", _region_vector(self.lo, "Grid lo"))
+        object.__setattr__(self, "hi", _region_vector(self.hi, "Grid hi"))
+        object.__setattr__(self, "counts", tuple(_grid_count(c) for c in self.counts))
         if not (self.lo.size == self.hi.size == len(self.counts)):
             raise ValueError("Grid lo, hi, and counts must agree in length")
-        if any(c < 1 for c in self.counts):
-            raise ValueError("Grid counts must be >= 1")
+        if np.any(self.hi < self.lo):
+            raise ValueError("Grid requires hi >= lo componentwise")
 
     @property
     def dim(self) -> int:
@@ -405,7 +434,7 @@ def grid_points(grid: Any, *, resolution: int = DEFAULT_REGION_RESOLUTION) -> np
     if not isinstance(resolved, Grid):
         lo = resolved.lo if isinstance(resolved, Box) else resolved.center - resolved.r
         hi = resolved.hi if isinstance(resolved, Box) else resolved.center + resolved.r
-        resolved = Grid(lo, hi, (int(resolution),) * int(lo.size))
+        resolved = Grid(lo, hi, (resolution,) * int(lo.size))
     grid = resolved
     axes = grid.axes()
     if grid.dim == 1:
@@ -447,7 +476,7 @@ def region(spec: Any) -> Grid:
         )
     lo = np.array([float(t[0]) for t in triples], dtype=float)
     hi = np.array([float(t[1]) for t in triples], dtype=float)
-    counts = tuple(int(t[2]) for t in triples)
+    counts = tuple(t[2] for t in triples)
     return Grid(lo=lo, hi=hi, counts=counts)
 
 
@@ -592,7 +621,8 @@ def as_region(
         )
 
     try:
-        rows = [tuple(float(v) for v in axis) for axis in spec]
+        raw_rows = [tuple(axis) for axis in spec]
+        rows = [tuple(float(v) for v in axis) for axis in raw_rows]
     except (TypeError, ValueError) as err:
         raise _refuse(f"got {type(spec).__name__}, which is not a region") from err
     if not rows or not all(len(row) == len(rows[0]) for row in rows):
@@ -631,10 +661,10 @@ def as_region(
         )
 
     if width == 3:
-        return region([(a, b, int(n)) for a, b, n in rows])
+        return region([(row[0], row[1], raw[2]) for row, raw in zip(rows, raw_rows, strict=True)])
     if not want_grid:
         return Box(lo, hi)
-    return Grid(lo, hi, (int(resolution),) * len(rows))
+    return Grid(lo, hi, (resolution,) * len(rows))
 
 
 # ---------------------------------------------------------------------------

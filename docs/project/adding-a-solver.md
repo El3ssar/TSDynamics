@@ -8,8 +8,10 @@ description: The recipe for contributing a new integration kernel to the Rust en
 
 A new integration method is a two-sided contribution: the **real kernel lives in
 Rust** (in the `tsdyn-solvers` crate), and a small **`SolverSpec` mirrors it** in
-the Python registry so users can select it by name with `method="..."`. This
-page is the end-to-end recipe at a level a contributor can follow.
+the Python registry so users can select it with `system.run(solver="...")`.
+Registering Python metadata alone does not supply an algorithm. For installed
+packages and aliases of existing kernels, start with
+[Plugins & extensions](plugins.md#solver-extensions).
 
 !!! note "This is an engine change"
     Unlike [adding a system](adding-a-system.md) — pure Python, no build step —
@@ -22,21 +24,27 @@ page is the end-to-end recipe at a level a contributor can follow.
 
 ## The mental model
 
-The engine owns the integration **loop**; a kernel owns a single **step**. Every
-kernel implements the `Solver` trait (`crates/tsdyn-solvers/src/solver.rs`):
+The engine owns the integration **loop**; a kernel owns a single **step**.
+Deterministic ODE kernels implement the `Solver` trait
+(`crates/tsdyn-solvers/src/solver.rs`):
 
 ```rust
-pub trait Solver {
+pub trait Solver: Send {
     fn name(&self) -> &'static str;
     fn caps(&self) -> Caps;
-    fn step(&mut self, /* state, rhs evaluator, h, ... */) -> StepResult;
+    fn step(&mut self, ev: &dyn Evaluator, st: &mut SolverState, h: f64) -> StepOutcome;
 }
 ```
 
 Kernels **self-register** at link time via the `register_solver!` macro
 (`inventory`-based — there is no central kernel table), and both the SSA
 interpreter and the Cranelift JIT back the same `Evaluator` trait, so a kernel is
-automatically **backend-agnostic** and `interp == jit` bit-for-bit.
+shared by both evaluation backends. Verify their numerical agreement in tests;
+registration alone does not prove a kernel correct.
+
+The DDE method-of-steps driver can reuse explicit ODE kernels; it does not
+support implicit kernels. SDE kernels have a separate `SdeKernel` trait and
+`register_sde_kernel!` registration in `crates/tsdyn-solvers/src/sde/`.
 
 ## The fast inner loop
 
@@ -44,7 +52,7 @@ Iterate against the pure-Rust crate — no Python, no maturin — while you get 
 tableau right:
 
 ```bash
-cd crates && cargo test -p tsdyn-solvers      # ≈ 10 s
+cargo test --manifest-path crates/Cargo.toml -p tsdyn-solvers --locked
 ```
 
 !!! warning "The stale-extension gotcha"
@@ -53,13 +61,14 @@ cd crates && cargo test -p tsdyn-solvers      # ≈ 10 s
     silently has no effect. After editing any Rust file, force a rebuild:
 
     ```bash
-    uv run --reinstall-package tsdynamics pytest -m "not slow" --no-cov
+    uv sync --locked --group dev --reinstall-package tsdynamics
+    uv run --no-sync pytest --no-cov tests/test_solvers.py tests/test_engine_wire.py
     ```
 
-    Look for the `Building tsdynamics` line. Sanity check with
-    `stat -c %y crates/tsdyn-core/src/bridge/marshal.rs src/tsdynamics/_rust.abi3.so`
-    — the `.so` must be **newer**. (`uv` may also re-sync `uv.lock`; restore it
-    with `git checkout uv.lock` if so.)
+    Look for the `Building tsdynamics` line. `--locked` prevents an unintended
+    dependency change; investigate a lock mismatch rather than discarding edits
+    to make the command pass. Add your kernel's own accuracy tests to the
+    focused test command, then run the normal contribution gates.
 
 ## Writing the kernel
 
@@ -119,7 +128,8 @@ factory):
 
 ```rust
 // crates/tsdyn-core/src/bridge/marshal.rs
-pub fn build_solver(name: &'static str, rtol: f64, atol: f64) -> Box<dyn Solver> {
+pub fn build_solver(name: &'static str, tol: Tolerances) -> Box<dyn Solver> {
+    let (rtol, atol) = (tol.rtol(), tol.atol());
     match name {
         "rk45"   => Box::new(Rk45::with_tolerances(rtol, atol)),
         // ... one arm per tolerance-owning adaptive kernel ...
@@ -138,7 +148,7 @@ arm** — they carry no tolerances.
 ## Mirroring it in Python
 
 Add a `SolverSpec` — the Python mirror of the Rust kernel — to the matching dict
-in `src/tsdynamics/solvers/` (`explicit.py`, `implicit.py`, or `stochastic.py`).
+in `src/tsdynamics/_solvers/` (`explicit.py`, `implicit.py`, or `stochastic.py`).
 The capability flags **must match the Rust `Caps`**:
 
 ```python
@@ -162,10 +172,17 @@ register(
 
 Optional friendly aliases go in `select.py::_ALIASES` (keys are normalised —
 lowercased, whitespace / `-` → `_` — so `"RK45"`, `"dopri5"`, and `"rk-45"` all
-resolve). No change to `run.py` is needed: `run.integrate` flows any registered
-method through `solvers.resolve`, so once the spec is registered,
-`run(solver="your_kernel")` just works and the tolerances thread through
-`build_solver`.
+resolve). The runtime resolves the Python name and sends `SolverSpec.kernel` to
+the compiled engine. A new method therefore becomes runnable when **both** its
+Rust implementation and Python declaration are included in the rebuilt extension
+and package. Use `system.run(solver="your_kernel")`; `method=` is the internal
+engine spelling. The reference backend delegates to SciPy and cannot exercise
+an arbitrary new Rust algorithm.
+
+For an SDE method, also update the Python family's method resolution and
+reference/incremental step implementation in `families/stochastic.py`. That
+family currently implements Euler–Maruyama and Milstein; a `SolverSpec` alone
+does not teach it a third stochastic scheme.
 
 ## Tests to update
 

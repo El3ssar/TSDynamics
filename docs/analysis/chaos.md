@@ -1,27 +1,26 @@
 ---
-description: Three fast, literature-validated verdicts on whether an orbit is chaotic — GALI (Skokos), the 0–1 test (Gottwald–Melbourne) and expansion entropy (Hunt–Ott) — without estimating a full Lyapunov spectrum.
+description: GALI, the 0–1 test, and expansion entropy — numerical indicators, their assumptions, and how to cross-check them.
 ---
 
 <span class="ts-kicker">Analysis · Chaos indicators</span>
 
 # Chaos indicators
 
-Sometimes you do not want the whole Lyapunov spectrum — you want a *verdict*.
-Is this orbit chaotic or regular? TSDynamics ships three fast,
-literature-validated tests that answer it from three different angles: the
+TSDynamics offers three numerical indicators that approach sensitivity from
+different angles: the
 alignment of tangent vectors, a single scalar drawn from one observable, and
-the growth of a derivative-volume that estimates topological entropy. Each is
-cheap, each returns a result you can threshold, and together they cross-check
-one another.
+the growth of a derivative-volume that estimates topological entropy. Each
+returns a result you can inspect. Their assumptions differ, so use independent
+indicators and longer observation windows to cross-check a conclusion.
 
 <figure markdown>
 ![GALI_2 and GALI_3 for the Lorenz attractor decaying exponentially against their Skokos-law reference slopes on a semilog axis](../assets/figures/analysis/chaos.svg){ loading=lazy }
 <figcaption>On the chaotic Lorenz attractor both alignment indices collapse exponentially, and their decay rates are fixed by the Lyapunov gaps: GALI₂ (indigo) falls at $\lambda_1-\lambda_2 \approx 0.91$ (with $\lambda_2 \approx 0$ along the flow), while GALI₃ (teal) falls at $(\lambda_1-\lambda_2)+(\lambda_1-\lambda_3) \approx 16.4$, hitting the floating-point floor almost at once — the measured curves tracking the predicted Skokos-law slopes (dashed).</figcaption>
 </figure>
 
-| Function | Reads | Chaotic ⇒ | Regular ⇒ |
+| Function | Reads | Typical chaotic behavior | Regular reference / caveat |
 |---|---|---|---|
-| [`gali`](#gali-generalized-alignment-index) | tangent-vector volume | exponential decay | $\sim O(1)$ / power law |
+| [`gali`](#gali-generalized-alignment-index) | tangent-vector volume | exponential decay | Hamiltonian tori: constant / power law; dissipative cycles can also decay exponentially |
 | [`zero_one_test`](#the-01-test) | scalar $K \in [-1, 1]$ | $K \approx 1$ | $K \approx 0$ |
 | [`expansion_entropy`](#expansion-entropy) | $H$ (topological entropy) | $H > 0$ | $H \approx 0$ |
 
@@ -50,8 +49,11 @@ $$
     e^{-[(\lambda_1-\lambda_2)+\dots+(\lambda_1-\lambda_k)]\,t}.
 $$
 
-For **regular** (quasi-periodic) motion it stays $O(1)$ or decays only by a
-power law. Crucially the deviation vectors are *not* re-orthonormalised — only
+For regular motion on a **Hamiltonian torus**, it stays $O(1)$ or follows a
+power law whose exponent depends on the torus and phase-space dimensions.
+A stable dissipative cycle can also align deviation vectors exponentially;
+decay alone does not establish a positive leading Lyapunov exponent. Crucially
+the deviation vectors are *not* re-orthonormalised — only
 per-column renormalised — which is exactly what lets the spanned volume
 actually shrink.
 
@@ -70,8 +72,16 @@ The `GALIResult` carries the full decay curve — `g.k`, `g.times`, `g.values`,
 `g.is_discrete` — and `float(g)` is the final value, so the result drops
 straight into a threshold test. `g.decay_rate()` fits the log-slope over the
 samples above the numerical floor to recover the exponent-gap sum, and
-`g.is_chaotic()` thresholds the final value. Note `k` is the second positional
+`g.is_chaotic()` thresholds the final value. That threshold is an alignment
+indicator, not a general proof of chaos for every dissipative system. Note `k` is the second positional
 argument, and must satisfy $2 \le k \le \dim$.
+
+`ts.plot(g, "gali_curves")` displays the decay curve on log axes. A Hamiltonian
+torus reference is opt-in: `frequencies=s` states the assumed torus dimension,
+and `degrees_of_freedom=N` supplies half the phase-space dimension when the
+result lacks that metadata. The guide uses the three-branch law of
+[Skokos, Bountis & Antonopoulos (2008)](https://arxiv.org/abs/0802.1646), not
+a fitted decay exponent.
 
 ```python
 # GALI_3 on Lorenz: the second gap (λ₁ − λ₃ ≈ 15.5) is added on top, so it

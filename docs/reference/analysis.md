@@ -6,8 +6,10 @@ description: API reference for tsdynamics.analysis — orbit diagrams, Poincaré
 
 # Analysis
 
-The quantifiers that consume any [`System`](base.md). Prose-first
-treatments live in the [Analysis](../analysis/index.md) section.
+Quantifiers for supported [`System`](base.md) families, sampled trajectories,
+and analysis results. Each function lists its accepted subjects and numerical
+assumptions. Start with the [Analysis guide](../analysis/index.md) for runnable
+examples, or use `ts.analysis.find(subject)` to discover compatible routines.
 
 ## Orbit diagrams
 
@@ -28,6 +30,8 @@ treatments live in the [Analysis](../analysis/index.md) section.
 ## Lyapunov quantifiers
 
 ::: tsdynamics.analysis.lyapunov.lyapunov_spectrum
+
+::: tsdynamics.analysis.lyapunov.LyapunovSpectrum
 
 ::: tsdynamics.analysis.lyapunov.from_data.lyapunov_from_data
 

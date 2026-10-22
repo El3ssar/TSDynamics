@@ -1,14 +1,14 @@
 ---
-description: The literature behind TSDynamics — the original papers for every built-in system, and the method papers behind the analysis toolkit, with DOI links.
+description: Research papers, historical curve constructions, implementation provenance, and analysis methods, with DOI links.
 ---
 
 <span class="ts-kicker">References · Bibliography</span>
 
 # Bibliography
 
-Every built-in system and every analysis method in TSDynamics traces back to a
-primary source. This page collects them all — never a competitor library, always
-the original paper. It has two halves:
+The catalogue draws on research papers, historical mathematical constructions,
+and first-hand implementation accounts. The citations below distinguish those
+sources from the papers behind the numerical methods. It has two halves:
 
 - The **[systems bibliography](#systems)** is generated straight from the
   catalogue. Each built-in system carries a `reference` (and, where one exists, a
@@ -20,15 +20,15 @@ the original paper. It has two halves:
   [Analysis](../analysis/index.md) section.
 
 !!! tip "Reproducing the numbers"
-    The parameter defaults and initial conditions in each system's page match the
-    cited paper wherever the source gives them. When a quantity is quoted in the
-    docs (a Lyapunov spectrum, a fractal dimension) it is pinned to a fixed
-    initial condition and, for stochastic systems, a fixed seed — so every number
-    is reproducible from the snippet that produces it.
+    System pages separate finite-time measurements at the shipped parameters
+    from literature values measured under their own conditions. Open **Method
+    and evidence** for the initial condition, horizon and numerical settings.
+    To reproduce a published result, use its parameter values and transient
+    choices; a model's defaults are not a universal reference case.
 
 ## Systems {#systems}
 
-The 177 built-in systems cite **137 distinct sources**, grouped below by family and ordered alphabetically by first author. A handful of textbook/folklore systems (the Lissajous figures, a couple of purely illustrative maps) carry no single primary source and are omitted from this list.
+The 177 built-in systems cite **144 distinct sources**, grouped below by family and ordered alphabetically by first author. These include research papers, historical curve constructions, and first-hand implementation accounts. Each citation states its scope; an implementation account is not a research proof of a model's dynamics.
 
 ### Ordinary differential equations
 
@@ -56,7 +56,7 @@ The 177 built-in systems cite **137 distinct sources**, grouped below by family 
 - Decroly & Goldbeter (1982), Proc. Natl. Acad. Sci. U.S.A. 79, 6917-6921. [doi:10.1073/pnas.79.22.6917](https://doi.org/10.1073/pnas.79.22.6917)<br><span class="ts-cite-systems">Cited by: `GlycolyticOscillation`</span>
 - Duffing (1918), Erzwungene Schwingungen bei veränderlicher Eigenfrequenz, Vieweg, Braunschweig.<br><span class="ts-cite-systems">Cited by: `Duffing`</span>
 - Field & Noyes (1974), J. Chem. Phys. 60, 1877-1884. [doi:10.1063/1.1681288](https://doi.org/10.1063/1.1681288)<br><span class="ts-cite-systems">Cited by: `Oregonator`</span>
-- FitzHugh (1961), Biophys. J. 1, 445-466. [doi:10.1016/s0006-3495(61)86902-6](https://doi.org/10.1016/s0006-3495(61)86902-6)<br><span class="ts-cite-systems">Cited by: `ForcedFitzHughNagumo`</span>
+- FitzHugh (1961), Biophys. J. 1, 445-466. [doi:10.1016/s0006-3495(61)86902-6](https://doi.org/10.1016/s0006-3495(61)86902-6)<br><span class="ts-cite-systems">Cited by: `FitzHughNagumo`, `ForcedFitzHughNagumo`</span>
 - Froeschlé, Guzzo & Lega (2000), Science 289, 2108. [doi:10.1126/science.289.5487.2108](https://doi.org/10.1126/science.289.5487.2108)<br><span class="ts-cite-systems">Cited by: `ArnoldWeb`</span>
 - Genesio & Tesi (1992), Automatica 28, 531-548. [doi:10.1016/0005-1098(92)90177-h](https://doi.org/10.1016/0005-1098(92)90177-h)<br><span class="ts-cite-systems">Cited by: `GenesioTesi`</span>
 - Gilet & Bush (2009), J. Fluid Mech. 625, 167-203. [doi:10.1017/s0022112008005442](https://doi.org/10.1017/s0022112008005442)<br><span class="ts-cite-systems">Cited by: `FluidTrampoline`</span>
@@ -78,11 +78,13 @@ The 177 built-in systems cite **137 distinct sources**, grouped below by family 
 - Lewis & Glass (1992), Neural Comput. 4, 621-642. [doi:10.1162/neco.1992.4.5.621](https://doi.org/10.1162/neco.1992.4.5.621)<br><span class="ts-cite-systems">Cited by: `Hopfield`</span>
 - Li (2008), Phys. Lett. A 372, 387-393. [doi:10.1016/j.physleta.2007.07.045](https://doi.org/10.1016/j.physleta.2007.07.045)<br><span class="ts-cite-systems">Cited by: `DequanLi`</span>
 - Li et al. (2015), IEICE Electron. Express 12(4), 20141116. [doi:10.1587/elex.12.20141116](https://doi.org/10.1587/elex.12.20141116)<br><span class="ts-cite-systems">Cited by: `Sakarya`</span>
+- J.-A. Lissajous (1857), 'Mémoire sur l'étude optique des mouvements vibratoires', Annales de Chimie et de Physique, 3e série, 51, 147–231 (historical planar construction; catalogue ODEs integrate its analytic derivatives, with a coordinate-wise extension for 3D). [Original memoir](https://gallica.bnf.fr/ark:/12148/bpt6k34792z/f146.item).<br><span class="ts-cite-systems">Cited by: `Lissajous2D`, `Lissajous3D`</span>
 - Liu & Chen (2004), Int. J. Bifurc. Chaos 14, 1395-1403. [doi:10.1142/s0218127404009880](https://doi.org/10.1142/s0218127404009880)<br><span class="ts-cite-systems">Cited by: `LiuChen`</span>
 - Lorenz (1963), J. Atmos. Sci. 20, 130-141. [doi:10.1175/1520-0469(1963)020&lt;0130:dnf&gt;2.0.co;2](https://doi.org/10.1175/1520-0469(1963)020%3C0130:dnf%3E2.0.co;2)<br><span class="ts-cite-systems">Cited by: `Lorenz`, `LorenzCoupled`</span>
 - Lorenz (1984), 'Irregularity: a fundamental property of the atmosphere', Tellus 36A, 98-110. [doi:10.1111/j.1600-0870.1984.tb00230.x](https://doi.org/10.1111/j.1600-0870.1984.tb00230.x)<br><span class="ts-cite-systems">Cited by: `Hadley`</span>
 - Lorenz (1984), Tellus 36A, 98-110. [doi:10.3402/tellusa.v36i2.11473](https://doi.org/10.3402/tellusa.v36i2.11473)<br><span class="ts-cite-systems">Cited by: `Lorenz84`</span>
 - Lorenz (1996), Proc. ECMWF Seminar on Predictability 1, 1-18.<br><span class="ts-cite-systems">Cited by: `Lorenz96`</span>
+- Lotka (1920), Proc. Natl. Acad. Sci. U.S.A. 6, 410-415. [doi:10.1073/pnas.6.7.410](https://doi.org/10.1073/pnas.6.7.410)<br><span class="ts-cite-systems">Cited by: `LotkaVolterra`</span>
 - Lü & Chen (2002), Int. J. Bifurcation Chaos 12, 659-661. [doi:10.1142/s0218127402004620](https://doi.org/10.1142/s0218127402004620)<br><span class="ts-cite-systems">Cited by: `LuChen`</span>
 - Lü, Chen & Cheng (2004), Int. J. Bifurcation Chaos 14, 1507-1537. [doi:10.1142/s021812740401014x](https://doi.org/10.1142/s021812740401014x)<br><span class="ts-cite-systems">Cited by: `LuChenCheng`</span>
 - MacArthur (1969), Proc. Natl. Acad. Sci. USA 64, 1369-1371. [doi:10.1073/pnas.64.4.1369](https://doi.org/10.1073/pnas.64.4.1369)<br><span class="ts-cite-systems">Cited by: `MacArthur`</span>
@@ -97,17 +99,20 @@ The 177 built-in systems cite **137 distinct sources**, grouped below by family 
 - Pearson (1993), Science 261, 189-192. [doi:10.1126/science.261.5118.189](https://doi.org/10.1126/science.261.5118.189)<br><span class="ts-cite-systems">Cited by: `GrayScott`</span>
 - Pehlivan & Wei (2012), Turk. J. Electr. Eng. Comput. Sci. 20, 1229-1239. [doi:10.3906/elk-1103-14](https://doi.org/10.3906/elk-1103-14)<br><span class="ts-cite-systems">Cited by: `PehlivanWei`</span>
 - Petrov, Scott & Showalter (1992), J. Chem. Phys. 97, 6191-6198. [doi:10.1063/1.463727](https://doi.org/10.1063/1.463727)<br><span class="ts-cite-systems">Cited by: `IsothermalChemical`</span>
-- van der Pol (1926), London Edinburgh Dublin Philos. Mag. J. Sci. 2, 978-992. [doi:10.1080/14786442608564127](https://doi.org/10.1080/14786442608564127)<br><span class="ts-cite-systems">Cited by: `ForcedVanDerPol`</span>
+- van der Pol (1926), London Edinburgh Dublin Philos. Mag. J. Sci. 2, 978-992. [doi:10.1080/14786442608564127](https://doi.org/10.1080/14786442608564127)<br><span class="ts-cite-systems">Cited by: `ForcedVanDerPol`, `VanDerPol`</span>
+- Prigogine & Lefever (1968), J. Chem. Phys. 48, 1695-1700. [doi:10.1063/1.1668896](https://doi.org/10.1063/1.1668896)<br><span class="ts-cite-systems">Cited by: `Brusselator`</span>
 - Prigogine (1980), From Being to Becoming, W.H. Freeman.<br><span class="ts-cite-systems">Cited by: `ForcedBrusselator`</span>
 - Qi et al. (2008), Chaos Solitons Fractals 38, 705-721. [doi:10.1016/j.chaos.2006.09.012](https://doi.org/10.1016/j.chaos.2006.09.012)<br><span class="ts-cite-systems">Cited by: `QiChen`</span>
 - Qi, van Wyk, van Wyk & Chen (2008), Phys. Lett. A 372, 124. [doi:10.1016/j.physleta.2007.10.082](https://doi.org/10.1016/j.physleta.2007.10.082)<br><span class="ts-cite-systems">Cited by: `HyperQi`, `Qi`</span>
 - Rabinovich & Fabrikant (1979), Sov. Phys. JETP 50, 311-317.<br><span class="ts-cite-systems">Cited by: `RabinovichFabrikant`</span>
 - Rikitake (1958), Proc. Cambridge Philos. Soc. 54, 89-105. [doi:10.1017/s0305004100033223](https://doi.org/10.1017/s0305004100033223)<br><span class="ts-cite-systems">Cited by: `RikitakeDynamo`</span>
+- C. Robinson (1989), 'Homoclinic bifurcation to a transitive attractor of Lorenz type', Nonlinearity 2(4), 495–518 (the y*z-coupled family at v=-1; the shipped parameter regime is not a validated chaotic reference case). [doi:10.1088/0951-7715/2/4/001](https://doi.org/10.1088/0951-7715/2/4/001)<br><span class="ts-cite-systems">Cited by: `Robinson`</span>
 - Romond, Rustici, Gonze & Goldbeter (1999), Ann. N.Y. Acad. Sci. 879, 180-193. [doi:10.1111/j.1749-6632.1999.tb10419.x](https://doi.org/10.1111/j.1749-6632.1999.tb10419.x)<br><span class="ts-cite-systems">Cited by: `CellCycle`</span>
 - Rucklidge (1992), J. Fluid Mech. 237, 209-229. [doi:10.1017/s0022112092003392](https://doi.org/10.1017/s0022112092003392)<br><span class="ts-cite-systems">Cited by: `Rucklidge`</span>
 - Rössler (1976), Phys. Lett. A 57, 397-398. [doi:10.1016/0375-9601(76)90101-8](https://doi.org/10.1016/0375-9601(76)90101-8)<br><span class="ts-cite-systems">Cited by: `Rossler`</span>
 - Rössler (1979), Phys. Lett. A 71, 155-157. [doi:10.1016/0375-9601(79)90150-6](https://doi.org/10.1016/0375-9601(79)90150-6)<br><span class="ts-cite-systems">Cited by: `HyperRossler`</span>
 - San-Um & Srisuchinwong (2012), J. Comput. 7, 1041-1047. [doi:10.4304/jcp.7.4.1041-1047](https://doi.org/10.4304/jcp.7.4.1041-1047)<br><span class="ts-cite-systems">Cited by: `SanUmSrisuchinwong`</span>
+- Sel'kov (1968), Eur. J. Biochem. 4, 79-86. [doi:10.1111/j.1432-1033.1968.tb00175.x](https://doi.org/10.1111/j.1432-1033.1968.tb00175.x)<br><span class="ts-cite-systems">Cited by: `Selkov`</span>
 - Shadden, Lekien & Marsden (2005), Physica D 212, 271-304. [doi:10.1016/j.physd.2005.10.007](https://doi.org/10.1016/j.physd.2005.10.007)<br><span class="ts-cite-systems">Cited by: `DoubleGyre`</span>
 - Shaw (1981), Z. Naturforsch. A 36, 80-112. [doi:10.1515/zna-1981-0115](https://doi.org/10.1515/zna-1981-0115)<br><span class="ts-cite-systems">Cited by: `BurkeShaw`</span>
 - Shimizu & Morioka (1980), Phys. Lett. A 76, 201-204. [doi:10.1016/0375-9601(80)90466-1](https://doi.org/10.1016/0375-9601(80)90466-1)<br><span class="ts-cite-systems">Cited by: `ShimizuMorioka`</span>
@@ -123,6 +128,7 @@ The 177 built-in systems cite **137 distinct sources**, grouped below by family 
 - Stenflo (1996), Phys. Scr. 53, 83-84. [doi:10.1088/0031-8949/53/1/015](https://doi.org/10.1088/0031-8949/53/1/015)<br><span class="ts-cite-systems">Cited by: `LorenzStenflo`</span>
 - Strizhak & Kawczynski (1995), J. Phys. Chem. 99, 10830-10833. [doi:10.1021/j100027a024](https://doi.org/10.1021/j100027a024)<br><span class="ts-cite-systems">Cited by: `KawczynskiStrizhak`</span>
 - Strogatz (1994), Nonlinear Dynamics and Chaos.<br><span class="ts-cite-systems">Cited by: `Torus`</span>
+- Stuart (1960), J. Fluid Mech. 9, 353-370. [doi:10.1017/s002211206000116x](https://doi.org/10.1017/s002211206000116x)<br><span class="ts-cite-systems">Cited by: `StuartLandau`</span>
 - Swift & Hohenberg (1977), Phys. Rev. A 15, 319-328. [doi:10.1103/physreva.15.319](https://doi.org/10.1103/physreva.15.319)<br><span class="ts-cite-systems">Cited by: `SwiftHohenberg`</span>
 - Thomas (1999), Int. J. Bifurc. Chaos 9, 1889-1905. [doi:10.1142/s0218127499001383](https://doi.org/10.1142/s0218127499001383)<br><span class="ts-cite-systems">Cited by: `Thomas`, `ThomasLabyrinth`</span>
 - Tufillaro, Abbott & Griffiths (1984), Am. J. Phys. 52, 895-903. [doi:10.1119/1.13791](https://doi.org/10.1119/1.13791)<br><span class="ts-cite-systems">Cited by: `SwingingAtwood`</span>
@@ -171,6 +177,7 @@ The 177 built-in systems cite **137 distinct sources**, grouped below by family 
 - May (1976), Nature 261, 459-467. [doi:10.1038/261459a0](https://doi.org/10.1038/261459a0)<br><span class="ts-cite-systems">Cited by: `Logistic`</span>
 - Nusse & Yorke (1994), Dynamics: Numerical Explorations. [doi:10.1007/978-1-4684-0231-5](https://doi.org/10.1007/978-1-4684-0231-5)<br><span class="ts-cite-systems">Cited by: `Tinkerbell`</span>
 - Pickover (1990), Computers, Pattern, Chaos and Beauty (St. Martin's Press).<br><span class="ts-cite-systems">Cited by: `Pickover`</span>
+- J. Rampe (2017), '2D Strange Attractors', Softology's Blog, (first-hand implementation account, not a research paper; Bedhead is credited to Ivan Emrich and the Johnny Svensson equations are listed). [Source](https://softologyblog.wordpress.com/2017/03/04/2d-strange-attractors/).<br><span class="ts-cite-systems">Cited by: `Bedhead`, `Svensson`</span>
 - Ricker (1954), J. Fish. Res. Board Can. 11, 559-623. [doi:10.1139/f54-039](https://doi.org/10.1139/f54-039)<br><span class="ts-cite-systems">Cited by: `Ricker`</span>
 - Rössler (1979), 'Chaotic oscillations: an example of hyperchaos', Lectures in Applied Mathematics 17, 141-156.<br><span class="ts-cite-systems">Cited by: `FoldedTowel`</span>
 - Maynard Smith (1968), Mathematical Ideas in Biology (Cambridge University Press). [doi:10.1017/cbo9780511565144](https://doi.org/10.1017/cbo9780511565144)<br><span class="ts-cite-systems">Cited by: `MaynardSmith`</span>

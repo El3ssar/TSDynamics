@@ -142,7 +142,9 @@ def _resolve_method_and_prepare(
     ``rebuild_extra`` carries entry-point-specific build kwargs (``integrate``
     passes ``ic=``; ``ensemble`` seeds each trajectory later, so it passes none).
 
-    Returns the canonical method name and the (possibly rebuilt) problem.
+    Returns the implementation kernel name and the (possibly rebuilt) problem.
+    A plugin's selectable name can differ from its ``SolverSpec.kernel``;
+    the compiled engine dispatches the implementation, not that Python name.
     """
     from .run import _as_problem
 
@@ -157,7 +159,7 @@ def _resolve_method_and_prepare(
         problem = _as_problem(
             system_or_problem, with_jacobian=True, **rebuild_extra, **build_kwargs
         )
-    return resolution.name, problem
+    return resolution.kernel, problem
 
 
 def __dir__() -> list[str]:

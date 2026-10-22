@@ -36,12 +36,13 @@ from typing import Any, ClassVar, cast
 
 import numpy as np
 
-from tsdynamics.errors import InvalidParameterError, invalid_value, remedy
+from tsdynamics.errors import InvalidInputError, InvalidParameterError, invalid_value, remedy
 from tsdynamics.families import ContinuousSystem, DiscreteMap
 
 from .._common import reject_data
 from .._result import AnalysisResult, CollectionResult, _ArrayBacked, _build_meta
 from .._result_json import _sig, _state
+from .._tangent import flow_has_explicit_time
 from . import _common as _c
 
 __all__ = ["FixedPoint", "FixedPointSet", "fixed_points"]
@@ -115,7 +116,23 @@ class FixedPoint(_ArrayBacked, AnalysisResult):
 
     def _interpretation(self) -> str | None:
         """Name the stability, and the reading it was decided from."""
-        return ("stable" if self.stable else "unstable") + f"  {self._gauge()}"
+        return self._linear_classification() + f"  {self._gauge()}"
+
+    def _linear_classification(self) -> str:
+        """Keep neutral eigenvalues distinct from an expanding direction."""
+        eigenvalues = np.asarray(self.eigenvalues)
+        if not eigenvalues.size or not np.isfinite(eigenvalues).all():
+            return "stability unresolved"
+        leading = (
+            float(eigenvalues.real.max())
+            if self.continuous
+            else float(np.abs(eigenvalues).max()) - 1.0
+        )
+        if leading > 0.0:
+            return "unstable"
+        if leading < 0.0:
+            return "stable"
+        return "nonhyperbolic (linear test inconclusive)"
 
     def _context(self) -> str | None:
         """Return the subject, and which stability convention applies."""
@@ -125,7 +142,7 @@ class FixedPoint(_ArrayBacked, AnalysisResult):
 
     def _as_item(self) -> str:
         """Return the compact one-line form used inside a set's item list."""
-        return f"x* = {_state(self.x)}  {'stable' if self.stable else 'unstable'}  {self._gauge()}"
+        return f"x* = {_state(self.x)}  {self._linear_classification()}  {self._gauge()}"
 
     def __plot_spec__(
         self,
@@ -171,7 +188,7 @@ class FixedPoint(_ArrayBacked, AnalysisResult):
         from .. import _plotbuilder as pb
 
         x = np.asarray(self.x, dtype=float).ravel()
-        label = "stable" if self.stable else "unstable"
+        label = self._linear_classification()
         style = _fixed_point_style(self.stable)
         i, j = _resolve_components(self.meta, int(x.size), components)
         if x.size >= 2:
@@ -314,7 +331,12 @@ class FixedPointSet(CollectionResult):
 
     @property
     def unstable(self) -> FixedPointSet:
-        """The unstable members, as a :class:`FixedPointSet` (the complement of :attr:`stable`)."""
+        """The complement of :attr:`stable`, including nonhyperbolic members.
+
+        This historical subset name means *not linearly asymptotically stable*;
+        a nonhyperbolic member's nonlinear stability is unresolved, not unstable.
+        Read each member's eigenvalues and verdict for that distinction.
+        """
         return self._select(stable=False)
 
     def _select(self, *, stable: bool) -> FixedPointSet:
@@ -331,11 +353,17 @@ class FixedPointSet(CollectionResult):
         """Return the count and the stable/unstable split."""
         if not self.items:
             return "none found"
-        n_stable = len(self.stable)
+        states = [fp._linear_classification() for fp in self.items]
+        n_stable = states.count("stable")
+        n_unstable = states.count("unstable")
+        n_other = len(states) - n_stable - n_unstable
+        split = f"{n_stable} stable, {n_unstable} unstable"
+        if n_other:
+            split += f", {n_other} nonhyperbolic / unresolved"
         return (
             f"{len(self.items)} {self._noun()}"
             + ("s" if len(self.items) != 1 else "")
-            + f" · {n_stable} stable, {len(self.items) - n_stable} unstable"
+            + f" · {split}"
         )
 
     @property
@@ -349,7 +377,7 @@ class FixedPointSet(CollectionResult):
 
     @property
     def n_unstable(self) -> int:
-        """How many of these are unstable — the count the repr reports."""
+        """Size of the legacy :attr:`unstable` subset, including nonhyperbolic points."""
         return len(self.unstable)
 
     def _derived(self) -> dict[str, Any]:
@@ -401,17 +429,29 @@ class FixedPointSet(CollectionResult):
 
         layers = []
         placed: list[tuple[float, float, np.ndarray]] = []
-        for stable, label in ((True, "stable"), (False, "unstable")):
-            pts = [
-                np.asarray(fp.x, dtype=float).ravel() for fp in self.items if fp.stable is stable
-            ]
-            eigs = [np.asarray(fp.eigenvalues) for fp in self.items if fp.stable is stable]
+        classifications: dict[str, list[FixedPoint]] = {
+            "stable": [],
+            "unstable": [],
+            "nonhyperbolic": [],
+            "unresolved": [],
+        }
+        for point in self.items:
+            classification = point._linear_classification().split(" (", 1)[0]
+            if classification == "stability unresolved":
+                classification = "unresolved"
+            classifications[classification].append(point)
+        for label, members in classifications.items():
+            pts = [np.asarray(fp.x, dtype=float).ravel() for fp in members]
+            eigs = [np.asarray(fp.eigenvalues) for fp in members]
             if not pts:
                 continue
             arr = np.asarray([p[:dim] for p in pts], dtype=float)
             xs = arr[:, i]
             ys = arr[:, j] if dim >= 2 else np.zeros(arr.shape[0])
-            layers.append(pb.scatter(xs, ys, label=label, style=_fixed_point_style(stable)))
+            style = _fixed_point_style(label == "stable")
+            if label in ("nonhyperbolic", "unresolved"):
+                style["color"] = "#777777"
+            layers.append(pb.scatter(xs, ys, label=label, style=style))
             placed.extend(zip(xs.tolist(), ys.tolist(), eigs, strict=False))
 
         continuous = bool(self.items[0].continuous) if self.items else False
@@ -492,7 +532,7 @@ def fixed_points(
     Parameters
     ----------
     system : DiscreteMap or ContinuousSystem
-        A discrete map (fixed points) or a continuous flow (equilibria).  Delay
+        A discrete map (fixed points) or an autonomous continuous flow (equilibria).  Delay
         and stochastic systems are not supported.
     region : Box, Grid, (lo, hi) tuple, optional
         Search region.  An explicit region is a hard search **domain**: seeds are
@@ -570,7 +610,8 @@ def fixed_points(
         ``"sd"``/``"dl"`` is requested for a flow (use ``"newton"`` on
         ``f(x)=0``), or ``"interval"`` is requested without a bounded ``region``.
     InvalidInputError
-        If ``method="interval"`` and the system's right-hand side uses an
+        If the flow depends explicitly on time (a root at a single forcing phase
+        is not an equilibrium), or if ``method="interval"`` and the system's right-hand side uses an
         operation the interval engine cannot enclose.
 
     Examples
@@ -595,6 +636,13 @@ def fixed_points(
         continuous = False
     elif isinstance(system, ContinuousSystem):
         continuous = True
+        if flow_has_explicit_time(system):
+            raise InvalidInputError(
+                "fixed_points finds equilibria of autonomous flows, but this right-hand "
+                "side depends explicitly on time. Solving f(x, 0)=0 would freeze the "
+                "forcing at one phase and give misleading equilibria and stability. "
+                "Use a Poincare map to study a periodically forced system."
+            )
     else:
         raise NotImplementedError(
             f"fixed_points solves f(x)=x for a map and f(x)=0 for a flow; "

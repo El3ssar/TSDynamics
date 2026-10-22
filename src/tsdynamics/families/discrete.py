@@ -354,8 +354,7 @@ class DiscreteMap(SystemBase, ABC):
             verb="reinit",
         )
         if params:
-            for k, v in params.items():
-                self.params[k] = v
+            self.params.update(params)
         # ``resolve_ic`` commits the resolved IC to ``self.ic`` up front, so a
         # malformed ``u`` (wrong length → a reshape ValueError) or a malformed
         # ``t`` must not leave a half-applied IC behind (the ``_dispatch`` /

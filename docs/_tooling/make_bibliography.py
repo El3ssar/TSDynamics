@@ -463,16 +463,16 @@ def _render_methods() -> str:
 # ---------------------------------------------------------------------------
 
 _INTRO = """---
-description: The literature behind TSDynamics — the original papers for every built-in system, and the method papers behind the analysis toolkit, with DOI links.
+description: Research papers, historical curve constructions, implementation provenance, and analysis methods, with DOI links.
 ---
 
 <span class="ts-kicker">References · Bibliography</span>
 
 # Bibliography
 
-Every built-in system and every analysis method in TSDynamics traces back to a
-primary source. This page collects them all — never a competitor library, always
-the original paper. It has two halves:
+The catalogue draws on research papers, historical mathematical constructions,
+and first-hand implementation accounts. The citations below distinguish those
+sources from the papers behind the numerical methods. It has two halves:
 
 - The **[systems bibliography](#systems)** is generated straight from the
   catalogue. Each built-in system carries a `reference` (and, where one exists, a
@@ -484,11 +484,11 @@ the original paper. It has two halves:
   [Analysis](../analysis/index.md) section.
 
 !!! tip "Reproducing the numbers"
-    The parameter defaults and initial conditions in each system's page match the
-    cited paper wherever the source gives them. When a quantity is quoted in the
-    docs (a Lyapunov spectrum, a fractal dimension) it is pinned to a fixed
-    initial condition and, for stochastic systems, a fixed seed — so every number
-    is reproducible from the snippet that produces it.
+    System pages separate finite-time measurements at the shipped parameters
+    from literature values measured under their own conditions. Open **Method
+    and evidence** for the initial condition, horizon and numerical settings.
+    To reproduce a published result, use its parameter values and transient
+    choices; a model's defaults are not a universal reference case.
 """
 
 
@@ -504,11 +504,13 @@ def build_page() -> str:
     parts.append("")
     parts.append(
         f"The {n_systems} built-in systems cite **{n_papers} distinct sources**, "
-        "grouped below by family and ordered alphabetically by first author. A "
-        "handful of textbook/folklore systems (the Lissajous figures, a couple of "
-        "purely illustrative maps) carry no single primary source and are omitted "
-        "from this list."
+        "grouped below by family and ordered alphabetically by first author. "
+        "These include research papers, historical curve constructions, and "
+        "first-hand implementation accounts. Each citation states its scope; "
+        "an implementation account is not a research proof of a model's dynamics."
     )
+    if n_without:
+        parts.append(f"{n_without} systems have no recorded source and are not included below.")
     parts.append("")
 
     for family in _FAMILY_ORDER:

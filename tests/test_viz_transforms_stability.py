@@ -15,7 +15,7 @@ independently of this library:
   strictly inside the unit circle);
 * the Lorenz leading exponent, 0.906;
 * the Kaplan-Yorke dimension of the literature Lorenz spectrum, 2.062;
-* the GALI power law's exact slope ``-(k - s)``;
+* every branch of the Hamiltonian-torus GALI power law (Skokos et al. 2008);
 * the 0-1 test's bounded-vs-diffusive geometry, as a measured extent ratio.
 
 Plus the cross-cutting invariants the transform substrate promises: the
@@ -372,23 +372,67 @@ def test_lyapunov_spectrum_runs_the_estimator_when_given_a_system():
 
 
 # ---------------------------------------------------------------------------
-# TRUTH 5 — GALI: the reference slope is exactly -(k - s)
+# TRUTH 5 — GALI: all three asymptotic branches of the Hamiltonian reference
 # ---------------------------------------------------------------------------
 
 
-def test_the_gali_reference_has_the_analytic_power_law_slope():
+@pytest.mark.parametrize(
+    "frequencies,degrees,order,power",
+    [
+        (2, 2, 2, 0),
+        (2, 2, 3, -2),
+        (2, 2, 4, -4),
+        (1, 3, 2, -1),
+        (1, 3, 5, -4),
+        (1, 3, 6, -6),
+    ],
+)
+def test_the_gali_reference_has_the_analytic_power_law_slope(frequencies, degrees, order, power):
     from tsdynamics.analysis.chaos.gali import GALIResult
 
     t = np.geomspace(1.0, 1000.0, 200)
-    results = [GALIResult(k=kk, times=t, values=t ** -(kk - 2.0)) for kk in (3, 4)]
-    geom = geometry(results, "gali_curves", frequencies=2)
-    for order in (3, 4):
-        guide = next(
-            part for part in geom.parts if part.label and f"t^{{{-(order - 2)}}}" in part.label
-        )
-        x, y = guide.array("x"), guide.array("y")
-        slope = (y[-1] - y[0]) / (x[-1] - x[0])
-        assert slope == pytest.approx(-(order - 2), rel=1e-9)
+    result = GALIResult(k=order, times=t, values=t ** float(power))
+    geom = geometry(result, "gali_curves", frequencies=frequencies, degrees_of_freedom=degrees)
+    guide = geom.parts[1]
+    x, y = guide.array("x"), guide.array("y")
+    slope = (y[-1] - y[0]) / (x[-1] - x[0])
+    assert slope == pytest.approx(power, abs=1e-12)
+
+
+def test_a_generic_gali_curve_does_not_claim_a_hamiltonian_power_law():
+    from tsdynamics.analysis.chaos.gali import GALIResult
+
+    t = np.linspace(1.0, 100.0, 20)
+    result = GALIResult(k=2, times=t, values=np.exp(-t))
+    assert len(geometry(result, "gali_curves").parts) == 1
+    with pytest.raises(ts.errors.InvalidParameterError, match="degrees_of_freedom"):
+        geometry(result, "gali_curves", frequencies=1)
+    with pytest.raises(
+        ts.errors.InvalidInputError, match="only apply when the subject is a system"
+    ):
+        geometry([result], "gali_curves", final_time=200.0)
+
+
+@pytest.mark.parametrize(
+    "meta",
+    [
+        {"spectrum_complete": False, "autonomous": True},
+        {"spectrum_complete": True, "autonomous": False},
+    ],
+)
+def test_spectrum_plot_preserves_an_unavailable_kaplan_yorke_dimension(meta):
+    from tsdynamics.analysis.lyapunov import LyapunovSpectrum
+
+    result = LyapunovSpectrum(values=np.array([0.9]), meta=meta)
+    geom = geometry(result, "lyapunov_spectrum")
+    assert geom.meta["kaplan_yorke"] is None
+    assert "D_{KY}" not in geom.title
+
+
+@pytest.mark.parametrize("values", [[], [[0.9, -1.5]], [np.nan], [np.inf]])
+def test_spectrum_plot_rejects_arrays_that_do_not_describe_a_finite_spectrum(values):
+    with pytest.raises(ts.errors.InvalidInputError, match="finite, one-dimensional"):
+        geometry(values, "lyapunov_spectrum")
 
 
 def test_gali_separates_a_regular_from_a_chaotic_henon_heiles_orbit():

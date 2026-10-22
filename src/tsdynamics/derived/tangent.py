@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import numpy as np
 
+from tsdynamics._utils.escape import ESCAPE_GROWTH, ESCAPE_SCALE
 from tsdynamics._utils.tolerances import DEFAULT_ATOL, DEFAULT_RTOL
 from tsdynamics.families import ContinuousSystem, DelaySystem, DiscreteMap, Trajectory
 from tsdynamics.families._hidden import hide
@@ -21,6 +23,44 @@ __all__ = ["TangentSystem"]
 #: ODE backends that integrate the *extended* variational system on the engine
 #: (interpreter / Cranelift JIT / pure-Python reference).
 _ENGINE_BACKENDS = frozenset({"interp", "jit", "reference"})
+
+
+def _initial_frame(dim: int, k: int) -> np.ndarray:
+    """Mixed orthonormal columns, mirroring Rust tangent_frame::initial_frame.
+
+    A fixed local stream avoids coordinate-invariant traps without consuming
+    global randomness. Sequential sums mirror native arithmetic, while vector
+    operations keep initialization inexpensive for large tangent spaces.
+    """
+    state = 0x54414E47454E5453
+    mask = (1 << 64) - 1
+    w = np.zeros((dim, k))
+
+    def orthogonalise(j: int) -> float:
+        for _ in range(2):
+            for i in range(j):
+                dot = float(np.add.accumulate(w[:, i] * w[:, j])[-1])
+                w[:, j] -= dot * w[:, i]
+        norm2 = float(np.add.accumulate(w[:, j] * w[:, j])[-1])
+        return math.sqrt(norm2)
+
+    for j in range(k):
+        for d in range(dim):
+            state = (state + 0x9E3779B97F4A7C15) & mask
+            z = state
+            z = ((z ^ (z >> 30)) * 0xBF58476D1CE4E5B9) & mask
+            z = ((z ^ (z >> 27)) * 0x94D049BB133111EB) & mask
+            z ^= z >> 31
+            w[d, j] = 2.0 * ((z >> 11) * (1.0 / (1 << 53))) - 1.0
+        norm = orthogonalise(j)
+        if norm <= np.finfo(float).eps:
+            used = [sum(float(w[d, i]) ** 2 for i in range(j)) for d in range(dim)]
+            best = min(range(dim), key=used.__getitem__)
+            w[:, j] = 0.0
+            w[best, j] = 1.0
+            norm = orthogonalise(j)
+        w[:, j] /= norm
+    return w
 
 
 def _qr_growths(w: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -323,13 +363,12 @@ class TangentSystem(DerivedSystem):
 
         if self._mode == "map":
             self.system.reinit(u, t=t, params=params)
-            self._W = np.eye(self.system.dim)[:, : self.k]
+            self._W = _initial_frame(self.system.dim, self.k)
             return
 
         # ode mode — apply any parameter overrides to the inner system first.
         if params:
-            for key, value in params.items():
-                self.params[key] = value
+            self.params.update(params)
         ic_arr = self.system._resolve_ic(u)
         t0 = float(t) if t is not None else 0.0
         self._t = t0
@@ -367,7 +406,7 @@ class TangentSystem(DerivedSystem):
             self._ext_tape = build_variational_tape_cached(self.system, self.k)
             self._ext_tape_key = key
             self._ext_tape_arrays = None  # re-marshal the wire arrays for the new tape
-        w0 = np.eye(self.system.dim)[:, : self.k]
+        w0 = _initial_frame(self.system.dim, self.k)
         self._z = embed_extended(ic_arr, w0)
         self._setup_ode_stepper()
 
@@ -422,7 +461,7 @@ class TangentSystem(DerivedSystem):
                 self._ext_tape_arrays,
                 self._z,
                 self._t,
-                method=resolution.name,
+                method=resolution.kernel,
                 rtol=self._rtol,
                 atol=self._atol,
                 jit=self._backend == "jit",
@@ -432,7 +471,7 @@ class TangentSystem(DerivedSystem):
             # the per-chunk run.integrate path (it raises the canonical errors).
             self._ode_stepper = None
             return
-        self._step_kernel = resolution.name
+        self._step_kernel = resolution.kernel
         self._step_explicit_engine = True
 
     # --- protocol ---
@@ -576,12 +615,12 @@ class TangentSystem(DerivedSystem):
 
         The live tangent frame: column ``j`` is the direction the ``j``-th
         Lyapunov exponent is currently being measured along, reorthonormalised at
-        every ``step()``.  Columns are ordered by decreasing growth, so
-        ``deviations()[:, 0]`` is the **most unstable direction at this point on
-        the orbit** — the covariant-direction estimate you want in order to
-        perturb a trajectory where it will actually separate, to seed a control
-        scheme, or to see how the stable/unstable splitting turns as the orbit
-        moves.
+        every ``step()``. These are QR (backward Lyapunov) vectors, not covariant
+        Lyapunov vectors. Their growth averages converge in the usual descending
+        order after alignment, but finite-time estimates need not yet be ordered.
+        Columns retain their accumulator order so directions, growths, and
+        convergence histories remain aligned; the public spectrum result sorts
+        its reported exponents separately.
 
         This is the only route to that frame, which is why it stays on the tab
         surface while :meth:`growths` (a per-step scalar of the same accumulation)
@@ -807,7 +846,8 @@ class TangentSystem(DerivedSystem):
         Returns
         -------
         ndarray, shape (k,)
-            Lyapunov exponents, largest first (QR order).
+            Lyapunov estimates in tangent-frame/accumulator order. The public
+            analysis entry point sorts the reported spectrum.
         """
         if self._mode == "map":
             return self._lyapunov_spectrum_map(**kwargs)
@@ -1032,25 +1072,44 @@ class TangentSystem(DerivedSystem):
             raise ValueError(f"dt must be positive, got {dt!r}")
 
         self.reinit(ic, method=method, rtol=rtol, atol=atol, **integrator_kwargs)
+        start_peak = float(np.max(np.abs(self.state())))
+        self._lyapunov_start_peak = start_peak
+        escape_limit = max(ESCAPE_SCALE, ESCAPE_GROWTH * start_peak)
 
         if self._step_explicit_engine and self._ode_stepper is not None:
-            exponents = self._engine_lyapunov_spectrum(dt, transient, final_time)
+            exponents = self._engine_lyapunov_spectrum(dt, transient, final_time, escape_limit)
         else:
             # Burn-in: advance the trajectory + tangent frame without accumulating.
             t_burn = self._t + max(0.0, transient)
             while self._t < t_burn - 1e-12:
                 self.step(min(dt, t_burn - self._t))
+                self._check_lyapunov_escape(escape_limit)
             self._reset_accumulators()
 
             # Production: uniform-dt steps, time-weighted growth average.
             t_end = self._t + final_time
             while self._t < t_end - 1e-12:
                 self.step(min(dt, t_end - self._t))
+                self._check_lyapunov_escape(escape_limit)
             exponents = self.exponents()
 
         return exponents
 
-    def _engine_lyapunov_spectrum(self, dt: float, burn_in: float, final_time: float) -> np.ndarray:
+    def _check_lyapunov_escape(self, limit: float) -> None:
+        """Refuse an escaped base orbit before expensive variational integration."""
+        from tsdynamics.errors import ConvergenceError
+
+        peak = float(np.max(np.abs(self.state())))
+        if peak >= limit:
+            raise ConvergenceError(
+                f"Lyapunov base orbit escaped at t={self._t:.6g}: state magnitude "
+                f"{peak:.6g} reached the scale-and-growth limit {limit:.6g}. Use an "
+                "initial condition on a bounded orbit before estimating attractor exponents."
+            )
+
+    def _engine_lyapunov_spectrum(
+        self, dt: float, burn_in: float, final_time: float, escape_limit: float
+    ) -> np.ndarray:
         """Run the entire Benettin loop in one Rust engine call (the fast path).
 
         Eligibility is decided by :meth:`_setup_ode_stepper` (an explicit engine
@@ -1082,6 +1141,7 @@ class TangentSystem(DerivedSystem):
             rtol=self._rtol,
             atol=self._atol,
             jit=self._backend == "jit",
+            escape_limit=escape_limit,
         )
         # Re-seat the live state from the engine's final extended state, and the
         # accumulators so exponents()/growths() reflect this run.

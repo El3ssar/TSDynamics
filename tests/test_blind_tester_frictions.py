@@ -17,7 +17,8 @@ import symengine as se
 
 import tsdynamics as ts
 from tsdynamics.analysis.dimensions import UnembeddedSeriesWarning
-from tsdynamics.errors import InvalidInputError, InvalidParameterError
+from tsdynamics.analysis.lyapunov import LyapunovSpectrum
+from tsdynamics.errors import ConvergenceError, InvalidInputError, InvalidParameterError
 
 # ---------------------------------------------------------------------------
 # 1. A diverged trajectory must never look like an answer
@@ -66,8 +67,19 @@ def test_a_poincare_section_of_an_escaping_orbit_is_not_reported_as_crossings():
 
 def test_a_lyapunov_spectrum_of_an_escaping_orbit_refuses_a_verdict():
     """It reported ``λ = [0.3057, 0.3054, -6.068]`` and hedged only about the horizon."""
-    spectrum = ts.analysis.lyapunov_spectrum(
-        ts.systems.Chua(), final_time=60.0, ic=[500.0, 0.0, 0.0]
+    with pytest.raises(
+        ConvergenceError, match="base orbit escaped at t=.*state magnitude"
+    ) as error:
+        ts.analysis.lyapunov_spectrum(ts.systems.Chua(), final_time=60.0, ic=[500.0, 0.0, 0.0])
+    assert "initial condition on a bounded orbit" in str(error.value)
+
+
+@pytest.mark.parametrize("start", [None, 500.0])
+def test_a_completed_escaping_spectrum_record_still_refuses_a_verdict(start):
+    """Legacy records and other estimators can still carry finite escaped rates."""
+    spectrum = LyapunovSpectrum(
+        values=np.array([0.3057, 0.3054, -6.068]),
+        meta={"system": "Chua", "orbit_peak": 1.6e9, "orbit_start": start},
     )
     assert spectrum.unbounded is True
     assert spectrum.chaotic is None

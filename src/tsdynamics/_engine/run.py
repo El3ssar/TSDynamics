@@ -1182,6 +1182,7 @@ def lyapunov_spectrum_ode(
     rtol: float,
     atol: float,
     jit: bool,
+    escape_limit: float = float("inf"),
 ) -> dict[str, Any]:
     """Run the whole ODE Benettin Lyapunov-spectrum loop in the Rust engine.
 
@@ -1226,6 +1227,9 @@ def lyapunov_spectrum_ode(
         Adaptive-kernel tolerances.
     jit : bool
         Select the Cranelift evaluator.
+    escape_limit : float, optional
+        Upper bound on base-state magnitude, derived by the caller from its
+        scale-and-growth escape policy. Tangent components are not checked.
 
     Returns
     -------
@@ -1256,6 +1260,7 @@ def lyapunov_spectrum_ode(
         float(burn_in),
         float(final_time),
         bool(jit),
+        float(escape_limit),
     )
     return {
         "spectrum": np.asarray(spectrum, dtype=np.float64),

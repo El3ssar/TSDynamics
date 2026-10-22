@@ -14,27 +14,19 @@ does the same for a discrete map. A dozen lines end to end.
 ## Instantiate a system
 
 Built-in systems live under `tsdynamics.systems`. Each is a class you
-instantiate with its parameters; the defaults reproduce the textbook attractor.
+instantiate with its parameters. Its catalogue page lists the equations,
+defaults and references; Lorenz uses the familiar convection parameters below.
 
 ```python
 import tsdynamics as ts
 
-lor = ts.systems.Lorenz()          # sigma=10, rho=28, beta=8/3
+lor = ts.systems.Lorenz(ic=[1, 1, 1])    # sigma=10, rho=28, beta=8/3
 ```
 
-Override any parameter by keyword — `ts.systems.Lorenz(rho=35.0)` — or set an
-initial condition with `ic=[...]`. Leaving `ic` unset lets the library pick a
-sensible starting point.
-
-!!! info "`ts.systems.Lorenz`, not `ts.Lorenz`"
-    The top level is eleven names; every built-in system lives under
-    `ts.systems`. Typing `ts.Lorenz` raises an error that hands you the address:
-
-    ```
-    ts.Lorenz moved: the top level is 11 names now, and this one lives at
-    its own address.
-        ts.systems.Lorenz()
-    ```
+Override any parameter by keyword — `ts.systems.Lorenz(rho=35.0)` — and set the
+starting state with `ic=[...]`. An explicit starting state makes your example
+reproducible. If you leave it unset, the model uses its declared default or
+draws a random initial condition; a random start need not lie in an attractor's basin.
 
 ## Run it
 
@@ -54,10 +46,11 @@ traj.y.shape      # (10001, 3) — state at each time
 
 `dt` is only the **output grid** — where the solution is sampled into the
 returned arrays. The internal solver is adaptive, choosing its own steps to meet
-the error tolerances, so a coarse `dt` costs resolution but never accuracy. The
+the error tolerances. A coarse `dt` stores fewer samples without relaxing those
+tolerances, but it can hide fast oscillations or spikes in a plot. The
 right-hand side is lowered to the Rust engine in-process and JIT-compiled to
-native code on first use — both steps happen in milliseconds and are memoised, so
-there is no build step to wait for and nothing is written to disk.
+native code on first use. Later calls reuse the in-memory cache while the model's
+structure is unchanged; no manual compilation step is needed.
 
 Prefer explicit control? Pass `solver=`, `rtol=`/`atol=`, `ic=`, `max_step=` or a
 `backend=`. All of that is covered in
@@ -130,10 +123,10 @@ under [Visualization](../visualization/index.md).
 ## Quantify: the Lyapunov spectrum
 
 **Every analysis is a free function whose first argument is the thing it is
-about.** The payoff of having the symbolic equations is that the analysis is
-exact: the Lyapunov spectrum — the average exponential rates at which nearby
-trajectories separate — comes straight from the variational equations, with no
-finite differences.
+about.** The Lyapunov spectrum gives the average exponential rates at which
+nearby trajectories separate. For this model, TSDynamics differentiates the
+symbolic equations and integrates the resulting variational equations. The
+derivatives are symbolic; the reported exponents are numerical, finite-time estimates.
 
 ```python
 ts.analysis.lyapunov_spectrum(lor)      # ≈ [0.9, 0.0, -14.6]

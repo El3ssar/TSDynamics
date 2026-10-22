@@ -6,12 +6,13 @@ description: Lyapunov spectra for flows, maps and delay systems, the Jacobian-fr
 
 # Lyapunov spectra
 
-The Lyapunov exponents are the sharpest number a dynamical system will give
-you. Two trajectories that start infinitesimally apart separate, on average, at
+Lyapunov exponents describe how infinitesimal perturbations grow or shrink. Two
+trajectories that start infinitesimally apart separate, on average, at
 an exponential rate; the spectrum $\lambda_1 \ge \lambda_2 \ge \dots$ collects
 those rates, one per direction in tangent space. A single positive exponent is
-the working definition of chaos — nearby states pull apart, so long-term
-prediction is impossible even though the equations are deterministic. The signs
+an indicator of sensitive dependence on a bounded invariant orbit. A finite-time
+positive estimate can also reflect a transient, so compare longer windows and
+check boundedness before interpreting it as asymptotic chaos. The signs
 of the whole spectrum read like a fingerprint: how many directions expand, how
 many are neutral, how fast phase-space volume contracts onto the attractor.
 
@@ -49,10 +50,22 @@ print(spec)
 
 The keywords split cleanly by family: a **flow** (ODE or DDE) uses
 `final_time=` as its averaging window and `transient=` as a burn-in *time*; a
-**map** uses `n=` iterations and takes no transient (the QR iteration
-reorthonormalises from the initial condition). `k=` sets how many exponents to
+**map** uses `n=` iterations and `transient=` as a count of discarded iterations
+(500 by default). Tangent-vector reorthonormalization does not remove the
+base orbit's transient. `k=` sets how many exponents to
 compute (`dim` by default). Passing a map keyword to a flow — or the reverse —
 raises rather than silently doing the wrong thing.
+
+For ODEs and maps, the initial tangent directions are mixed and reproducible.
+This avoids starting a leading-exponent calculation entirely inside a
+contracting coordinate subspace. A finite run still needs a convergence check;
+the choice of initial frame does not certify an asymptotic exponent.
+
+Native and reference ODE tangent integrations stop with `ConvergenceError` if
+the base orbit crosses both the shared absolute escape scale and growth factor.
+The error reports the time and state magnitude; choose an initial condition in
+a bounded basin before retrying. Large physical units alone do not trigger this
+guard. For returned map, DDE, or older results, also inspect `result.unbounded`.
 
 ## Per family — what actually runs
 
@@ -73,8 +86,8 @@ that make sense for that family change.
     symbolically — is integrated on the Rust engine. After the `burn_in` the
     evolving frame is periodically **QR-reorthonormalised** (Benettin et al.
     1980); the logs of the diagonal $R$ factors, time-weighted, are the
-    exponents. One exponent of a flow is always $\approx 0$ — the neutral
-    direction *along* the flow — which is why the Lorenz middle exponent lands
+    exponents. A bounded non-equilibrium orbit of an autonomous flow has a
+    neutral direction *along* the flow — which is why the Lorenz middle exponent lands
     just above zero rather than exactly on it.
 
 === "Map"
@@ -100,7 +113,7 @@ that make sense for that family change.
     ts.analysis.lyapunov_spectrum(mg, k=1, dt=0.5, ic=traj.y[-1],   # then measure
                                   transient=100.0, final_time=1000.0,
                                   rtol=1e-4, atol=1e-4)
-    # ≈ [0.0075]   (positive → chaotic at τ = 17)
+    # ≈ [0.0075]   (positive finite-time leading rate at τ = 17)
     ```
 
     A delay system has an **infinite-dimensional** tangent space (its state is
@@ -123,23 +136,27 @@ the family, the parameters and the initial condition.
     (a fixed point, cycle or torus), **one** → chaos, **two or more** →
     hyperchaos. The repr prints that word, but only when it is *earned*.
 
-    The zero tolerance is calibrated on the estimator's **own realised zero**: a
-    flow has at least one structurally-zero exponent, so `min|λ|` measures how
-    close to zero this estimator got at this horizon — which is exactly the
-    tolerance the classification needs. A map has no structural zero and keeps a
-    relative floor. The supporting line shows which rule ran and at what floor:
+    For a multi-direction autonomous flow, the zero tolerance uses `min|λ|` as
+    an empirical floor, alongside a relative floor. It is a heuristic, not a
+    confidence interval: equilibria need not have a zero exponent, and a
+    truncated spectrum may omit a neutral direction. Single-exponent estimates,
+    maps, and explicitly forced systems use a relative floor. A single recorded
+    flow direction leaves the automatic chaos verdict indeterminate: even a
+    regular orbit can have positive finite-time growth from shear. Its numerical
+    rate remains available. The supporting line reports which rule ran:
 
     ```
     LyapunovSpectrum  λ = [0.9081, -0.001005, -14.57]   chaotic · D_KY = 2.062   (Lorenz)
-        (3 exponents · flow (realised zero) · λ > 0.0146)
+        (3 exponents · flow (empirical zero floor) · λ > 0.0146)
     ```
 
     If the count changes when that floor is multiplied by ten, no word is
     printed — the result says `indeterminate at this horizon (n_pos = 0..1
     across a 10x tolerance band; raise final_time)` instead of guessing. And
-    `D_KY` is suppressed entirely when no exponent is positive, because on a
-    regular spectrum it is just the integer state dimension and printing it
-    would read as a measurement.
+    `D_KY` is omitted from the regime readout when no exponent is positive.
+    A stable equilibrium has dimension zero; a regular cycle or torus has
+    neutral directions, so there is no universal integer dimension for all
+    regular spectra.
 
 ## Known values to test against
 
@@ -163,18 +180,10 @@ ts.analysis.lyapunov_spectrum(ts.systems.Lorenz(), k=1, ic=[1.0, 1.0, 1.0])
 ts.analysis.lyapunov_spectrum(ts.systems.Henon(), k=1, ic=[0.1, 0.1])
 ```
 
-!!! note "`max_lyapunov` is gone — one question, one spelling"
-
-    Until v6 there was a second door, `max_lyapunov`, onto exactly this
-    question, and the two answered it with **different numbers**: on Hénon at
-    one nominal horizon `max_lyapunov` said `0.4233` and `lyapunov_spectrum`
-    said `0.4160`. The better half of it — the burn-in, and the Jacobian-free
-    two-trajectory machine — moved into `lyapunov_spectrum`, and the second door
-    closed. The old name raises, naming this one.
-
 When the system has a right-hand side to differentiate, the exponents come from
-a **tangent frame** carried alongside the orbit: nothing is perturbed and
-nothing is rescaled. When it does not — a
+a **tangent frame** carried alongside the orbit. The base trajectory is not
+perturbed; the deviation vectors are repeatedly orthonormalized. When no
+differentiable right-hand side is available — for example, a
 [`WrappedSystem`](../start/defining-systems.md) around an external stepper, a
 non-smooth map with no analytic Jacobian — `lyapunov_spectrum` falls back to the
 classic **two-trajectory** method, which needs nothing but the stepping
@@ -228,8 +237,10 @@ Pass `dt=` explicitly to override either way.
 
 ## Kaplan–Yorke dimension
 
-The Lyapunov (Kaplan–Yorke) dimension estimates the attractor's fractal
-dimension straight from the spectrum — no box-counting required:
+The Lyapunov (Kaplan–Yorke) dimension interpolates the balance between expanding
+and contracting directions. Its relation to geometric attractor dimension is
+conjectural and depends on the invariant measure; it is not a direct
+box-counting measurement:
 
 ```python
 ts.analysis.kaplan_yorke_dimension([0.906, 0.0, -14.57])   # ≈ 2.06  (Lorenz)
@@ -242,9 +253,17 @@ $$
 with $j$ the largest index whose cumulative exponent sum is still non-negative
 (Kaplan & Yorke 1979) — the interpolation point where expanding directions have
 just been balanced by contracting ones. It returns `0.0` for a fully negative
-spectrum (a fixed point) and `len(spectrum)` when the cumulative sum never turns
-negative (the spectrum does not close — compute more exponents). A
-`LyapunovSpectrum` exposes it directly as `spec.kaplan_yorke`.
+spectrum (a stable fixed point). For a complete finite-dimensional spectrum
+whose sum stays nonnegative, the result saturates at the state dimension.
+
+A `LyapunovSpectrum` exposes it as `spec.kaplan_yorke`. That property is `nan`
+when the supplied directions do not determine a dimension: a truncated
+spectrum must reach a negative cumulative sum, and an explicitly forced
+system needs its forcing phase in an autonomous extension. Passing such a
+result to `ts.analysis.kaplan_yorke_dimension` raises an explanatory error.
+A bare exponent array has no record of missing directions or forcing and
+retains the mathematical edge convention `len(spectrum)` when no crossing
+is present; keep the rich result when provenance matters.
 
 ## `TangentSystem` — build your own loop
 

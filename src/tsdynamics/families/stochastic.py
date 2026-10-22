@@ -514,14 +514,13 @@ class StochasticSystem(SystemBase, ABC):
             verb="reinit",
         )
         if params:
-            for k, v in params.items():
-                self.params[k] = v
+            self.params.update(params)
         t0 = float(t) if t is not None else 0.0
         if not math.isfinite(t0):
             raise InvalidParameterError(f"t must be finite, got {t!r}.")
         # ``resolve_ic`` commits the IC before the method resolution and the tape
         # lowering below, either of which can raise — a failed ``reinit`` must
-        # leave the object exactly as it was.
+        # preserve the previously chosen IC.
         with self._ic_rollback():
             ic_arr = self._resolve_ic(u)
             canon = self._resolve_method(solver)
@@ -986,7 +985,7 @@ class StochasticSystem(SystemBase, ABC):
           Wiener increment.
         """
         if method is None:
-            return cls._default_method
+            method = cls._default_method
         canon = _METHODS.get(str(method).lower())
         if canon is not None:
             return canon
@@ -995,6 +994,16 @@ class StochasticSystem(SystemBase, ABC):
         from tsdynamics.errors import _nearest
 
         raw = str(method)
+        try:
+            registered = solvers.resolve(raw)
+        except InvalidParameterError:
+            registered = None
+        if (
+            registered is not None
+            and registered.spec.caps.supports_family("sde")
+            and registered.kernel in _METHODS.values()
+        ):
+            return registered.kernel
         names = sorted(set(_METHODS.values()))
         # Rank over the ALIASES (so "em" and "euler-maruyama" can be matched),
         # then report the canonical name each one resolves to, de-duplicated.
@@ -1003,15 +1012,22 @@ class StochasticSystem(SystemBase, ABC):
         if near:
             msg += " Did you mean: " + ", ".join(repr(n) for n in near) + "?"
         msg += f"\n    Available for an sde problem: {names}"
-        try:
-            deterministic = solvers.resolve(raw).name
-        except InvalidParameterError:
-            deterministic = ""
+        deterministic = (
+            registered.name
+            if registered is not None and not registered.spec.caps.supports_family("sde")
+            else ""
+        )
         if deterministic:
             msg += (
                 f"\n    {deterministic!r} is a deterministic kernel: it integrates dx = f dt and has"
                 "\n    nowhere to put the Wiener increment dW. An SDE needs a scheme that draws the"
                 "\n    noise — 'euler_maruyama' (order 0.5) or 'milstein' (order 1.0)."
+            )
+        elif registered is not None:
+            msg += (
+                f"\n    Its SolverSpec names kernel {registered.kernel!r}, but this SDE family "
+                "implements only 'euler_maruyama' and 'milstein'. Registering solver "
+                "metadata does not install a numerical implementation."
             )
         raise InvalidParameterError(msg)
 

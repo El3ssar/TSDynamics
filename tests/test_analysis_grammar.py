@@ -65,14 +65,23 @@ class TestTheMaximalExponentHasExactlyOneDoor:
         with pytest.raises(ImportError, match=r"lyapunov_spectrum\(system, k=1\)"):
             A.max_lyapunov  # noqa: B018 - the attribute access IS the test
 
-    def test_the_surviving_number_is_the_better_one(self, henon: object) -> None:
-        """The burnt-in value, not the cold one -- bit for bit."""
+    def test_the_surviving_door_defaults_to_500_burn_in_iterations(self, henon: object) -> None:
+        """An omitted transient is the documented explicit iteration count."""
         got = float(A.lyapunov_spectrum(henon, k=1, n=20_000, ic=[0.1, 0.1])[0])
-        assert got == 0.4232673343379148
+        explicit = float(A.lyapunov_spectrum(henon, k=1, n=20_000, ic=[0.1, 0.1], transient=500)[0])
+        assert got == explicit
 
-    def test_a_map_burn_in_can_be_switched_off_by_name(self, henon: object) -> None:
+    def test_a_map_burn_in_can_be_switched_off_by_name(self, henon: object, monkeypatch) -> None:
+        import importlib
+
+        implementation = importlib.import_module("tsdynamics.analysis.lyapunov")
+
+        def unexpected_burn_in(*args, **kwargs):
+            pytest.fail("transient=0 must measure from the supplied state without burn-in")
+
+        monkeypatch.setattr(implementation, "_burn_in_map", unexpected_burn_in)
         cold = float(A.lyapunov_spectrum(henon, k=1, n=20_000, ic=[0.1, 0.1], transient=0)[0])
-        assert cold == 0.4159988587314602
+        assert np.isfinite(cold) and cold > 0.0
 
     def test_n_counts_iterations_on_a_map(self, henon: object) -> None:
         """Doubling ``n`` doubles the work -- ``n`` is iterations, not cycles."""

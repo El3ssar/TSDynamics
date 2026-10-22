@@ -20,6 +20,9 @@ This page is the contributor's recipe. For a gentler, worked introduction to
 the family contracts, read [Defining systems](../start/defining-systems.md)
 first; this page is the checklist you follow to land a *catalogue* system.
 
+To distribute models in your own package, use the complete
+[Plugins & extensions](plugins.md#a-complete-model-package) example instead.
+
 ## The three steps
 
 1. **Write the class** in the right module under
@@ -36,11 +39,12 @@ first; this page is the checklist you follow to land a *catalogue* system.
 
 ## The family contracts
 
-Every system subclasses one of the four family bases and holds its dynamics in
-one symbolic method. Use **only** symbolic operations — `symengine.sin`, `cos`,
-`exp`, `+`, `*`, `**`, `abs`, `sign`, `min`, `max`. **No** NumPy, **no** `math`,
-**no** Python control flow over the state; the engine lowers the method to an IR
-tape, which cannot capture a `numpy` ufunc or an `if` on a state value.
+Every system subclasses one of the four family bases and supplies its dynamics
+through the method below. For ODEs, DDEs and SDE coefficients, use symbolic
+operations such as `symengine.sin`, `cos`, `exp`, `Abs`, `sign`, `Min`, `Max`
+and ordinary arithmetic. Numeric `numpy` / `math` calls and Python control flow
+over the symbolic state cannot be lowered. Maps receive a state vector instead
+and can use supported NumPy operations through the map tracer.
 
 === "ODE — `ContinuousSystem`"
 
@@ -81,7 +85,7 @@ tape, which cannot capture a `numpy` ufunc or an `if` on a state value.
         _delay_params = ("tau",)               # default; override for non-"tau" names
 
         @staticmethod
-        def _equations(y, t, beta, gamma, n, tau):   # params POSITIONAL for DDEs
+        def _equations(y, t, *, beta, gamma, n, tau):
             yd = y(0, t - tau)                        # the delayed accessor
             return [beta * yd / (1 + yd**n) - gamma * y(0)]
     ```
@@ -89,6 +93,7 @@ tape, which cannot capture a `numpy` ufunc or an `if` on a state value.
     `y(i, t - tau)` reads the delayed state. A *delay* value is a structural
     quantity and is baked into the engine tape, so sweeping it re-lowers. List
     every delay parameter's name in `_delay_params` if it is not called `tau`.
+    Parameters are passed by name, as for an ODE.
 
 === "Map — `DiscreteMap`"
 
@@ -113,8 +118,10 @@ tape, which cannot capture a `numpy` ufunc or an `if` on a state value.
     Maps take the whole state vector `X` and their parameters **positionally**,
     in `params`-dict insertion order — the engine feeds them positionally when it
     lowers `_step`. `__init_subclass__` validates the signature order against
-    `params` **at import**, raising `TypeError` on a mismatch. Maps do provide an
-    analytic `_jacobian` (used for stability and Lyapunov exponents).
+    `params` **at import**, raising `TypeError` on a mismatch. A hand-written
+    `_jacobian` is optional: the default is generated from `_step` by symbolic
+    differentiation. The explicit version above can be useful as an independent
+    check; the engine still requires a traceable `_step` to run the map.
 
 === "SDE — `StochasticSystem`"
 
@@ -141,6 +148,10 @@ tape, which cannot capture a `numpy` ufunc or an `if` on a state value.
     symbolic and keyword-only; `_diffusion` returns one coefficient per
     component. `_drift` is the marker that makes the class a concrete `sde` in
     the registry.
+
+    Euler–Maruyama accepts cross-dependent diagonal coefficients. The simplified
+    Milstein solver requires each `g_k` to depend only on its own state component
+    and time, `g_k(X_k, t)`; independent Wiener increments alone are not enough.
 
 ## It really is that easy — a from-scratch run
 
@@ -177,7 +188,9 @@ exactly as on a catalogue system.
 ## Publishing a system plugin
 
 A separate Python package can add its systems to `ts.systems` without changing
-TSDynamics. Define the class using the same family contract, then declare an
+TSDynamics. The [complete package example](plugins.md#a-complete-model-package)
+includes its directory layout, installation and use. Define the class using the
+same family contract, then declare an
 entry point in that package's `pyproject.toml`:
 
 ```toml
@@ -246,7 +259,10 @@ class Lorenz96(ts.ContinuousSystem):
 Control parameters are read live from the system on every run, so they can
 change at runtime with no re-lowering. A structural parameter changes the *shape*
 of the tape, so changing it re-lowers (there is no on-disk cache — it just
-re-lowers in-process).
+re-lowers in-process). If the change also resizes the state or spatial grid, use
+`system = system.with_params(N=40)` so the constructor rebuilds the dimension,
+geometry and a matching default initial condition. Assigning `system.params.N`
+directly cannot resize an existing object.
 
 ## The extra line for DDEs and SDEs
 

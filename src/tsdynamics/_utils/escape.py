@@ -111,17 +111,25 @@ def detect_unbounded(y: np.ndarray) -> Unbounded | None:
     )
 
 
-def escaped(peak: float | None) -> bool:
-    """Whether a recorded state magnitude is past :data:`ESCAPE_SCALE`.
+def escaped(peak: float | None, *, start: float | None = None) -> bool:
+    """Whether recorded orbit magnitudes satisfy the shared escape policy.
 
-    The one-number form, for a caller that holds only the landed state (a
-    Lyapunov estimator) rather than the whole orbit.  ``None`` — nothing was
-    recorded — is *not* an escape: a family that cannot answer says nothing.
+    With a recorded starting scale, both :data:`ESCAPE_SCALE` and
+    :data:`ESCAPE_GROWTH` must be reached. The legacy one-number form retains
+    its absolute-scale check when no starting scale was recorded. ``None`` for
+    the peak means there is no evidence of escape.
     """
     if peak is None:
         return False
     value = float(peak)
-    return not np.isfinite(value) or value >= ESCAPE_SCALE
+    if not np.isfinite(value):
+        return True
+    if start is None:
+        return value >= ESCAPE_SCALE
+    initial = float(start)
+    return not np.isfinite(initial) or (
+        value >= ESCAPE_SCALE and value / max(initial, 1.0) >= ESCAPE_GROWTH
+    )
 
 
 def __dir__() -> list[str]:

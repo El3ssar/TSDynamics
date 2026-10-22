@@ -175,8 +175,17 @@ class TestTheMaximalExponentHasOneDoor:
             np.asarray(ts.analysis.lyapunov_spectrum(hen, k=1, n=20_000, ic=[0.1, 0.1]))[0]
         )
         assert cold != default, "transient= is being ignored on a map"
-        # and the burnt-in one is the number the retired door used to give
-        assert default == pytest.approx(0.4232673343379148, abs=1e-9)
+        # Compose the same operation through the ordinary stepping API. This
+        # checks the burn-in's length and starting state without freezing the
+        # finite-time correction from a particular initial tangent frame.
+        landed = hen.copy()
+        landed.reinit([0.1, 0.1])
+        for _ in range(500):
+            landed.step()
+        already_burnt = float(
+            ts.analysis.lyapunov_spectrum(hen, k=1, n=20_000, ic=landed.state(), transient=0)[0]
+        )
+        assert default == pytest.approx(already_burnt, abs=1e-12)
 
     def test_a_system_with_no_jacobian_is_still_answered(self) -> None:
         """A ``WrappedSystem`` has no RHS to differentiate — and no second door.

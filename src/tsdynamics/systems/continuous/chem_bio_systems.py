@@ -169,9 +169,9 @@ class Oregonator(ContinuousSystem):
     chemical reaction.  The variables ``X``, ``Y`` and ``Z`` are scaled
     concentrations of the key intermediates (HBrO₂, Br⁻ and the oxidised
     catalyst Ce⁴⁺).  The small parameters ``epsilon`` and ``mu`` separate the
-    timescales, making the system **stiff** with a stable limit cycle; an
-    explicit solver cannot integrate it, so the default method is the engine's
-    variable-order BDF.
+    timescales, making the system **stiff** with a stable limit cycle. Explicit
+    methods require very small steps for stability at these timescales, so the
+    default method is the engine's variable-order BDF.
 
     Parameters
     ----------
@@ -195,8 +195,7 @@ class Oregonator(ContinuousSystem):
     variables = ("x", "y", "z")
     reference = "Field & Noyes (1974), J. Chem. Phys. 60, 1877-1884"
     doi = "10.1063/1.1681288"
-    # Classic stiff system (Field–Noyes); an explicit solver cannot integrate
-    # it, so default to the engine's variable-order BDF.
+    # Prefer an implicit method for the widely separated reaction timescales.
     _default_method = "bdf"
 
     @staticmethod

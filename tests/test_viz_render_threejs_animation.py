@@ -4,13 +4,10 @@
 reader actually experiences: that the exported page **plays**, that the knobs the
 user turned reach it, and that anything it cannot play is named out loud.
 
-Verified in a real browser while these were written (headless Chrome, the page
-served over ``http://127.0.0.1``): the module loads from the pinned three.js CDN,
-a WebGL canvas is drawn (28 000 lit pixels), the progress readout advances
-(7 % → 11 % over 3 s with ``requestAnimationFrame`` throttled by the hidden tab),
-and ``fps=60`` versus ``fps=10`` advance the comet at 0.200 versus 0.038 % per
-frame.  The browser cannot run in CI, so what is gated here is the *contract*
-those runs confirmed: the exporter writes what the shipped loader reads.
+These tests check that the exporter writes what the shipped loader reads.
+``test_viz_threejs.py`` also executes the shipped animation clock in Node with
+synthetic timestamps: explicit durations, display refresh rates, hidden views,
+reduced motion and control cleanup are checked without a WebGL dependency.
 """
 
 from __future__ import annotations
@@ -61,11 +58,9 @@ def test_the_exporter_writes_every_field_the_shipped_loader_reads(traj):
 def test_fps_reaches_the_page_as_a_playback_duration(traj):
     """``.animate(fps=...)`` changes how fast the browser plays the comet.
 
-    The loader has no frame clock — it traverses the series in
+    The loader uses elapsed time — it traverses the series in
     ``animation.duration`` seconds and reads ``fps`` nowhere — so the exporter
     inverts ``Animation``'s own relation (``frame_count = duration * fps``).
-    Measured in a browser: ``fps=60`` advanced the head 0.200 % per frame against
-    ``fps=10``'s 0.038 %.
     """
     fast = _animation_block(ts.plot(traj, animate=True).animate(fps=60.0))
     slow = _animation_block(ts.plot(traj, animate=True).animate(fps=10.0))

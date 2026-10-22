@@ -14,7 +14,7 @@ trust your installed version.
 
 | You are looking for | Page |
 | ------------------- | ---- |
-| The seventeen top-level names, where everything else lives, and the error ladder | [Top level](top-level.md) |
+| The top-level names, where everything else lives, and the error ladder | [Top level](top-level.md) |
 | `ContinuousSystem`, `DelaySystem`, `DiscreteMap`, `StochasticSystem`, `Trajectory`, `ParamSet`, the `System` protocol | [Base classes](base.md) |
 | `PoincareMap`, `StroboscopicMap`, `TangentSystem`, `ProjectedSystem`, `Ensemble`, `WrappedSystem` | [Derived systems](derived.md) |
 | Lyapunov, chaos indicators, fixed/periodic orbits, orbit diagrams, basins, dimensions, embeddings, recurrence | [Analysis](analysis.md) |

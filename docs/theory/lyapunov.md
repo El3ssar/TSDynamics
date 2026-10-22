@@ -17,18 +17,24 @@ $$
 $$
 
 linearized along the trajectory. The Lyapunov exponents are the long-time
-average exponential growth rates of volumes spanned by such perturbations:
+growth rates of the tangent propagator. Let $\Phi(t)$ map an initial
+perturbation to its value at time $t$, with $\Phi(0)=I$, and let
+$\sigma_i(\Phi(t))$ be its ordered singular values. When the long-time limits
+exist, the spectrum is
 
 $$
-\lambda_i = \lim_{t \to \infty} \frac{1}{t} \ln \frac{\|\mathbf{w}_i(t)\|}{\|\mathbf{w}_i(0)\|},
+\lambda_i = \lim_{t \to \infty} \frac{1}{t} \ln \sigma_i\!\left(\Phi(t)\right),
 $$
 
 ordered $\lambda_1 \ge \lambda_2 \ge \dots$ For a map
 $\mathbf{x}_{n+1} = f(\mathbf{x}_n)$ the same holds with the Jacobian
 product $J(\mathbf{x}_{n-1}) \cdots J(\mathbf{x}_0)$ in place of the
 flow's fundamental matrix. A positive $\lambda_1$ is the practical
-definition of chaos; flows additionally carry one exactly-zero exponent
-along the trajectory direction.
+indicator of sensitive dependence, interpreted on a bounded invariant orbit.
+A bounded non-equilibrium orbit of an autonomous flow has a neutral direction
+along the trajectory. Equilibria and explicitly time-dependent forcing do not
+have that guaranteed zero exponent. Every computed spectrum is a finite-time
+estimate, so a small positive value alone need not establish asymptotic chaos.
 
 ## The QR / re-orthonormalization algorithm
 
@@ -96,9 +102,19 @@ $$
 
 — the dimension at which an interpolated volume neither grows nor
 shrinks. For Lorenz, $D_{KY} \approx 2 + 0.906/14.57 \approx 2.06$.
-`kaplan_yorke_dimension` computes exactly this, returning `0.0` when all
-exponents are negative and `len(spectrum)` when the sum never turns
-negative (the spectrum is incomplete — compute more exponents).
+`kaplan_yorke_dimension` evaluates this interpolation, returning `0.0` when all
+exponents are negative. A complete finite-dimensional spectrum whose sum never
+turns negative saturates at the state dimension. A truncated spectrum whose
+cumulative sum stays nonnegative does not determine the crossing and cannot
+support a dimension estimate; request more exponents. A delay system has
+infinitely many directions, so its leading finite spectrum is always partial.
+For an explicitly forced flow, include the forcing phase in an autonomous
+extension before interpreting an attractor dimension.
+
+The dimension is a conjectural relation to geometric properties of an attractor,
+not a certificate of a measured fractal dimension. A raw exponent array cannot
+carry its missing directions or forcing assumptions; preserve a
+`LyapunovSpectrum` result when those checks matter.
 
 ## References
 

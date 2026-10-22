@@ -15,9 +15,12 @@ along the most-expanding direction and the index decays exponentially,
 
 .. math::  \mathrm{GALI}_k(t) \sim e^{-[(\lambda_1-\lambda_2)+\cdots+(\lambda_1-\lambda_k)]\,t},
 
-while for a **regular** (quasi-periodic) orbit it stays constant or decays only
-by a power law — so the decay law cleanly separates order from chaos and, for
-chaos, *measures* the leading Lyapunov-exponent gaps.
+For regular tori in Hamiltonian systems it stays bounded or follows the
+appropriate power law, depending on torus dimension and index order. That
+comparison needs its Hamiltonian assumptions. In a dissipative system, even a
+stable limit cycle can align tangent vectors exponentially: the index measures
+Lyapunov-exponent *gaps*, which do not establish that the leading exponent is
+positive. Collapse alone is therefore not a general chaos verdict.
 
 Supported systems are finite-tangent-space ones: discrete maps
 (:class:`~tsdynamics.families.DiscreteMap`) and flows
@@ -50,14 +53,9 @@ from . import _common as _c
 
 __all__ = ["GALIResult", "gali"]
 
-#: Final GALI_k at or below which the repr names the orbit chaotic.  GALI_k
-#: separates the two regimes by orders of magnitude (it collapses exponentially
-#: on a chaotic orbit and stays O(1) on a regular one), so a coarse threshold
-#: with a wide silent band between the two is the honest reading.
-_CHAOTIC_GALI = 1e-6
-
-#: Final GALI_k at or above which the repr names the orbit regular.
-_REGULAR_GALI = 1e-2
+#: Descriptive alignment thresholds, never chaos-classification thresholds.
+_COLLAPSED_GALI = 1e-6
+_RESOLVED_GALI = 1e-2
 
 #: Fewest samples of the GALI curve a verdict may be read from.  A verdict is a
 #: reading of where the curve *went*; below this it is a reading of its starting
@@ -67,13 +65,12 @@ _MIN_GALI_SAMPLES = 8
 
 @dataclass(frozen=True)
 class GALIResult(AnalysisResult):
-    r"""A GALI\ :sub:`k` time series with the tools to read order vs chaos off it.
+    r"""A GALI\ :sub:`k` time series describing tangent-vector alignment.
 
     An :class:`~tsdynamics.analysis._result.AnalysisResult`, so it carries
     ``.meta`` / the readout ``repr`` / ``.to_dict()`` / the ``.plot`` seam.
-    ``float(result)`` is the final value — :math:`\approx 1` for a regular orbit,
-    :math:`\to 0` for a chaotic one — so the result drops straight into a
-    threshold test.
+    ``float(result)`` is the final alignment volume. A small value means the
+    tangent vectors have aligned; it does not alone prove chaos.
 
     Attributes
     ----------
@@ -95,7 +92,7 @@ class GALIResult(AnalysisResult):
     is_discrete: bool = False
 
     def __float__(self) -> float:
-        """Return the final GALI value (the order/chaos summary)."""
+        """Return the final tangent-alignment volume."""
         return self.final
 
     @property
@@ -112,13 +109,14 @@ class GALIResult(AnalysisResult):
         return float(self.values[-1])
 
     def decay_rate(self, *, floor: float = 1e-12, t_min: float | None = None) -> float:
-        r"""Exponential decay rate of GALI\ :sub:`k` (a positive number for chaos).
+        r"""Exponential decay rate of GALI\ :sub:`k` (a Lyapunov-gap estimate).
 
         Fits a line to :math:`\ln \mathrm{GALI}_k` over the samples that lie
         above ``floor`` (i.e. before the index reaches the floating-point noise
         floor) and returns ``-slope``.  For a chaotic orbit this estimates the
         Lyapunov gap sum :math:`(\lambda_1-\lambda_2)+\cdots+(\lambda_1-\lambda_k)`
-        (Skokos et al. 2008); for a regular orbit it is ``~0``.
+        (Skokos et al. 2008). Positive decay also occurs on attracting regular
+        orbits with distinct Lyapunov exponents; it is not a chaos certificate.
 
         Parameters
         ----------
@@ -159,70 +157,38 @@ class GALIResult(AnalysisResult):
 
     @property
     def chaotic(self) -> bool | None:
-        r"""Whether the orbit is chaotic, at the shipped collapse threshold.
+        """Indeterminate: alignment alone cannot establish or exclude chaos.
 
-        The one adjective-named spelling of the verdict (contract §4.2 rule 10);
-        :meth:`is_chaotic` is the same test with a tunable threshold.  ``None`` —
-        never ``False`` — when the curve is not :attr:`applicable` or ends in the
-        undecided band between the two thresholds.
-
-        Returns
-        -------
-        bool or None
+        GALI measures exponent gaps, not the sign of the leading exponent.
+        Stable dissipative limit cycles also collapse exponentially, and regular
+        Hamiltonian tori can decay algebraically. Use a Lyapunov spectrum for
+        independent evidence of positive growth. The curve and its decay rate
+        remain available regardless of this deliberately absent verdict.
         """
-        if not self.applicable:
-            return None
-        final = self.final
-        if not np.isfinite(final):
-            return None
-        if final <= _CHAOTIC_GALI:
-            return True
-        if final >= _REGULAR_GALI:
-            return False
         return None
 
     def is_chaotic(self, *, threshold: float = 1e-6) -> bool:
-        r"""Whether GALI\ :sub:`k` collapsed below **your** threshold by the end.
+        """Legacy threshold predicate: whether the final alignment volume is small.
 
-        **This is the one thing :attr:`chaotic` cannot do, and the reason a
-        second spelling of one verdict is allowed to exist here.**  Everywhere
-        else in the library a classification has exactly one name (contract §4.2
-        rule 10) and that name answers with the library's own judgement.  But
-        GALI\ :sub:`k` is a *decay* test, and how far the index must fall before
-        you call an orbit chaotic depends on how long you integrated and how
-        cleanly the system separates — so the threshold is genuinely the
-        caller's to set, and a closed-vocabulary property has nowhere to put it.
-
-        Prefer :attr:`chaotic` (which knows about :attr:`applicable` and hedges
-        with ``None`` in the undecided band) and reach for this only when you
-        are sweeping the threshold or reproducing a published cut::
-
-            gali = ts.analysis.gali(system, k=2, final_time=500)
-            gali.chaotic                      # the library's verdict, or None
-            gali.is_chaotic(threshold=1e-8)   # yours, on the same curve
-
-        Unlike :attr:`chaotic` this always returns a plain ``bool``: you asked a
-        sharp question, so it gives a sharp answer and does not consult
-        :attr:`applicable`.  On a curve that never resolved, that answer is
-        ``False`` because nothing collapsed — check :attr:`applicable` first if
-        that distinction matters.
+        Despite its historical name, this checks only ``final < threshold``.
+        It is a heuristic when reproducing a particular GALI experiment, not a
+        general chaos test: regular attracting orbits can also return True.
+        Read :attr:`chaotic` for the scientifically supported verdict (None from
+        alignment alone), or inspect an independently measured Lyapunov spectrum.
 
         Parameters
         ----------
         threshold : float, default 1e-6
-            Collapse level for :attr:`final`.  Keyword-only, so the call always
-            reads as ``is_chaotic(threshold=...)``.
+            Positive finite collapse level. This predicate does not apply the
+            minimum-record-length check of :attr:`applicable`.
 
         Returns
         -------
         bool
-            ``True`` when ``final < threshold``.
-
-        See Also
-        --------
-        chaotic : the verdict at the shipped thresholds, hedging when undecided.
-        decay_rate : the fitted exponential rate the collapse happened at.
+            Whether ``final < threshold``; no claim about the sign of an exponent.
         """
+        if not np.isfinite(threshold) or threshold <= 0.0:
+            raise InvalidParameterError("threshold must be finite and positive.")
         return self.final < threshold
 
     def __plot_spec__(self, kind: str | None = None) -> Any:
@@ -230,8 +196,8 @@ class GALIResult(AnalysisResult):
 
         Builds a ``DIAGNOSTIC_CURVE`` of GALI\ :sub:`k` against time (or iteration
         index for a map) on a **log y-axis** — the recommended scale, since
-        GALI\ :sub:`k` decays exponentially for a chaotic orbit and saturates for
-        a regular one, so a log axis reads the decay rate off as a slope.  The
+        exponential alignment appears as a line. The slope measures an exponent
+        gap; it does not by itself distinguish chaos from regular attraction.  The
         :mod:`tsdynamics.viz.spec` import is lazy, so building a spec never pulls a
         plotting library.
 
@@ -267,25 +233,20 @@ class GALIResult(AnalysisResult):
         return f"GALI_{self.k} = {_sig(self.final, 4)} at the end"
 
     def _interpretation(self) -> str | None:
-        r"""Name the orbit from where GALI\ :sub:`k` ended up.
-
-        GALI\ :sub:`k` stays :math:`O(1)` on a regular orbit and collapses
-        exponentially on a chaotic one (Skokos et al. 2007), so the verdict is a
-        reading of the final value against the noise floor — several orders of
-        magnitude apart, which is why a coarse threshold is honest here.
-
-        A curve too short to have gone anywhere says so instead of naming a
-        regime off its own initial condition.
-        """
+        """Describe alignment while keeping an unsupported chaos verdict absent."""
         n = int(np.asarray(self.values).size)
         if not n:
             return None
         if not self.applicable:
             return f"not applicable — {n} sample{'s' if n != 1 else ''} recorded"
-        verdict = self.chaotic
-        if verdict is None:
-            return None
-        return "chaotic (GALI collapsed)" if verdict else "regular (GALI bounded)"
+        final = self.final
+        if not np.isfinite(final):
+            return "alignment unresolved; chaos indeterminate"
+        if final <= _COLLAPSED_GALI:
+            return "alignment collapsed; chaos indeterminate from alignment alone"
+        if final >= _RESOLVED_GALI:
+            return "alignment remains spread; chaos indeterminate from alignment alone"
+        return "alignment intermediate; chaos indeterminate from alignment alone"
 
     def _context(self) -> str | None:
         """Return the subject and the horizon the series was run to."""
@@ -323,7 +284,8 @@ def gali(
     ----------
     system : DiscreteMap or ContinuousSystem
         The system whose tangent dynamics to track.  Delay/stochastic systems
-        are not supported (their tangent space is not finite-dimensional here).
+        are not supported: delay equations need a history-space estimator and
+        stochastic equations need shared-noise tangent dynamics.
     k : int, default 2
         Number of deviation vectors, ``2 <= k <= system.dim``.  (``k = 1`` is
         trivially ``1``.)
@@ -375,8 +337,9 @@ def gali(
     -----
     For a chaotic orbit GALI\ :sub:`k` decays as
     :math:`\exp\!\big[-\sum_{i=2}^{k}(\lambda_1-\lambda_i)\,t\big]`, so its
-    log-slope measures the leading Lyapunov-exponent gaps; a regular orbit keeps
-    it bounded.  See the module docstring for the full statement.
+    log-slope measures the leading Lyapunov-exponent gaps. Regular attracting
+    orbits may also collapse; Hamiltonian-torus power laws require additional
+    assumptions. See the module docstring for the interpretation limits.
 
     Examples
     --------

@@ -92,6 +92,30 @@ def _prep(entry):
     return np.round(y, 3)
 
 
+def _write_preview():
+    """Keep a real, lightweight plot visible before WebGL loads or if it fails."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    payload = json.loads((OUT / "Lorenz.json").read_text())
+    points = np.asarray(payload["xyz"]).reshape(-1, 3)
+    with plt.rc_context({"svg.hashsalt": "tsdynamics-hero"}):
+        fig = plt.figure(figsize=(5.6, 4.3), facecolor="#0b0f14")
+        ax = fig.add_axes([0, 0, 1, 1], projection="3d", facecolor="#0b0f14")
+        ax.plot(*points.T, color="#2cc5ae", linewidth=0.65, alpha=0.85)
+        ax.view_init(elev=16, azim=55)
+        ax.set_box_aspect(np.ptp(points, axis=0))
+        ax.set_axis_off()
+        preview = OUT / "preview.svg"
+        fig.savefig(preview, facecolor="#0b0f14", metadata={"Date": None})
+        preview.write_text(
+            "\n".join(line.rstrip() for line in preview.read_text().splitlines()) + "\n"
+        )
+        plt.close(fig)
+
+
 def main():
     """Regenerate every hero JSON (+ manifest) from the roster; prune orphans."""
     OUT.mkdir(parents=True, exist_ok=True)
@@ -116,6 +140,8 @@ def main():
         ok.append(name)
         print(f"  ok   {name:22} {len(y)} pts  {(OUT / f'{name}.json').stat().st_size // 1024} KB")
     (OUT / "manifest.json").write_text(json.dumps({"systems": ok}, separators=(",", ":")))
+    if "Lorenz" in ok:
+        _write_preview()
     # Prune orphaned hero JSONs (systems dropped from the roster) so the assets dir
     # only ever holds the current hero set.
     for stale in OUT.glob("*.json"):

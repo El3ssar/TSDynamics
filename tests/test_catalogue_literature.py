@@ -140,13 +140,20 @@ def test_baker_exponents_are_ln2_and_ln_alpha(alpha: float) -> None:
     ``y`` and expanded *both* coordinates, giving |det J| = 4 and two positive
     exponents in an invertible 2-D map.
     """
-    spec = ts.analysis.lyapunov_spectrum(
-        ts.systems.Baker(params={"alpha": alpha}), steps=20_000, ic=[0.31415926535, 0.2718281828]
-    )
+    system = ts.systems.Baker(params={"alpha": alpha})
+    ic = [0.31415926535, 0.2718281828]
+    n = 20_000
+    tangent = ts.derived.TangentSystem(system, backend="reference")
+    tangent.reinit(ic)
+    projection = abs(float(tangent.deviations()[0, 0]))
+    spec = ts.analysis.lyapunov_spectrum(system, steps=n, transient=0, ic=ic)
     assert spec.shape == (2,)
-    # Constant slopes → the estimate is exact up to float roundoff.
-    assert spec[0] == pytest.approx(np.log(2.0), abs=1e-6)
-    assert spec[1] == pytest.approx(np.log(alpha), abs=1e-6)
+    # A mixed initial direction needs to align even for a diagonal Jacobian:
+    # ||J^n q|| ~ 2^n |q_x|. The resulting log|q_x|/n finite-time correction
+    # is analytic, rather than estimator error or an arbitrary tolerance band.
+    correction = np.log(projection) / n
+    assert spec[0] == pytest.approx(np.log(2.0) + correction, abs=1e-6)
+    assert spec[1] == pytest.approx(np.log(alpha) - correction, abs=1e-6)
     assert spec.sum() == pytest.approx(np.log(2.0 * alpha), abs=1e-6)
 
 

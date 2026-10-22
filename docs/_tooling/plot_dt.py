@@ -209,7 +209,7 @@ def _resolve_ic(sys_obj: Any, override: Any):
 
         return figures._resolve_ic(sys_obj, override)
     except Exception:  # noqa: BLE001 — local fallback
-        if override == "0.1*ones":
+        if isinstance(override, str) and override == "0.1*ones":
             return 0.1 * np.ones(sys_obj.dim)
         if override is not None:
             return np.asarray(override, dtype=float)
@@ -249,7 +249,7 @@ def _ode_pilot(entry: Any, final_time: float, dt0: float) -> np.ndarray | None:
     ic = _resolve_ic(sys_obj, ic_override)
     for attempt in range(_IC_RETRIES):
         if ic is None or attempt > 0:
-            ic = sys_obj.resolve_ic(rng.uniform(0.0, 1.0, sys_obj.dim))
+            ic = rng.uniform(0.0, 1.0, sys_obj.dim)
         try:
             traj = sys_obj.run(
                 final_time=final_time,
