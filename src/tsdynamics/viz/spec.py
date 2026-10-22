@@ -1233,6 +1233,24 @@ def _camera_angle(field: str, value: Any) -> float:
     return number
 
 
+def _validated_camera_call[F: Callable[..., Any]](func: F) -> F:
+    """Bind and validate camera inputs before a successful tweak invalidates its figure."""
+    import inspect
+
+    signature = inspect.signature(func)
+
+    @functools.wraps(func)
+    def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
+        bound = signature.bind(self, *args, **kwargs)
+        for name in ("elev", "azim", "spin"):
+            value = bound.arguments.get(name)
+            if value is not None:
+                bound.arguments[name] = _camera_angle(name, value)
+        return func(*bound.args, **bound.kwargs)
+
+    return cast("F", wrapper)
+
+
 def _only_given(**kwargs: Any) -> dict[str, Any]:
     """Drop the keywords the caller did not pass (``None`` means "leave it alone").
 
@@ -3318,6 +3336,7 @@ class Plot:
     # ``elev`` / ``azim`` are a *panel*'s viewing angle (each 3-D axes has its
     # own camera) and forward; ``spin`` is the figure's animation timeline and
     # must not become one desynchronised per-panel Animation.
+    @_validated_camera_call
     @_mutates
     @panel_scoped_custom
     def camera(

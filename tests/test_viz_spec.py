@@ -852,6 +852,58 @@ def test_refused_camera_spin_never_changes_angles_or_enables_animation(spin, com
     assert source.to_dict() == before
 
 
+@pytest.mark.parametrize("field", ["elev", "azim", "spin"])
+@pytest.mark.parametrize("value", [True, complex(1, 1), np.nan, np.inf, "fast"])
+@pytest.mark.parametrize("composite", [False, True])
+def test_refused_camera_arguments_preserve_rendered_hand_edits(field, value, composite):
+    pytest.importorskip("matplotlib")
+    import warnings
+
+    source = _composite(2, three_d=True) if composite else _panel(three_d=True)
+    figure = source.fig
+    axis = figure.axes[0]
+    hand_edit = axis.text2D(0.2, 0.3, "keep my hand edit")
+    cache = source._figure_cache
+    before = source.to_dict()
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        with pytest.raises(InvalidParameterError, match=rf"camera\({field}="):
+            source.camera(**{"elev": 20, "azim": 30, "spin": 0.25, field: value})
+    assert source._figure_cache is cache
+    assert source.fig is figure and hand_edit in axis.texts
+    assert source._figure_handed_out and not source._handout_warned
+    assert source.to_dict() == before
+
+
+@pytest.mark.parametrize("bad_call", [lambda p: p.camera(20), lambda p: p.camera(elevation=20)])
+def test_camera_binding_errors_preserve_rendered_hand_edits(bad_call):
+    pytest.importorskip("matplotlib")
+    import warnings
+
+    source = _panel(three_d=True)
+    figure = source.fig
+    hand_edit = figure.axes[0].text2D(0.2, 0.3, "keep my hand edit")
+    cache = source._figure_cache
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        with pytest.raises(TypeError):
+            bad_call(source)
+    assert source._figure_cache is cache and source.fig is figure
+    assert hand_edit in figure.axes[0].texts and not source._handout_warned
+
+
+def test_successful_camera_tweak_still_warns_before_invalidating_a_handed_out_figure():
+    pytest.importorskip("matplotlib")
+
+    source = _panel(three_d=True)
+    figure = source.fig
+    with pytest.warns(VisualizationDegraded, match="library tweaks first"):
+        source.camera(elev=20, azim=30)
+    assert source._figure_cache is None
+    assert source.meta["camera"] == {"elev": 20, "azim": 30}
+    assert source.fig is not figure
+
+
 def test_mutating_after_handing_out_the_figure_warns_once() -> None:
     """Never silently lose your work: library tweaks first, matplotlib last."""
     plt = pytest.importorskip("matplotlib.pyplot")

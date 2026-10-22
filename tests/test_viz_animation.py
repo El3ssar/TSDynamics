@@ -131,6 +131,84 @@ def test_signed_camera_spin_survives_json_and_rotates_the_rendered_camera(turns)
         assert movie._fig.axes[0].elev == 20
 
 
+@pytest.mark.parametrize("axis", ["x", "y", "z"])
+@pytest.mark.parametrize("limits", [None, (10, 4000)])
+def test_three_dimensional_log_animation_keeps_positive_bounds_and_explicit_limits(axis, limits):
+    pytest.importorskip("matplotlib")
+    import numpy as np
+
+    channels = {"x": np.linspace(1, 2, 10), "y": np.linspace(2, 3, 10), "z": np.linspace(3, 4, 10)}
+    channels[axis] = np.geomspace(20, 2000, 10)
+    plot = viz.draw(channels, "line3d").rescale(**{axis: "log"}).animate(n_frames=3)
+    if limits is not None:
+        plot.limits(**{axis: limits})
+    movie = plot.render("matplotlib")
+    for frame in (0, 2, 0):
+        movie._func(frame)
+        movie._fig.canvas.draw()
+        axes = movie._fig.axes[0]
+        assert getattr(axes, f"get_{axis}scale")() == "log"
+        actual = getattr(axes, f"get_{axis}lim")()
+        if limits is not None:
+            assert actual == limits
+        else:
+            assert 0 < actual[0] < 20 < 2000 < actual[1]
+
+
+@pytest.mark.parametrize("axis", ["x", "y", "z"])
+def test_a_constant_positive_log_coordinate_stays_in_the_log_domain(axis):
+    pytest.importorskip("matplotlib")
+    import numpy as np
+
+    channels = {"x": np.arange(3.0) + 1, "y": np.arange(3.0) + 2, "z": np.arange(3.0) + 3}
+    channels[axis] = np.full(3, 0.001)
+    plot = viz.draw(channels, "line3d").rescale(**{axis: "log"}).animate(n_frames=3)
+    movie = plot.render("matplotlib")
+    movie._fig.canvas.draw()
+    lo, hi = getattr(movie._fig.axes[0], f"get_{axis}lim")()
+    assert 0 < lo < 0.001 < hi
+
+
+@pytest.mark.parametrize("axis", ["x", "y"])
+@pytest.mark.parametrize("limits", [None, (10, 4000)])
+def test_two_dimensional_log_animation_honors_the_scale_and_explicit_limits(axis, limits):
+    pytest.importorskip("matplotlib")
+    import numpy as np
+
+    channels = {"x": np.linspace(1, 2, 10), "y": np.linspace(2, 3, 10)}
+    channels[axis] = np.geomspace(20, 2000, 10)
+    plot = viz.draw(channels, "line").rescale(**{axis: "log"}).animate(n_frames=3)
+    if limits is not None:
+        plot.limits(**{axis: limits})
+    movie = plot.render("matplotlib")
+    for frame in (0, 2, 0):
+        movie._func(frame)
+        movie._fig.canvas.draw()
+        axes = movie._fig.axes[0]
+        assert getattr(axes, f"get_{axis}scale")() == "log"
+        actual = getattr(axes, f"get_{axis}lim")()
+        if limits is not None:
+            assert actual == limits
+        else:
+            assert 0 < actual[0] < 20 < 2000 < actual[1]
+
+
+@pytest.mark.parametrize("axis", ["x", "y"])
+def test_two_dimensional_symlog_animation_preserves_the_signed_domain(axis):
+    pytest.importorskip("matplotlib")
+    import numpy as np
+
+    channels = {"x": np.linspace(1, 2, 10), "y": np.linspace(2, 3, 10)}
+    channels[axis] = np.linspace(-100, 100, 10)
+    plot = viz.draw(channels, "line").rescale(**{axis: "symlog"}).animate(n_frames=3)
+    movie = plot.render("matplotlib")
+    movie._fig.canvas.draw()
+    axes = movie._fig.axes[0]
+    assert getattr(axes, f"get_{axis}scale")() == "symlog"
+    lo, hi = getattr(axes, f"get_{axis}lim")()
+    assert lo < -100 < 0 < 100 < hi
+
+
 @pytest.mark.parametrize("spatial", [False, True])
 def test_dark_animation_labels_clock_and_fading_legend_keep_their_real_colours(spatial):
     pytest.importorskip("matplotlib")

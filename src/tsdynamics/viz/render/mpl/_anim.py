@@ -1451,7 +1451,8 @@ def _draw_static_layer(ax: Axes, layer: Any, spec: PlotSpec, *, three_d: bool) -
 
 
 def _data_range(spec: PlotSpec, channel: str) -> tuple[float, float] | None:
-    """Min/max of ``channel`` across all layers (for fixed animation limits)."""
+    """Pad finite channel extents in the axis's scale for fixed animation limits."""
+    logarithmic = getattr(getattr(spec, channel, None), "scale", None) == "log"
     lo, hi = np.inf, -np.inf
     for layer in spec.layers:
         arr = layer.data.get(channel)
@@ -1459,10 +1460,22 @@ def _data_range(spec: PlotSpec, channel: str) -> tuple[float, float] | None:
             continue
         a = np.asarray(arr, dtype=float)
         a = a[np.isfinite(a)]
+        if logarithmic:
+            a = a[a > 0]
         if a.size:
             lo, hi = min(lo, float(a.min())), max(hi, float(a.max()))
     if not (np.isfinite(lo) and np.isfinite(hi)):
         return None
+    if logarithmic:
+        lower, upper = np.log10([lo, hi])
+        if upper <= lower:
+            lower, upper = lower - 1.0, upper + 1.0
+        pad = 0.05 * (upper - lower)
+        with np.errstate(over="ignore", under="ignore"):
+            padded = np.power(10.0, [lower - pad, upper + pad])
+        return max(float(padded[0]), np.nextafter(0.0, 1.0)), min(
+            float(padded[1]), np.finfo(float).max
+        )
     if hi <= lo:
         return (lo - 1.0, hi + 1.0)
     pad = 0.05 * (hi - lo)
@@ -1506,14 +1519,7 @@ def _apply_static_labels(ax: Any, spec: PlotSpec, *, three_d: bool) -> None:
     The title goes through the shared :func:`~._core.apply_title`, so an animated
     frame is themed exactly like the still of the same spec.
     """
-    if spec.x.label:
-        ax.set_xlabel(spec.x.label)
-    if spec.y.label:
-        ax.set_ylabel(spec.y.label)
-    if three_d and spec.z is not None and spec.z.label:
-        ax.set_zlabel(spec.z.label)
     theme = _resolve_theme(spec)
-    apply_title(ax, spec, theme)
     if three_d:
         # ``mplot3d`` draws its own pane quads, which keep matplotlib's light
         # default whatever the figure facecolor is.  The still renderer themes
@@ -1523,8 +1529,14 @@ def _apply_static_labels(ax: Any, spec: PlotSpec, *, three_d: bool) -> None:
 
         _apply_3d_panes(ax, theme, spec)
         _apply_3d_axes(ax, spec, theme)
-    if not three_d and spec.aspect == "equal":
-        ax.set_aspect("equal", adjustable="box")
+    else:
+        from ._core import _apply_axis
+
+        _apply_axis(ax, spec.x, "x", theme)
+        _apply_axis(ax, spec.y, "y", theme)
+        apply_title(ax, spec, theme)
+        if spec.aspect == "equal":
+            ax.set_aspect("equal", adjustable="box")
     if spec._axes_hidden():
         ax.set_axis_off()
 

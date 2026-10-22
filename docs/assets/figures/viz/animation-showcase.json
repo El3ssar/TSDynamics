@@ -3,7 +3,7 @@
   "clips": {
     "animation-reveal": {
       "source_sha256": "0b83d234382e545d3e13822116bbaabb658bbfba93196f8ac09335f61c4ab098",
-      "renderer_sha256": "5f741cb0262df5d77d9c0d4bb455cd205d7f077515a9fdf2547a97e6a21af09a",
+      "renderer_sha256": "f5518f1a9d63e124256deca5e3e5b6b8dc46e41c54fbd19d5038e5ea8d4e41f6",
       "encoding": {
         "codec": "libx264",
         "crf": 21,
@@ -27,7 +27,7 @@
     },
     "animation-trails": {
       "source_sha256": "3857a4d919dcc2f33b7591901531496822e47c5e2b8b313715648579e70df815",
-      "renderer_sha256": "5f741cb0262df5d77d9c0d4bb455cd205d7f077515a9fdf2547a97e6a21af09a",
+      "renderer_sha256": "f5518f1a9d63e124256deca5e3e5b6b8dc46e41c54fbd19d5038e5ea8d4e41f6",
       "encoding": {
         "codec": "libx264",
         "crf": 21,
@@ -51,7 +51,7 @@
     },
     "animation-camera": {
       "source_sha256": "c1aca0969e7cc16bb794c256671b6020025e94ce5ae72e27a4fc4e2e289bd010",
-      "renderer_sha256": "5f741cb0262df5d77d9c0d4bb455cd205d7f077515a9fdf2547a97e6a21af09a",
+      "renderer_sha256": "f5518f1a9d63e124256deca5e3e5b6b8dc46e41c54fbd19d5038e5ea8d4e41f6",
       "encoding": {
         "codec": "libx264",
         "crf": 21,
@@ -75,7 +75,7 @@
     },
     "animation-linked": {
       "source_sha256": "1262e65f95abb644aed7a1364f8d1ae53b7d03f76f8fd16aae2cac6ae66d6a91",
-      "renderer_sha256": "5f741cb0262df5d77d9c0d4bb455cd205d7f077515a9fdf2547a97e6a21af09a",
+      "renderer_sha256": "f5518f1a9d63e124256deca5e3e5b6b8dc46e41c54fbd19d5038e5ea8d4e41f6",
       "encoding": {
         "codec": "libx264",
         "crf": 21,
@@ -99,7 +99,7 @@
     },
     "animation-overlay": {
       "source_sha256": "19e7c7ce6d3115009b9ed7761dc22f30157e06bc40f4b623b6af4596404bdc78",
-      "renderer_sha256": "5f741cb0262df5d77d9c0d4bb455cd205d7f077515a9fdf2547a97e6a21af09a",
+      "renderer_sha256": "f5518f1a9d63e124256deca5e3e5b6b8dc46e41c54fbd19d5038e5ea8d4e41f6",
       "encoding": {
         "codec": "libx264",
         "crf": 21,
@@ -123,7 +123,7 @@
     },
     "animation-nested": {
       "source_sha256": "11ab0cde546f6374b6f6969bd2df68e9865293693bdd2686643249aced1a046a",
-      "renderer_sha256": "5f741cb0262df5d77d9c0d4bb455cd205d7f077515a9fdf2547a97e6a21af09a",
+      "renderer_sha256": "f5518f1a9d63e124256deca5e3e5b6b8dc46e41c54fbd19d5038e5ea8d4e41f6",
       "encoding": {
         "codec": "libx264",
         "crf": 21,
@@ -147,7 +147,7 @@
     },
     "animation-map": {
       "source_sha256": "8257714e5f04a7928c79861804ee085dba9bb0147feef46e80307f3627f59919",
-      "renderer_sha256": "5f741cb0262df5d77d9c0d4bb455cd205d7f077515a9fdf2547a97e6a21af09a",
+      "renderer_sha256": "f5518f1a9d63e124256deca5e3e5b6b8dc46e41c54fbd19d5038e5ea8d4e41f6",
       "encoding": {
         "codec": "libx264",
         "crf": 21,
@@ -171,7 +171,7 @@
     },
     "animation-field": {
       "source_sha256": "4738eedffb08885cd7791781767880f2036c7e15285dd77d532a9fe768369e0e",
-      "renderer_sha256": "5f741cb0262df5d77d9c0d4bb455cd205d7f077515a9fdf2547a97e6a21af09a",
+      "renderer_sha256": "f5518f1a9d63e124256deca5e3e5b6b8dc46e41c54fbd19d5038e5ea8d4e41f6",
       "encoding": {
         "codec": "libx264",
         "crf": 21,
@@ -195,7 +195,7 @@
     },
     "animation-pingpong": {
       "source_sha256": "89e9de6e93ccb037e75c931cd962a2266ae41e3c04c2f77c3436b00b32a2ce69",
-      "renderer_sha256": "5f741cb0262df5d77d9c0d4bb455cd205d7f077515a9fdf2547a97e6a21af09a",
+      "renderer_sha256": "f5518f1a9d63e124256deca5e3e5b6b8dc46e41c54fbd19d5038e5ea8d4e41f6",
       "encoding": {
         "codec": "libx264",
         "crf": 21,
