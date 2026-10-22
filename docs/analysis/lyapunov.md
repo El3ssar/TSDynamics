@@ -45,10 +45,10 @@ import tsdynamics as ts
 
 spec = ts.analysis.lyapunov_spectrum(ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]),
                             final_time=300.0, dt=0.05, transient=40.0)
-np.asarray(spec)      # ≈ [ 0.903,  0.002, -14.572]
+np.asarray(spec)      # approximately [0.9, 0.0, -14.6] for this finite window
 spec.kaplan_yorke     # ≈ 2.06
 print(spec)
-# LyapunovSpectrum  λ = [0.9081, -0.001005, -14.57]   chaotic · D_KY = 2.062   (Lorenz)
+# summarizes the rates, classification, Kaplan–Yorke dimension and system name
 ```
 
 The keywords split cleanly by family: a **flow** (ODE or DDE) uses
@@ -80,7 +80,7 @@ following examples show the time or iteration arguments each family requires.
     ```python
     lor = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0])
     ts.analysis.lyapunov_spectrum(lor, final_time=300.0, dt=0.05, transient=40.0)
-    # ≈ [0.908, -0.001, -14.57]
+    # approximately [0.9, 0.0, -14.6] for this finite window
     ```
 
     The **extended variational system** — the state plus $k$ deviation
@@ -89,8 +89,8 @@ following examples show the time or iteration arguments each family requires.
     evolving frame is periodically **QR-reorthonormalised** (Benettin et al.
     1980); the logs of the diagonal $R$ factors, time-weighted, are the
     exponents. A bounded non-equilibrium orbit of an autonomous flow has a
-    neutral direction *along* the flow — which is why the Lorenz middle exponent lands
-    just above zero rather than exactly on it.
+    neutral direction *along* the flow. The finite-time estimate of this neutral
+    exponent can lie on either side of zero.
 
 === "Map"
 
@@ -148,7 +148,7 @@ the family, the parameters and the initial condition.
     rate remains available. The supporting line reports which rule ran:
 
     ```
-    LyapunovSpectrum  λ = [0.9081, -0.001005, -14.57]   chaotic · D_KY = 2.062   (Lorenz)
+    LyapunovSpectrum  λ = [0.9038, -0.0003703, -14.57]   chaotic · D_KY = 2.062   (Lorenz)
         (3 exponents · flow (empirical zero floor) · λ > 0.0146)
     ```
 
@@ -292,7 +292,7 @@ of this page is built from.
 
 ## See also
 
-- [Chaos indicators](chaos.md) — GALI, the 0–1 test and expansion entropy: fast "is it chaotic?" verdicts that stand in for the full spectrum
+- [Chaos indicators](chaos.md) — complementary alignment, signal-growth and expansion diagnostics
 - [Fixed points & periodic orbits](fixed-points.md) — the invariant sets whose local stability the exponents generalise
 - [Fractal dimensions](dimensions.md) — measure the attractor's dimension directly, to cross-check $D_{KY}$
 - [Delay embeddings](embedding.md) — the reconstruction `lyapunov_from_data` relies on

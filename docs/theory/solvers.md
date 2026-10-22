@@ -137,8 +137,8 @@ right-hand-side evaluations than `rk45` at the same tolerance.
 `dop853` is the eighth-order Dormand–Prince method with embedded fifth- and
 third-order estimators for stepsize control (Hairer, Nørsett & Wanner 1993).
 Reach for it when you need **tight tolerances** or a high-accuracy reference
-trajectory — at small `rtol` it reaches a far lower error than the 5(4) pairs
-for comparable work (the left panel above).
+trajectory. In the left panel above, its endpoint error is lower than the 5(4)
+pairs at the displayed tight requested tolerances.
 
 ```python
 # High-accuracy reference run.

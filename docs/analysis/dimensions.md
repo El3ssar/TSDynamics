@@ -247,7 +247,7 @@ or a guarantee that a fractal scaling regime was resolved.
 
 | Set | Estimator | Value | Source |
 | --- | --------- | ----- | ------ |
-| Hénon attractor | `correlation_dimension` | $D_2 \approx 1.17$ | run above |
+| Hénon attractor | `correlation_dimension` | $D_2 \approx 1.20$ | run above |
 | Hénon attractor | `box_counting_dimension` | $D_0 \approx 1.28$ | run above |
 | Hénon attractor | `fixed_mass_dimension` | $D \approx 1.27$ | run above |
 | Lorenz attractor | $D_2$ | $\approx 2.05$ | literature (Grassberger & Procaccia 1983) |
