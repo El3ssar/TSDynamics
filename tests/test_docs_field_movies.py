@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import shutil
 import subprocess
 import sys
@@ -11,6 +10,7 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
+from _video import probe_video
 
 import tsdynamics as ts
 
@@ -98,8 +98,8 @@ def test_field_video_is_controllable_and_curated_settings_are_visible():
 
 def test_profile_mp4_encodes_all_spatial_snapshots(tmp_path, monkeypatch):
     pytest.importorskip("matplotlib")
-    if not field_movies._ffmpeg_available() or shutil.which("ffprobe") is None:
-        pytest.skip("requires FFmpeg and ffprobe")
+    if not field_movies._ffmpeg_available():
+        pytest.skip("requires FFmpeg")
     record = _record("Lorenz96")
     recipe = {
         "grid": 8,
@@ -116,25 +116,51 @@ def test_profile_mp4_encodes_all_spatial_snapshots(tmp_path, monkeypatch):
     assert result is not None
     movie, poster = result
     assert movie.stat().st_size > 1000 and poster.stat().st_size > 1000
-    probe = subprocess.run(
+    stream = probe_video(movie)
+    assert stream.n_frames == 5
+    assert (stream.width, stream.height) == (320, 160)
+    assert stream.codec_name == "h264" and stream.pix_fmt == "yuv420p"
+    assert stream.frame_rate == 6
+    np.testing.assert_allclose(stream.frame_times, np.arange(5) / 6, atol=1e-6)
+
+
+def test_ffmpeg_only_video_probe_decodes_the_same_frames_and_timing(tmp_path, monkeypatch):
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg is None:
+        pytest.skip("requires FFmpeg")
+    movie = tmp_path / "probe.mp4"
+    subprocess.run(
         [
-            "ffprobe",
-            "-v",
+            ffmpeg,
+            "-hide_banner",
+            "-loglevel",
             "error",
-            "-select_streams",
-            "v:0",
-            "-show_entries",
-            "stream=nb_frames,width,height,codec_name,pix_fmt",
-            "-of",
-            "json",
+            "-nostdin",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=navy:s=64x48:r=6",
+            "-frames:v",
+            "5",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
             str(movie),
         ],
-        capture_output=True,
-        text=True,
         check=True,
-        timeout=20,
+        capture_output=True,
+        timeout=30,
     )
-    stream = json.loads(probe.stdout)["streams"][0]
-    assert int(stream["nb_frames"]) == 5
-    assert (stream["width"], stream["height"]) == (320, 160)
-    assert stream["codec_name"] == "h264" and stream["pix_fmt"] == "yuv420p"
+    expected = probe_video(movie)
+    # Exercise automatic selection when only the bundled FFmpeg is installed.
+    which = shutil.which
+    monkeypatch.setattr(shutil, "which", lambda name: None if name == "ffprobe" else which(name))
+    fallback = probe_video(movie)
+    assert fallback.n_frames == expected.n_frames == 5
+    assert fallback.frame_rate == expected.frame_rate == 6
+    assert (fallback.width, fallback.height) == (expected.width, expected.height) == (64, 48)
+    assert fallback.codec_name == expected.codec_name == "h264"
+    assert fallback.pix_fmt == expected.pix_fmt == "yuv420p"
+    np.testing.assert_allclose(fallback.frame_times, np.arange(5) / 6, atol=1e-6)
+    np.testing.assert_allclose(fallback.frame_times, expected.frame_times, atol=1e-6)

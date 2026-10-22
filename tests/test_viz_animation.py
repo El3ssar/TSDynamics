@@ -466,8 +466,8 @@ def test_save_mp4(tmp_path):
     import shutil
 
     pytest.importorskip("matplotlib")
-    if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
-        pytest.skip("ffmpeg/ffprobe not available for mp4 export")
+    if shutil.which("ffmpeg") is None:
+        pytest.skip("ffmpeg not available for mp4 export")
     out = tmp_path / "orbit.mp4"
     spec = _lorenz().__plot_spec__(animate=True).animate(n_frames=6)
     assert spec.save(str(out), fps=10) == str(out)
@@ -607,35 +607,15 @@ def _field_1d_traj():
 
 
 def _mp4_stream_info(path):
-    """Return ``(n_frames, frame_rate)`` decoded from an MP4 with ``ffprobe``.
+    """Return ``(n_frames, frame_rate)`` decoded with ffprobe or FFmpeg alone.
 
     Counting the frames is the only way to tell a movie from a one-frame file that
     happens to carry the right container; the rate proves ``fps=`` reached the writer.
     """
-    import json
-    import subprocess
+    from _video import probe_video
 
-    out = subprocess.run(
-        [
-            "ffprobe",
-            "-v",
-            "error",
-            "-select_streams",
-            "v:0",
-            "-count_frames",
-            "-show_entries",
-            "stream=nb_read_frames,r_frame_rate",
-            "-of",
-            "json",
-            str(path),
-        ],
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout
-    stream = json.loads(out)["streams"][0]
-    num, _, den = stream["r_frame_rate"].partition("/")
-    return int(stream["nb_read_frames"]), float(num) / float(den or 1)
+    stream = probe_video(path)
+    return stream.n_frames, stream.frame_rate
 
 
 def _gif_frames(path):

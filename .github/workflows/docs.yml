@@ -25,6 +25,7 @@ on:
       - "README.md"
       - "CLAUDE.md"
       - ".github/workflows/docs.yml"
+      - ".github/scripts/install_ffmpeg.py"
 
 concurrency:
   group: docs-${{ github.ref }}
@@ -58,15 +59,14 @@ jobs:
 
       # The spatial-field systems (Gray-Scott / Swift-Hohenberg) render an animated
       # field-movie hero (docs/_tooling/field_movies.py) as an H.264 mp4 via
-      # matplotlib's ffmpeg writer.  ffmpeg is not preinstalled on ubuntu-latest, so
-      # install it; a cache hit (below) skips the render entirely, and a cache miss
-      # without ffmpeg would fall back to a (larger) pillow GIF, so this keeps the
-      # hero a small mp4.
+      # matplotlib's ffmpeg writer. Use a pinned binary wheel rather than waiting
+      # on apt mirror failover; the isolated tool does not change project deps.
       - name: Install ffmpeg (field-movie encoder)
-        run: |
-          # Keep the runner's mirror failover, with explicit transfer timeouts and retries.
-          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
-          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends ffmpeg
+        timeout-minutes: 3
+        env:
+          UV_HTTP_TIMEOUT: "30"
+          UV_HTTP_RETRIES: "2"
+        run: uv run --no-project --python 3.12 --no-build .github/scripts/install_ffmpeg.py
 
       # Persist every generated illustration family. Include runtime inputs in
       # the outer key as well as each asset's content key, so newly rendered
