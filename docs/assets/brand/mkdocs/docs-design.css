@@ -260,7 +260,10 @@
   padding: .4rem .7rem;
 }
 .md-typeset .tsd-control-table { overflow-x: auto; }
-.md-typeset .tsd-control-table table { font-size: .7rem; min-width: 38rem; }
+.md-typeset .tsd-control-table table { font-size: .7rem; }
+.md-typeset .tsd-control-table .md-typeset__table > table:not([class]) {
+  min-width: 38rem;
+}
 .md-typeset .tsd-control-table td:first-child { min-width: 11rem; }
 .md-typeset .tsd-animation-intro {
   align-items: center;
