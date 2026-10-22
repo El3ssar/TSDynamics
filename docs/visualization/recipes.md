@@ -156,15 +156,16 @@ figure[1].limits(x=(30, 40)).relabel(x="Time", y="x")
 <figure class="tsd-showcase" markdown="1">
 ![A Lorenz x-y phase portrait colored by z and a power spectrum above a full-width, zoomed time-series panel](../assets/figures/viz/recipe-linked-views.svg){ loading=lazy }
 <figcaption>The upper row contains two panels; the lower trace spans the width.
-Only the trace is zoomed. The spectrum still uses the complete retained record.</figcaption>
+The trace selects a shorter displayed time window. The spectrum still uses
+the complete retained record, with explicit frequency and density display limits.</figcaption>
 </figure>
 
 `figure[0][1]` selects the second panel inside the first row; `figure[1]` is the
 lower trace. Set the outer theme first, then panel-specific overrides. Use
 `color="…"` for one categorical color, `color_by=` for a measured scalar, and a
 labeled colorbar for its meaning. More options are in [styling](styling.md).
-The spectrum's displayed density range also omits values near its numerical
-floor without filtering the record.
+The density limits keep low-power tails from dominating the displayed scale;
+the spectral estimates remain unchanged.
 
 ## An ensemble fan
 

@@ -21,8 +21,12 @@ Jacobian-free maximal estimator, an estimator for measured data and the
 Kaplan–Yorke dimension derived from a suitable spectrum.
 
 <figure markdown>
-![Running Lyapunov spectrum of the Lorenz system, the three exponents converging to their literature values on a log-time axis](../assets/figures/analysis/lyapunov.svg){ loading=lazy }
-<figcaption>The Lorenz running spectrum. As the tangent frame is stepped along the attractor the three time-averaged exponents (indigo/teal/amber) approach their literature estimates <code>[0.906, 0.0, -14.57]</code> (rose, dashed) on a log-time axis — the positive · zero · strongly-negative signature consistent with a chaotic dissipative flow.</figcaption>
+![Three running Lorenz Lyapunov estimates approach dashed reference lines in separate panels with a logarithmic time axis](../assets/figures/analysis/lyapunov.svg){ loading=lazy }
+<figcaption>Each panel follows one running Lyapunov estimate after a settling
+interval. The panels share a logarithmic time axis and use separate vertical
+scales so the near-neutral rate remains visible. Dashed lines mark the reference
+values <code>[0.906, 0.0, -14.57]</code>. Compare longer observation windows before
+interpreting finite-time estimates as asymptotic rates.</figcaption>
 </figure>
 
 ## The uniform entry point

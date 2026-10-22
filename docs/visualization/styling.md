@@ -435,7 +435,7 @@ Four themes ship out of the box, applied per figure with `.theme(...)`:
 
 <figure markdown>
 ![The same Lorenz x–z portrait rendered under all four built-in themes, tiled 2×2: default (light, blue), dark (near-black background, cyan line), minimal (light, muted slate), publication (white, serif labels, black line)](../assets/figures/viz/themes.svg){ loading=lazy }
-<figcaption>One Lorenz <code>(x, z)</code> portrait, four themes, tiled with <code>ts.plot(..., layout="grid")</code>. Only the theme differs between panels: <b>default</b> (matplotlib-ish blue on white), <b>dark</b> (bright cyan on <code>#11131a</code> — the panel keeps its near-black background through the composite), <b>minimal</b> (muted slate, thinner line), and <b>publication</b> (serif labels, larger type, the colourblind-safe Wong palette). Switching theme is a one-word change to the recipe.</figcaption>
+<figcaption>One Lorenz <code>(x, z)</code> portrait, four themes, tiled with <code>ts.plot(..., layout="grid")</code>. Only the theme differs between panels: <b>default</b> (matplotlib-ish blue on white), <b>dark</b> (bright cyan on <code>#11131a</code> — the panel keeps its near-black background through the composite), <b>minimal</b> (muted slate), and <b>publication</b> (serif labels, larger type, the colourblind-safe Wong palette). Switching theme is a one-word change to the recipe.</figcaption>
 </figure>
 
 ```pycon
