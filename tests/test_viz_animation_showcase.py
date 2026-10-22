@@ -31,13 +31,14 @@ class _Players(HTMLParser):
             self.sources.append(dict(attrs))
 
 
-def test_all_nine_examples_have_accessible_lazy_user_controlled_players():
+def test_all_nine_examples_have_accessible_visibility_controlled_players():
     parser = _Players()
     parser.feed(showcase.PAGE.read_text())
     assert len(parser.videos) == len(parser.sources) == len(showcase.CLIPS) == 9
     for clip, player, source in zip(showcase.CLIPS, parser.videos, parser.sources, strict=True):
         assert "controls" in player and "playsinline" in player
-        assert "autoplay" not in player and "loop" not in player
+        assert "autoplay" not in player
+        assert "data-tsd-autoplay" in player and "muted" in player and "loop" in player
         assert player["preload"] == "none"
         assert (int(player["width"]), int(player["height"])) == clip.pixels
         assert player["aria-label"]

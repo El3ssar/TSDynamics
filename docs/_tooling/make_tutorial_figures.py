@@ -1,14 +1,13 @@
 """Generate the tutorial-page showcase figures (one or more per tutorial).
 
 Each render function uses the real tsdynamics library to produce a didactic,
-on-brand figure for a tutorial page: transparent background, the brand teal
+on-brand figure for a tutorial page: opaque white paper, the brand teal
 (``#11857A``) / indigo (``#574FCF``) accents, viridis/twilight where a colour
-map is called for, and IBM Plex label text (the SVG carries the font-family so
-the site's IBM Plex webfont applies when the page renders). The SVGs are
+map is called for, and portable sans-serif labels. The SVGs are
 committed static assets under ``docs/assets/figures/tutorials/``; re-run after
 changing a generator::
 
-    .venv/bin/python docs/_tooling/make_tutorial_figures.py
+    uv run --no-sync python docs/_tooling/make_tutorial_figures.py
 
 Every figure here mirrors the numbers used in the tutorial prose, so it is
 reproducible: the same explicit initial conditions / seeds appear in both.
@@ -19,41 +18,20 @@ from __future__ import annotations
 import argparse
 import pathlib
 
+from figure_style import PAPER_RC, FigureCanvas, paper_plot, save_figure
+
 OUT = pathlib.Path(__file__).resolve().parents[1] / "assets" / "figures" / "tutorials"
 
 #: Brand palette (docs/assets/brand/tokens.css) — teal primary, indigo accent,
 #: amber/rose as warm secondaries.
 TEAL, INDIGO, AMBER, ROSE = "#11857A", "#574FCF", "#E8912D", "#D64562"
 
-#: Label font — IBM Plex Sans, with DejaVu as the layout fallback.
-_FONT_STACK = ["IBM Plex Sans", "DejaVu Sans", "sans-serif"]
-
 
 def _style():
-    """Configure matplotlib for the on-brand, transparent, SVG-friendly house style."""
-    import matplotlib
+    """Configure matplotlib for the on-brand, readable, SVG-friendly house style."""
+    plt = FigureCanvas()
 
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
-    plt.rcParams.update(
-        {
-            "svg.fonttype": "none",
-            "font.family": "sans-serif",
-            "font.sans-serif": _FONT_STACK,
-            "figure.facecolor": "none",
-            "axes.facecolor": "none",
-            "savefig.transparent": True,
-            "axes.edgecolor": "#88888855",
-            "axes.labelcolor": "#888888",
-            "xtick.color": "#888888",
-            "ytick.color": "#888888",
-            "axes.grid": False,
-            "font.size": 9,
-            "axes.titlesize": 10,
-            "legend.frameon": False,
-        }
-    )
+    plt.rcParams.update(PAPER_RC)
     return plt
 
 
@@ -109,8 +87,8 @@ def fig_basins_image(plt, out_path):
         alpha=0.92,
     )
     # Mark the two attractors (well bottoms).
-    for a in basins.attractors:
-        ax.plot(a.center[0], a.center[1], "o", ms=6, mfc="white", mec="#222", mew=1.2, zorder=5)
+    for center in basins.attractors.centers:
+        ax.plot(center[0], center[1], "o", ms=6, mfc="white", mec="#222", mew=1.2, zorder=5)
     ax.set_xlabel("$x_0$")
     ax.set_ylabel("$\\dot{x}_0$")
     ax.set_title("Basins of the two wells  ($F = 0$)")
@@ -133,7 +111,7 @@ def fig_basins_image(plt, out_path):
         color="white",
     )
     fig.tight_layout()
-    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    save_figure(fig, out_path)
     plt.close(fig)
 
 
@@ -149,7 +127,7 @@ def fig_basins_continuation(plt, out_path):
 
     values = np.linspace(0.0, 0.5, 11)
     cont = ts.analysis.continuation(
-        sys, "F", values, region, n=300, resolution=40, dt=0.5, max_steps=2000, seed=0
+        sys, "F", values, region, n_seeds=300, resolution=40, dt=0.5, max_steps=2000, seed=0
     )
     fr = cont.fractions
     # attractor 1 = left well, 2 = right well (ids from the F=0 sort order)
@@ -177,10 +155,10 @@ def fig_basins_continuation(plt, out_path):
     ax.set_xlabel("tilt  $F$")
     ax.set_ylabel("basin fraction")
     ax.set_ylim(-0.03, 1.05)
-    ax.legend(loc="center left")
+    ax.legend(loc="upper left")
     ax.set_title("Basin stability as the potential is tilted")
     fig.tight_layout()
-    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    save_figure(fig, out_path)
     plt.close(fig)
 
 
@@ -215,9 +193,9 @@ def fig_poincare_section(plt, out_path):
     ax.set_xlabel("$x$")
     ax.set_ylabel("$z$")
     ax.legend(loc="upper left", markerscale=2.5, handletextpad=0.4)
-    ax.set_title("Rössler section: the flow collapses onto a thin sheet")
+    ax.set_title("Rössler flow and section crossings")
     fig.tight_layout()
-    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    save_figure(fig, out_path)
     plt.close(fig)
 
 
@@ -228,13 +206,13 @@ def fig_return_map(plt, out_path):
     # Rössler first-return in x at the section.
     ros = ts.systems.Rossler()
     rm = ts.analysis.return_map(
-        ros, "x", method="poincare", plane=("y", 0.0), direction=+1, n=500, dt=0.02, seed=0
+        ros, "x", kind="poincare", plane=("y", 0.0), direction=+1, n=500, dt=0.02, seed=0
     )
 
     # Lorenz z-maxima cusp.
     lor = ts.systems.Lorenz()
     ic_l = lor.run(final_time=40.0, dt=0.01, ic=[1.0, 1.0, 1.0]).y[-1]
-    zc = ts.analysis.return_map(lor, "z", method="max", n=2000, final_time=400.0, dt=0.01, ic=ic_l)
+    zc = ts.analysis.return_map(lor, "z", kind="max", n=2000, final_time=400.0, dt=0.01, ic=ic_l)
 
     fig, (a0, a1) = plt.subplots(1, 2, figsize=(7.4, 3.7))
 
@@ -257,7 +235,7 @@ def fig_return_map(plt, out_path):
     a1.set_aspect("equal", "box")
 
     fig.tight_layout()
-    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    save_figure(fig, out_path)
     plt.close(fig)
 
 
@@ -286,7 +264,7 @@ def fig_ou_ensemble(plt, out_path):
     ts_grid = np.linspace(0.2, 8.0, 40)
     means, sds = [], []
     for T in ts_grid:
-        f = ou.ensemble(ics, final_time=float(T), dt=0.01, seed=0)
+        f = ou.ensemble(ics).run(final_time=float(T), dt=0.01, seed=0).final
         means.append(f.mean())
         sds.append(f.std())
     means = np.asarray(means)
@@ -320,7 +298,7 @@ def fig_ou_ensemble(plt, out_path):
     ax.set_title("Ornstein–Uhlenbeck: relaxation to the stationary law")
     ax.legend(loc="upper right", ncol=1)
     fig.tight_layout()
-    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    save_figure(fig, out_path)
     plt.close(fig)
 
 
@@ -358,21 +336,13 @@ def fig_double_well_switching(plt, out_path):
     a1.tick_params(labelleft=False)
 
     fig.tight_layout()
-    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    save_figure(fig, out_path)
     plt.close(fig)
 
 
 def _save_plot(plot, out_path, *, size=(1120, 440)):
     """Keep tutorial illustrations on one readable, reproducible paper surface."""
-    plot.theme(
-        "minimal",
-        background="#fbfcfd",
-        foreground="#243240",
-        font_family="sans-serif",
-        font_size=10,
-        title_size=12,
-        palette=[TEAL, INDIGO, AMBER, ROSE],
-    ).save(str(out_path), size=size)
+    paper_plot(plot, font_size=14).save(str(out_path), size=size)
 
 
 def fig_first_figure(plt, out_path):
@@ -449,7 +419,12 @@ def fig_lyapunov_readout(plt, out_path):
     result = ts.analysis.lyapunov_spectrum(
         ts.systems.Lorenz(ic=[1, 1, 1]), final_time=300.0, dt=0.05, transient=40.0
     )
-    _save_plot(ts.plot(result), out_path, size=(1000, 440))
+    spectrum = ts.plot(result, "lyapunov_spectrum", color=TEAL, legend=False)
+    spectrum.ticks(x=[0, 1, 2]).relabel(title="Finite-time spectrum of the Lorenz orbit")
+    for index, value in enumerate(result.values):
+        spectrum.text(index + 0.04, value + 0.45, f"{value:+.4g}", color="#526675")
+    spectrum.limits(x=(-0.2, 2.35), y=(float(result.values.min()) - 1, 2))
+    _save_plot(spectrum, out_path, size=(1000, 500))
     plt.close("all")
 
 
@@ -530,10 +505,17 @@ def main():
         "--only", nargs="+", choices=sorted(FIGURES), help="Render selected figures"
     )
     args = parser.parse_args()
-    plt = _style()
+    import matplotlib as mpl
+
+    with mpl.rc_context():
+        plt = _style()
+        _render_selected(plt, args.only)
+
+
+def _render_selected(plt, selected):
     OUT.mkdir(parents=True, exist_ok=True)
     for slug, fn in FIGURES.items():
-        if args.only and slug not in args.only:
+        if selected and slug not in selected:
             continue
         plt.close("all")
         out = OUT / f"{slug}.svg"

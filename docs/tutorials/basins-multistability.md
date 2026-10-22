@@ -15,8 +15,7 @@ that picture end to end, then asks the sharper question: what happens to it when
 you push a parameter until a state disappears?
 
 We use the damped **two-well Duffing oscillator**, the textbook bistable flow,
-and take it all the way from three lines of math to a quantified, tipping-aware
-global-stability portrait. Initial conditions and seeds are specified. Printed
+and estimate its attractors, basin fractions and response to a tilt. Initial conditions and seeds are specified. Printed
 values illustrate finite-resolution results; check convergence when changing
 the grid, observation window or solver settings.
 
@@ -57,8 +56,7 @@ sys = TiltedDuffing()
 !!! note "Symbolic right-hand side"
     `_equations` is read symbolically (SymEngine), so use plain arithmetic and
     `symengine` functions — never NumPy or `math` inside it. `Y(0)`, `Y(1)` are
-    the state components. That is the entire contract; compilation, caching,
-    output grids and provenance are handled for you. See
+    the state components. The library handles compilation, caching, output grids and provenance. See
     [the mental model](../start/concepts.md).
 
 ## 2. Integrate — see the bistability
@@ -100,10 +98,10 @@ plain `(dim,)` array. The records live alongside, at the same index —
 `.center` (its located point set's centroid), an integer id, and the recurrent
 cells that identified it.
 
-!!! tip "Reading the knobs"
+!!! tip "Choosing the search settings"
     `resolution` sets the recurrence-cell count per axis: too coarse and two
-    attractors merge into one cell set; too fine and a chaotic trajectory never
-    *recurs*. For these two point attractors a coarse `40` is plenty. `n_seeds`
+    attractors merge into one cell set; too fine and recurrence may not occur
+    during the observation window. For these two point attractors a coarse `40` is plenty. `n_seeds`
     is how many random initial conditions to classify, `dt` the integration step
     between cell checks, and `seed` makes the sampler reproducible. A diverging
     seed is counted (the `0/200 diverged` above) rather than aborting the scan.
@@ -131,7 +129,7 @@ cell), laid out on the grid you passed — ready to image directly:
 # plt.xlabel("$x_0$"); plt.ylabel(r"$\dot{x}_0$")
 ```
 
-or, without touching matplotlib, through the result's own front door —
+Alternatively, use the result directly:
 `ts.plot(basins)` returns a `basins_image` [`Plot`](../visualization/index.md)
 that renders itself with `.plot()` / `.save("basins.png")`.
 
@@ -182,8 +180,9 @@ Read them in turn:
   Inspect the scaling fit and vary resolution before interpreting the estimate.
 
 A fourth, [`resilience`](../analysis/basins.md), asks how *far* (in state space)
-a given attractor is from its basin boundary — the smallest perturbation that
-can knock the system out of it (Halekotte & Feudel, 2020):
+a sampled attractor is from cells assigned to another basin (Halekotte &
+Feudel, 2020). This finite-grid estimate depends on the domain, resolution
+and norm:
 
 ```python
 ts.analysis.resilience(basins, 1)     # ScalarResult(value=0.575251)
@@ -240,17 +239,15 @@ cannot by itself establish a statement about every initial condition.
 
 <figure class="ts-fig" markdown>
 ![Basin fractions vs tilt: the left-well fraction shrinks to zero at F≈0.4](../assets/figures/tutorials/basins-continuation.svg){ loading=lazy }
-<figcaption><span class="lbl">FIG 2</span> · basin stability under the tilt $F$. The teal (left-well) basin fraction shrinks monotonically and vanishes at the dashed line ($F \approx 0.4$), where the saddle-node bifurcation annihilates the well; the indigo (right-well) basin captures the whole state space beyond it. This is the global-stability signature of a tipping point — not a state slowly drifting, but a basin disappearing out from under it.</figcaption>
+<figcaption><span class="lbl">FIG 2</span> · basin stability under the tilt $F$. The teal (left-well) basin fraction shrinks monotonically and vanishes at the dashed line ($F \approx 0.4$), where the saddle-node bifurcation annihilates the well; the indigo (right-well) basin captures the sampled initial conditions beyond it. The numerical transition brackets the analytic fold at $F=2/(3\sqrt{3})\approx0.385$.</figcaption>
 </figure>
 
 ## What you built
 
-From three lines of math you produced the complete multistability portrait —
-attractors, basins, basin stability, a quantified boundary, and a continuation
-that *catches the tipping point where a state disappears* — every result
-carrying its provenance in `.meta`. That is the path the whole toolkit is
-designed around: define the system once, then compose
-[analysis](../analysis/index.md) on top.
+You defined a bistable model, searched for its attractors, sampled their
+basins, estimated boundary statistics and followed basin fractions across a
+known fold. Keep each result's `.meta` with the numerical arrays, and repeat
+with finer grids or longer horizons to assess convergence.
 
 !!! warning "Basins are for finite-dimensional states only"
     `attractors` / `basins` / `continuation` drive a **map or

@@ -988,10 +988,12 @@ def _camera(spec: PlotSpec, bounds: dict[str, list[float]]) -> dict[str, list[fl
     ``target`` / ``up`` sequences) is normalized and passed through.  Otherwise a
     default view is derived: the target is the bounds centre, the camera sits one
     bounding-box diagonal away on a ``(1, 1, 1)`` corner direction, and ``up`` is
-    ``+z``.
+    ``+z``. The public ``camera(elev=..., azim=...)`` sets this fitted camera's
+    direction in degrees without losing the bounds centre or viewing distance.
     """
     override = spec.meta.get("camera") if isinstance(spec.meta, dict) else None
-    if isinstance(override, dict):
+    angles = isinstance(override, dict) and ("elev" in override or "azim" in override)
+    if isinstance(override, dict) and not angles:
         return {
             "position": _vec3(override.get("position"), default=(1.0, 1.0, 1.0)),
             "target": _vec3(override.get("target"), default=(0.0, 0.0, 0.0)),
@@ -1009,6 +1011,16 @@ def _camera(spec: PlotSpec, bounds: dict[str, list[float]]) -> dict[str, list[fl
         diagonal = 1.0
     offset = diagonal  # one diagonal back along the (1, 1, 1) corner direction
     step = offset / float(np.sqrt(3.0))
+    if isinstance(override, dict) and angles:
+        # Match the public camera() convention: degrees above the xy plane and
+        # degrees around +z. Keep the fitted target/distance when setting a pose.
+        elev, azim = np.deg2rad([override.get("elev", 30.0), override.get("azim", -60.0)])
+        direction = [np.cos(elev) * np.cos(azim), np.cos(elev) * np.sin(azim), np.sin(elev)]
+        return {
+            "position": (np.asarray([cx, cy, cz]) + offset * np.asarray(direction)).tolist(),
+            "target": [cx, cy, cz],
+            "up": [0.0, 0.0, 1.0],
+        }
     return {
         "position": [cx + step, cy + step, cz + step],
         "target": [cx, cy, cz],

@@ -9,8 +9,8 @@ description: The numerical interval-Newton / Krawczyk fixed-point search — det
 [`fixed_points`](../analysis/fixed-points.md) defaults to **multi-start
 Newton**: scatter many seeds across a box, run a local solve from each, keep the
 distinct roots. It is fast and general, but it has one structural weakness — a
-finite number of seeds can leave a root's basin unsampled, so it can **silently
-miss** an equilibrium. There is no certificate that the returned set is complete.
+finite number of seeds can leave a root's convergence basin unsampled and
+miss an equilibrium. There is no certificate that the returned set is complete.
 
 `method="interval"` searches the required region systematically with a
 **Krawczyk operator** and interval branch-and-prune. This implementation uses
@@ -94,13 +94,12 @@ with a formal proof.
 The interval result is **deterministic** (no `seed`): the box decomposition is a
 function of the math alone.
 
-## Where the win comes from — and its limits
+## Computational cost and limits {#where-the-win-comes-from-and-its-limits}
 
-The speed-up is real even in pure Python because the work is *targeted*: the
-operator prunes empty regions wholesale and contracts quadratically near a root,
-visiting only tens to a few thousand boxes, instead of running hundreds of full
-Newton trajectories. (A compiled interval kernel would be faster still, but the
-Python implementation already beats the multi-start default.)
+Pruning empty boxes and contracting candidate boxes can reduce the work relative
+to repeated local solves. The benefit depends on dimension, root geometry,
+interval overestimation and subdivision settings; the historical timings above
+do not establish a general speed advantage.
 
 Limits:
 

@@ -67,7 +67,7 @@ hands it back.
 The two *data-export* backends (`json`, `threejs`) return a serializable
 **payload** rather than a live figure — they draw nothing themselves, they hand
 a browser (or a cache) the data to draw. Both are pure standard library over the
-spec IR, so they need **no** third-party dependency and always register.
+plot description, so they need **no** third-party dependency and always register.
 
 ### matplotlib — the universal reference renderer
 
@@ -109,8 +109,8 @@ real-time comet you can rotate while it plays — see [Animation](animation.md).
 The `json` backend serializes the **whole** spec to the versioned JSON envelope
 (`tsdynamics.viz.export.to_json`) — every layer, axis, annotation, color range,
 theme, and `meta` field, with NumPy arrays as nested lists. It round-trips
-exactly, so a spec computed on one machine can be cached, shipped to a web
-frontend, or replayed **without re-running the analysis** and without a plotting
+exactly, so a plot computed on one machine can be stored, sent to another machine or
+rendered again **without re-running the analysis** and without a plotting
 library installed.
 
 The current plot envelope uses schema 4 and standards-compliant JSON. Non-finite
@@ -172,7 +172,7 @@ opens from `file://` and loads three.js from a CDN. It is a format for putting a
 3. **Negotiates capabilities** — if the chosen backend cannot draw this spec's
    kind (or its 3-D-ness), it **falls back** to a capable one, warning you.
 4. **Reports honoring gaps** — one consolidated warning names any style key,
-   animation knob, or theme field the chosen backend will silently ignore.
+   animation option, or theme field the chosen backend will silently ignore.
 
 ### The default is deterministic
 
@@ -201,8 +201,8 @@ KeyError: "No renderer registered as 'gnuplot'."
 ## Capability negotiation & `VisualizationDegraded`
 
 Not every backend can draw every kind, and not every backend honors every style
-knob. Rather than fail or silently misrender, the dispatcher **degrades loudly**
-with a `VisualizationDegraded` warning. There are two triggers.
+option. The dispatcher reports unsupported choices with a `VisualizationDegraded`
+warning. There are two triggers.
 
 **1. Backend fallback.** You named a backend that declines the spec, and dispatch
 routed to a capable one (matplotlib) instead:
@@ -228,7 +228,7 @@ warning before drawing:
 VisualizationDegraded: threejs: ignoring linestyle
 ```
 
-Each backend's honored vocabulary is an **enforced contract** — see
+For supported style options, see
 [Styling & themes](styling.md) for the per-key `honored_by` table and the
 `caps.style_honoring_gaps` helper that drives these warnings. `json` is exempt
 (it serializes every field faithfully, so it drops nothing).
@@ -256,11 +256,11 @@ name one — the fast path for "just write me the figure".
 | `.mp4` `.gif` (animated spec) | matplotlib | a movie (ffmpeg / pillow) |
 | `.html` (animated spec) | plotly | a real-time, rotatable-while-playing page |
 | `.html` with `backend="threejs"` | three.js | a WebGL viewer page; three.js comes from a CDN |
-| `.json` with `backend="threejs"` | three.js | the BufferGeometry payload (**not** the spec IR) |
+| `.json` with `backend="threejs"` | three.js | the BufferGeometry payload (**not** the plot description) |
 
 !!! warning "`.json` means two different documents"
 
-    `save("x.json")` writes the **Plot IR envelope** — reloadable with
+    `save("x.json")` writes the **plot-description envelope** — reloadable with
     `tsdynamics.viz.export.from_json`. `save("x.json", backend="threejs")` writes
     the **BufferGeometry payload** — geometry for a browser, *not* a spec. They
     share an extension and are not interchangeable; `backend=` is the
@@ -313,7 +313,7 @@ Matplotlib at export time (`pip install "tsdynamics[viz]"`) and `poster=True`.
 The interactive export still works without Matplotlib; its fallback image is
 omitted when the renderer is unavailable or cannot draw the plot.
 
-Knobs (all on `render` / `save`):
+Options (all on `render` / `save`):
 
 | Argument | Default | What it does |
 | --- | --- | --- |
@@ -336,8 +336,7 @@ spec.save("a.html", backend="threejs", assets="link",
 
 ### Putting it on your own page {#embedding}
 
-The whole path, end to end. There are exactly three steps, and the middle one is
-copy-paste.
+Export the viewer page, place it with your site files, then embed it:
 
 **1. Write the file.** One line:
 
@@ -355,8 +354,8 @@ before you ship it — it needs no server.
 **2. Drop it next to your HTML and reference it in an `<iframe>`.** An iframe is
 the right container here, not a `<div>`: the page brings its own import map,
 its own module script and its own stylesheet, and an iframe keeps all three out
-of your document's scope. It also means the viewer cannot break your page's
-layout or its CSP.
+of your document's scope. Your site's content-security policy must still permit the iframe and the
+viewer's CDN requests.
 
 ```html
 <iframe src="lorenz.html"
@@ -369,8 +368,8 @@ layout or its CSP.
 lazy loading means a page with a dozen attractors does not parse a dozen payloads
 up front either.
 
-**3. Nothing.** There is no build step, no bundler, and no `npm install`. The one
-thing the page fetches from the network is the pinned three.js build from a CDN;
+**3. Check network access.** No JavaScript build step is needed. The viewer
+loads its pinned three.js dependencies from a CDN;
 if that is blocked, the reader sees the poster PNG when one was generated at
 export time (see below).
 
@@ -381,8 +380,8 @@ yourself; that is [the reference loader](#the-reference-loader) section.
 #### The size budget
 
 The number that decides whether this is embeddable is the size of the HTML file.
-Two things drive it: the vertex buffer, and the inlined poster PNG. The loader
-(~58 KB) is noise, and three.js is not embedded at all. Measured:
+Two things drive it: the vertex buffer, and the inlined poster PNG. The loader adds a smaller fixed cost; three.js itself is loaded externally.
+These recorded file sizes illustrate the trade-off:
 
 | What you export | `poster=False` | `poster=True` |
 | --- | --- | --- |
@@ -393,14 +392,10 @@ Two things drive it: the vertex buffer, and the inlined poster PNG. The loader
 | 1e6-sample flow, default cap | 1.00 MB | — |
 | 1e6-sample flow, **uncapped** (`max_points=None`) | 23.3 MB | don't |
 
-Rules of thumb: **budget ~1 MB per viewer**, treat 5 MB as the point where a phone
-on mobile data gives up, and reach for `max_points` before anything else — the
-capped 1e6-sample flow is 23x lighter than the uncapped one and, because the
-thinning is by arc length, visually indistinguishable.
-
-The poster is not free: it costs ~50 KB on a sparse scatter but ~550 KB on a dense
-3-D flow, where it can be a third of the file. `poster=False` drops it — a real
-trade, not a micro-optimisation, so make it deliberately (see the next section).
+Choose `max_points` for the intended device and network, then inspect the
+exported geometry and file size. Thinning reduces transfer and rendering work
+but can remove geometric detail. A poster improves fallback behavior and adds
+its own image size; omit it only when that trade-off suits your audience.
 
 #### The fallback, for readers who cannot run it
 
@@ -461,7 +456,7 @@ Then, in your page:
 ### Exporting the raw payload
 
 The `threejs` renderer ships in-tree and needs **no extra dependency** (it is
-pure Python over the spec IR):
+pure Python over the plot description):
 
 ```python
 # a modestly sampled spec, so nothing is thinned by the vertex cap
@@ -492,8 +487,7 @@ lifted to `z = 0`).
 
 ### Payload size is a budget, and the budget is enforced
 
-A browser is not a plot device with an unlimited budget. The exporter therefore
-caps each geometry at `max_points` (40 000 by default). Capping emits a
+The exporter limits transfer and rendering cost by capping each geometry at `max_points` (40 000 by default). Capping emits a
 `VisualizationDegraded` warning naming both counts, and records them in
 `metadata.resample`; it is never silent.
 
@@ -506,21 +500,12 @@ Measured on a 1 000 000-sample Lorenz (`final_time=2000, dt=0.002`):
 | `max_points=None, decimals=None` | 56.6 MB |
 | *(pre-v6 exporter, for reference)* | *~122 MB* |
 
-The pre-v6 number is historical, not a current option: it predates the cap, the
-dropped line indices, the scalar `c` channel and position rounding. Today even the
-uncapped path is ~5x lighter than it was — but 23 MB is still a payload no page
-should carry, which is why the cap is on by default.
+The pre-v6 number predates current geometry capping and serialization. These
+sizes vary with the data, rounding, poster and loader. Measure the exported file
+and inspect it on the devices where it will be read.
 
-**Publish to this budget:**
-
-| Payload | Verdict |
-| --- | --- |
-| ≤ 500 KB | comfortable — embed as many as you like |
-| ≤ 2 MB | fine for a hero / landing page |
-| > 5 MB | you passed `max_points=None`; be sure you meant it |
-
-**The cap is applied by arc length, never by a stride** — and that is not a
-stylistic preference. The scale-free readability criterion is the worst-case
+**Line geometry is thinned by arc length rather than a sample stride.** One
+measure of the resulting geometric error is the worst-case
 *sagitta*: the bow of the curve off its local chord, over the bounding-box
 diagonal, which should stay under ~0.01 for a curve to read as an arc rather than
 a polygon. Measured at a 40 000-vertex budget on `final_time=90, dt=0.001`
@@ -539,8 +524,8 @@ tightly-curved turns — exactly the features that carry the geometry. HyperQi a
 a stride is 35x off target and visibly chorded; arc-length resampled at the same
 byte count it is smooth. (A **point cloud** — a map's iterate set — has no chord
 to bow off, so it is thinned instead by a deterministic seeded uniform draw,
-which preserves the invariant density and cannot alias a resonant orbit the way
-a stride can.)
+which samples the recorded empirical distribution without systematically
+selecting an iterate phase. It still introduces finite-sample variation.)
 
 #### When 40 000 vertices is not enough
 
@@ -561,12 +546,11 @@ across the catalogue, the worst-case sagitta tracks $h$ in one of two regimes:
   visible.
 - **cusp-like hyperchaotic attractors** are *curvature-limited*: sagitta $\approx h$,
   because the local radius of curvature at the sharpest turns is comparable to the
-  chord itself. No resample can beat that; only more vertices can.
+  chord itself. This regime can require more vertices to resolve sharp turns.
 
 So a long trace of a fast attractor **can** exceed the target at the default cap.
 HyperQi over `final_time=400` reaches $L/D = 1661$, giving $h = 0.042$ and a measured
-sagitta of **0.038** — about 5x over. The fix is to spend vertices, not to change
-the resampling:
+sagitta of **0.038** — about 5x over. Increase the vertex budget or shorten the displayed time window:
 
 ```python
 # skip-doctest — `traj` is a long HyperQi run (final_time=400); the sagitta and
@@ -605,12 +589,16 @@ Both ship, and they are different products — neither is a fallback for the oth
 | Best for | one interactive figure, axes and all | embedding an attractor *in a page* |
 | Axes / ticks / legend | yes | no (a bare WebGL scene) |
 | 2-D plots | yes, first-class | lifted to `z = 0`; not the point |
-| Big 3-D curves | slows down; gl3d cannot stream while you orbit | built for it |
-| Output | one `.html` (0.05 MB via `render(path=)`) | one `.html` (~1.5 MB inlined) |
-| Customising the look | plotly's API | edit the reference loader — it is yours |
+| Large 3-D curves | Check browser performance and point count | Geometry cap and resampling limit transferred vertices |
+| Output | HTML with CDN or inlined Plotly JavaScript | HTML with inlined payload and loader; three.js loads from a CDN |
+| Customising the look | Plot styling or native Plotly figure API | Supported plot styles; custom embedding through the loader |
 
-Reach for plotly when you want *a plot*. Reach for three.js when you want the
-attractor itself living in someone else's web page.
+Choose Plotly for interactive scientific axes and supported layouts. Choose
+Threejs for an orbitable geometry view embedded in a web page.
+
+Static `.camera(elev=..., azim=...)` settings choose the initial Threejs view.
+Camera spin is unsupported and produces a capability warning. Use
+`.style(axes=False)` or export with `axes=False` to hide the scale frame.
 
 ### The payload schema
 
@@ -626,7 +614,7 @@ attractor itself living in someone else's web page.
       "positions": [x0, y0, z0, x1, y1, z1, ...],   // FLAT, Float32-ready
       "indices":   [],                              // "surface" triangles only; [] for line/points
       "material": {                                 // the three.js-honored style keys
-        "color": "#1f77b4", "linewidth": null,
+        "color": "#1f77b4",
         "markersize": null, "alpha": null, "zorder": null
       },
       "c":         [c0, c1, ...],                   // OPTIONAL per-vertex SCALAR field
@@ -670,16 +658,15 @@ maps the optional scalar `c` through a colour ramp of its choice — exactly wha
     `n_samples` and `trail_length_samples` are reported in **capped** vertices —
     a reveal sized against the uncapped count would index past the buffer.
 
-A few honest exclusions the payload makes deliberately:
+Payload scope:
 
 - **`material`** carries only the style keys three.js genuinely honors —
-  `color` / `linewidth` / `markersize` / `alpha` / `zorder` (→ `renderOrder`).
+  `color` / `markersize` / `alpha` / `zorder` (→ `renderOrder`).
   `linestyle`, marker *shape*, and `cmap` are **not** emitted (the loader has no
   way to honor them — it owns a fixed built-in colormap ramp for `c`), so they
-  are dropped rather than serialized as dead fields. `caps` warns about any of them.
+  are omitted from the payload. `caps` warns about any of them.
 - **`c`** appears only for a genuine per-vertex gradient (`color_by="time"`, a
-  speed field, …). A *solid* colour rides once on `material.color` — repeating it
-  per vertex would be waste.
+  speed field, …). A solid color is stored once on `material.color`.
 - **`metadata.theme`** carries only `background` and `palette` — the other theme
   fields (foreground, font, grid) have no analogue in a bare three.js scene.
 
@@ -720,15 +707,9 @@ refuses the unsupported layout before writing a misleading artifact.
     matplotlib and plotly tile a composite into a real subplot grid; three.js has
     no subplots, so the panels are laid out side by side **in the scene** and
     viewed through one camera. For 2-D panels that reads much like a subplot grid.
-    For several 3-D panels it reads as several boxes at different depths, which is
-    honest but rarely what you want — save each panel separately (a panel *is* a
+    For several 3-D panels it reads as several boxes at different depths, which may be unsuitable for a quantitative comparison — save each panel separately (a panel *is* a
     `Plot`), or use `backend="plotly"` for a genuine interactive multi-panel
     page.
-
-    Earlier versions **refused** a composite `.html` outright, because the loader
-    read only the top-level `geometries` — `[]` for a composite — and the page came
-    up blank: a multi-megabyte file that existed, opened in a browser, and showed
-    nothing. That is fixed at the loader, so the refusal is gone.
 
 ### The reference loader
 
@@ -766,11 +747,8 @@ The frame is on by default for a static payload and off while a reveal comet pla
 (there the motion is the subject); `opts.axes` — surfaced as `axes=` on
 `render` / `save` — forces either way.
 
-It also sizes point clouds in **screen pixels**, not world units, with the dot
-diameter and opacity chosen from the point count. That distinction is not cosmetic:
-a 200 000-iterate Hénon export sized in world units drew every dot 23% as wide as
-the whole attractor and rendered as a solid opaque slab, with the Cantor banding —
-the entire content of the picture — buried underneath it.
+Point clouds use screen-pixel sizes, with default size and opacity chosen
+from the point count. This keeps markers readable across different orbit scales.
 
 It is written for real embedding contexts, not just a full-page demo:
 
@@ -779,11 +757,10 @@ It is written for real embedding contexts, not just a full-page demo:
   right size the moment it is revealed (a `window.resize` listener never fires for
   that, which used to leave such an embed permanently at 640x420);
 - it **idles when scrolled off-screen** (`IntersectionObserver`), so a page with
-  six attractors is not running six WebGL loops for nobody;
-- `dispose()` really tears down — both animation loops, both observers, and every
+  six attractors is does not render hidden scenes unnecessarily;
+- `dispose()` releases — both animation loops, both observers, and every
   geometry / material / texture — so mounting and unmounting does not leak;
-- `devicePixelRatio` is capped at 2, because a thin-line scene gains nothing from
-  9x the fragments on a 3x-DPR phone.
+- `devicePixelRatio` is capped at 2, to bound rendering cost on high-density displays.
 
 ### In the system catalogue
 
@@ -804,9 +781,8 @@ Any WebGL or CDN failure falls back to the static PNG. The emitter is
 The exact payload the 3-D catalogue pages ship — the Lorenz attractor as an
 **animated reveal comet** (a thin teal trail fading into the dark stage behind an
 indigo state head, sweeping the full faint attractor) rendered in your browser by
-the reference loader. **The camera is yours: drag to orbit, scroll to zoom — the
-comet keeps playing while you move it.** The play/pause + restart controls sit
-bottom-left.
+the reference loader. Drag to orbit and scroll to zoom while playback continues. The play/pause + restart controls sit
+in the viewer.
 
 <div id="tsdyn-threejs-viewer"
      style="width:100%;height:460px;border-radius:8px;overflow:hidden;background:#0b0f14"></div>
@@ -844,13 +820,13 @@ bottom-left.
 | `import tsdynamics` and expecting a plot library | None is imported — `ts.viz` is lazy, and backends register on first render. |
 | No plotting library installed | `matplotlib` / `plotly` renders raise `VisualizationNotInstalled`; `json` / `threejs` still work (they need no dependency). |
 | Naming a backend that declines the spec | Dispatch warns (`VisualizationDegraded`) and falls back to matplotlib. |
-| A style / theme knob a backend ignores | One consolidated `VisualizationDegraded` names every dropped knob (json is exempt). |
+| A style / theme option a backend ignores | One consolidated `VisualizationDegraded` names every dropped option (json is exempt). |
 | Strict `filterwarnings=["error"]` test suite | A degradation becomes an error — scope a narrow `pytest.warns` / ignore around the one call. |
 | Saving `.mp4` with no ffmpeg | matplotlib raises — install ffmpeg, or save `.gif` (pillow) / `.html` (plotly). |
 | `.render("json")` returns a `RenderResult`, not a string | Pass `raw=True` for the bare string, or read `.payload`. |
 | A `VisualizationDegraded` about capped vertices | Expected — the export was thinned to `max_points` by arc length. Pass `max_points=None` to keep every vertex (and read the size budget first). |
 | A `.html` three.js page shows the poster, not the attractor | The pinned three.js CDN was unreachable, or WebGL is off. The poster *is* the fallback working as designed. |
-| `save("x.json")` vs `save("x.json", backend="threejs")` | Two different documents (spec IR vs BufferGeometry) behind one extension — name the backend. |
+| `save("x.json")` vs `save("x.json", backend="threejs")` | Two different documents (plot description vs BufferGeometry) behind one extension — name the backend. |
 
 ---
 

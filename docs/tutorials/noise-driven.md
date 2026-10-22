@@ -96,7 +96,7 @@ round(finals.var(), 4)                  # 0.0451   ≈ 0.045  — the analytic v
 int(np.isnan(finals).any(axis=1).sum()) # 0  — no diverged trajectories
 ```
 
-With 2000 paths the ensemble variance at $T = 30$ nails the stationary value
+With 2000 paths the ensemble variance at $T = 30$ is close to the stationary value
 $0.045$. The **transient** matches theory too: the ensemble mean decays as
 $\mu + (x_0 - \mu)\,e^{-\theta t}$. Sweep the horizon and compare:
 
@@ -114,10 +114,10 @@ transient.
 
 <figure class="ts-fig" markdown>
 ![OU sample paths with the ensemble mean tracking the analytic exponential decay and a ±sd band](../assets/figures/tutorials/ou-ensemble.svg){ loading=lazy }
-<figcaption><span class="lbl">FIG 1</span> · Ornstein–Uhlenbeck relaxation. Five seeded sample paths (faint teal) start at $x_0 = 2$ and are pulled toward $\mu = 0$. The ensemble mean (indigo, over 3000 paths) tracks the analytic transient $\mu + (x_0-\mu)e^{-\theta t}$ (dashed rose) exactly, while the $\pm\,$sd band (indigo shading) widens to the stationary spread $\sigma/\sqrt{2\theta}$ (dotted). The single path is one draw; the ensemble is the law.</figcaption>
+<figcaption><span class="lbl">FIG 1</span> · Ornstein–Uhlenbeck relaxation. Five seeded sample paths (faint teal) start at $x_0 = 2$ and are pulled toward $\mu = 0$. The ensemble mean (indigo, over 3000 paths) approximates the analytic transient $\mu + (x_0-\mu)e^{-\theta t}$ (dashed rose), while the $\pm\,$sd band (indigo shading) widens to the stationary spread $\sigma/\sqrt{2\theta}$ (dotted). The ensemble estimates the distribution; it still has sampling and discretization error.</figcaption>
 </figure>
 
-!!! warning "Ensemble seeding is by index — by design"
+!!! note "Ensemble seeds depend on member index"
     `ensemble(ics).run(seed=s)` seeds trajectory $i$ from `seed_for(s, i)`, a
     mix depending only on the index, so the batch is reproducible and matches the
     engine's parallel-equals-serial contract. This means a one-member ensemble
@@ -129,7 +129,7 @@ transient.
 
 ## 3. Noise-induced switching (Kramers escape)
 
-Now the headline stochastic phenomenon. The **double-well** process is overdamped
+The **double-well** process is overdamped
 gradient flow in the bistable potential $U(x) = -\tfrac{a}{2}x^2 +
 \tfrac{b}{4}x^4$,
 
@@ -226,8 +226,8 @@ whole path.
 ## 5. The deterministic skeleton
 
 Every SDE contains an ODE: set $\sigma = 0$ (or read the drift alone) and you have
-the **deterministic skeleton** that the noise perturbs. It is always worth looking
-at — it tells you where the attractors of the noisy system are hiding. For the
+the **deterministic skeleton**. Its equilibria and basins can help explain
+weak-noise behavior, but noise can also change the effective dynamics. For the
 double well the skeleton is a bistable gradient flow: without noise the state
 simply rolls into the nearest well and stops.
 
@@ -240,13 +240,13 @@ round(det.run(final_time=50.0, dt=0.01, ic=[ 0.2], seed=0).y[-1, 0], 4)  #  1.0
 
 From $x_0 = -1.5$ it settles into the left well ($-1$); from $x_0 = 0.2$, just
 right of the barrier, into the right well ($+1$). Those two fixed points are
-exactly the states the noise telegraphs *between* in §3 — the skeleton's basins
-(which you can map with [`ts.analysis.basins`](basins-multistability.md) on the
-$\sigma = 0$ system) are the wells; the noise supplies the barrier-hopping the
-skeleton can never do on its own.
+the states around which the noisy path spends time in §3. Setting `sigma=0`
+does not change this object's SDE family. To use deterministic equilibrium or
+basin analyses, define a `ContinuousSystem` with the same drift; those analyses
+reject `StochasticSystem` inputs even when diffusion is zero.
 
 !!! tip "Skeleton first, then noise"
-    A good workflow for any SDE: study the deterministic skeleton with the full
+    For this additive-noise example: study the deterministic skeleton with the full
     ODE toolkit — [fixed points](../analysis/fixed-points.md),
     [Lyapunov exponents](../analysis/lyapunov.md),
     [basins](basins-multistability.md) — to map the landscape, *then* add noise
@@ -261,7 +261,8 @@ matched the analytic OU laws to three decimals, watched noise drive Kramers
 escape across a double-well barrier (and proliferate as $\sigma$ grew), confirmed
 the log-normal mean/median gap of multiplicative noise, and grounded all of it in
 the deterministic skeleton underneath. Each result carries its scheme, seed and
-`dt` in `.meta`, so any path or ensemble replays exactly.
+`dt` in `.meta`. Retain the software version and backend too; seeded replay
+requires the same numerical configuration.
 
 ## See also
 

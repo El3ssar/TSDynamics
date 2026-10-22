@@ -1,16 +1,15 @@
 ---
-description: The TSDynamics mental model — four families sharing one stepping protocol, three execution backends, and derived wrappers that re-present a system through a new lens.
+description: Understand the four system families, their shared stepping methods, execution backends and derived systems.
 ---
 
 <span class="ts-kicker">Start · 03</span>
 
 # The mental model
 
-The whole library rests on a small set of ideas. A **system** is a class that
-declares its parameters, its dimension, and *one method* holding the dynamics.
-Everything downstream — lowering to the engine, integration, output grids, the
-Lyapunov machinery, the analysis toolkit — is inherited from a family base
-class. This page is the map of those ideas.
+A **system** declares state variables, parameters and equations or an update
+rule. Its family supplies the corresponding simulation methods. Analysis
+functions and plots then work with the system or its recorded trajectories,
+subject to their mathematical and numerical requirements.
 
 ## The four families
 
@@ -117,12 +116,11 @@ Maps are the one family whose body uses **NumPy** functions (`np.sin`, `np.cos`,
 `np.exp`, …) rather than `symengine` — the map `_step` is traced symbolically
 through those ufuncs to build its tape.
 
-!!! warning "Parameter order is positional for maps and SDEs"
-    `_step`/`_jacobian` (and `_drift`/`_diffusion`) receive parameters
-    **positionally**, in the insertion order of the `params` dict — whereas an
-    ODE/DDE `_equations` receives them by name (`a=...`). A map signature that
-    disagrees with the `params` order is rejected with a `TypeError` at import,
-    so this can never fail silently.
+!!! warning "Map parameters are positional"
+    A map's `_step` and `_jacobian` receive parameters in the insertion order of
+    `params`. Their signatures must match that order; a mismatch raises
+    `TypeError` when the class is defined. ODE/DDE `_equations` and SDE
+    `_drift`/`_diffusion` receive parameters by name instead.
 
 The full worked example — from a blank class to an integrated, plotted,
 auto-registered system — is on [Defining systems](defining-systems.md).
@@ -143,8 +141,8 @@ lor.run(final_time=10)     # same tape, new parameter value
 
 Only *structural* parameters — integer loop bounds that change the *shape* of the
 equations, like Lorenz-96's `N`, declared in `_structural_params` — require a
-fresh lowering. A parameter sweep (a continuation, a bifurcation diagram) reuses
-one cached tape, so it stays cheap. Delay values are the exception: a DDE bakes
+fresh lowering. A parameter sweep can reuse the cached tape. Delay values are
+the exception: a DDE embeds
 its delay into the tape, so a delay sweep re-lowers per value.
 
 ## One protocol for everything that steps
@@ -175,48 +173,44 @@ u1 = lor.step(0.01)          # integrate one dt chunk from the live state
 u2 = lor.step(0.01)          # continue from there
 ```
 
-**`run` is the one-liner over the same machinery**, and the two verbs divide
-cleanly: `run()` is always a *fresh* integration from the initial condition;
-`step()` is the one that continues. An automatically resolved initial condition
+`run()` starts a fresh simulation from the initial condition; `step()` continues
+from the current state. An automatically resolved initial condition
 is retained on the instance, so repeated deterministic runs reuse that start.
 For reproducibility across fresh instances, fix the initial condition or pass
 `seed=`; SDEs also need a fixed noise seed to reproduce their realisation.
 
 !!! note "`family` replaces `is_discrete`"
-    One name, four answers, and it separates `"dde"` from `"sde"` — which a
-    boolean could not. `sys.family == "map"` is the discreteness test.
+    `family` identifies `"ode"`, `"dde"`, `"sde"` or `"map"`.
+    Use `sys.family == "map"` to identify a discrete map.
 
 ## Backends: `jit`, `interp`, `reference`
 
-Orthogonal to *what* a system is is *how* the engine executes its tape. The same
-run works on any of three backends, chosen with `backend=`:
+Choose how the equations are evaluated with `backend=`. Available backends
+depend on the family:
 
 | `backend` | What it is | When to use it |
 | --------- | ---------- | -------------- |
-| `"jit"` | The Cranelift JIT, which compiles the tape to native code — **the default** | Everyday integration. The compile is cached per distinct system, so it is paid once (sub-millisecond for a typical flow) and the runs are ~1.5× faster |
-| `"interp"` | The Rust SSA-tape interpreter | When you want no compile at all — a very short one-shot run, or one of the handful of tiny systems the interpreter wins on; **bit-for-bit identical** to `jit` |
-| `"reference"` | A dependency-light pure-Python oracle (ODEs, SDEs, maps) | Cross-validation and wheel-free environments — the answer key, not the fast path |
+| `"jit"` | Cranelift compiles the expression tape to native code; compiled evaluators are cached | The default for repeated simulations and parameter sweeps |
+| `"interp"` | The Rust interpreter evaluates the same tape without JIT compilation | Short runs, profiling or comparison with JIT execution |
+| `"reference"` | A separate Python implementation for ODEs, SDEs and maps | Cross-checks; this path is usually slower and has no DDE integrator |
 
 ```python
 traj = ts.systems.Lorenz().run(final_time=100.0, dt=0.01, backend="interp")
 ```
 
-`interp` and `jit` lower the *same* tape, so they agree to the last bit.
-`reference` is an independent implementation kept as a correctness oracle; it
-tracks the compiled path closely at early times and, being a separate float
-computation, diverges only as roundoff accumulates on a chaotic orbit — exactly
-as any two independent integrators would. Not every family supports it: delay
-systems have no pure-Python integrator and reject `backend="reference"` loudly
-rather than silently degrading.
+`interp` and `jit` evaluate the same tape using the same numerical kernels and
+are tested for bitwise agreement on the same platform. The separate `reference`
+implementation provides a cross-check. Its rounding and solver behavior can
+differ, and chaotic trajectories amplify small differences over time. Delay
+systems reject `backend="reference"` because no Python DDE integrator is provided.
 
 ## Derived systems: composition
 
-A **derived system** re-presents an existing system through a new lens while
+A **derived system** exposes a different view of an existing system while
 keeping the protocol intact. Analyses can consume the wrapped view when its
 family and capabilities meet their requirements, and it still answers `run`.
 
-Two of them are **verbs on the system**, because they speak the same vocabulary
-as the class you are holding:
+Two common derived systems are available as methods:
 
 ```python
 pmap = ts.systems.Rossler().poincare("y", 0.0)        # flow → a discrete map
@@ -234,11 +228,10 @@ Because the result **is** a discrete system, compatible map tools apply to a flo
 an [orbit diagram](../analysis/orbit-diagrams.md) over a Poincaré map **is** a
 bifurcation diagram of the flow.
 
-`band.run(final_time=…)` returns a `TrajectoryBatch` — a list of trajectories
+`band.run(final_time=…)` returns a `TrajectoryBatch` — a read-only sequence of trajectories
 that also carries `.final`, the `(n, dim)` array of end states.
 
-Two more wrappers are Lyapunov and projection machinery rather than things you
-type every day, so they live at their own address:
+Tangent dynamics and state projection are available through two further wrappers:
 
 ```python
 from tsdynamics.derived import TangentSystem, ProjectedSystem
@@ -262,8 +255,9 @@ registry.get("Lorenz")     # SystemEntry('Lorenz', family='ode', category=..., d
 Define `class MyODE(ts.ContinuousSystem)` anywhere in your code and it appears in
 the registry immediately. For built-in systems the registry is also what the
 bulk test suite sweeps and what generates the per-system pages under
-[Systems](../systems/index.md): adding a system to the library *is* adding its
-tests and its documentation.
+[Systems](../systems/index.md). New catalogue entries participate in the shared
+tests and documentation generation; model-specific checks are still needed to
+verify their equations and expected behavior.
 
 ---
 

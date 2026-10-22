@@ -222,6 +222,7 @@ _VIZ_EXTRA_TESTS: tuple[str, ...] = (
     "test_to_plot_spec.py",
     "test_plot_accessor_kinds.py",
     "test_renderers_registry.py",
+    "test_docs_static_figures.py",
     "test_audit_WP12_viz_compose_spec.py",
     "test_audit_WP13_viz_render.py",
 )
@@ -313,15 +314,16 @@ _CATALOGUE_GATES: tuple[str, ...] = (
 #: The gate that **executes** the documentation: every runnable ``python`` fence
 #: on every ``docs/**.md`` page, the ``mkdocs.yml`` exclusion block, and the
 #: catalogue counts written in prose.  A documentation change selects it.
-_DOCS_GATE_TESTS: tuple[str, ...] = ("test_doctests.py",)
+_DOCS_GATE_TESTS: tuple[str, ...] = ("test_doctests.py", "test_docs_motion.py")
 
 #: ``docs/_tooling/`` is code the suite imports, not prose: the gallery builder
 #: (``test_viz_gallery.py``), the committed golden-figure corpus
 #: (``test_docs_figures_golden.py``) and ``editorial.json``, the reviewed
 #: per-system claim table ``test_catalogue_dynamics.py`` reads.
 _DOCS_TOOLING_TESTS: tuple[str, ...] = (
-    "test_doctests.py",
+    *_DOCS_GATE_TESTS,
     "test_docs_figures_golden.py",
+    "test_docs_static_figures.py",
     "test_viz_gallery.py",
     "test_catalogue_dynamics.py",
     # The docs tooling reads the CATALOGUE, and v6 moved five of its ClassVars

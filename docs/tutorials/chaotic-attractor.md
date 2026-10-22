@@ -7,14 +7,11 @@ description: A complete walkthrough of a chaotic flow — define the Lorenz syst
 
 # Anatomy of a chaotic attractor
 
-Everyone has seen the Lorenz butterfly. This tutorial takes it apart. We start
-from three lines of differential equations, integrate them, and draw the
-attractor, then quantify numerical evidence for chaos. These finite-time
-estimates do not constitute a mathematical proof. By the end you will
-have watched two identical-looking states pull apart, measured the exponential
-rate at which they do, read the attractor's fractal dimension straight off that
-measurement, and confirmed it a second, independent way. That chain — integrate,
-then quantify — is the pattern the whole library is built around.
+This tutorial simulates the Lorenz system, plots its orbit, and compares several
+pieces of numerical evidence for chaos: finite trajectory separation, the
+Lyapunov spectrum and two dimension estimates. It also checks phase-volume
+contraction against an exact identity. These finite-time calculations are
+cross-checks, not a mathematical proof or a guaranteed dimension measurement.
 
 The example is the **Lorenz system** (Lorenz, 1963), a three-variable model of
 thermal convection:
@@ -69,7 +66,7 @@ traj.meta["method"]   # the solver that ran — 'rk45'
 ```
 
 A three-component trajectory draws as a 3-D phase portrait straight from the
-front door — [`ts.plot`](../visualization/index.md) auto-dispatches on the
+[`ts.plot`](../visualization/index.md) chooses the view from the
 component count. We hide the axes and set a camera angle for a clean "attractor
 floating in space":
 
@@ -123,8 +120,8 @@ a $10^{-9}$ initial difference grows to order 1 by $t \approx 34$ and to the
 scale of the attractor itself shortly after. That is the *predictability
 horizon* — push the starting uncertainty down by another factor of ten and you
 buy only a *constant* extra amount of forecast time, because the growth is
-exponential, not linear. This is the property that makes weather
-unforecastable weeks ahead no matter how good the measurements.
+exponential, not linear. The numerical horizon also depends on the initial direction, transient growth
+and the accuracy required of the forecast.
 
 ## 4. Quantify it: the Lyapunov spectrum
 
@@ -263,12 +260,10 @@ for chaos: the attractor drawn, sensitive dependence witnessed, the
 Lyapunov spectrum computed with its signs read, the phase-volume contraction
 checked against theory, and two related dimension estimates compared.
 Every result carries its settings in `traj.meta` / the result's `.meta`,
-so the whole thing is reproducible and auditable.
+so the input choices can be retained with the results.
 
-That is the arc the library is built for: **define the system once, then compose
-[analysis](../analysis/index.md) on top of it.** The [next
-tutorial](bifurcations.md) asks the sequel question — where does this chaos
-*come from* as a parameter is turned?
+The [next tutorial](bifurcations.md) studies how the long-term motion changes
+as a parameter varies.
 
 ## See also
 
@@ -276,7 +271,7 @@ tutorial](bifurcations.md) asks the sequel question — where does this chaos
 - [Fractal dimensions](../analysis/dimensions.md) — the correlation dimension and the rest of the fractal-geometry toolkit
 - [The road to chaos](bifurcations.md) — how a fixed point period-doubles into an attractor like this one
 - [Reconstruction from one signal](reconstruction.md) — recover all of the above from a single measured channel
-- [Chaos indicators](../analysis/chaos.md) — fast "is it chaotic?" verdicts (GALI, the 0–1 test) that stand in for the full spectrum
+- [Chaos indicators](../analysis/chaos.md) — alignment, scalar-series and regional-growth indicators with different assumptions
 
 ## References
 

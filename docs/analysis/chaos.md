@@ -6,10 +6,8 @@ description: GALI, the 0–1 test, and expansion entropy — numerical indicator
 
 # Chaos indicators
 
-TSDynamics offers three numerical indicators that approach sensitivity from
-different angles: the
-alignment of tangent vectors, a single scalar drawn from one observable, and
-the growth of a derivative-volume that estimates topological entropy. Each
+TSDynamics provides indicators based on tangent-vector alignment, a statistic
+from a scalar observable and regional derivative-volume growth. Each
 returns a result you can inspect. Their assumptions differ, so use independent
 indicators and longer observation windows to cross-check a conclusion.
 
@@ -24,9 +22,9 @@ indicators and longer observation windows to cross-check a conclusion.
 | [`zero_one_test`](#the-01-test) | scalar $K \in [-1, 1]$ | $K \approx 1$ | $K \approx 0$ |
 | [`expansion_entropy`](#expansion-entropy) | expansion entropy $H_0$ | asymptotic $H_0 > 0$ | check horizon, region and survivor statistics |
 
-Maps use the compiled analytic Jacobian; flows use a self-contained RK4
-variational core. Both are backend-free (the fast tier — no engine compile
-step), so these tests are cheap to sweep over a parameter or an ensemble.
+GALI and expansion entropy use the equations of deterministic ODEs or maps;
+the 0–1 test can also use recorded scalar data. Cost and applicability depend
+on state dimension, sampling and the selected observation window.
 
 ## GALI — Generalized Alignment Index
 
@@ -62,8 +60,8 @@ import tsdynamics as ts
 
 g = ts.analysis.gali(ts.systems.Lorenz(), 2, final_time=40.0, dt=0.05, ic=[1.0, 1.0, 1.0])
 
-g.values[0], g.values[-1]   # ≈ 1.0  →  ~1e-16   (exponential collapse: chaotic)
-g.is_chaotic()              # True
+g.values[0], g.values[-1]   # ≈ 1.0  →  ~1e-16   (alignment collapse)
+g.is_chaotic()              # True: legacy threshold heuristic, not a chaos verdict
 g.decay_rate()              # ≈ 0.82  →  λ₁ − λ₂  (the Skokos law; lit. ≈ 0.906)
 g.is_discrete               # False
 ```
@@ -89,18 +87,18 @@ a fitted decay exponent.
 ts.analysis.gali(ts.systems.Lorenz(), 3, final_time=40.0, dt=0.05,
         ic=[1.0, 1.0, 1.0]).decay_rate()   # ≈ 18.4  (lit. gap sum ≈ 16.4)
 
-# On a map GALI is immediate (analytic Jacobian, no integration):
+# On a map GALI applies the Jacobian at each iterate:
 ts.analysis.gali(ts.systems.Henon(), 2, n=60).is_chaotic()    # True
 ```
 
 !!! note "GALI on a flow integrates its variational core"
-    `gali` on a map is immediate; on a flow the deviation vectors are advanced
+    On a map, `gali` applies the Jacobian at each iterate. On a flow, vectors are advanced
     by the internal RK4 variational core, so it is slower. The measured decay
     rate of $\mathrm{GALI}_2$ on Lorenz ($\approx 0.82$ over this short orbit)
     approximates the Skokos-law gap $\lambda_1 - \lambda_2 \approx 0.906$ (with
     $\lambda_2 = 0$ along the flow); a short, un-renormalised horizon is a
-    finite-time estimate, so the number brackets rather than nails the exponent
-    gap. See [Lyapunov spectra](lyapunov.md) for the spectrum itself.
+    finite-time estimate, so it need not match the asymptotic gap. See
+    [Lyapunov spectra](lyapunov.md) for the spectrum itself.
 
     GALI characterises a **specific** orbit, so an explicit `ic` that escapes
     the basin raises rather than being silently swapped for a random one — pass
@@ -109,7 +107,7 @@ ts.analysis.gali(ts.systems.Henon(), 2, n=60).is_chaotic()    # True
 
 ## The 0–1 test
 
-`zero_one_test` answers the question from a **single scalar observable** — no
+`zero_one_test` uses a **single scalar observable** — no
 phase-space reconstruction, no Jacobian at all (Gottwald & Melbourne 2004,
 2009). For each of many random frequencies $c$ it drives a skew translation,
 
@@ -141,21 +139,27 @@ ts.analysis.zero_one_test(x)          # ≈ 0.998   (the data overload — horiz
 
 The test medians over `n_c` random drive frequencies drawn from `c_range`
 (defaulting to the interval that avoids the resonances near $c = 0, \pi$); pass
-`seed=` for a reproducible draw, and `return_distribution=True` to also get the
-per-frequency $K_c$ array. The `ZeroOneResult` is a drop-in for its $K$ value
+`seed=` for a reproducible draw. The per-frequency values are available on
+`result.distribution`; there is no separate return-shape flag. The `ZeroOneResult` is a drop-in for its $K$ value
 and also carries the translation plane $(p_c, q_c)$ — a bounded blob for
 regular motion, a diffusing cloud for chaos — which `result.plot()` renders as a
-phase portrait.
+phase portrait. With `oversampling="resample"` (the default), a mean-crossing
+heuristic may decimate an oversampled record; the stride is stored in `.meta`.
+Use `"warn"` to inspect the original record with a warning, or `"ignore"` to
+disable this guard. Check whether that heuristic suits your observable.
 
-!!! warning "Noise-free deterministic signals only"
-    The 0–1 test is designed for deterministic data, and successive samples
-    must be **decorrelated** — every iterate for a map, but a *coarse* `dt`
-    (or a Poincaré / stroboscopic view) for a flow. Strong observational noise
-    pushes $K$ spuriously toward 1, so pre-filter, sample sparsely, or
-    cross-check with an independent indicator (GALI or the Lyapunov
-    spectrum) before trusting the verdict. The correlation method
+!!! warning "Check sampling and observational noise"
+    The 0–1 test is designed for deterministic data. Oversampling a flow can
+    obscure its growth statistic; compare several sampling intervals or use
+    a Poincaré / stroboscopic view. Map iterates may also be correlated, so
+    assess record length and sampling rather than assuming every iterate is
+    suitable. Observational noise can push $K$ toward 1. Filtering changes the
+    signal and is not a general correction: compare results with independent
+    evidence before interpreting the statistic as chaos. The correlation method
     returns a Pearson coefficient, so $K \in [-1, 1]$ in principle (a regular
-    orbit can give a small negative $K$); $K > 0.5$ is the usual threshold.
+    orbit can give a small negative $K$). The result's `.chaotic` property uses
+    conservative cutoffs: `True` at $K\geq0.8$, `False` at $K\leq0.2$, and
+    `None` between them. These are interpretation heuristics, not proofs.
 
 ## Expansion entropy
 
@@ -204,7 +208,7 @@ dimension. For a **flow** pass `final_time=` and `dt=` instead of `n=` (passing
 ```python
 ts.analysis.expansion_entropy(ts.systems.Lorenz(), [(-20.0, 20.0), (-25.0, 25.0), (0.0, 50.0)],
                      n_samples=300, final_time=3.0, dt=0.1).entropy
-# ≈ 1.16   (a positive rate — Lorenz is chaotic)
+# ≈ 1.16   (positive finite-time growth over this region and horizon)
 ```
 
 The `ExpansionEntropyResult` carries `entropy`, `stderr`, the
@@ -234,9 +238,9 @@ uniformly-expanding maps, the approximate ones for chaotic attractors.
 
 ## See also
 
-- [Lyapunov spectra](lyapunov.md) — the full quantifier these three indicators stand in for
-- [Recurrence & RQA](recurrence.md) — a complementary, geometry-based chaos diagnostic
-- [Fixed points & periodic orbits](fixed-points.md) — the regular attractors these tests must *not* flag as chaotic
+- [Lyapunov spectra](lyapunov.md) — rates of infinitesimal perturbation growth along an orbit
+- [Recurrence & RQA](recurrence.md) — recurrence geometry and line statistics
+- [Fixed points & periodic orbits](fixed-points.md) — invariant sets and their linear stability
 
 ## References
 

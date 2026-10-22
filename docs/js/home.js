@@ -27,13 +27,11 @@
     var intersection = null, frameId = null, tourTimer = null, previousTime = null;
     var group, scene, camera, current = null, loading = false, visible = true;
     var systems = [], systemIndex = -1, dragging = false, pointerX = 0, pointerY = 0;
-    var orbitAfter = 0, speed = 1, duration = 60, tail = 560, scale = 24;
+    var orbitAfter = 0, duration = 20, tail = 560, scale = 24;
     var motion = window.matchMedia("(prefers-reduced-motion: reduce)");
     var paused = motion.matches;
     var pauseButton = document.getElementById("ts-pause");
     var nextButton = document.getElementById("ts-next");
-    var speedSelect = document.getElementById("ts-speed");
-    speed = Number(speedSelect.value) || 1;
     var nameLabel = document.getElementById("ts-sysname");
     var status = document.getElementById("ts-boot");
     var controls = document.getElementById("ts-controls");
@@ -43,7 +41,7 @@
     status.hidden = false;
     status.textContent = "Loading interactive preview…";
     controls.hidden = false;
-    pauseButton.disabled = nextButton.disabled = speedSelect.disabled = true;
+    pauseButton.disabled = nextButton.disabled = true;
 
     function listen(target, name, fn) {
       target.addEventListener(name, fn, { signal: signal.signal });
@@ -115,10 +113,10 @@
       if (!canAnimate() || !current) { previousTime = null; return; }
       var elapsed = previousTime === null ? 0 : Math.min((timestamp - previousTime) / 1000, 0.05);
       previousTime = timestamp;
-      if (timestamp >= orbitAfter && !motion.matches) group.rotation.y += 0.025 * elapsed;
+      if (timestamp >= orbitAfter && !motion.matches) group.rotation.y += 0.075 * elapsed;
       if (current.position < current.points.length - 1) {
         current.position = Math.min(current.points.length - 1,
-          current.position + current.points.length * elapsed * speed / duration);
+          current.position + current.points.length * elapsed / duration);
         if (current.position === current.points.length - 1 && tourTimer === null) {
           tourTimer = setTimeout(function () {
             tourTimer = null;
@@ -181,7 +179,6 @@
       fallback.hidden = true;
       status.hidden = true;
       pauseButton.disabled = false;
-      speedSelect.disabled = false;
       previousTime = null;
       fitCamera();
       requestFrame();
@@ -237,7 +234,6 @@
         draw();
         requestFrame();
       });
-      listen(speedSelect, "change", function () { speed = Number(speedSelect.value); });
       listen(nextButton, "click", loadNext);
       listen(canvas, "pointerdown", function (event) {
         if (event.button !== 0) return;

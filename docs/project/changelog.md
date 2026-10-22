@@ -8,8 +8,8 @@ description: Where TSDynamics release notes live, how versions are numbered, and
 
 Release notes are **generated automatically** from the conventional-commit
 history by [python-semantic-release](https://python-semantic-release.readthedocs.io/).
-Nobody writes them by hand — every released change is accounted for because the
-commit that introduced it carries its own `feat:` / `fix:` / `perf:` prefix.
+The commit types determine the version bump and organize the notes. Review
+the release notes for user-visible changes and migration guidance.
 
 ## Where the notes live
 

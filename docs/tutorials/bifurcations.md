@@ -7,21 +7,17 @@ description: The road to chaos — sweep the logistic map's growth rate to see t
 
 # The road to chaos
 
-The [previous tutorial](chaotic-attractor.md) took a chaotic attractor apart. This
-one asks the sequel: *where does the chaos come from?* Turn one knob on a simple
-system and the answer unfolds as the single most famous picture in nonlinear
-dynamics — a stable state that splits in two, splits again, and cascades into
-chaos. We will draw that **bifurcation diagram**, land its forks on the exact
-parameter values the theory predicts, confirm the onset of chaos with a Lyapunov
-exponent, and then — the payoff — reproduce the *entire route* for a continuous
-flow, using a Poincaré section to turn the flow into a map we can sweep the same
-way.
+Vary the logistic map's growth rate to draw a period-doubling diagram, compare
+numerically located transitions with known parameter values, and estimate a
+Lyapunov exponent at each value. Then apply the same workflow to a Rössler
+Poincaré map. Read the [attractor tutorial](chaotic-attractor.md) first if you
+want an introduction to the Lyapunov calculation.
 
 ## 1. The canonical example: the logistic map
 
 The logistic map $x_{n+1} = r\,x_n(1 - x_n)$ models a population that grows in
 proportion to $r$ but is capped by crowding. It is a one-line system, and its
-sole parameter $r$ is the knob. It is in the [catalogue](../systems/index.md):
+control parameter is $r$. It is in the [catalogue](../systems/index.md):
 
 ```python
 import numpy as np
@@ -56,8 +52,8 @@ r_vals, states = od.flat()   # scatter-ready 1-D arrays
 
 `flat()` returns two aligned arrays — the parameter repeated once per recorded
 point, and the asymptotic state — ready to scatter. A genuine `DiscreteMap` like
-this sweeps the *whole* parameter array in a single Rust engine call, so a
-600-value sweep is near-instant.
+this sweeps the parameter array in a single Rust engine call. Runtime depends
+on the number of values, transient length and samples retained.
 </div>
 
 <figure class="ts-fig" markdown>
@@ -136,11 +132,11 @@ ts.plot(sample, components="x", marker="o", markersize=2)
 
 ## 3. Confirm the onset with a Lyapunov exponent
 
-The orbit diagram *shows* chaos as a filled band; the [Lyapunov
-exponent](../analysis/lyapunov.md) *measures* it. For a map, $\lambda$ is
-negative on a stable cycle (nearby orbits converge onto it) and positive in
-chaos (they diverge). Sweep it and watch the sign flip exactly where the diagram
-turns chaotic:
+A filled band is suggestive but can also hide a long period or transient.
+Estimate a [Lyapunov exponent](../analysis/lyapunov.md) as an independent check:
+a stable hyperbolic cycle has negative exponents, while a persistent positive
+leading rate on a bounded orbit supports sensitive dependence. Finite-time
+rates can be ambiguous near transitions:
 
 ```python
 for r in [2.9, 3.2, 3.5, 3.57, 3.83, 3.9, 4.0]:
@@ -161,9 +157,9 @@ for r in [2.9, 3.2, 3.5, 3.57, 3.83, 3.9, 4.0]:
 $\lambda$ is negative throughout the periodic regime, crosses zero right at the
 accumulation point $r_\infty \approx 3.57$, goes positive in the chaotic bands —
 and dips *back* below zero inside the period-3 window, exactly matching the
-return to order the diagram shows. At $r = 4$ it hits $\ln 2 \approx 0.693$, the
-one value known in closed form (the map is conjugate to a tent map there). The
-picture and the number tell the same story.
+return to order the diagram shows. At $r = 4$, the typical-orbit asymptotic exponent is $\ln 2 \approx 0.693$
+(the map is conjugate to a tent map there). Exceptional initial conditions and
+finite-time estimates need not have that value.
 
 ## 4. The same route, for a flow
 
@@ -206,10 +202,9 @@ for cval in [2.5, 3.5, 4.1, 5.7]:
 # c ~ 5.70:  43 distinct crossings     chaotic — the Rössler funnel attractor
 ```
 
-There it is again — 1, 2, 4, … cascading into a chaotic band, the identical
-period-doubling route to chaos, one dimension up. The logistic map was not a toy
-curiosity: it is the *universal* skeleton (Feigenbaum, 1978) that a huge class of
-systems, flows included, follow into chaos.
+The section shows another period-doubling cascade. Feigenbaum universality
+applies under particular smoothness and critical-point assumptions; a similar
+diagram alone does not establish its scaling constants.
 
 !!! tip "Forced oscillators: strobe instead of a plane"
     For a *periodically forced* system the natural discrete view is once per

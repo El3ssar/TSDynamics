@@ -1,10 +1,12 @@
 # Start
 
-TSDynamics is a Python library for studying dynamical systems: you describe
-the math once, symbolically, and a compiled Rust engine integrates flows,
-iterates maps, marches delay and stochastic equations, and feeds a full
-chaos-analysis toolkit. This section is the getting-started journey — from a
-fresh `pip install` to defining a system of your own.
+TSDynamics simulates ordinary, delay and stochastic differential equations and
+discrete maps. You can use a built-in model or define your own, then study its
+trajectories with numerical analyses and plots. The compiled Rust engine is
+included in the standard installation.
+
+This section introduces installation, a first calculation, the main types of
+system and the equations required to define a new model.
 
 Read it in order, or jump to what you need:
 

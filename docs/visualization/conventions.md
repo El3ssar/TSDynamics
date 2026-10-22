@@ -21,7 +21,7 @@ The [scientific recipes](recipes.md) apply these choices in complete, editable
 figures. Their settings are visible beside each picture so that a reader can
 reproduce the sampling, projection, time window and color range.
 
-## The one rule: colour encodes meaning
+## Match color to the quantity {#the-one-rule-colour-encodes-meaning}
 
 Colour is a data channel, not ornament. The choice of colormap should follow the
 *kind* of quantity being shown, because the human eye reads different maps in
@@ -38,17 +38,13 @@ different ways.
 These are the library's built-in per-kind defaults — a `SPACETIME` /
 `SPATIAL_FIELD` / `IMAGE` renders viridis, a `BASINS_IMAGE` renders tab20, a
 `RECURRENCE_PLOT` renders binary, a `SPECTROGRAM` renders magma with a log norm —
-so you usually get the right map for free. Override with `cmap=` only for a
-deliberate reason.
+Use `cmap=` to choose a different map when it better represents your quantity.
 
-!!! danger "Never use a rainbow (jet) colormap"
+!!! note "Avoid artificial contrast"
 
-    `jet` and its relatives are **not** perceptually uniform: they invent
-    contrast where the data is flat (the cyan/yellow bands) and hide it where the
-    data changes, they are unreadable in greyscale, and they are hostile to
-    colour-blind readers. Every quantitative figure in this project uses viridis
-    or a sibling for exactly this reason. If you find yourself reaching for a
-    rainbow, reach for viridis instead.
+    Rainbow maps such as `jet` have uneven lightness, which can emphasize some
+    intervals and obscure others. For sequential values, start with a map such
+    as viridis, then check grayscale reproduction and color-vision accessibility.
 
 ## Keep comparisons easy to follow
 
@@ -120,16 +116,16 @@ that "several related views" is *panels*, not clutter.
 
 ## Colorbars and legends
 
-- **A scalar colour channel always gets a colorbar.** A `color_by=` line, a
+- **Label scalar color channels.** By default, A `color_by=` line, a
   spacetime image, a 2-D field — each grows a labelled colorbar and an inferred
-  colour range (`clim`) automatically, so the mapping from colour to value is
-  never left implicit.
+  colour range (`clim`). Check the label and units, especially for a custom
+  scalar channel.
 - **Two or more labelled layers get a legend.** A single-trace figure does not —
   the axis labels already say what it is. An overlay disambiguates its legend by
   source automatically.
 - **Fix the colour range across a comparison.** When two panels image the same
   quantity, set the same `clim=` on both so their colours are comparable —
-  otherwise each auto-scales independently and the colours lie about magnitude.
+  otherwise equal colors can represent different magnitudes.
 
 ```python
 # a shared colour range across two field panels, so the colours mean the same thing
@@ -206,7 +202,7 @@ ts.viz.themes.use("default")
 Before a figure leaves the notebook for a paper:
 
 - [ ] Colormap matches the quantity — **viridis** sequential, **twilight**
-      cyclic, **tab20** categorical, never a rainbow.
+      cyclic, **tab20** categorical; check accessibility and grayscale contrast.
 - [ ] Every axis is labelled; a colour channel has a labelled colorbar.
 - [ ] The figure makes **one** point; a second point is a second panel.
 - [ ] Compared panels share a `clim=` so colours are comparable.
@@ -217,5 +213,5 @@ Before a figure leaves the notebook for a paper:
 ## See also
 
 - [Styling & themes](styling.md) — how to apply all of the above.
-- [Plotting — the front door](plotting.md) — building the figure in the first place.
+- [Transforms and primitives](plotting.md) — building the figure in the first place.
 - [System catalogue](../systems/index.md) — every page is a worked example of these conventions.

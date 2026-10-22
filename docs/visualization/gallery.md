@@ -7,17 +7,13 @@ description: Every plot TSDynamics can draw, generated from the plot-transform r
 
 # The gallery
 
-This page is the answer to *"what plots can this library actually draw?"* — and
-it is **generated from the registry at build time**, not written by hand. Every
-figure below comes from the code printed beside it. Unchanged figures are reused
-from a content-addressed build cache.
+Browse the available views and drawing choices below. Each figure is generated
+from the code beside it. Start with a nearby example, then change the data,
+components and style. The [recipes](recipes.md) show how to combine views into
+complete scientific figures.
 
-That matters more than it sounds. A hand-written gallery drifts: a transform is
-renamed, an option changes, a picture stays. Here the page is built by walking
-`registry.plot_transforms`, and each snippet string is *executed* to make the
-figure it is shown next to. A transform that stopped drawing would fail the docs
-build. A newly registered transform with an `example=` factory can appear without
-a handwritten gallery entry.
+The gallery is generated from the transform registry. An extension can supply
+an `example=` factory for automatic inclusion; unchanged figures are cached.
 
 ## How to read it
 
@@ -46,7 +42,7 @@ them:
 -   **`data`** — computable from a series or a point set.
 
     A `Trajectory`, a NumPy array, an analysis result. It **also** accepts a
-    system, because a model gives you data for free.
+    system, which is simulated before a data view is built.
 
 -   **`model`** — must evaluate or integrate the right-hand side.
 
@@ -70,8 +66,8 @@ ts.plot(subject, "flow_speed", "nullclines", "streamlines")   # overlay several
 
 `ts.plot` always returns a [`Plot`](plotting.md), which renders itself —
 `.show()`, `.save("figure.pdf")`, `.render("plotly")` — so a gallery snippet is
-also a working first line of your own figure. Two rungs below it are public when
-you want the numbers rather than the picture:
+also a working first line of your own figure. Use the lower-level functions when
+you want plot coordinates or drawing layers instead of a rendered figure:
 
 ```python
 # skip-doctest — the escape-hatch pattern; `subject` is yours

@@ -316,7 +316,7 @@ def _attractor_block(
             '<figure class="ts-attractor-fig" markdown>',
             primary,
             f'<figcaption class="ts-attractor-cap">{_viewer.view_description(rec)}. '
-            f"{_INTERACTIVE_CAPTION}; play/pause controls below.</figcaption>",
+            f"{_INTERACTIVE_CAPTION}; use the play/pause control in the viewer.</figcaption>",
             "</figure>",
             "",
         ]
@@ -453,8 +453,9 @@ def _define_block(rec) -> list[str]:
         ]
     else:
         lines += [
-            "For the default adaptive ODE solver, `dt` is the output spacing. "
-            "Choose `rtol` and `atol` to control integration accuracy.",
+            "With an adaptive ODE solver, `dt` sets the output spacing; "
+            "`rtol` and `atol` control local integration error. "
+            "For a fixed-step solver, reduce `dt` to check numerical convergence.",
             "",
         ]
     return lines
@@ -738,9 +739,9 @@ def _system_page(
     parts += ["</div>", '<div markdown="1">', "", *attractor]
     if has_viewer or has_figure or field_movie:
         parts += [
-            '<p class="ts-model-note">The illustration is a finite simulation, '
-            "not a classification of every orbit. It may use a selected initial "
-            "condition or projection; diagnostics below state their own inputs.</p>",
+            '<p class="ts-model-note">This finite simulation illustrates one '
+            "initial condition and view. The diagnostics below report their "
+            "own inputs and observation windows.</p>",
             "",
         ]
 
@@ -806,9 +807,9 @@ def _systems_index(catalog) -> str:
 
     parts = [
         *_page_heading("Systems"),
-        '<p class="ts-subtitle">A curated library of canonical dynamical systems — '
-        "each with equations, parameters and a runnable example. Browse by "
-        "type, or drop straight into a definition and start simulating.</p>",
+        '<p class="ts-subtitle">Models for ordinary, delay and stochastic '
+        "differential equations and discrete maps, with equations, parameters "
+        "and runnable examples. Browse by family or choose a model below.</p>",
         "",
         '<div class="ts-stats" markdown>',
         f'<div class="ts-stat"><div class="ts-stat-num">{total}</div>'
@@ -844,7 +845,7 @@ def _systems_index(catalog) -> str:
         "import tsdynamics as ts",
         "",
         "lorenz = ts.systems.Lorenz(ic=[1, 1, 1])",
-        "traj = lorenz.run(final_time=100.0, dt=0.01)             # trajectory → attractor",
+        "traj = lorenz.run(final_time=100.0, dt=0.01)             # sampled trajectory",
         "exps = ts.analysis.lyapunov_spectrum(lorenz)             # [≈ +0.91, 0, ≈ −14.57]",
         "ts.analysis.kaplan_yorke_dimension(exps)                 # ≈ 2.06",
         "```",

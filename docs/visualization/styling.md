@@ -21,10 +21,10 @@ import tsdynamics as ts
 
 trajectory = ts.systems.Lorenz(ic=[1, 1, 1]).run(final_time=40, dt=0.02)
 plain = ts.plot(trajectory, components=["x", "z"], title="Default colours")
-plain.theme("publication").font(family="sans-serif")
+plain.theme("publication", foreground="#273947").font(family="sans-serif", size=12)
 
 styled = ts.plot(trajectory, components=["x", "z"], title="A deliberate style")
-styled.theme("publication").font(family="sans-serif").recolor("#11857A")
+styled.theme("publication", foreground="#273947").font(family="sans-serif", size=12).recolor("#11857A")
 styled.style(lw=0.9, alpha=0.85).gridlines(color="#94A0AA", alpha=0.2)
 figure = (plain | styled).size(10, 4)
 ```
@@ -53,7 +53,7 @@ with `figure[i]` when it needs its own labels or colour; use the composite's
 Supported styling carries across renderers, but the output is not pixel
 identical. Features such as line dashes and font controls have backend-specific
 support. The capability warning names an unsupported option rather than
-silently promising it was rendered. See [backends and export](backends.md).
+leaving the difference unexplained. See [backends and export](backends.md).
 
 ## Start with the change you want
 
@@ -202,11 +202,10 @@ Traceback (most recent call last):
 ValueError: invalid value for style key 'alpha': expected a value in [0, 1], got bool True
 ```
 
-### Unknown keys warn — they are never silently swallowed
+### Unknown style keys {#unknown-keys-warn-they-are-never-silently-swallowed}
 
-A typo or an unsupported key is **dropped with a single warning**, naming the
-offending key(s) and listing the vocabulary. There is no more "I set
-`colour='red'` and nothing happened":
+A typo or unsupported key is dropped with a warning that names the key and
+lists accepted alternatives:
 
 ```pycon
 >>> import warnings
@@ -221,7 +220,7 @@ offending key(s) and listing the vocabulary. There is no more "I set
 ```
 
 The same validation applies when creating a plot and when editing it with
-`.style(...)`, so these options mean the same thing at both doors.
+`.style(...)`, so these options mean the same thing in both cases.
 
 </details>
 
@@ -274,12 +273,9 @@ spec.style(axes=False)                        # hide the axes entirely
 
 `layer=None` (the default) applies to *every* layer; an `int` targets one layer.
 
-`axes=False` is a **figure-level switch**, not a style key: it hides ticks,
-labels, gridlines, and (in 3-D) the grey background panes — for a clean
-"attractor floating in space" still or animation. It is recorded as
-`meta["axes_visible"] = False` and **every backend honors it** (mpl
-`ax.set_axis_off()`, plotly `visible=False`, three.js drops the grid). It pairs
-naturally with `.camera(...)` for a headline attractor figure.
+`axes=False` hides ticks, labels, gridlines and 3-D panes. It works in
+Matplotlib, Plotly and Threejs HTML. Use it for an illustrative orbit view;
+retain coordinates when the figure needs to support quantitative comparisons.
 
 ### `.recolor(*colors, layer=None)` {#recolor}
 
@@ -302,9 +298,7 @@ through its panels; select `figure[i]` for a panel-specific change.
 ### `.theme(name | Theme, /, **overrides)` {#theme}
 
 The figure-level look (palette / font / background / grid / line defaults). The
-`theme` argument is **positional-only** — call `spec.theme("dark")`, never
-`spec.theme(theme="dark")` (the keyword name is reserved so a theme field
-literally called `theme` could go in `**overrides`). Pass a registered name, a
+`theme` argument is positional-only: call `spec.theme("dark")`. Pass a registered name, a
 `Theme` instance, or `None` (snapshot the active global default *now*), and
 optionally override individual fields on top:
 
@@ -329,8 +323,7 @@ from future global-default changes. You can always read the effective theme back
 'dark'
 ```
 
-`spec.resolved_theme` is the **read** half of the pattern (`.theme(...)` *sets*,
-`resolved_theme` *reads*, `spec._theme` is the raw private field).
+Read the effective theme through `spec.resolved_theme`.
 
 ### `.palette`, `.gridlines`, `.font`, `.background`, `.size` {#palette-grid-font-background-size}
 
@@ -392,9 +385,8 @@ p.save("lorenz.png")       # matplotlib, by extension — honors the whole chain
 
 Note the extension. Saving this same chain as `.html` routes to plotly, which
 does not honor `figsize` (see the honoring table above), so the `.size(...)` step
-would be dropped with a `VisualizationDegraded` warning naming it. That is the
-contract working as designed: a backend that cannot render a tweak says so
-rather than silently ignoring it.
+would produce a `VisualizationDegraded` warning naming it. Choose the export
+backend before relying on backend-specific sizing.
 
 The static tweaks compose with the [animation](animation.md) modifiers
 (`.animate` / `.trail` / `.head` / `.camera` / `.clock`) the same way — they are
@@ -499,8 +491,7 @@ ts.viz.themes.register("paper", ts.viz.themes.get("publication"),
 '#faf7f2'
 ```
 
-`register` returns the built `Theme`, so it is also the one-liner form of
-"build a theme object" when you genuinely want one.
+`register` returns the new `Theme` for reuse or inspection.
 
 A registered theme is the right home for your lab's or paper's house style — set
 it once, then every figure is one `.theme("tsd-brand")` (or one
@@ -509,7 +500,7 @@ it once, then every figure is one `.theme("tsd-brand")` (or one
 ### The global default
 
 `themes.use` / `themes.get` read and write the **single** mutable global in the viz
-layer — the active default theme that any spec *without its own theme* resolves to
+layer for theme selection — the active default theme that any spec *without its own theme* resolves to
 at render time:
 
 ```pycon
@@ -544,12 +535,10 @@ ts.viz.themes.use("default")                                      # tidy up
 
 ## Per-backend honoring
 
-The three *visual* backends differ in what they can render. Each `StyleKey`
-declares its `honored_by` set — the backends that genuinely apply it — and this is
-an **enforced contract**: where a backend cannot honor a knob you set, the
-renderer emits **one consolidated `VisualizationDegraded`** naming the dropped
-knobs, rather than silently ignoring them. (The JSON exporter does not draw — it
-faithfully *serialises* every field — so it is exempt from this negotiation.)
+Visual backends support different styling options. Each `StyleKey` records
+its support in `honored_by`. One consolidated `VisualizationDegraded` warning
+lists unsupported options at render time. The JSON exporter preserves the
+settings instead of drawing them.
 
 | Style key | matplotlib | plotly | three.js |
 | --- | :---: | :---: | :---: |
@@ -586,10 +575,8 @@ listing the dropped keys alphabetically:
 'threejs: ignoring cmap, linestyle, marker'
 ```
 
-The one message also covers any unhonored **animation** knobs and **theme** fields
-for the chosen backend, so degradation is always *visible and named*, never
-silent. Render the same spec on matplotlib or plotly and it draws all three knobs
-with no warning at all. You can introspect a key's reach up front:
+The message also covers unsupported animation options and theme fields.
+Render this example with Matplotlib or Plotly to retain those styles. You can introspect a key's reach up front:
 
 ```pycon
 >>> sorted(ts.viz.STYLE_KEYS["linestyle"].honored_by)
@@ -608,14 +595,10 @@ For styling shared with three.js, prefer `color` /
 
 ## Upgrading from v3 — breaking changes
 
-The v5 redesign makes the style vocabulary a **closed, validated set**. Calls that
-silently worked on the old v3 matplotlib path — because they were forwarded
-straight to matplotlib — now go through `normalize_style` and raise a `ValueError`
-**at the call site** if the value is not in the canonical vocabulary. This is
-deliberate: one validated spelling travels through the supported backends,
-whose capability contracts say which effects they honor. A Matplotlib-only
-keyword cannot silently enter that shared vocabulary. Unsupported effects issue
-the degradation warning described above.
+Since v5, style values are validated against the options listed on this page.
+Some Matplotlib-specific values accepted in v3 now raise `ValueError`; replace
+them with a supported value below. A valid option that a chosen backend cannot
+draw produces a capability warning instead.
 
 ```python
 # skip-doctest — the first call deliberately shows what now RAISES
@@ -641,12 +624,9 @@ matplotlib-only spellings with **no** canonical equivalent now raise:
 | `'P'` (filled plus) | `"cross"` |
 | `'p'`, `'h'`, `'H'` (pentagon / hexagons) | `"star"` or `"circle"` (nearest) |
 
-This is a **cross-backend** choice: three.js and the JSON exporter cannot render
-oriented or exotic matplotlib markers, so the vocabulary is restricted to shapes
-every visual backend can draw (or honestly decline). It is a **hard error** rather
-than a silent substitution — a quiet down-triangle → up-triangle swap would
-corrupt a figure more confusingly than a clear `ValueError` naming the unknown
-marker.
+Unsupported marker values raise `ValueError`; they are not substituted.
+Threejs draws points without preserving marker shape, while JSON stores the
+requested style for later rendering.
 
 ### Linestyles — named set only
 
@@ -690,15 +670,13 @@ into *errors*:
 1. **An unknown style key.** `.style(unknown_key=...)` (or any `normalize_style`
    call that drops a key) emits a `VisualizationDegraded`. With warnings as
    errors, `.style(colour="red")` *raises* instead of warning-and-dropping.
-2. **An unhonored knob at render time.** Rendering a spec that sets a knob the
+2. **An unsupported option at render time.** Rendering a spec that sets an option the
    chosen backend cannot honor (e.g. `linestyle` on three.js) emits the
    consolidated `VisualizationDegraded` described above — which becomes an error
    under the strict policy.
 
-There are **no false positives on a default render**: a spec that sets only
-honored knobs (or no style at all) emits nothing, so the strict policy never fires
-on an ordinary plot. Only specs that set an *unknown* key or an *unhonored* knob
-are affected — exactly the cases the warning is meant to flag.
+A plot using only supported options does not produce this style warning.
+Other warnings, such as geometry thinning, have separate causes.
 
 If a downstream test treats warnings as errors and you *want* the degraded path
 (you know three.js drops `linestyle`, say), scope the warning rather than

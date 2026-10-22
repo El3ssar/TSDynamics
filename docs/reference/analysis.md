@@ -53,8 +53,10 @@ examples, or use `ts.analysis.find(subject)` to discover compatible routines.
 
 ## Chaos indicators
 
-Three literature-validated answers to "is this orbit chaotic?": the Generalized
-Alignment Index (GALI), the 0--1 test, and Hunt--Ott expansion entropy.
+Indicators based on tangent-vector alignment (GALI), a scalar-series growth
+statistic (the 0–1 test), and regional derivative-volume growth (Hunt–Ott
+expansion entropy). They have distinct assumptions and are not interchangeable
+chaos classifiers.
 
 ::: tsdynamics.analysis.chaos.gali.gali
 

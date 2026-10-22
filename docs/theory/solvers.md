@@ -6,8 +6,8 @@ description: Catalogue of the numerical solvers behind run() — explicit Runge�
 
 # Solvers & methods
 
-Most of the time you never touch this layer. You call `run()` and the
-default solver does the right thing:
+Start with the model's default solver, then check convergence for the regime
+you want to study:
 
 ```python
 import tsdynamics as ts
@@ -16,7 +16,7 @@ traj = ts.systems.Lorenz().run(final_time=100.0, dt=0.01)
 ```
 
 When you *do* want to choose — a stiff chemical model, a high-accuracy reference
-run, a fixed-step orbit — you pass a `method=` string:
+run, a fixed-step orbit — pass a `solver=` string:
 
 ```python
 traj = ts.systems.Lorenz().run(final_time=100.0, dt=0.01, solver="dop853")
@@ -29,21 +29,19 @@ against a registry before the engine runs it. For the programmatic registry API
 (resolving names, capability flags, registering your own) see
 [Reference → Solvers](../reference/solvers.md).
 
-!!! note "`dt` is the output grid, not the step size"
-    For every adaptive method, `dt` only sets how densely the returned
-    [`Trajectory`](../analysis/integration-and-methods.md) is sampled — the internal stepper
-    chooses its own steps from `rtol`/`atol`. A coarse `dt` does **not** cost
-    accuracy. The two exceptions are `rk4` (a genuinely fixed-step method, where
-    `dt` *is* the step) and the stochastic schemes (where `dt` *is* the noise
-    increment $\sqrt{\mathrm{d}t}$).
+!!! note "Sampling interval and numerical step"
+    Adaptive ODE solvers choose internal steps using `rtol` and `atol`; `dt`
+    sets the returned sampling grid. A coarse grid can still miss features in
+    saved data. For fixed-step methods and SDE schemes, `dt` is also the
+    numerical step. DDE history interpolation introduces additional resolution
+    constraints. Check both integration and sampling convergence.
 
-    Since `rtol` is therefore the *only* accuracy knob, v6 tightened its default
-    to `1e-9` (`atol=1e-12`) — see
-    [the tolerance table](../analysis/integration-and-methods.md#the-default-tolerances).
+    ODE defaults are `rtol=1e-9`, `atol=1e-12`; see the
+    [tolerance table](../analysis/integration-and-methods.md#the-default-tolerances).
 
 ## The catalogue
 
-| `method=` | Family | Kind | Order | Adaptive | Needs Jacobian | Use when |
+| `solver=` | Family | Kind | Order | Adaptive | Needs Jacobian | Use when |
 |---|---|---|---|:--:|:--:|---|
 | `euler`          | ode, dde | explicit RK (fixed) | 1 | — | — | the simplest baseline; teaching |
 | `midpoint`       | ode, dde | explicit RK (fixed) | 2 | — | — | a cheap fixed-step march |
@@ -71,7 +69,7 @@ against a registry before the engine runs it. For the programmatic registry API
 | `euler_maruyama` | sde      | explicit | 0.5 (strong) | — | — | **the SDE default** — diagonal-Itô noise |
 | `milstein`       | sde      | explicit | 1.0 (strong) | — | ✓ (∂g/∂u) | SDE, componentwise diffusion gₖ(Xₖ,t) |
 
-All names are case- and punctuation-insensitive and carry common aliases (e.g.
+Names are case-insensitive, normalize whitespace and hyphens, and accept common aliases (e.g.
 `dopri5`/`RK45` → `rk45`, `ode23` → `bs3`, `cash_karp` → `cashkarp`,
 `crank_nicolson` → `trapezoid`, `implicit_euler` → `backward_euler`,
 `adams_bashforth`/`ab` → `ab4`). The list is open: new kernels register
@@ -110,8 +108,8 @@ as in the large ODE systems from method-of-lines/spectral discretisations of PDE
 self-start with `rk4`. (For genuinely *stiff* semilinear PDEs such as
 Kuramoto–Sivashinsky, an explicit Adams method is stability-bound; the efficient
 route is an implicit/IMEX or exponential-integrator split of the linear and
-nonlinear operators — a future seam, since the present engine takes a single
-combined `f(u, t)`.)
+nonlinear operators — these split methods are not currently implemented; the engine accepts a
+single combined `f(u, t)`.)
 
 ```python
 # Fixed-step march: dt IS the integrator step here.
@@ -151,18 +149,15 @@ traj = ts.systems.Lorenz().run(
 
 ## Implicit / stiff
 
-A problem is **stiff** when its Jacobian has eigenvalues spanning many orders of
-magnitude: a fast-decaying mode forces an *explicit* method to take tiny steps
-for *stability* long after the solution itself has gone smooth. The fix is an
-implicit method, whose stability region covers the entire left half-plane (it is
-A- or L-stable), so the step size is bounded by accuracy alone. The right panel
-of the figure makes the cost concrete: on stiff van der Pol every kernel reaches
-the *same* final state, but the explicit methods run hundreds of times slower.
+A problem is **stiff** when stability constraints force an explicit method to
+use steps much smaller than the solution's accuracy requirements would suggest.
+Widely separated decay rates are one common cause. Implicit methods can ease
+that restriction, although their stability properties depend on the method and
+order. Nonlinear convergence and accuracy still limit the step size.
 
 Every implicit kernel is adaptive and requires the **analytic Jacobian**
-$\partial f/\partial u$. You never build it: the engine differentiates your
-`_equations` symbolically and lowers a Jacobian-carrying tape automatically
-whenever the resolved kernel needs one, so `solver="bdf"` simply works.
+$\partial f/\partial u$. The engine derives it from `_equations` and includes
+it in the expression tape when required by the selected solver.
 
 `bdf` is the variable-order (1–5), fixed-leading-coefficient backward
 differentiation formula (Curtiss & Hirschfelder 1952; Shampine & Gordon 1975) —
@@ -189,14 +184,11 @@ the long-time energy-conservation guarantee of a fixed-step symplectic method;
 Hairer, Lubich & Wanner 2006). All four solve their implicit stage(s) by a modified-Newton
 iteration reusing the analytic Jacobian, and share the step-doubling error
 controller. The A-stable (non-L-stable) `trapezoid`/`implicit_midpoint` can ring
-on the very stiffest transients — prefer an L-stable kernel (`bdf`,
-`backward_euler`, `sdirk2`, `rosenbrock`, `trbdf2`) there.
+on the very stiffest transients — consider `bdf` or a strongly damping one-step method such as
+`backward_euler`, `sdirk2` or `trbdf2`, then compare convergence. Variable-order
+BDF stability depends on its active order.
 
-A higher-order stiff Radau IIA collocation kernel and the Verner/Feagin
-high-order explicit pairs are natural follow-ups; they slot in behind the same
-`Solver` seam.
-
-Mark a system stiff once and forget it — declare the default method on the class:
+To choose a default for a model known to be stiff in its intended regime:
 
 ```python
 class MyStiffSystem(ts.ContinuousSystem):
@@ -221,16 +213,16 @@ Belousov–Zhabotinsky model) already do this.
     Use `bdf` (or `rosenbrock` / `trbdf2`) instead.
 
 !!! note "Stiff DDEs"
-    The method-of-steps reuses only the **explicit** ODE kernels, so a DDE's
-    `method=` is explicit-only (`available_for("dde")` →
-    `['dop853', 'rk4', 'rk45', 'tsit5']`). The implicit kernels are ODE-only for
-    now; `method="rosenbrock"` on a DDE raises.
+    The method-of-steps driver supports the explicit ODE kernels only. Inspect
+    `tsdynamics._solvers.available_for("dde")` for the installed list.
+    `solver="rosenbrock"` or another implicit solver on a DDE raises; there is
+    currently no implicit DDE kernel.
 
 ## Stochastic
 
 The [stochastic family](../reference/base.md) integrates diagonal-Itô SDEs
 $\mathrm{d}X_k = f_k\,\mathrm{d}t + g_k\,\mathrm{d}W_k$ with a **fixed step**.
-Here `dt` is load-bearing in two ways at once: it is both the output sampling
+Here `dt` has two roles: it is both the output sampling
 interval *and* the discretisation step — the Wiener increment over a step has
 scale $\sqrt{\mathrm{d}t}$ — so a smaller `dt` is the only way to a more
 accurate sample path.
@@ -276,10 +268,10 @@ For the common cases the defaults are already right:
 | Family | Default | Default stiff |
 |---|---|---|
 | ODE | `rk45` | `bdf` |
-| DDE | `rk45` | `rosenbrock` *(policy; not yet a resolvable DDE kernel — see above)* |
+| DDE | `rk45` | —; implicit DDE integration is unsupported |
 | SDE | `euler_maruyama` | — |
 
-**Names normalise.** A `method=` string is lower-cased, its whitespace and
+**Names normalize.** A `solver=` string is lower-cased, its whitespace and
 hyphens collapsed, then run through an alias table before the registry lookup —
 so `"RK45"`, `"dopri5"`, `"dp45"` all reach `rk45`; `"dop8"` → `dop853`;
 `"ros"` → `rosenbrock`; `"em"` → `euler_maruyama`. An unrecognised name raises
@@ -304,14 +296,14 @@ rec.build_kwargs  # {'with_jacobian': True}
 Both are **one-point heuristics** evaluated at the IC, meant to *seed* a choice
 rather than guarantee one — pass an explicit `ic=` for a reproducible verdict
 (a system with a random initial condition will probe a different point each
-call). The authoritative signal is the engine's *runtime* stiffness detector,
-which watches the rejected-step ratio once integration is underway.
+call). Monitor runtime, convergence and step-budget failures too; a single
+Jacobian probe can miss stiffness that develops later or is mainly oscillatory.
 
 ## Programmatic registry
 
 The solver layer is a pluggable registry: each method is a `SolverSpec` with a
 `SolverCaps` (explicit/implicit, adaptive, needs-Jacobian, supported families),
-`method=` strings resolve against it, and third-party solvers register through
+`solver=` strings resolve against it, and third-party solvers register through
 the same entry point. If you are building on the selection machinery — listing
 methods, inspecting capabilities, resolving names yourself, or registering a new
 kernel — see the [Reference → Solvers](../reference/solvers.md) API page for

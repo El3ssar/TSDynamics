@@ -47,12 +47,12 @@ defaults, and an orbit figure.
 import tsdynamics as ts
 
 h = ts.systems.Henon()
-traj = h.run(steps=10_000)     # Trajectory; traj.t is arange(steps)
+traj = h.run(steps=10_000)     # Trajectory; includes the initial state and 10,000 iterates
 ```
 
 The map iterates on the Rust engine, with the lowered tape JIT-compiled once per
-system; parameters are control values of that tape, so changing one is free. If an orbit diverges
-(random ICs can land outside the attractor basin), `iterate` retries with
+system; parameters are control values of that tape, so changing one reuses the lowered equations. If an orbit diverges
+(random ICs can land outside the attractor basin), `run` retries with
 fresh random ICs up to `max_retries` times. Maps whose basin is small declare
 a class-level `default_ic` so the first try lands inside.
 
@@ -74,5 +74,5 @@ The protocol-level tools written for maps also run on flows through the
 derived wrappers (`PoincareMap`, `StroboscopicMap`) — that composition is
 what turns an [orbit diagram](../../analysis/orbit-diagrams.md) over a
 wrapped flow into its bifurcation diagram. Map-specific tools like
-[fixed-point finding](../../analysis/fixed-points.md) use the explicit
-`_jacobian` and apply to `DiscreteMap` subclasses directly.
+[fixed-point finding](../../analysis/fixed-points.md) use the map's
+Jacobian and apply to `DiscreteMap` subclasses directly.

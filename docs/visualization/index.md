@@ -7,7 +7,7 @@ hide:
 
 <span class="ts-kicker">Visualization</span>
 
-# A useful picture, in a few lines
+# Visualization {#a-useful-picture-in-a-few-lines}
 
 <div class="tsd-page-intro" markdown="1">
 
@@ -32,7 +32,7 @@ model = ts.systems.Lorenz(ic=[1, 1, 1])
 trajectory = model.run(final_time=40, dt=0.01)
 
 figure = ts.plot(trajectory, color="#11857A")
-figure.theme("publication").font(family="sans-serif")
+figure.theme("publication", foreground="#273947").font(family="sans-serif", size=12)
 figure.size(6.4, 4.6)
 ```
 
@@ -47,8 +47,8 @@ into a movie; the settings below are optional refinements.
 <figure markdown="1">
 ![A Lorenz trajectory forms two lobes in a labelled three-dimensional phase portrait](../assets/figures/viz/first-plot.svg){ loading=lazy }
 <figcaption>The code produces this figure. A three-component trajectory gets a
-3-D phase portrait by default; the publication theme supplies a clean white
-canvas.</figcaption>
+3-D phase portrait by default; the explicit theme sets the background and
+typography.</figcaption>
 </figure>
 </div>
 

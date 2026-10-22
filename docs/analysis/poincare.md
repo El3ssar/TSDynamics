@@ -52,8 +52,10 @@ print(section)     # a one-line report of what the section is
 The system path marches the flow with a detection step `dt`, brackets each sign
 change of the plane function, and **refines the crossing** with cubic Hermite
 interpolation — endpoint derivatives come from the system's numeric right-hand
-side, giving $O(\Delta t^4)$ accuracy in the crossing point. `dt` only has to be
-small enough not to *skip* a crossing; the refinement supplies the precision.
+side. For a smooth, transverse crossing, cubic Hermite interpolation has local
+error $O(\Delta t^4)$ in the state. Integration error and near-tangency can
+limit crossing accuracy; check convergence as `dt` decreases and ensure no
+crossings are skipped.
 
 The return value is a `PoincareSection` — a `Trajectory` subclass carrying
 section plot intent (so a renderer draws the in-plane scatter, not a misleading
@@ -68,11 +70,10 @@ trajectory, so `section["x"]`, `section[10:50]` and `ts.plot(section)` all work.
 
 </div>
 
-Under the hood this runs on the **wired Rust event engine**: the whole attractor
-is marched and every crossing refined in a *single* engine call, roughly two
-orders of magnitude faster than a per-`dt` Python loop. DDEs (no numeric RHS),
-stiff defaults, and `backend="reference"` transparently fall back to the Python
-loop; the two paths are answer-identical at the same fixed-step discretisation.
+Supported ODEs collect and refine crossings in one Rust event-engine call.
+DDEs, stiff defaults and `backend="reference"` use the Python collection path.
+These paths implement the same crossing construction; performance depends on
+the system, integration settings and number of crossings.
 
 ## From trajectory data: no system needed
 
@@ -124,9 +125,10 @@ the two halves of the attractor and blurs the return structure.
 
 ## `sys.poincare(...)` — the section as a discrete map
 
-`poincare_section` is a convenience over the real machinery: a **derived system**
-that *is* a discrete map, so it slots into anything written for maps. The verb on
-the flow builds one, in the same plane vocabulary:
+For repeated stepping or parameter sweeps, construct a **derived system** with
+`sys.poincare(...)`. It presents section crossings through the discrete stepping
+protocol. Analyses that need an analytic map Jacobian have additional restrictions;
+use `ts.analysis.find(pmap)` to discover supported analyses.
 
 ```python
 pmap = ts.systems.Rossler().poincare("y", 0.0, direction="up", dt=0.01)
@@ -157,7 +159,7 @@ may miss the attractor, or the direction is reversed.
 
 A return map takes the reduction one step further: from the crossing sequence it
 keeps a *single* scalar observable and plots each value against its successor
-$(v_n, v_{n+1})$, exposing the one-dimensional map that governs the flow.
+$(v_n, v_{n+1})$, to look for an approximately one-dimensional return relation.
 `return_map(kind="poincare")` builds it directly from a section:
 
 ```python
@@ -168,8 +170,9 @@ rm = ts.analysis.return_map(ts.systems.Rossler(), "y", kind="poincare",
 The related extremum construction — successive local maxima of a coordinate, the
 Lorenz $z$-maxima cusp — is covered on the
 [orbit-diagrams page](orbit-diagrams.md#the-hidden-1-d-map-return_map). A tight,
-single-valued curve means a noisy 1-D map governs the dynamics; a filled cloud
-means it does not.
+single-valued curve supports an approximate scalar description. A cloud can
+reflect unresolved state variables, measurement noise or insufficient sampling;
+the plot alone does not distinguish these causes.
 
 ## See also
 

@@ -3,38 +3,38 @@
   "recipes": {
     "recipe-analysis": {
       "generator_sha256": "c1f63d4309a67150bf1f4bcb50e10a37c5b9c98a75051d01eecf4d1583b5e992",
-      "source_sha256": "ac3b0212d1ab3df6cebb85854da17822677a6086aceb1597be6f1f7c245042a9",
-      "svg_sha256": "e1ca7268f943eb84a228806713bc8b70e0735d042d4b628f78b43b1db791db7e"
+      "source_sha256": "0cc3ecb18affa067b70151b69caf43d004f48ab9abb76bf61e26bdac58470df5",
+      "svg_sha256": "3668f7e8f9dea7ddc3b351c547a350f0a5adf20fb9646e7610fea0544e04b9de"
     },
     "recipe-compare": {
       "generator_sha256": "c1f63d4309a67150bf1f4bcb50e10a37c5b9c98a75051d01eecf4d1583b5e992",
-      "source_sha256": "0ef28e2396739a2c34c7bed2b4f4039399ac8dc03ab51fc39ddeb393c046e92b",
-      "svg_sha256": "0a19d3c583c2ce8510bdb65cf554061fb69d32be0ac9064c065a50aa61ac806c"
+      "source_sha256": "b28a3e27bd5da28d1dbf24590d63b8fc38d44adcd84523f68cd3092b4a12773c",
+      "svg_sha256": "91de40de147d969a7cb92592de36ea0fa451761f487c22b90864cbc86c4bf616"
     },
     "recipe-data": {
       "generator_sha256": "c1f63d4309a67150bf1f4bcb50e10a37c5b9c98a75051d01eecf4d1583b5e992",
-      "source_sha256": "fedb15a81620b80a9428d89bab79951b69cdd56595d9f3ac539a96a9bf33a16e",
-      "svg_sha256": "ee0a3d1fd2def5538da6ed827aa47a2964b9de10a875d4f005ad82e9503598c3"
+      "source_sha256": "f4eea417234d2b680bbb3dc2011caaaed9029090d85a3f6b510766ccdd205604",
+      "svg_sha256": "25bdde4e76f750c96e5df1fc28757b7eb599fa79971338e71f3281f29aae65fa"
     },
     "recipe-ensemble": {
       "generator_sha256": "c1f63d4309a67150bf1f4bcb50e10a37c5b9c98a75051d01eecf4d1583b5e992",
-      "source_sha256": "79570651dd697d7864e0f249faa8ccc2f2ed5d9708c1a09038efd8a1ad78cfa9",
-      "svg_sha256": "768a82e9d3852d2613f03fd15df23ac765f7a8edaa22b5765d510f3807713ae3"
+      "source_sha256": "c9525a5da1303d3fcfd39061f6899c66f3157b79f9a0a8010ff898a5ab74880e",
+      "svg_sha256": "e935faec6619a1f1565e0cc90404eb789064026e115c7b5a9d998236bae24ae3"
     },
     "recipe-fields": {
       "generator_sha256": "c1f63d4309a67150bf1f4bcb50e10a37c5b9c98a75051d01eecf4d1583b5e992",
-      "source_sha256": "f24cb1d40b9116b8de03474dfb044fd83328b32daeb6f6a265986f355c4f36e7",
-      "svg_sha256": "c2707586964dc73ef7c6e2247a1c67e12dafc812094686c968bf84e3836dc2cc"
+      "source_sha256": "f498e7923103630cd05559cf69e0d3d7a44323f64e46302ae750fb3d26e9e25e",
+      "svg_sha256": "f6826b26df7734bd56ebd42e8771afb5cd74c79c9b4c513f5b26270f506f1c4d"
     },
     "recipe-linked-views": {
       "generator_sha256": "c1f63d4309a67150bf1f4bcb50e10a37c5b9c98a75051d01eecf4d1583b5e992",
-      "source_sha256": "42762d64a460e92ecf680bc9f39ab0a257036d66a8ae9078e801cf31c0cd918d",
-      "svg_sha256": "46b151c65c7e9919c8efb162ad7de787c13016557f102934ff3beeb1ba0fa9c1"
+      "source_sha256": "6907e5f0454d5ec3de80bb3c82adfcdb3136008b9b1277673e074ae0ad0662c5",
+      "svg_sha256": "6e6c1875f6e7d8dce0f72be185e7299105b7fee3abd2dd33f65f6a785970052c"
     },
     "recipe-spatial": {
       "generator_sha256": "c1f63d4309a67150bf1f4bcb50e10a37c5b9c98a75051d01eecf4d1583b5e992",
-      "source_sha256": "e5455e0fbd37a605e9bef9b747aa325e88c1674db761cda557c999e1f7228165",
-      "svg_sha256": "0e128f3b6072ff5f9c64de329fe066239868907a75837b654a938da5417a9b53"
+      "source_sha256": "83b36e4f014834d82f8c4e9a8c100faa47e84c4acd371e3d9da84119c60e4d66",
+      "svg_sha256": "dc101db100cfff77403188eda4c59d554da506170be786be6cf0d32a0b49d69e"
     }
   },
   "version": 1

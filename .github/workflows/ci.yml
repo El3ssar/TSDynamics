@@ -393,6 +393,7 @@ jobs:
           tests/test_viz*.py tests/test_plotspec*.py tests/test_to_plot_spec.py
           tests/test_plot_accessor_kinds.py tests/test_renderers_registry.py
           tests/test_docs_system_pages.py tests/test_docs_field_movies.py
+          tests/test_docs_static_figures.py tests/test_docs_figures_golden.py tests/test_docs_motion.py
           --no-cov -n auto -q
 
   # Single stable status check to require for merge. Green iff every required job

@@ -89,6 +89,7 @@ extra_css:
 extra_javascript:
   - js/math.js
   - js/home.js
+  - js/motion.js
   - https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js
   - https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js
 
@@ -172,7 +173,7 @@ nav:
       - start/index.md
       - "Install": start/install.md
       - "First trajectory": start/first-trajectory.md
-      - "The mental model": start/concepts.md
+      - "Core concepts": start/concepts.md
       - "Defining a system": start/defining-systems.md
   - Analysis:
       - analysis/index.md
@@ -190,20 +191,20 @@ nav:
       - systems/index.md
   - Visualization:
       - visualization/index.md
-      - "Scientific figure recipes": visualization/recipes.md
+      - "Figure recipes": visualization/recipes.md
       - "Layouts & overlays": visualization/composition.md
       - "Colors, labels & themes": visualization/styling.md
-      - "Animation studio": visualization/animation.md
-      - "Complete plot gallery": visualization/gallery.md
-      - "Inputs & plot types": visualization/plotting.md
-      - "Scientific conventions": visualization/conventions.md
+      - "Animation & web views": visualization/animation.md
+      - "Plot gallery": visualization/gallery.md
+      - "Plot types & inputs": visualization/plotting.md
+      - "Figure design": visualization/conventions.md
       - "Space-filling curves": visualization/hilbert.md
       - "Backends & export": visualization/backends.md
   - Tutorials:
       - tutorials/index.md
-      - "Seven tasks in one sitting": tutorials/seven-tasks.md
-      - "From equations to a chaotic attractor": tutorials/chaotic-attractor.md
-      - "The road to chaos — bifurcations": tutorials/bifurcations.md
+      - "Seven workflows": tutorials/seven-tasks.md
+      - "Simulate a chaotic attractor": tutorials/chaotic-attractor.md
+      - "Bifurcations & parameter sweeps": tutorials/bifurcations.md
       - "Reconstructing dynamics from a signal": tutorials/reconstruction.md
       - "Basins & multistability": tutorials/basins-multistability.md
       - "Poincaré & return maps": tutorials/poincare-return-maps.md

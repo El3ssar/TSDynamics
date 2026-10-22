@@ -1,35 +1,33 @@
 ---
 title: Animation
-description: Nine real movies show orbit reveals, trails, signed camera spin, overlays, linked and nested layouts, map iterations, field snapshots, and reverse playback.
+description: Rotate a live Threejs orbit, inspect an animated Plotly trace, then explore nine real movies of trails, cameras, compositions, maps, and fields.
 ---
 
 <span class="ts-kicker">Visualization · Animation</span>
 
-# Make the motion explain the picture
+# Animation and interactive views
 
 <div class="tsd-page-intro tsd-animation-intro" markdown="1">
 <div markdown="1">
 
-Make a plot. Add `.animate()`. Save the same object as a movie. Start with the
-short example below, then change one thing at a time: what stays visible,
-where the camera looks, or how related views sit together.
+Add `.animate()` to a plot. Export HTML when you want to rotate an orbit or
+inspect values in a browser; save MP4 or GIF when you need a recording for a
+presentation.
 
-Every movie on this page comes from its runnable example. Press play when
-you want motion; the players have native controls and never autoplay.
+Page previews play while visible and repeat. Pause any player to keep it still.
+Reduced-motion preferences start all motion paused.
 
 </div>
 
-<figure class="tsd-demo-card">
-<video width="960" height="600" controls playsinline preload="none" aria-label="A Lorenz orbit gradually draws itself in three-dimensional state space" poster="../../assets/figures/viz/animation-reveal-poster.png">
-<source src="../../assets/figures/viz/animation-reveal.mp4" type="video/mp4">
-<a href="../../assets/figures/viz/animation-reveal.mp4">Download the orbit reveal</a>.
-</video>
-<figcaption>The recorded path builds up and stays visible. Ten seconds of playback
-show thirty simulation time units; the labels describe state coordinates.</figcaption>
+<figure class="tsd-showcase tsd-demo-card">
+<iframe class="tsd-live-viewer" src="../../assets/interactive/interactive-orbit.html" title="Interactive Lorenz orbit: drag to rotate, scroll to zoom, pause or restart the reveal" width="960" height="600" loading="lazy" allow="fullscreen"></iframe>
+<figcaption>Live Threejs · thirty simulation time units revealed over sixteen
+playback seconds. <a href="../../assets/interactive/interactive-orbit.html" target="_blank" rel="noopener">Open the full viewer</a> · <a href="../../assets/interactive/interactive-orbit-poster.png">Static image</a>.</figcaption>
 </figure>
 </div>
 
 <nav class="tsd-recipe-nav" aria-label="Animation recipes">
+<a href="#interact-in-your-browser">Live in your browser</a>
 <a href="#your-first-movie">First movie</a>
 <a href="#leave-a-trail">Trails</a>
 <a href="#move-the-camera">Camera</a>
@@ -41,6 +39,77 @@ show thirty simulation time units; the labels describe state coordinates.</figca
 <a href="#play-forward-and-back">Ping-pong</a>
 <a href="#all-the-controls">All controls</a>
 </nav>
+
+## Interact in your browser
+
+The same plot can become an interactive HTML file instead of a recording.
+Choose **Threejs** to rotate a 3-D path while it plays. Choose **Plotly** to
+hover over values, zoom into a time interval, and inspect the revealed data.
+Neither needs a Python kernel after export.
+
+### Rotate the orbit · Threejs
+
+Drag to orbit, scroll or pinch to zoom, and use the lower-left controls to pause
+or restart the reveal. The camera stays under your control while the path moves.
+Axes are hidden in this preview to give the geometry room; the trajectory still
+contains the original state coordinates and time samples.
+
+<!-- tsd-example: interactive-orbit -->
+```python
+import tsdynamics as ts
+
+trajectory = ts.systems.Lorenz(ic=[1, 1, 1]).run(final_time=30, dt=0.01)
+web_plot = ts.plot(trajectory, color="#2CC5AE").theme("dark")
+web_plot.style(axes=False).camera(elev=24, azim=-60)
+web_plot.animate(duration=16).trail(350, backdrop_alpha=0.12)
+web_plot.head(size=7, color="#E8912D")
+```
+
+
+
+```python
+# skip-doctest — writes an interactive HTML file
+web_plot.save("orbit.html", backend="threejs", axes=False)
+```
+
+### Inspect the time trace · Plotly
+
+Pause, then hover to read a sample's time and value. Drag a rectangle to zoom;
+double-click to restore the full interval. The top-right toolbar also provides
+pan and reset controls. Restart returns the reveal to its first sample without
+discarding your chosen axis range.
+
+<!-- tsd-example: interactive-trace -->
+```python
+import tsdynamics as ts
+
+trajectory = ts.systems.Lorenz(ic=[1, 1, 1]).run(final_time=30, dt=0.02)
+web_plot = ts.plot(
+    trajectory, "time_series", components="x", color="#2CC5AE"
+).theme("dark").font(family="sans-serif", size=12)
+web_plot.relabel(title="Inspect a revealed time series", x="Time", y="x")
+web_plot.animate(duration=16).trail(None).head(size=7, color="#E8912D")
+```
+
+<figure class="tsd-showcase tsd-demo-card">
+<iframe class="tsd-live-viewer" src="../../assets/interactive/interactive-trace.html" title="Animated Plotly time trace: pause to hover over values, drag to zoom, double-click to reset" width="960" height="540" loading="lazy" allow="fullscreen"></iframe>
+<figcaption>Live Plotly · the recorded x samples, in time order. Zoom changes the
+view, not the data. <a href="../../assets/interactive/interactive-trace.html" target="_blank" rel="noopener">Open the full inspector</a> · <a href="../../assets/interactive/interactive-trace-poster.png">Static image</a>.</figcaption>
+</figure>
+
+```python
+# skip-doctest — writes an interactive HTML file; requires tsdynamics[plotly]
+web_plot.save("trace.html", backend="plotly")
+```
+
+These are real exports from the examples above, with a static loading/failure
+image added to the documentation's Plotly embed. They load a pinned renderer
+from a CDN, so opening the HTML files requires an internet connection. A static
+image remains available if scripts, WebGL, or the CDN are unavailable. Playback
+pauses outside the visible page and in hidden tabs; an explicit pause stays in
+effect when you return. The Threejs preview uses thin WebGL lines and a hard
+trail. Use the Matplotlib movies below for fading trails, scripted camera spin,
+animated layouts, or evolving spatial fields.
 
 ## Your first movie
 
@@ -62,6 +131,15 @@ movie.animate(duration=10, fps=24)
 # skip-doctest — writes a movie using the external FFmpeg executable
 movie.save("lorenz.mp4", size=(960, 600), dpi=120)
 ```
+
+<figure class="tsd-demo-card">
+<video data-tsd-autoplay muted loop width="960" height="600" controls playsinline preload="none" aria-label="A Lorenz orbit gradually draws itself in three-dimensional state space" poster="../../assets/figures/viz/animation-reveal-poster.png">
+<source src="../../assets/figures/viz/animation-reveal.mp4" type="video/mp4">
+<a href="../../assets/figures/viz/animation-reveal.mp4">Download the orbit reveal</a>.
+</video>
+<figcaption>The recorded path builds up and stays visible. Ten seconds of playback
+show thirty simulation time units; the labels describe state coordinates.</figcaption>
+</figure>
 
 The output grid (`dt=0.01`) controls the recorded data. Playback duration and
 frame rate control how those samples are shown. More movie frames do not make
@@ -89,7 +167,7 @@ movie.animate(duration=12, fps=24)
 ```
 
 <figure class="tsd-showcase tsd-demo-card">
-<video width="1104" height="432" controls playsinline preload="none" aria-label="The same Lorenz orbit with a persistent path, a moving window, and a fading window" poster="../../assets/figures/viz/animation-trails-poster.png">
+<video data-tsd-autoplay muted loop width="1104" height="432" controls playsinline preload="none" aria-label="The same Lorenz orbit with a persistent path, a moving window, and a fading window" poster="../../assets/figures/viz/animation-trails-poster.png">
 <source src="../../assets/figures/viz/animation-trails.mp4" type="video/mp4">
 <a href="../../assets/figures/viz/animation-trails.mp4">Download the trail comparison</a>.
 </video>
@@ -131,7 +209,7 @@ movie.animate(duration=12, fps=24)
 ```
 
 <figure class="tsd-showcase tsd-demo-card">
-<video width="1152" height="480" controls playsinline preload="none" aria-label="The same three-dimensional orbit with a reverse quarter-turn, fixed camera, and forward quarter-turn" poster="../../assets/figures/viz/animation-camera-poster.png">
+<video data-tsd-autoplay muted loop width="1152" height="480" controls playsinline preload="none" aria-label="The same three-dimensional orbit with a reverse quarter-turn, fixed camera, and forward quarter-turn" poster="../../assets/figures/viz/animation-camera-poster.png">
 <source src="../../assets/figures/viz/animation-camera.mp4" type="video/mp4">
 <a href="../../assets/figures/viz/animation-camera.mp4">Download the camera comparison</a>.
 </video>
@@ -168,7 +246,7 @@ movie.head(size=7, symbol="s").clock("t = {t:.1f}")
 ```
 
 <figure class="tsd-showcase tsd-demo-card">
-<video width="960" height="560" controls playsinline preload="none" aria-label="Two nearby Lorenz initial states evolve together on one labelled phase plane" poster="../../assets/figures/viz/animation-overlay-poster.png">
+<video data-tsd-autoplay muted loop width="960" height="560" controls playsinline preload="none" aria-label="Two nearby Lorenz initial states evolve together on one labelled phase plane" poster="../../assets/figures/viz/animation-overlay-poster.png">
 <source src="../../assets/figures/viz/animation-overlay.mp4" type="video/mp4">
 <a href="../../assets/figures/viz/animation-overlay.mp4">Download the orbit overlay</a>.
 </video>
@@ -202,7 +280,7 @@ movie.animate(duration=12, fps=24).trail(("time", 4), fade=True)
 ```
 
 <figure class="tsd-showcase tsd-demo-card">
-<video width="1080" height="480" controls playsinline preload="none" aria-label="One Lorenz orbit linked to its x time series" poster="../../assets/figures/viz/animation-linked-poster.png">
+<video data-tsd-autoplay muted loop width="1080" height="480" controls playsinline preload="none" aria-label="One Lorenz orbit linked to its x time series" poster="../../assets/figures/viz/animation-linked-poster.png">
 <source src="../../assets/figures/viz/animation-linked.mp4" type="video/mp4">
 <a href="../../assets/figures/viz/animation-linked.mp4">Download the linked views</a>.
 </video>
@@ -239,7 +317,7 @@ movie.animate(duration=12, fps=24).trail(300, fade=True, backdrop_alpha=0.10)
 ```
 
 <figure class="tsd-showcase tsd-demo-card">
-<video width="1080" height="720" controls playsinline preload="none" aria-label="Two Lorenz projections above a full-width synchronized time trace" poster="../../assets/figures/viz/animation-nested-poster.png">
+<video data-tsd-autoplay muted loop width="1080" height="720" controls playsinline preload="none" aria-label="Two Lorenz projections above a full-width synchronized time trace" poster="../../assets/figures/viz/animation-nested-poster.png">
 <source src="../../assets/figures/viz/animation-nested.mp4" type="video/mp4">
 <a href="../../assets/figures/viz/animation-nested.mp4">Download the nested movie</a>.
 </video>
@@ -271,7 +349,7 @@ movie.clock("n = {t:.0f} · frame {i}")
 ```
 
 <figure class="tsd-showcase tsd-demo-card">
-<video width="960" height="600" controls playsinline preload="none" aria-label="The Henon map reveals its points in their actual iteration order" poster="../../assets/figures/viz/animation-map-poster.png">
+<video data-tsd-autoplay muted loop width="960" height="600" controls playsinline preload="none" aria-label="The Henon map reveals its points in their actual iteration order" poster="../../assets/figures/viz/animation-map-poster.png">
 <source src="../../assets/figures/viz/animation-map.mp4" type="video/mp4">
 <a href="../../assets/figures/viz/animation-map.mp4">Download the ordered map reveal</a>.
 </video>
@@ -301,7 +379,7 @@ movie.animate(duration=10, fps=24).clock("t = {t:.0f}")
 ```
 
 <figure class="tsd-showcase tsd-demo-card">
-<video width="960" height="600" controls playsinline preload="none" aria-label="The Gray Scott activator evolves from a seeded patch into a spatial pattern" poster="../../assets/figures/viz/animation-field-poster.png">
+<video data-tsd-autoplay muted loop width="960" height="600" controls playsinline preload="none" aria-label="The Gray Scott activator evolves from a seeded patch into a spatial pattern" poster="../../assets/figures/viz/animation-field-poster.png">
 <source src="../../assets/figures/viz/animation-field.mp4" type="video/mp4">
 <a href="../../assets/figures/viz/animation-field.mp4">Download the field movie</a>.
 </video>
@@ -334,7 +412,7 @@ movie.clock("t = {t:.1f}")
 ```
 
 <figure class="tsd-showcase tsd-demo-card">
-<video width="960" height="560" controls playsinline preload="none" aria-label="A Lorenz path plays forward and then back while its time readout reverses" poster="../../assets/figures/viz/animation-pingpong-poster.png">
+<video data-tsd-autoplay muted loop width="960" height="560" controls playsinline preload="none" aria-label="A Lorenz path plays forward and then back while its time readout reverses" poster="../../assets/figures/viz/animation-pingpong-poster.png">
 <source src="../../assets/figures/viz/animation-pingpong.mp4" type="video/mp4">
 <a href="../../assets/figures/viz/animation-pingpong.mp4">Download the ping-pong movie</a>.
 </video>
@@ -419,8 +497,10 @@ background for either movie format.
 | JSON | Serializable plot data and animation settings; no encoded video |
 
 Use the [backend guide](backends.md) for exact fallback and export rules.
-For a supported single-panel interactive view, `movie.save("orbit.html")` uses
-the interactive extra. An animated composite belongs in MP4 or GIF. These
-examples use native video controls, `preload="none"`, and no autoplay, so motion
-starts only when the reader requests it. Use the player's fullscreen control
-when comparing small panels.
+For a supported single-panel interactive view, choose
+`movie.save("orbit.html", backend="threejs")` or
+`movie.save("trace.html", backend="plotly")`. An animated composite belongs in
+MP4 or GIF. This page starts previews only while they are visible, repeats them,
+and retains your explicit pause. A downloaded MP4's repeating behavior is chosen
+by its video player. Use the player's fullscreen control when comparing small
+panels.

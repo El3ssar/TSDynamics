@@ -6,11 +6,10 @@ description: Subclass a family base and write the dynamics as one symbolic metho
 
 # Defining systems
 
-The built-in catalogue is a starting point, not a ceiling. Defining your own
-system is the same short contract every built-in follows: name the components,
-declare the parameters, and write one method holding the math. Subclass the right
-family base and you inherit lowering, integration, and the common stepping
-protocol. The [analysis toolkit](../analysis/index.md) documents which routines
+To define a system, choose a family, name its components, declare its parameters
+and implement the required equations. The family supplies equation compilation,
+simulation and the common stepping methods. The
+[analysis toolkit](../analysis/index.md) documents which routines
 accept each family. Systems contributed to the built-in catalogue also receive
 generated documentation pages.
 
@@ -28,7 +27,7 @@ $$
 $$
 
 The catalogue already includes a FitzHugh–Nagumo model; rebuilding it here shows
-the full contract from scratch. Subclass
+how to implement the equations. Subclass
 `ContinuousSystem`, name the components, declare the parameters, and translate
 the equations into `_equations`:
 
@@ -74,7 +73,7 @@ Python `if` on the state do not belong here (they cannot be traced).
 accessor whatever you call it; only naming it `self` is a mistake, and the error
 says so rather than demanding a decorator.
 
-!!! tip "`system.info` is the frozen record of everything above"
+!!! tip "Inspect the model with `system.info`"
     ```python
     print(FitzHughNagumo().info)
     ```
@@ -91,7 +90,7 @@ says so rather than demanding a decorator.
     return (om, -(g / L) * sin(theta) - b * om)   # a damped pendulum
     ```
 
-### It just works
+### Run and analyze the system {#it-just-works}
 
 There is no registration call and no build step. The class is a fully
 functional system the moment it is defined:
@@ -104,9 +103,9 @@ traj.y.shape          # (4001, 2)
 traj["v"].min(), traj["v"].max()   # ≈ (-2.0, 1.9) — the relaxation spikes
 ```
 
-Because a system *is* its equations, the analysis toolkit applies immediately.
-The lone equilibrium is unstable, which is exactly why the state settles into a
-limit cycle around it:
+Use the supported analysis functions to locate equilibria and assess their linear
+stability. For these parameters the equilibrium is unstable; the simulated
+trajectory shows oscillations around it:
 
 ```python
 fps = ts.analysis.fixed_points(fhn)
@@ -147,8 +146,9 @@ the loop bound follows.
 ## Maps
 
 A discrete map $\mathbf{x}_{n+1} = \mathbf{F}(\mathbf{x}_n)$ subclasses
-`DiscreteMap`. Fill in `_step`, and — for the exact Lyapunov spectrum — the
-`_jacobian`. Maps are the one family whose body uses **NumPy** functions:
+`DiscreteMap`. Implement `_step`; its Jacobian is derived automatically for
+Lyapunov calculations. An optional `_jacobian` provides an independent numerical
+check. Map equations use **NumPy** functions:
 
 ```python
 import numpy as np
@@ -245,9 +245,8 @@ to the engine. When you already have a **stepper** — a foreign ODE solver, an
 agent-based model, a hardware-in-the-loop rig, anything that advances a state
 vector — `WrappedSystem` adapts it to the same protocol. Analyses that need only
 that protocol can then use it; routines requiring symbolic equations or analytic
-Jacobians have additional requirements. It is the one place where subclassing (well,
-instantiating) a library type is genuinely the only path: there is no equation to
-lower and so nothing to infer.
+Jacobians have additional requirements. Use a `WrappedSystem` when an existing
+stepper, rather than symbolic equations, defines how the state advances.
 
 ```python
 import numpy as np
@@ -266,7 +265,7 @@ ts.analysis.lyapunov_spectrum(sysm, k=1, ic=[0.3])  # ≈ 0.5 — chaotic
 ts.plot(traj)                              # and it plots like any other
 ```
 
-`step_fn(state, n_or_dt) -> new_state` is the whole contract. Pass
+The required callback is `step_fn(state, n_or_dt) -> new_state`. Pass
 `family="ode"` and `n_or_dt` becomes a time increment instead of an iteration
 count; `default_dt=` is what a bare `.step()` advances by. Anything that reads a
 system through the protocol can work on it, subject to the routine's supported
@@ -289,8 +288,8 @@ User classes register as **non-builtin**, so the built-in catalogue and its test
 sweeps are unaffected, while your own tooling can still discover your systems
 through the same registry.
 
-For a system contributed to the library itself, registration is what wires it
-into everything at once: the bulk test suite sweeps it, and the docs build
+For a system contributed to the library itself, the shared test suite includes
+it and the docs build
 generates the same complete page used throughout the catalogue: LaTeX equations,
 parameter descriptions, a runnable example, a static figure, an animated orbit
 or field, and measured diagnostics with their conditions and limitations.
@@ -300,9 +299,7 @@ wires in this test and documentation infrastructure. The optional
 metadata that enriches that page — `_reference` and `_doi` for the citation,
 `_known_lyapunov` for a literature-value test, `_default_ic` for a robust
 starting point — is declared as class attributes alongside `params` and
-`variables`. They are underscored because they are *facts the library reads*, not
-part of the tab surface of the system you get back: `system.info` is where you
-read them again. A NumPy-style `Parameters` section in the class docstring also
+`variables`. Read the resolved metadata through `system.info` or the registry. A NumPy-style `Parameters` section in the class docstring also
 supplies the generated parameter descriptions. See
 [Adding a system](../project/adding-a-system.md#what-the-generated-page-includes)
 for the full documentation workflow and preview controls.
@@ -313,5 +310,5 @@ for the full documentation workflow and preview controls.
 
 - [The mental model](concepts.md) — the four families, the protocol, and the backends
 - [Systems](../systems/index.md) — the 177 built-ins, each defined exactly this way
-- [Analysis](../analysis/index.md) — the quantifiers that compose over any system you define
+- [Analysis](../analysis/index.md) — analyses for supported model families and data
 - [Fixed & periodic points](../analysis/fixed-points.md) — the equilibria and limit cycles used above

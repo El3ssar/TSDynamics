@@ -9,7 +9,7 @@ hide:
 
 <span class="tsd-eyebrow">Guided experiments</span>
 
-# Learn by doing
+# Tutorials {#learn-by-doing}
 
 Start with a question. Run the model, make a figure, then use the numerical
 tools to investigate what you see. Each tutorial connects the equations to a
@@ -24,7 +24,7 @@ complete experiment, with code you can run in order.
 
 ![Four real library outputs: a Lorenz phase portrait, logistic bifurcations, a component time series and a noisy mean-reverting trajectory](../assets/figures/tutorials/overview.svg){ loading=lazy }
 
-<figcaption><span class="tsd-caption-label">One library, many questions</span><br>Geometry, parameter changes, time evolution and noise. These panels are assembled with the same <code>|</code> and <code>/</code> operators used in the visualization guide.</figcaption>
+<figcaption><span class="tsd-caption-label">Example workflows</span><br>Geometry, parameter changes, time evolution and noise. These panels are assembled with the same <code>|</code> and <code>/</code> operators used in the visualization guide.</figcaption>
 </figure>
 
 ## Your first complete workflow

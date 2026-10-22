@@ -19,7 +19,7 @@ to `run` (see
 documents the registry itself.
 
 !!! note "`solver=` picks a kernel; `method=` picks an estimator"
-    One concept, one spelling. `lor.run(solver="dop853")` chooses the numerical
+    `lor.run(solver="dop853")` chooses the numerical
     kernel; `ts.analysis.optimal_delay(x, method="mi")` chooses an estimation
     algorithm. `run(method=...)` raises and names `solver=`.
 

@@ -16,10 +16,9 @@ check boundedness before interpreting it as asymptotic chaos. The signs
 of the whole spectrum read like a fingerprint: how many directions expand, how
 many are neutral, how fast phase-space volume contracts onto the attractor.
 
-TSDynamics computes the spectrum three ways — one per family — behind a single
-uniform verb, plus a Jacobian-free maximal estimate, a from-a-recording
-estimator, and the Kaplan–Yorke dimension that falls straight out of the
-numbers.
+TSDynamics provides spectrum estimators for ODEs, maps and delay systems, a
+Jacobian-free maximal estimator, an estimator for measured data and the
+Kaplan–Yorke dimension derived from a suitable spectrum.
 
 <figure markdown>
 ![Running Lyapunov spectrum of the Lorenz system, the three exponents converging to their literature values on a log-time axis](../assets/figures/analysis/lyapunov.svg){ loading=lazy }
@@ -33,8 +32,8 @@ implementation and translates one signature to each family's native keywords.
 The exponents come back largest first, in a `LyapunovSpectrum` result that is a
 drop-in for the bare exponent array — `np.asarray(result)`, indexing and
 iteration all defer to it — while also carrying `.meta` and the `.kaplan_yorke`
-dimension. **The repr is the report**: print it and you get the numbers, the
-verdict and the subject on one line.
+dimension when enough exponents are available. Printing the result summarizes
+the rates, any automatic classification and the model used.
 
 ```python
 import numpy as np
@@ -69,9 +68,8 @@ guard. For returned map, DDE, or older results, also inspect `result.unbounded`.
 
 ## Per family — what actually runs
 
-Under the one verb, each family has a genuinely different tangent-space
-computation. The call is the same free function every time; only the keywords
-that make sense for that family change.
+The same function selects a family-specific tangent-space calculation. The
+following examples show the time or iteration arguments each family requires.
 
 === "ODE (flow)"
 
@@ -122,19 +120,19 @@ that make sense for that family change.
     and Benettin-renormalises over the deviation *history segment*. Because it
     restarts from a **constant past**, the workflow is two calls: integrate to
     the attractor, then hand the end state to `lyapunov_spectrum`. A DDE may
-    request more exponents than `dim`. The loose `1e-3`-ish tolerances are the
-    DDE default and are the right starting point — the method of steps lands on
-    every output sample, so `dt` bounds the internal step and tightening mostly
-    buys nothing (it is safe, just not usually worth it). See
+    request more exponents than `dim`. Check convergence with both the step bound
+    `dt` and solver tolerances: delay interpolation and history resolution can
+    affect the estimated rates as well as integration error. See
     [the tolerance table](integration-and-methods.md#the-default-tolerances).
 
 Every call records its settings in `result.meta` — the horizon it actually used,
 the family, the parameters and the initial condition.
 
-!!! note "Reading the signs — and when the result refuses to read them"
-    The number of positive exponents names the dynamics: **none** → regular
-    (a fixed point, cycle or torus), **one** → chaos, **two or more** →
-    hyperchaos. The repr prints that word, but only when it is *earned*.
+!!! note "Interpreting signs and automatic classifications"
+    Positive asymptotic exponents indicate expanding directions; two or more
+    are commonly called hyperchaos for a bounded invariant state. Finite-time
+    estimates require more caution. The automatic label uses a numerical
+    tolerance heuristic and does not establish asymptotic behavior.
 
     For a multi-direction autonomous flow, the zero tolerance uses `min|λ|` as
     an empirical floor, alongside a relative floor. It is a heuristic, not a
@@ -152,7 +150,7 @@ the family, the parameters and the initial condition.
 
     If the count changes when that floor is multiplied by ten, no word is
     printed — the result says `indeterminate at this horizon (n_pos = 0..1
-    across a 10x tolerance band; raise final_time)` instead of guessing. And
+    across a 10x tolerance band; raise final_time)`. Also,
     `D_KY` is omitted from the regime readout when no exponent is positive.
     A stable equilibrium has dimension zero; a regular cycle or torus has
     neutral directions, so there is no universal integer dimension for all
@@ -186,12 +184,12 @@ perturbed; the deviation vectors are repeatedly orthonormalized. When no
 differentiable right-hand side is available — for example, a
 [`WrappedSystem`](../start/defining-systems.md) around an external stepper, a
 non-smooth map with no analytic Jacobian — `lyapunov_spectrum` falls back to the
-classic **two-trajectory** method, which needs nothing but the stepping
+classic **two-trajectory** method, which uses the stepping
 protocol: run a reference and a copy perturbed by `d0`, let them separate for
 `steps_per` protocol steps, log the growth $\ln(d/d_0)$, rescale back to `d0`,
 and repeat (Benettin, Galgani & Strelcyn 1976). The continuous normalisation
 divides by the *measured* elapsed `time()` of the reference run, so the exponent
-is correct whatever per-step advance the system makes.
+has the correct time units even when a protocol step advances by a variable amount.
 
 ## `lyapunov_from_data` — from a measured series
 
@@ -214,7 +212,7 @@ res.times, res.divergence     # the S(k) curve — inspect, then set fit=(lo, hi
 Two estimators are available via `method=`:
 
 - `"kantz"` (default) averages over **all** neighbours within a ball of radius
-  `eps` — robust to noise (Kantz 1994).
+  `eps`, reducing reliance on any single neighbour (Kantz 1994).
 - `"rosenstein"` tracks the **single** nearest neighbour — cheaper, well-suited
   to short records (Rosenstein, Collins & De Luca 1993).
 

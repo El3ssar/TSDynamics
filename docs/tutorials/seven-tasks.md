@@ -7,21 +7,16 @@ description: Seven tasks in one sitting — simulate a system, test it for chaos
 
 # Seven tasks in one sitting
 
-This is the cold-start page: seven things people actually come to a
-dynamical-systems library to do, each in a handful of lines, on one page, in
-order. Paste them in sequence into a fresh session. Install
-`tsdynamics[viz,interactive]` to render the plots and export the animations.
+Work through seven common tasks in one Python session. Install
+`tsdynamics[viz,interactive]` for the figures; MP4 export also needs FFmpeg.
+Each section links to a guide with settings and interpretation in more detail.
 
-If you only read one page, read this one. The rest of the site is the same
-material at depth.
+The examples use three conventions:
 
-Three facts carry the whole API:
-
-1. **`run` is the one verb that produces data**, on every family.
-2. **Every analysis is a free function whose first argument is its subject** —
-   `ts.analysis.lyapunov_spectrum(lorenz)`. There are no analysis methods.
-3. **`ts.plot` draws everything you hand it**: a positional *string* says how to
-   draw, everything else says what to draw.
+1. `run` simulates a system and returns sampled data.
+2. Analysis functions take their subject first, for example
+   `ts.analysis.lyapunov_spectrum(lorenz)`.
+3. `ts.plot` accepts data or systems; a positional string selects a named view.
 
 ```python
 import numpy as np
@@ -45,7 +40,7 @@ traj.meta["method"]   # the solver kernel that ran — 'rk45'
 ```
 
 For this adaptive ODE solver, `dt` is the **output sampling interval**: the solver is
-adaptive and uses genuine dense output, so a coarse `dt` costs resolution and
+adaptive and uses dense output, so a coarse `dt` costs resolution and
 does not set its integration error tolerance. Accuracy is controlled by
 `rtol`/`atol` (`1e-9`/`1e-12` by default) and
 `max_step=` bounds the internal step when a feature is narrow.
@@ -58,8 +53,7 @@ orbit = hen.run(steps=5000, ic=[0.1, 0.1], transient=500)
 orbit.t[:4]           # array([0, 1, 2, 3]) — integer iterate indices
 ```
 
-Ask a map for `final_time=` and the error explains the mathematics rather than
-just the signature:
+Ask a map for `final_time=` and the error explains the mathematics and the expected argument:
 
 ```
 InvalidParameterError: final_time is not a valid Henon.run() keyword, got 10.0.
@@ -95,7 +89,7 @@ signal = ts.plot(traj, components="x", color="#574FCF")
 
 The Lyapunov spectrum estimates how nearby trajectories separate. Here it comes
 from integrating the variational equations with the analytic Jacobian, and
-**the result prints the answer**:
+the result prints the rates and its finite-time interpretation:
 
 ```python
 spec = ts.analysis.lyapunov_spectrum(lor, final_time=300.0, dt=0.05, transient=40.0)
@@ -107,18 +101,18 @@ print(spec)
 One positive exponent, one at zero (the direction *along* the flow), one strongly
 negative: the positive·zero·negative signature of a chaotic dissipative flow. The
 verdict word is only printed when it survives a **tenfold change of the zero
-tolerance** — otherwise the result says `indeterminate at this horizon` instead of
-guessing, and the supporting line always shows the floor it decided at.
+tolerance** — otherwise the result says `indeterminate at this horizon` and shows the tolerance used. This sensitivity check does not establish
+asymptotic convergence.
 
 The result behaves like the array it reports, so it drops into ordinary code:
 
 ```python
 float(spec[0])          # 0.908…  the leading exponent
 np.asarray(spec)        # the bare (3,) array
-spec.kaplan_yorke       # 2.06 — the fractal dimension implied by the spectrum
+spec.kaplan_yorke       # 2.06 — the Kaplan–Yorke estimate derived from the spectrum
 ```
 
-Two cheaper verdicts, useful as cross-checks:
+Two additional indicators, with distinct assumptions:
 
 ```python
 ts.analysis.lyapunov_spectrum(hen, k=1, ic=[0.1, 0.1])   # ≈ 0.42, just the leader
@@ -322,8 +316,8 @@ movie.save("vdp.html")     # ...or a real-time comet you can pan while it plays
 
 ## 7 · Define your own system
 
-The catalogue is a starting point, not a ceiling. Name the components, declare
-the parameters, write the math once:
+To define a custom model, name its components, declare parameters and write
+the right-hand side:
 
 ```python
 class RosenzweigMacArthur(ts.ContinuousSystem):
@@ -341,7 +335,7 @@ class RosenzweigMacArthur(ts.ContinuousSystem):
                 e * grazing - m * y]
 ```
 
-That is the whole contract. `variables` names the components and **`dim` follows
+Here are the main requirements. `variables` names the components and **`dim` follows
 from it**; ordinary `params` are runtime values, so changing one reuses the compiled equations. The body builds
 **symbolic** expressions — plain arithmetic plus `symengine` functions (`sin`,
 `exp`, `sqrt`, …) — and `u(i)` reads component `i`. It is lowered to the Rust
@@ -378,9 +372,10 @@ print(ts.analysis.lyapunov_spectrum(rma, final_time=2000.0, dt=0.05,
 ts.plot(rma, traj, "flow_speed", "nullclines", title="predator–prey")
 ```
 
-The coexistence equilibrium is unstable and the spectrum has no positive
-exponent: the population settles onto a **limit cycle**, the predator–prey
-oscillation. That is the paradox of enrichment, measured in five lines.
+The equilibrium is unstable and the sampled orbit approaches an oscillation.
+Inspect that orbit and the spectrum together; the absence of a positive
+finite-time exponent alone does not prove a limit cycle. Varying the enrichment
+parameter lets you investigate the corresponding ecological transition.
 
 Your class also joined the registry the moment it was defined:
 

@@ -1,19 +1,21 @@
 """Generate the analysis-page showcase figures (one per analysis tool).
 
 Each render function uses the real tsdynamics library to produce a didactic,
-on-brand figure for its docs page: transparent background, the brand teal
+on-brand figure for its docs page: opaque white paper, the brand teal
 (``#11857A``) / indigo (``#574FCF``) accents, viridis/twilight where a colour
-map is called for, and IBM Plex label text (the SVG carries the font-family so
-the site's IBM Plex webfont applies when the page renders). The SVGs are
+map is called for, and portable sans-serif labels. The SVGs are
 committed static assets under ``docs/assets/figures/analysis/``; re-run after
 changing a generator::
 
-    .venv/bin/python docs/_tooling/make_analysis_figures.py
+    uv run --no-sync python docs/_tooling/make_analysis_figures.py
 """
 
 from __future__ import annotations
 
+import argparse
 import pathlib
+
+from figure_style import PAPER_RC, FigureCanvas, save_figure
 
 OUT = pathlib.Path(__file__).resolve().parents[1] / "assets" / "figures" / "analysis"
 
@@ -22,37 +24,12 @@ OUT = pathlib.Path(__file__).resolve().parents[1] / "assets" / "figures" / "anal
 #: functions re-bind them locally so each stays copy-paste self-contained.
 TEAL, INDIGO, AMBER, ROSE = "#11857A", "#574FCF", "#E8912D", "#D64562"
 
-#: Label font — IBM Plex Sans, with DejaVu as the layout fallback. In an SVG the
-#: chosen family string is emitted verbatim, so the page's IBM Plex webfont
-#: renders it even though the box may not be installed system-wide.
-_FONT_STACK = ["IBM Plex Sans", "DejaVu Sans", "sans-serif"]
-
 
 def _style():
-    """Configure matplotlib for the on-brand, transparent, SVG-friendly house style."""
-    import matplotlib
+    """Configure matplotlib for the on-brand, readable, SVG-friendly house style."""
+    plt = FigureCanvas()
 
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
-    plt.rcParams.update(
-        {
-            "svg.fonttype": "none",  # keep text as <text> so IBM Plex applies in-browser
-            "font.family": "sans-serif",
-            "font.sans-serif": _FONT_STACK,
-            "figure.facecolor": "none",
-            "axes.facecolor": "none",
-            "savefig.transparent": True,
-            "axes.edgecolor": "#88888855",
-            "axes.labelcolor": "#888888",
-            "xtick.color": "#888888",
-            "ytick.color": "#888888",
-            "axes.grid": False,
-            "font.size": 9,
-            "axes.titlesize": 10,
-            "legend.frameon": False,
-        }
-    )
+    plt.rcParams.update(PAPER_RC)
     return plt
 
 
@@ -66,12 +43,11 @@ def fig_lyapunov(plt, out_path):
     INDIGO = "#574FCF"
     TEAL = "#11857A"
     AMBER = "#E8912D"
-    ROSE = "#D64562"
 
     known = np.array([0.906, 0.0, -14.57])
 
     # Settle onto the Lorenz attractor, then track the running spectrum.
-    lor = ts.systems.Lorenz()
+    lor = ts.systems.Lorenz(ic=[1, 1, 1])
     settle = lor.run(final_time=40.0, dt=0.01)
     ic = settle.y[-1]
 
@@ -90,38 +66,32 @@ def fig_lyapunov(plt, out_path):
     times = np.asarray(times)
     exps = np.asarray(exps)  # (n_record, 3)
 
-    fig, ax = plt.subplots(figsize=(6.2, 4.0))
-
-    labels = [r"$\lambda_1$", r"$\lambda_2$", r"$\lambda_3$"]
+    # Separate scales keep the near-neutral rate legible without truncating
+    # the large contracting exponent or pretending that the vertical scales match.
+    fig, axes = plt.subplots(3, 1, figsize=(6.6, 6.4), sharex=True, layout="constrained")
+    labels = ["Expanding direction", "Near-neutral direction", "Contracting direction"]
     cols = [INDIGO, TEAL, AMBER]
-    for j in range(3):
-        ax.plot(times, exps[:, j], color=cols[j], lw=1.3, label=labels[j], zorder=3)
-
-    # Known literature values (dashed ROSE reference lines).
-    for val in known:
-        ax.axhline(val, color=ROSE, lw=0.9, ls="--", alpha=0.8, zorder=2)
-    xr = times[-1]
-    for val, txt in zip(known, ["0.906", "0.0", "-14.57"], strict=True):
-        ax.annotate(
-            txt,
-            xy=(xr, val),
-            xytext=(4, 0),
-            textcoords="offset points",
-            va="center",
-            ha="left",
-            fontsize=8,
-            color=ROSE,
-            clip_on=False,
+    for j, ax in enumerate(axes):
+        ax.plot(times, exps[:, j], color=cols[j], lw=1.6)
+        ax.axhline(known[j], color="#697F8C", lw=0.9, ls="--", zorder=1)
+        ax.set_title(labels[j], loc="left", fontsize=11)
+        ax.set_ylabel(rf"$\lambda_{j + 1}(t)$")
+        ax.text(
+            0.98,
+            0.84,
+            f"reference: {known[j]:g}",
+            transform=ax.transAxes,
+            ha="right",
+            va="top",
+            fontsize=9,
+            color="#526675",
+            bbox=dict(facecolor="white", edgecolor="none", alpha=0.9),
         )
-
-    ax.set_xscale("log")
-    ax.set_xlim(times[0], xr)
-    ax.set_xlabel("elapsed time  $t$")
-    ax.set_ylabel("running Lyapunov exponents")
-    ax.margins(x=0)
-    ax.legend(loc="center right", fontsize=8, handlelength=1.4)
-
-    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+        ax.set_xscale("log")
+        ax.set_xlim(times[0], times[-1])
+        ax.grid(axis="y", alpha=0.65)
+    axes[-1].set_xlabel("Elapsed time after settling")
+    save_figure(fig, out_path)
     plt.close(fig)
 
 
@@ -169,7 +139,7 @@ def fig_orbit_diagram(plt, out_path):
     for s in ("top", "right"):
         ax.spines[s].set_visible(False)
 
-    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    save_figure(fig, out_path)
     plt.close(fig)
 
 
@@ -218,7 +188,7 @@ def fig_recurrence(plt, out_path):
     axes[0].set_ylabel("$j$")
 
     fig.tight_layout()
-    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    save_figure(fig, out_path)
     plt.close(fig)
 
 
@@ -231,7 +201,7 @@ def fig_dimensions(plt, out_path):
     INDIGO = "#574FCF"
     ROSE = "#D64562"
 
-    # Hénon attractor point cloud (already decorrelated -> no Theiler window needed)
+    # One finite Hénon record; the estimate retains its default temporal exclusion.
     traj = ts.systems.Henon().run(8000, transient=500, ic=[0.1, 0.1])
 
     # D2 estimate + the log-log scaling curve it was read from
@@ -282,7 +252,7 @@ def fig_dimensions(plt, out_path):
     for s in ("top", "right"):
         ax.spines[s].set_visible(False)
 
-    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    save_figure(fig, out_path)
     plt.close(fig)
 
 
@@ -294,7 +264,7 @@ def fig_embedding(plt, out_path):
     TEAL = "#11857A"
 
     # Integrate Rossler; we will keep ONLY x(t) for the reconstruction.
-    ros = ts.systems.Rossler()
+    ros = ts.systems.Rossler(ic=[1, 0, 0])
     traj = ros.run(final_time=400.0, dt=0.05)
     # drop transient
     n0 = int(traj.y.shape[0] * 0.15)
@@ -334,7 +304,7 @@ def fig_embedding(plt, out_path):
     )
 
     fig.tight_layout()
-    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    save_figure(fig, out_path)
     plt.close(fig)
 
 
@@ -349,7 +319,7 @@ def fig_chaos(plt, out_path):
     AMBER = "#E8912D"
     ROSE = "#D64562"
 
-    lor = ts.systems.Lorenz()
+    lor = ts.systems.Lorenz(ic=[1, 1, 1])
     g2 = ts.analysis.gali(lor, 2, final_time=40.0, dt=0.05, seed=0)
     g3 = ts.analysis.gali(lor, 3, final_time=40.0, dt=0.05, seed=0)
 
@@ -409,7 +379,7 @@ def fig_chaos(plt, out_path):
     ax.set_xlim(0, float(t2[-1]))
     ax.legend(loc="upper right", fontsize=7.5, handlelength=1.8)
 
-    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    save_figure(fig, out_path)
     plt.close(fig)
 
 
@@ -419,7 +389,6 @@ def fig_basins(plt, out_path):
     from matplotlib.colors import ListedColormap
 
     import tsdynamics as ts
-    from tsdynamics.analysis import basins as bas
     from tsdynamics.data import Grid
 
     INDIGO = "#574FCF"
@@ -444,14 +413,16 @@ def fig_basins(plt, out_path):
 
         @staticmethod
         def _jacobian(X):
-            return ((0.0, 0.0), (0.0, 0.0))
+            z = complex(X[0], X[1])
+            derivative = (2.0 / 3.0) * (1.0 - 1.0 / z**3)
+            return ((derivative.real, -derivative.imag), (derivative.imag, derivative.real))
 
     # Paint the basins on a square of the complex plane.  Newton on z^3 = 1 has
     # three roots (the cube roots of unity); the boundaries between their basins
     # form the fractal Julia set.
     lo, hi, n = -1.0, 1.0, 200
     nm = NewtonMap()
-    res = bas.basins(
+    res = ts.analysis.basins(
         nm,
         Grid([lo, lo], [hi, hi], (n, n)),
         consecutive_recurrences=8,
@@ -461,7 +432,7 @@ def fig_basins(plt, out_path):
 
     labels = res.labels  # (n_re, n_im); -1 = diverged
     ids = res.attractors.ids
-    centers = {k: res.attractors[k].center for k in ids}
+    centers = {k: res.attractors.by_id(k).center for k in ids}
 
     palette = [INDIGO, TEAL, AMBER]
     img = np.full(labels.shape, np.nan)
@@ -469,7 +440,7 @@ def fig_basins(plt, out_path):
         img[labels == k] = idx
 
     cmap = ListedColormap(palette[: max(1, min(3, len(ids)))])
-    cmap.set_bad(color="none")
+    cmap = cmap.with_extremes(bad="none")
 
     fig, ax = plt.subplots(figsize=(5.2, 5.2))
     # labels[i, j] -> (re_i, im_j); transpose so re is x and im is y.
@@ -506,7 +477,7 @@ def fig_basins(plt, out_path):
         spine.set_visible(False)
     ax.tick_params(length=0)
 
-    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    save_figure(fig, out_path)
     plt.close(fig)
 
 
@@ -533,7 +504,7 @@ def fig_fixed_points(plt, out_path):
     sys = VanDerPol(params={"mu": 1.0})
 
     # The limit cycle, found by single shooting (thick TEAL closed curve).
-    orb = ts.periodic_orbit(sys, ic=[2.0, 0.0], period_guess=6.0, transient=20.0)
+    orb = ts.analysis.periodic_orbits(sys, 6.0, ic=[2.0, 0.0], transient=20.0).details[0]
     cyc = np.asarray(orb.points)
 
     # The unstable equilibrium at the origin (ROSE x) via multi-start Newton.
@@ -551,7 +522,7 @@ def fig_fixed_points(plt, out_path):
         [0.0, -4.2],
     ]
 
-    fig, ax = plt.subplots(figsize=(6.0, 4.2))
+    fig, ax = plt.subplots(figsize=(6.6, 4.4))
 
     for s in seeds:
         traj = sys.run(ic=s, final_time=22.0, dt=0.01)
@@ -561,12 +532,12 @@ def fig_fixed_points(plt, out_path):
         cyc[:, 0],
         cyc[:, 1],
         color=TEAL,
-        lw=2.4,
+        lw=1.8,
         zorder=3,
         label=f"limit cycle (T = {orb.period:.3f})",
     )
 
-    for fp in fps:
+    for fp in fps.details:
         if not fp.stable:
             ax.scatter(
                 [fp.x[0]],
@@ -592,12 +563,12 @@ def fig_fixed_points(plt, out_path):
 
     ax.set_xlabel("x")
     ax.set_ylabel("v")
-    ax.set_xlim(-3.6, 3.6)
-    ax.set_ylim(-4.6, 4.6)
-    ax.set_aspect("equal", adjustable="box")
-    ax.legend(loc="upper right", fontsize=8)
+    # Position and velocity have different units; independent axes show every
+    # transient without clipping the outer arcs or forcing a tall empty canvas.
+    ax.margins(0.04)
+    ax.legend(loc="lower left", bbox_to_anchor=(0, 1.02), ncol=2, fontsize=9)
 
-    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    save_figure(fig, out_path)
     plt.close(fig)
 
 
@@ -616,9 +587,9 @@ def fig_poincare(plt, out_path):
     bz = traj["z"]
 
     # Poincare section: plane y = 0, ascending crossings -> one wing of the
-    # attractor sampled stroboscopically; the crossings collapse onto a thin,
+    # attractor sampled at crossings; the crossings lie on a thin,
     # near-one-dimensional return set.
-    pmap = ts.derived.PoincareMap(sys, plane=(1, 0.0), direction=+1, dt=0.01)
+    pmap = sys.poincare(plane=(1, 0.0), direction=+1, dt=0.01)
     sec = pmap.run(600, transient=50, ic=[1.0, 1.0, 0.0])
     sx = sec.y[:, 0]
     sz = sec.y[:, 2]
@@ -638,7 +609,7 @@ def fig_poincare(plt, out_path):
     ax.text(
         0.03,
         0.80,
-        "flow shown faint;\nsection collapses to\na thin 1-D return set",
+        "Faint curve: flow\nTeal points: crossings",
         transform=ax.transAxes,
         ha="left",
         va="top",
@@ -646,7 +617,7 @@ def fig_poincare(plt, out_path):
         color="#888888",
     )
 
-    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    save_figure(fig, out_path)
     plt.close(fig)
 
 
@@ -662,7 +633,7 @@ def fig_integrate(plt, out_path):
     TEAL = "#11857A"
     AMBER = "#E8912D"
 
-    lor = ts.systems.Lorenz()
+    lor = ts.systems.Lorenz(ic=[1, 1, 1])
     traj = lor.run(final_time=60.0, dt=0.005, ic=[1.0, 1.0, 1.0])
     traj = traj.after(5.0)  # drop the transient onto the attractor
 
@@ -695,7 +666,7 @@ def fig_integrate(plt, out_path):
         axes.append(ax)
     axes[-1].set_xlabel("time")
 
-    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    save_figure(fig, out_path)
     plt.close(fig)
 
 
@@ -742,8 +713,8 @@ def fig_solvers(plt, out_path):
             errs.append(abs(tr.y[-1, 0] - exact))
         ax1.loglog(tols, errs, marker=marker, color=color, lw=1.6, ms=5, label=method)
     ax1.set_xlabel("requested tolerance  rtol")
-    ax1.set_ylabel("achieved global error")
-    ax1.set_title("Explicit work-precision", color="#888888", fontsize=9.5)
+    ax1.set_ylabel("Absolute endpoint error")
+    ax1.set_title("Tolerance and endpoint error", color="#888888", fontsize=9.5)
     ax1.invert_xaxis()
     ax1.grid(True, which="both", color="#88888822", lw=0.5)
     ax1.legend(loc="upper left", fontsize=8)
@@ -805,7 +776,7 @@ def fig_solvers(plt, out_path):
     ax2.set_title("Stiff van der Pol (mu=1000)", color="#888888", fontsize=9.5)
     ax2.grid(True, axis="x", which="both", color="#88888822", lw=0.5)
     for i, ms in enumerate(times):
-        ax2.text(ms * 1.15, i, f"{ms:.0f}", va="center", fontsize=7.5, color="#888888")
+        ax2.text(ms * 1.15, i, f"{ms:.2g}", va="center", fontsize=7.5, color="#888888")
     assert max(xends) - min(xends) < 1e-2, xends
     ax2.text(
         0.97,
@@ -822,7 +793,7 @@ def fig_solvers(plt, out_path):
     fig = plt.gcf()
     fig.set_size_inches(6.2, 3.8)
     fig.tight_layout()
-    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    save_figure(fig, out_path)
     plt.close(fig)
 
 
@@ -843,9 +814,21 @@ FIGURES = {
 
 def main():
     """Render every analysis figure to docs/assets/figures/analysis/<slug>.svg."""
-    plt = _style()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--only", nargs="+", choices=sorted(FIGURES))
+    args = parser.parse_args()
+    import matplotlib as mpl
+
+    with mpl.rc_context():
+        plt = _style()
+        _render_selected(plt, args.only)
+
+
+def _render_selected(plt, selected):
     OUT.mkdir(parents=True, exist_ok=True)
     for slug, fn in FIGURES.items():
+        if selected and slug not in selected:
+            continue
         plt.close("all")
         out = OUT / f"{slug}.svg"
         fn(plt, str(out))

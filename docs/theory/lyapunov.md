@@ -52,8 +52,8 @@ $$
 
 Comparisons across method variants (Geist, Parlitz & Lauterborn 1990)
 established this as the robust default, and it is what TSDynamics uses for
-maps (the compiled QR tangent-map kernel behind `TangentSystem`) with the exact
-`_jacobian` at every iterate.
+maps (the compiled QR tangent-map kernel behind `TangentSystem`) with the
+map Jacobian at every iterate.
 
 ## What each family actually solves
 
@@ -76,8 +76,9 @@ maps (the compiled QR tangent-map kernel behind `TangentSystem`) with the exact
   state plus deviation states whose dynamics are the symbolic variational
   equations — and integrating it on the engine in delay-window chunks, with a
   function-space QR over the deviation history segment. This is why `k` must
-  be chosen consciously, why the estimates converge more slowly than ODE ones,
-  and why `TangentSystem` refuses delay systems outright.
+  be chosen explicitly and history resolution needs a convergence check.
+  `TangentSystem` itself does not support delay systems; the analysis function
+  uses the separate function-space estimator.
 
 ## The two-trajectory estimator
 

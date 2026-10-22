@@ -6,17 +6,15 @@ description: Correlation, generalized-Rényi, box-counting, information and fixe
 
 # Fractal dimensions
 
-How many directions does an attractor genuinely fill? A strange attractor is
-not a smooth manifold — it folds a bounded volume onto a set with detailed
-structure at every scale, and the honest way to count its degrees of freedom is
-a *non-integer* dimension. TSDynamics estimates the whole family — the
-correlation dimension $D_2$, the generalized Rényi spectrum $D_q$ (with the
-capacity $D_0$ and information $D_1$ as named cases), and a fixed-mass variant
-robust into the sparse tails — each fit on a power-law scaling region the
-library **selects automatically and lets you inspect**.
+Fractal dimensions describe how a set or measure fills state space as the
+observation scale changes. TSDynamics estimates the correlation dimension
+$D_2$, generalized Rényi dimensions $D_q$ (including capacity $D_0$ and
+information $D_1$), and a fixed-mass dimension. Each estimate comes from a fitted
+scaling region. Inspect that region and its dependence on sample size before
+interpreting a finite-data slope as an asymptotic dimension.
 
-Every estimator reads a [`Trajectory`](index.md), a raw `(N, dim)` array, or a
-1-D series interchangeably, and returns a `DimensionResult` that behaves as the
+Individual estimators accept a [`Trajectory`](index.md), a raw `(N, dim)` array,
+or a 1-D series, and return a `DimensionResult` that behaves as the
 dimension number in arithmetic (`float(result)`) while carrying the log–log
 curve and the fitted window.
 
@@ -35,11 +33,12 @@ The Grassberger–Procaccia correlation sum counts the fraction of point pairs
 closer than a radius $r$,
 
 $$
-C(r) = \frac{2}{N_\text{pairs}} \sum_{i<j}
+C(r) = \frac{1}{M} \sum_{\substack{i<j\\|i-j|>w}}
        \Theta\!\big(r - \lVert x_i - x_j \rVert\big),
 $$
 
-and on a fractal it scales as $C(r) \sim r^{D_2}$. The correlation dimension is
+where $w$ is the Theiler window and $M$ counts eligible unordered pairs
+($M=N(N-1)/2$ when $w=0$). In a scaling regime, $C(r) \sim r^{D_2}$. The correlation dimension is
 therefore the slope of $\log C(r)$ against $\log r$ — but only across the
 *scaling region*, the straight middle of the curve. It bends away below (the
 finite-sampling noise floor) and above (saturation at the attractor diameter),
@@ -58,7 +57,7 @@ pts = ts.systems.Henon().run(steps=8000, ic=[0.1, 0.1]).y[500:]
 
 res = ts.analysis.correlation_dimension(pts, n_radii=32, min_window=8)
 float(res)        # 1.171   (the fitted slope D2)
-res.stderr        # 0.002   (slope uncertainty over the window)
+res.stderr        # 0.002   (line-fit slope standard error)
 res.fit_region    # (3, 13) inclusive indices of the fitted region
 ```
 
@@ -77,9 +76,9 @@ line.
 **The Theiler window.** Temporally adjacent samples of a densely sampled flow
 sit spuriously close in state space and inflate $C(r)$ at small $r$, biasing
 $D_2$ *downward*. Pass `theiler=w` to count only pairs separated by more than
-$w$ samples in time (Theiler 1986) — always set it for a measured flow. The
-Hénon map above is already decorrelated iterate-to-iterate, so no window is
-needed; for a reconstructed flow use a few autocorrelation times.
+$w$ samples in time (Theiler 1986). For densely sampled flows, assess a window
+based on the signal's correlation time. Map iterates can also be correlated;
+compare several windows rather than assuming successive samples are independent.
 
 The raw curve is available on its own via `correlation_sum(pts)`, which returns
 `(radii, C)` if you want to fit it yourself.
@@ -136,7 +135,7 @@ regime.
 
 To read the whole spectrum at once, `dimension_spectrum` computes the box
 occupancies **once per scale** and reuses them across every $q$, so the full
-curve costs barely more than a single $D_q$:
+curve avoids repeating the partition for each $q$:
 
 ```python
 spec = ts.analysis.dimension_spectrum(pts, qs=[0, 1, 2, 3, 4])
@@ -158,8 +157,9 @@ spectrum.
     boundaries happen to fall: a cluster straddling a boundary is split across
     two boxes and inflates the count. For every scale, `generalized_dimension`
     sweeps several grid-origin offsets and keeps the one yielding the *fewest*
-    occupied boxes — the minimal cover closest to the true covering number
-    $N(\epsilon)$. This flattens the $D_q$ spectrum of a self-similar
+    occupied boxes. This reduces sensitivity to grid placement, although a
+    finite set of offsets is not an exact minimal cover. It helps flatten the
+    estimated $D_q$ spectrum of a self-similar
     monofractal (e.g. the middle-thirds Cantor set, $D_q = \log 2/\log 3$ for
     all $q$). Pass `offsets=(0.0,)` to recover the naive single-origin
     partition.
@@ -177,18 +177,17 @@ $$
 $$
 
 and $D$ is the slope of the digamma $\psi(k)$ against $\langle\log r_k\rangle$.
-(The digamma — *not* $\log k$ — is the bias-free abscissa: for a fixed mass the
-enclosing radius is a random order statistic, and the digamma correction removes
-the $O(1/k)$ bias $\log k$ carries at small $k$.)
+The digamma correction accounts for nearest-neighbour order statistics and
+reduces the small-$k$ bias associated with using $\log k$. It does not remove
+all finite-sample or geometric bias.
 
 ```python
-ts.analysis.fixed_mass_dimension(pts)           # 1.266   (agrees with D2)
+ts.analysis.fixed_mass_dimension(pts)           # 1.266   (a different finite-sample geometric estimate)
 ```
 
 Because it adapts the radius to the *local* density, the fixed-mass estimator
-keeps a usable signal-to-noise ratio deep into the sparse tails of an attractor,
-where a fixed-radius correlation sum simply runs out of pairs. It is the
-estimator of choice for **higher-dimensional** attractors.
+can use sparse regions where a fixed-radius correlation sum has few pairs.
+Higher-dimensional estimates still require enough data and a stable fitted range.
 
 ## Inspect and override the fit
 
@@ -231,16 +230,16 @@ res.trusted            # False when the scaling region did not resolve
 float(res)             # still gives you the number
 ```
 
-This is deliberate: refusing to return would deny you the diagnostic curve that
-shows *why* it failed. Treat `trusted=False` as "look at `local_slopes` before
-quoting this", not as a crash — and never quote an untrusted value without
-saying so.
+The diagnostic curve remains available when `trusted=False`. Inspect the reason,
+local slopes and fitted range before reporting the number. Conversely,
+`trusted=True` means the internal checks passed; it is not an uncertainty bound
+or a guarantee that a fractal scaling regime was resolved.
 
 !!! warning "Finite data limits the answer"
-    A reliable $D$ wants roughly $10^{D}$ points and a clean plateau spanning at
-    least a decade in scale. Above $D \approx 5$ prefer `fixed_mass_dimension`,
-    and never trust a number without looking at `local_slopes(res.x, res.y)`
-    first — the automatic fit can be fooled by a short spurious flat.
+    Data requirements grow rapidly with dimension and depend on noise, sampling
+    and the measure being estimated. Inspect `local_slopes(res.x, res.y)` and
+    repeat with longer records and different fitting ranges. A short flat segment
+    can occur without an asymptotic scaling regime.
 
 ## Known values
 
@@ -253,20 +252,20 @@ saying so.
 | Circle of points | any | $D \approx 1$ | sanity check |
 | Filled square | any | $D \approx 2$ | sanity check |
 
-!!! note "Lorenz is a flow — reconstruct first"
+!!! note "Flow data and reconstructed coordinates"
     The Lorenz $D_2 \approx 2.05$ is a *literature* value: integrating a flow
     long enough to populate its attractor densely is slow, so it is cited rather
-    than run inline. In practice you reconstruct the cloud from one observable
-    via [delay embedding](embedding.md), then call `correlation_dimension` on
-    the reconstruction — a full observable-to-dimension pipeline recovers
-    $D_2 \approx 1.9$ for the (three-dimensional) Rössler attractor.
+    than run inline. Use the full state when it is available; for a single
+    measured observable, form [delay coordinates](embedding.md) first. Estimates
+    from either representation depend on sampling, temporal exclusion and the
+    scaling window; agreement on one short record is not a convergence test.
 
 ## See also
 
 - [Delay embeddings](embedding.md) — reconstruct the point cloud from a single
   signal before measuring $D$ (and remember the Theiler window on the result)
 - [Lyapunov spectra](lyapunov.md) — the dynamical companion; the Kaplan–Yorke
-  dimension is a fractal dimension read straight off the spectrum
+  dimension is derived from dynamical rates under additional assumptions
 - [Recurrence & RQA](recurrence.md) — a complementary, geometry-based view of
   the same structure
 
