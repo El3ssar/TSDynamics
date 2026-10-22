@@ -13,7 +13,7 @@ indicators and longer observation windows to cross-check a conclusion.
 
 <figure markdown>
 ![GALI_2 and GALI_3 for the Lorenz attractor decaying exponentially against their Skokos-law reference slopes on a semilog axis](../assets/figures/analysis/chaos.svg){ loading=lazy }
-<figcaption>On the chaotic Lorenz attractor both alignment indices collapse exponentially, and their decay rates are fixed by the Lyapunov gaps: GALI₂ (indigo) falls at $\lambda_1-\lambda_2 \approx 0.91$ (with $\lambda_2 \approx 0$ along the flow), while GALI₃ (teal) falls at $(\lambda_1-\lambda_2)+(\lambda_1-\lambda_3) \approx 16.4$, hitting the floating-point floor almost at once — the measured curves tracking the predicted Skokos-law slopes (dashed).</figcaption>
+<figcaption>Solid curves show measured GALI₂ (indigo) and GALI₃ (teal) for a finite Lorenz trajectory. Dashed curves give asymptotic Lyapunov-gap references: $\lambda_1-\lambda_2 \approx 0.91$ and $(\lambda_1-\lambda_2)+(\lambda_1-\lambda_3) \approx 16.4$. Values below $10^{-17}$ are clipped at the display floor.</figcaption>
 </figure>
 
 | Function | Reads | Typical chaotic behavior | Regular reference / caveat |

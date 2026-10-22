@@ -76,8 +76,8 @@ Names are case-insensitive, normalize whitespace and hyphens, and accept common 
 themselves (see [Programmatic registry](#programmatic-registry)).
 
 <figure markdown>
-![Work–precision diagram for the explicit family and a stiff-problem wall-time comparison](../assets/figures/analysis/solvers.svg){ loading=lazy }
-<figcaption>Left: on a scalar problem with a known solution the explicit kernels track the requested tolerance, with the order-8 <code>dop853</code> reaching the lowest error at every setting. Right: on stiff van der Pol (μ=1000) all six kernels land on the same final state, but the explicit methods are stability-bound and pay hundreds of times the wall-time of the implicit ones — the practical case for <code>bdf</code>.</figcaption>
+![Absolute endpoint error versus requested tolerance beside a recorded stiff-problem timing comparison](../assets/figures/analysis/solvers.svg){ loading=lazy }
+<figcaption>Left: absolute endpoint error decreases as the requested tolerance tightens on a scalar problem with a known solution. The order-8 <code>dop853</code> reaches the lowest error at each displayed setting. Right: a recorded timing comparison on stiff van der Pol (μ=1000), with a common horizon and tolerances. The explicit methods take substantially longer than the implicit ones in this run; timings depend on the machine and workload.</figcaption>
 </figure>
 
 ## Explicit Runge–Kutta

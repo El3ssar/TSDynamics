@@ -53,22 +53,24 @@ automatically selected scaling region. On the Hénon attractor:
 ```python
 import tsdynamics as ts
 
-pts = ts.systems.Henon().run(steps=8000, ic=[0.1, 0.1]).y[500:]
+trajectory = ts.systems.Henon().run(steps=8000, transient=500, ic=[0.1, 0.1])
 
-res = ts.analysis.correlation_dimension(pts, n_radii=32, min_window=8)
-float(res)        # 1.171   (the fitted slope D2)
-res.stderr        # 0.002   (line-fit slope standard error)
-res.fit_region    # (3, 13) inclusive indices of the fitted region
+res = ts.analysis.correlation_dimension(trajectory, n_radii=32, min_window=8)
+float(res)        # about 1.20: the fitted slope D2 for this finite record
+res.stderr        # line-fit slope standard error
+res.fit_region    # inclusive indices of the selected fitting interval
 ```
 
-The `.y[500:]` slice drops the transient before the orbit lands on the
-attractor. The figure plots exactly this result: every point of the log–log
-curve (indigo), the fitted region circled, and the slope $D_2$ drawn as the
-line.
+`transient=500` discards 500 initial iterates. The figure uses the retained
+trajectory to show the log–log correlation sum, the selected fitting region
+and the fitted slope $D_2$.
 </div>
 <figure class="ts-fig" markdown>
 ![Correlation-dimension scaling of the Hénon attractor](../assets/figures/analysis/dimensions.svg){ loading=lazy }
-<figcaption><span class="lbl">FIG 1</span> · the Grassberger–Procaccia correlation sum of the Hénon attractor on log–log axes; the slope of the straight scaling region (between the small-<em>r</em> noise floor and the large-<em>r</em> saturation knee) is <em>D</em>₂ ≈ 1.17.</figcaption>
+<figcaption>The Hénon correlation sum on logarithmic axes. The highlighted
+fitting interval gives a finite-record estimate <em>D</em>₂ ≈ 1.20. Its
+line-fit error does not include uncertainty from record length, temporal
+exclusion or the choice of scaling interval.</figcaption>
 </figure>
 
 </div>
@@ -80,7 +82,7 @@ $w$ samples in time (Theiler 1986). For densely sampled flows, assess a window
 based on the signal's correlation time. Map iterates can also be correlated;
 compare several windows rather than assuming successive samples are independent.
 
-The raw curve is available on its own via `correlation_sum(pts)`, which returns
+The raw curve is available on its own via `correlation_sum(trajectory)`, which returns
 `(radii, C)` if you want to fit it yourself.
 
 !!! note "Sanity checks you can run in two lines"

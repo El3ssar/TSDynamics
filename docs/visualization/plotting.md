@@ -149,7 +149,8 @@ it with the camera.
 lor = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]).run(final_time=100.0, dt=0.01)
 
 (
-    ts.plot(lor)               # all three → phase_portrait_3d
+    ts.plot(lor, color="#47D7BF")  # all three → phase_portrait_3d
+       .theme("dark", background="#0B0F14")
        .style(axes=False)            # no ticks / labels / grey panes
        .camera(elev=22, azim=-60)    # frame the butterfly
        .save("lorenz-3d.pdf")
@@ -157,7 +158,7 @@ lor = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]).run(final_time=100.0, dt=0.01)
 ```
 
 <figure markdown>
-![The Lorenz butterfly as a clean 3-D phase portrait, its two indigo wings, axes hidden, on a transparent background](../assets/figures/viz/kind-phase-3d.svg){ loading=lazy }
+![A Lorenz trajectory in three dimensions, with hidden axes on a dark background](../assets/figures/viz/kind-phase-3d.svg){ loading=lazy }
 <figcaption>The Lorenz attractor drawn as a 3-D <code>LINE3D</code> portrait. <code>.style(axes=False)</code> strips the ticks, labels, and 3-D background panes; <code>.camera(elev=22, azim=-60)</code> frames the two wings. This is the "attractor floating in space" look the catalogue pages use.</figcaption>
 </figure>
 
@@ -248,14 +249,17 @@ ts.plot(gs, "spatial_field").save("gray-scott.pdf")          # last field, imsho
 ts.plot(gs, "spatial_field", components="v").save("gs-v.pdf")  # pick a field block
 ```
 
-A multi-block field (Gray–Scott packs an activator `u` and inhibitor `v`)
+A multi-block field (Gray–Scott packs a substrate `u` and activator `v`)
 declares `field_labels`; `components=` picks the block, defaulting to the last
 (the activator). A system with **no** `_field_shape` (or a 1-D one) plots as a
 1-D profile; it is not automatically reshaped into a square.
 
 <figure markdown>
-![Two panels: left, a Gray-Scott 2-D activator field as a viridis heatmap of self-replicating spots; right, a Kuramoto-Sivashinsky 1-D space-time diagram in viridis showing chaotic cellular stripes](../assets/figures/viz/spatial-field.svg){ loading=lazy }
-<figcaption>Left: the Gray–Scott activator field via <code>kind="field"</code> — a viridis heatmap of the reaction–diffusion pattern. Right: the Kuramoto–Sivashinsky 1-D field (<code>N=128</code>, <code>L=60</code>) as a space-time diagram (<code>kind="spacetime"</code>, viridis) — time horizontal, site index vertical, the chaotic cellular flame front.</figcaption>
+![A Gray–Scott activator-concentration snapshot beside a Kuramoto–Sivashinsky space-time field diagram](../assets/figures/viz/spatial-field.svg){ loading=lazy }
+<figcaption>Left: a Gray–Scott activator-concentration snapshot. Right: a
+Kuramoto–Sivashinsky space-time diagram (<code>N=128</code>, <code>L=60</code>),
+with time horizontal and site index vertical. In both panels, the colour scale
+represents the field value.</figcaption>
 </figure>
 
 **A field over time is a movie.** `ts.plot(traj, "spatial_field", animate=True)`
