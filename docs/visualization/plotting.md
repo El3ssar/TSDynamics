@@ -1,6 +1,6 @@
 ---
 title: Transforms and primitives
-description: Choose a view, change its drawing primitive, and add a transform of your own with the declared compatibility contract.
+description: Choose a useful view for arrays, trajectories, models and analysis results, then customize its drawing style.
 ---
 
 <span class="ts-kicker">Visualization · Transforms & primitives</span>
@@ -10,6 +10,12 @@ description: Choose a view, change its drawing primitive, and add a transform of
 [`ts.plot`](index.md) is the verb. This page is its vocabulary: **what** it can
 draw (a *transform*), **how** each one can be drawn (a *primitive*), and how to
 add either.
+
+Looking for a complete picture to adapt? Start with the
+[scientific figure recipes](recipes.md): measured arrays, comparison panels,
+scalar color, ensembles, analysis diagnostics and fields. Use this page to choose
+the next transform or primitive; the [gallery](gallery.md) shows every declared
+combination.
 
 ```python
 import tsdynamics as ts
@@ -21,18 +27,17 @@ ts.plot(traj, "psd")                # ...a named transform
 ts.plot(traj, "phase_portrait", primitive="points3d")   # ...drawn differently
 ```
 
-Three nouns, and nothing else in the library learns a new name when one is added:
+Three ideas describe a plot:
 
-- a **transform** turns a *subject* — a trajectory, a system, an analysis result,
-  a bare array — into **geometry**: typed channels (`x`/`y`/`z`/`c`/…) in a named
-  coordinate frame;
+- a **transform** chooses a view of your data or model: a trace, a phase portrait,
+  a spectrum, a section or a field;
 - a **primitive** is *how* that geometry is drawn — `line`, `points`, `image`,
   `contour`, `surface3d`, `quiver`, `band`, …;
 - a **`Plot`** is what you get back.
 
-A transform owns **no new math**. It adapts an estimator from
-[`ts.analysis`](../analysis/index.md), which is where the numerics, the citation
-and the tests live.
+Views that calculate a scientific quantity use the corresponding analysis.
+See [`ts.analysis`](../analysis/index.md) for estimator settings, assumptions and
+interpretation; the final sections here explain how to add a custom view.
 
 !!! tip "Plot straight from a system"
 
@@ -73,7 +78,7 @@ sequence), not a joined line, because successive iterates are not continuous.
 You override the auto-dispatch by **naming a transform positionally** —
 `ts.plot(traj, "time_series")` — and you pick *which* channels with
 `components=`. (On the method doors, `traj.plot(...)` and `system.plot(...)`,
-`kind=` names any member of the closed `PlotKind` vocabulary directly.) The next
+`kind=` selects a semantic plot kind directly.) The next
 sections walk every default view; then come the named transforms, the
 primitives, and how to add your own.
 
@@ -215,7 +220,7 @@ ts.plot(traj, "delay_embedding", delay_time=17.0).save("mackey-glass-delay.pdf")
 
 <figure markdown>
 ![A delay embedding of the Mackey-Glass system: x(t) against x(t minus tau) tracing a folded chaotic band](../assets/figures/viz/kind-delay.svg){ loading=lazy }
-<figcaption>The Mackey–Glass delay system embedded via <code>kind="delay"</code>, <code>delay_time=17.0</code>. At <code>dt=0.5</code> the delay of 17 time units is a 34-sample lag (the axis reads <code>x(t - 34)</code>), and the folded band is the attractor of the scalar <code>x(t)</code> reconstructed by Takens' theorem.</figcaption>
+<figcaption>The Mackey–Glass scalar observable in delayed coordinates with <code>delay_time=17.0</code>. At <code>dt=0.5</code>, that is a 34-sample lag. The folded band makes relations between current and delayed values visible; this two-coordinate picture alone does not establish a faithful embedding of the delay system's state.</figcaption>
 </figure>
 
 **`delay_time` is in time units** (`delay` is the same lag in samples). It is
@@ -303,6 +308,21 @@ traj = ts.Trajectory(t, points)          # no system required
 ts.analysis.recurrence_matrix(traj, recurrence_rate=0.05).plot()
 ```
 
+Array orientation is `(samples, components)`. A `(N, 2)` array is a point path
+through two coordinates; to compare its columns against time, name
+`"time_series"`. To compare independent signals, pass them as separate subjects
+and label them:
+
+```python
+ts.plot(points, "time_series", dt=0.02, components=[0, 1])
+ts.plot(signal, 0.8 * signal, dt=0.02, labels=["reference", "scaled"])
+```
+
+These choices have different meanings: two columns are two measured channels,
+two subjects are two records, and an ensemble fan expects members along its
+first array axis. The [array](recipes.md#arrays-and-timestamps) and
+[ensemble](recipes.md#an-ensemble-fan) recipes show both conventions with figures.
+
 !!! warning "A delay in *time units* needs a real `dt`"
     `delay=` is a lag in **samples** and always works; `delay_time=` is in
     **time units**, and an index-time trajectory has no clock to convert it. So
@@ -389,6 +409,12 @@ If the two planes disagree the overlay **raises** rather than drawing markers in
 the wrong place — the frame check compares what each panel's axes *mean*, so an
 `(x, z)` portrait will not silently accept `(x, y)` equilibria. Use a panelled
 layout, or pass the same `components=` to both.
+
+For results with their own natural coordinates, retain those coordinates: a
+Lyapunov spectrum is exponent versus index, a convergence curve is rate versus
+time, and a scaling fit is a measure versus scale. Put them next to the orbit
+rather than overlaying unlike axes. The
+[analysis dashboard](recipes.md#analysis-results-in-context) is a complete example.
 
 ## Rendering and saving
 

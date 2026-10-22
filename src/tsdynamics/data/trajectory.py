@@ -1558,14 +1558,19 @@ class Trajectory:
         )
 
     def _is_discrete(self) -> bool:
-        """Whether the producing system is a discrete map (default ``False``).
+        """Whether plotted samples are discrete map iterates or section crossings.
 
         Reads the **family word**, not the removed ``is_discrete`` flag: that
         name is alive only through an internal alias table, so this would have
         gone quiet — and answered "flow" for every map — the day the table is
-        emptied.  A synthetic trajectory with no system is treated as a flow.
+        emptied. Section crossings remain discrete even though their underlying
+        system is a continuous flow, including when selecting or coloring coordinates.
+        Other synthetic trajectories with no system are treated as flows.
         """
-        return getattr(self.system, "family", None) == "map"
+        return (
+            getattr(self.system, "family", None) == "map"
+            or self.meta.get("plot_kind") == "poincare_section"
+        )
 
     def _spacetime_spec(
         self, ys: np.ndarray, names: tuple[str, ...], *, transpose: bool = False

@@ -1395,7 +1395,19 @@ def _apply_legend(ax: Axes, spec: PlotSpec, theme: Theme) -> None:
     eff_font_size = leg.font_size if leg.font_size is not None else theme.font_size
     if eff_font_size is not None:
         legend_kw["fontsize"] = float(eff_font_size)
-    ax.legend(**legend_kw)
+    if theme.background is not None:
+        legend_kw["facecolor"] = theme.background
+    if theme.foreground is not None:
+        legend_kw["labelcolor"] = theme.foreground
+        legend_kw["edgecolor"] = theme.foreground
+    legend = ax.legend(**legend_kw)
+    for text in [*legend.get_texts(), legend.get_title()]:
+        if theme.foreground is not None:
+            text.set_color(theme.foreground)
+        if theme.font_family is not None:
+            text.set_fontfamily(theme.font_family)
+    if eff_font_size is not None:
+        legend.get_title().set_fontsize(float(eff_font_size))
 
 
 _TEXT_ONLY_STYLE_KEYS = frozenset({"fontsize", "fontweight", "fontstyle", "ha", "va", "rotation"})

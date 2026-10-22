@@ -66,8 +66,8 @@ def _split_traj(source: Any) -> tuple[np.ndarray, np.ndarray, tuple[str, ...] | 
 
     ``y`` is coerced to a 2-D ``(T, dim)`` array.  ``names`` are the declared
     component names if the source carries ``variables``, else ``None``.  The
-    discreteness flag reads ``source.system.is_discrete`` defensively (``False``
-    when absent).  A source is treated as a trajectory when it exposes both
+    discreteness flag recognizes map iterates and declared section crossings.
+    A source is treated as a trajectory when it exposes both
     ``t`` and ``y`` attributes; otherwise a :class:`TypeError` is raised.
     """
     t = getattr(source, "t", None)
@@ -87,7 +87,7 @@ def _split_traj(source: Any) -> tuple[np.ndarray, np.ndarray, tuple[str, ...] | 
 
 
 def _is_discrete(source: Any) -> bool:
-    """Whether this trajectory came from a **map** — read from ``system.family``.
+    """Whether samples are map iterates or explicitly declared section crossings.
 
     It used to read ``system.is_discrete``, a name v6 removed.  ``getattr(…,
     False)`` has a *legal* default, so the rename orphaned this reader in
@@ -95,10 +95,16 @@ def _is_discrete(source: Any) -> bool:
     LINE instead of the point sequence it is (a map's iterates are not joined —
     that is the whole visual difference between the two families).  The rule
     CLAUDE.md states for this class of defect is *do not read a removed name as
-    a string*; ``family`` is the live spelling.
+    a string*; ``family`` is the live spelling. Section crossings also remain
+    points when a caller selects components or adds a scalar color channel.
     """
     system = getattr(source, "system", None)
-    return getattr(system, "family", None) == "map" if system is not None else False
+    meta = getattr(source, "meta", None)
+    return (
+        getattr(system, "family", None) == "map"
+        or isinstance(meta, Mapping)
+        and meta.get("plot_kind") == "poincare_section"
+    )
 
 
 def _component_index(name_or_index: int | str, names: tuple[str, ...] | None, dim: int) -> int:

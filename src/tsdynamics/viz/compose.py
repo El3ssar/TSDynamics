@@ -270,12 +270,7 @@ def _fresh_copy(spec: PlotSpec) -> PlotSpec:
     The same copy :meth:`Plot._compose` (the ``a + b`` operator) takes, hoisted
     so the operator door and the call door cannot drift.
     """
-    import copy as _copy
-
-    fresh = _copy.deepcopy(spec)
-    fresh._figure_cache = None
-    fresh._figure_handed_out = False
-    return fresh
+    return spec.copy()
 
 
 #: The pre-v6 private spelling of :func:`to_spec`.  ``Plot.add`` imports it by

@@ -65,7 +65,7 @@ def to_html(
     include_plotlyjs: str | bool = "cdn",
     post_script: str | None = None,
 ) -> str:
-    """Export a spec / plotly figure to a self-contained interactive HTML string.
+    """Export a plot as interactive HTML, using CDN JavaScript by default.
 
     The returned text embeds an interactive plotly ``<div>`` (pan / zoom / hover)
     plus the JavaScript that wires it up — it needs **no** Python kernel to
@@ -113,7 +113,7 @@ def write_html(
     include_plotlyjs: str | bool = "cdn",
     post_script: str | None = None,
 ) -> Path:
-    """Write the self-contained interactive HTML for a spec / figure to ``path``.
+    """Write interactive HTML, inlining Plotly when ``include_plotlyjs=True``.
 
     A convenience around :func:`to_html` that writes the result (UTF-8) and
     returns the path.  Writing a file defaults to ``full_html=True`` so the

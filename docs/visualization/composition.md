@@ -55,7 +55,18 @@ The named spellings are equivalent: `ts.plot(a, b)` overlays,
 `ts.plot(a, b, layout="stack")` makes a stack. Operators produce a new outer
 plot; fluent tweaks mutate the plot they are called on. Composite panels retain
 the original child objects, so a later change to `a` also changes its uses in a
-composite. Build a fresh view when two copies need independent styling.
+composite. Use `a.copy()` when variants need independent styling or different
+windows; the copy carries independent layers and panels without a rendered cache.
+
+```python
+reference_view = ts.plot(first, "time_series", components="x", title="Full record")
+detail_view = reference_view.copy().limits(x=(10, 15)).relabel(title="Detail")
+comparison = reference_view | detail_view
+```
+
+For a complete figure comparing an overlay with matching separate panels, see
+[Compare runs](recipes.md#compare-runs). The recipes also cover arrays,
+ensembles, analysis results and scalar fields.
 
 ## Give each question its own axes
 
@@ -103,6 +114,21 @@ default. For other compatible panels, request `share_x=True` or `share_y=True`
 at composition time. Share axes only when their coordinates and units match.
 Use `share_color=True` for comparable scalar fields that need one colour scale.
 
+### Sharing an axis is a scientific choice
+
+| Comparison | Sensible sharing |
+|---|---|
+| Several channels measured at the same times | `share_x=True`; keep different units on separate vertical axes |
+| Same observable in several runs | `share_x=True, share_y=True` when their time origins match |
+| Phase portrait beside a spectrum | Independent axes; these coordinates mean different things |
+| Same scalar field at several times | Common `clim` and `share_color=True` |
+
+Set a common color range on the field panels **before** composing them. This
+makes the intended comparison explicit when `share_color=True` reconciles their
+colorbars. The [spatial recipe](recipes.md#spatial-fields) demonstrates one shared
+bar. It should describe one quantity, rather than combine unrelated variables
+because both happen to be represented by colors.
+
 ## Work on the whole figure, then a panel
 
 ```python
@@ -119,6 +145,20 @@ The outer figure has two children: an upper row and a lower trace.
 Axis tweaks such as `.limits(...)` and `.gridlines(...)` on a composite recurse
 through its panels. The outer title, size and background belong to the figure.
 See [styling](styling.md) for theme inheritance and panel overrides.
+
+For example, preserve the wide context while focusing only the spectrum:
+
+```python
+figure = (portrait.copy() | spectrum.copy()) / trace.copy()
+figure.theme("publication").font(family="sans-serif").size(10, 7)
+figure[0][0].style(color="#11857A", linewidth=0.8)
+figure[0][1].rescale(x="linear").limits(x=(0, 3))
+figure[1].gridlines(axis="y", alpha=0.2)
+```
+
+A tweak on the outer figure recurses to its children; a tweak on a selected
+panel stays there. Apply an outer theme first, then local overrides. To give a
+single panel its own coherent theme, use `figure[0][1].theme("minimal")`.
 
 ## Overlay coordinates that mean the same thing
 

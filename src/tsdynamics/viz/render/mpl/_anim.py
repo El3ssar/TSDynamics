@@ -1247,6 +1247,9 @@ def _fade_comet_driver(
         ]
     head.set_visible(anim.head)
     style = style or {}
+    # Legend handles are captured before the first frame is drawn. Seed their
+    # real colour now rather than letting an empty collection advertise C0.
+    lc.set_color([(*base, style.get("alpha", 1.0))])
     if "linestyle" in style:
         lc.set_linestyle(style["linestyle"])
     if "zorder" in style:
@@ -1448,7 +1451,8 @@ def _draw_static_layer(ax: Axes, layer: Any, spec: PlotSpec, *, three_d: bool) -
 
 
 def _data_range(spec: PlotSpec, channel: str) -> tuple[float, float] | None:
-    """Min/max of ``channel`` across all layers (for fixed animation limits)."""
+    """Pad finite channel extents in the axis's scale for fixed animation limits."""
+    logarithmic = getattr(getattr(spec, channel, None), "scale", None) == "log"
     lo, hi = np.inf, -np.inf
     for layer in spec.layers:
         arr = layer.data.get(channel)
@@ -1456,10 +1460,22 @@ def _data_range(spec: PlotSpec, channel: str) -> tuple[float, float] | None:
             continue
         a = np.asarray(arr, dtype=float)
         a = a[np.isfinite(a)]
+        if logarithmic:
+            a = a[a > 0]
         if a.size:
             lo, hi = min(lo, float(a.min())), max(hi, float(a.max()))
     if not (np.isfinite(lo) and np.isfinite(hi)):
         return None
+    if logarithmic:
+        lower, upper = np.log10([lo, hi])
+        if upper <= lower:
+            lower, upper = lower - 1.0, upper + 1.0
+        pad = 0.05 * (upper - lower)
+        with np.errstate(over="ignore", under="ignore"):
+            padded = np.power(10.0, [lower - pad, upper + pad])
+        return max(float(padded[0]), np.nextafter(0.0, 1.0)), min(
+            float(padded[1]), np.finfo(float).max
+        )
     if hi <= lo:
         return (lo - 1.0, hi + 1.0)
     pad = 0.05 * (hi - lo)
@@ -1503,24 +1519,24 @@ def _apply_static_labels(ax: Any, spec: PlotSpec, *, three_d: bool) -> None:
     The title goes through the shared :func:`~._core.apply_title`, so an animated
     frame is themed exactly like the still of the same spec.
     """
-    if spec.x.label:
-        ax.set_xlabel(spec.x.label)
-    if spec.y.label:
-        ax.set_ylabel(spec.y.label)
-    if three_d and spec.z is not None and spec.z.label:
-        ax.set_zlabel(spec.z.label)
     theme = _resolve_theme(spec)
-    apply_title(ax, spec, theme)
     if three_d:
         # ``mplot3d`` draws its own pane quads, which keep matplotlib's light
         # default whatever the figure facecolor is.  The still renderer themes
         # them; the animator did not, so a dark 3-D movie had **grey panes**
         # where its own ``.png`` had dark navy ones.
-        from ._threed import _apply_3d_panes
+        from ._threed import _apply_3d_axes, _apply_3d_panes
 
         _apply_3d_panes(ax, theme, spec)
-    if not three_d and spec.aspect == "equal":
-        ax.set_aspect("equal", adjustable="box")
+        _apply_3d_axes(ax, spec, theme)
+    else:
+        from ._core import _apply_axis
+
+        _apply_axis(ax, spec.x, "x", theme)
+        _apply_axis(ax, spec.y, "y", theme)
+        apply_title(ax, spec, theme)
+        if spec.aspect == "equal":
+            ax.set_aspect("equal", adjustable="box")
     if spec._axes_hidden():
         ax.set_axis_off()
 
@@ -1539,9 +1555,23 @@ def _base_azim(spec: PlotSpec) -> float:
 
 def _make_clock(ax: Any, spec: PlotSpec, *, three_d: bool) -> Any:
     """Create the per-frame time-readout text artist (top-left, axes coords)."""
+    theme = _resolve_theme(spec)
+    style: dict[str, Any] = {}
+    if theme.foreground is not None:
+        style["color"] = theme.foreground
+    if theme.font_family is not None:
+        style["fontfamily"] = theme.font_family
+    if theme.font_size is not None:
+        style["fontsize"] = theme.font_size
+    style["bbox"] = {
+        "facecolor": theme.background or ax.get_facecolor(),
+        "edgecolor": "none",
+        "alpha": 0.8,
+        "pad": 2,
+    }
     if three_d:
-        return ax.text2D(0.02, 0.95, "", transform=ax.transAxes)
-    return ax.text(0.02, 0.95, "", transform=ax.transAxes)
+        return ax.text2D(0.02, 0.95, "", transform=ax.transAxes, **style)
+    return ax.text(0.02, 0.95, "", transform=ax.transAxes, **style)
 
 
 # ---------------------------------------------------------------------------

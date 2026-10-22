@@ -5,12 +5,31 @@ same Pygments token vocabulary so they remain highlighted without JavaScript or
 a network request, including when navigating with Material's instant loading.
 """
 
+from pathlib import Path
+from runpy import run_path
 from textwrap import dedent
 
 from markupsafe import Markup
 from pygments import highlight
 from pygments.formatters import HtmlFormatter
 from pygments.lexers import get_lexer_by_name
+
+
+def on_pre_build(config):
+    """Keep illustrated recipes synchronized with the code readers can copy.
+
+    These guards inspect checked-in source hashes and assets only. A normal
+    documentation build never needs to encode the showcase movies again.
+    """
+    from mkdocs.exceptions import PluginError
+
+    tooling = Path(__file__).resolve().parents[1] / "docs" / "_tooling"
+    failures = []
+    for generator in ("make_viz_recipes.py", "make_animation_showcase.py"):
+        namespace = run_path(str(tooling / generator))
+        failures.extend(namespace["validate_assets"]())
+    if failures:
+        raise PluginError("Illustrated examples need regeneration:\n" + "\n".join(failures))
 
 
 def highlight_code(source: str, language: str = "python") -> Markup:

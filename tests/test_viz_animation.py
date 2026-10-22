@@ -99,6 +99,183 @@ def test_trail_persistent_clears_the_window():
     assert spec.animation.trail_kind is None and spec.animation.trail_length is None
 
 
+@pytest.mark.parametrize("length", [0, 1, 150])
+def test_integer_trail_is_exactly_the_explicit_sample_step_spelling(length):
+    short = viz.draw({"x": [0, 1], "y": [0, 1]}, "line").trail(length)
+    explicit = viz.draw({"x": [0, 1], "y": [0, 1]}, "line").trail(("steps", length))
+    assert short.to_dict() == explicit.to_dict()
+    assert viz.load(short.to_json()).animation.trail_length == length
+
+
+@pytest.mark.parametrize("length", [True, -1, 1.5])
+def test_invalid_bare_trails_do_not_turn_a_static_plot_into_a_movie(length):
+    plot = viz.draw({"x": [0, 1], "y": [0, 1]}, "line")
+    before = plot.to_dict()
+    with pytest.raises(ts.errors.InvalidParameterError):
+        plot.trail(length)
+    assert plot.to_dict() == before
+
+
+@pytest.mark.parametrize("turns", [-0.25, 0, 0.25])
+def test_signed_camera_spin_survives_json_and_rotates_the_rendered_camera(turns):
+    pytest.importorskip("matplotlib")
+    plot = viz.draw({"x": [0, 1, 2], "y": [0, 1, 0], "z": [0, 0, 1]}, "line3d")
+    plot.camera(elev=20, azim=30, spin=turns).animate(n_frames=3)
+    restored = viz.load(plot.to_json())
+    assert restored.animation.spin == turns
+    movie = restored.render("matplotlib")
+    movie._fig.canvas.draw()
+    for frame, fraction in ((0, 0), (1, 0.5), (2, 1), (0, 0)):
+        movie._func(frame)
+        assert movie._fig.axes[0].azim == pytest.approx(30 + 360 * turns * fraction)
+        assert movie._fig.axes[0].elev == 20
+
+
+@pytest.mark.parametrize("axis", ["x", "y", "z"])
+@pytest.mark.parametrize("limits", [None, (10, 4000)])
+def test_three_dimensional_log_animation_keeps_positive_bounds_and_explicit_limits(axis, limits):
+    pytest.importorskip("matplotlib")
+    import numpy as np
+
+    channels = {"x": np.linspace(1, 2, 10), "y": np.linspace(2, 3, 10), "z": np.linspace(3, 4, 10)}
+    channels[axis] = np.geomspace(20, 2000, 10)
+    plot = viz.draw(channels, "line3d").rescale(**{axis: "log"}).animate(n_frames=3)
+    if limits is not None:
+        plot.limits(**{axis: limits})
+    movie = plot.render("matplotlib")
+    for frame in (0, 2, 0):
+        movie._func(frame)
+        movie._fig.canvas.draw()
+        axes = movie._fig.axes[0]
+        assert getattr(axes, f"get_{axis}scale")() == "log"
+        actual = getattr(axes, f"get_{axis}lim")()
+        if limits is not None:
+            assert actual == limits
+        else:
+            assert 0 < actual[0] < 20 < 2000 < actual[1]
+
+
+@pytest.mark.parametrize("axis", ["x", "y", "z"])
+def test_a_constant_positive_log_coordinate_stays_in_the_log_domain(axis):
+    pytest.importorskip("matplotlib")
+    import numpy as np
+
+    channels = {"x": np.arange(3.0) + 1, "y": np.arange(3.0) + 2, "z": np.arange(3.0) + 3}
+    channels[axis] = np.full(3, 0.001)
+    plot = viz.draw(channels, "line3d").rescale(**{axis: "log"}).animate(n_frames=3)
+    movie = plot.render("matplotlib")
+    movie._fig.canvas.draw()
+    lo, hi = getattr(movie._fig.axes[0], f"get_{axis}lim")()
+    assert 0 < lo < 0.001 < hi
+
+
+@pytest.mark.parametrize("axis", ["x", "y"])
+@pytest.mark.parametrize("limits", [None, (10, 4000)])
+def test_two_dimensional_log_animation_honors_the_scale_and_explicit_limits(axis, limits):
+    pytest.importorskip("matplotlib")
+    import numpy as np
+
+    channels = {"x": np.linspace(1, 2, 10), "y": np.linspace(2, 3, 10)}
+    channels[axis] = np.geomspace(20, 2000, 10)
+    plot = viz.draw(channels, "line").rescale(**{axis: "log"}).animate(n_frames=3)
+    if limits is not None:
+        plot.limits(**{axis: limits})
+    movie = plot.render("matplotlib")
+    for frame in (0, 2, 0):
+        movie._func(frame)
+        movie._fig.canvas.draw()
+        axes = movie._fig.axes[0]
+        assert getattr(axes, f"get_{axis}scale")() == "log"
+        actual = getattr(axes, f"get_{axis}lim")()
+        if limits is not None:
+            assert actual == limits
+        else:
+            assert 0 < actual[0] < 20 < 2000 < actual[1]
+
+
+@pytest.mark.parametrize("axis", ["x", "y"])
+def test_two_dimensional_symlog_animation_preserves_the_signed_domain(axis):
+    pytest.importorskip("matplotlib")
+    import numpy as np
+
+    channels = {"x": np.linspace(1, 2, 10), "y": np.linspace(2, 3, 10)}
+    channels[axis] = np.linspace(-100, 100, 10)
+    plot = viz.draw(channels, "line").rescale(**{axis: "symlog"}).animate(n_frames=3)
+    movie = plot.render("matplotlib")
+    movie._fig.canvas.draw()
+    axes = movie._fig.axes[0]
+    assert getattr(axes, f"get_{axis}scale")() == "symlog"
+    lo, hi = getattr(axes, f"get_{axis}lim")()
+    assert lo < -100 < 0 < 100 < hi
+
+
+@pytest.mark.parametrize("spatial", [False, True])
+def test_dark_animation_labels_clock_and_fading_legend_keep_their_real_colours(spatial):
+    pytest.importorskip("matplotlib")
+    from matplotlib.colors import to_rgba
+
+    channels = {"x": [0, 1, 2], "y": [0, 2, 1]}
+    if spatial:
+        channels["z"] = [0, 1, 2]
+    primitive = "line3d" if spatial else "line"
+    teal = viz.draw({**channels, "label": "first"}, primitive).style(color="#2CC5AE")
+    orange = viz.draw({**channels, "label": "second"}, primitive).style(color="#E8912D")
+    plot = (teal + orange).theme("dark").font(family="serif", size=13)
+    plot.relabel(x="x", y="y", z="z").animate(n_frames=3).trail(1, fade=True).clock()
+    plot.colorize(legend={"title": "Initial states"})
+    movie = plot.render("matplotlib")
+    movie._fig.canvas.draw()
+    movie._func(2)
+    axis = movie._fig.axes[0]
+    ink = to_rgba(plot.resolved_theme.foreground)
+    labels = [axis.xaxis.label, axis.yaxis.label]
+    if spatial:
+        labels.append(axis.zaxis.label)
+    assert all(to_rgba(label.get_color()) == ink for label in labels)
+    clock = next(text for text in axis.texts if text.get_text().startswith("t ="))
+    assert to_rgba(clock.get_color()) == ink
+    assert clock.get_fontfamily() == ["serif"] and clock.get_fontsize() == 13
+    assert (
+        to_rgba(clock.get_bbox_patch().get_facecolor())[:3]
+        == to_rgba(plot.resolved_theme.background)[:3]
+    )
+    legend = axis.get_legend()
+    assert [tuple(handle.get_color()) for handle in legend.legend_handles] == [
+        to_rgba("#2CC5AE"),
+        to_rgba("#E8912D"),
+    ]
+    assert all(
+        to_rgba(text.get_color()) == ink for text in [*legend.get_texts(), legend.get_title()]
+    )
+    assert legend.get_frame().get_facecolor()[:3] == to_rgba(plot.resolved_theme.background)[:3]
+
+
+def test_dark_field_animation_clock_is_readable_over_its_heatmap():
+    pytest.importorskip("matplotlib")
+    import numpy as np
+    from matplotlib.colors import to_rgba
+
+    from tsdynamics.viz.spec import Layer
+
+    frames = np.arange(12.0).reshape(3, 2, 2)
+    plot = (
+        PlotSpec(
+            kind=PlotKind.SPATIAL_FIELD,
+            layers=[Layer(PlotKind.IMAGE, {"frames": frames, "z": frames[-1]})],
+            meta={"times": [0, 1, 2]},
+        )
+        .theme("dark")
+        .animate(n_frames=3, mode="frames")
+        .clock()
+    )
+    movie = plot.render("matplotlib")
+    movie._fig.canvas.draw()
+    movie._func(2)
+    clock = next(text for text in movie._fig.axes[0].texts if text.get_text().startswith("t ="))
+    assert to_rgba(clock.get_color()) == to_rgba(plot.resolved_theme.foreground)
+    assert clock.get_bbox_patch() is not None
+
+
 def test_clock_default_on_and_static_tweaks_compose():
     spec = _lorenz().__plot_spec__(animate=True).clock().relabel(title="orbit").rescale(z="linear")
     assert spec.animation.clock is True

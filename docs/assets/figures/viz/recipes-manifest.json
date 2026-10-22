@@ -1,0 +1,41 @@
+{
+  "generator_sha256": "c1f63d4309a67150bf1f4bcb50e10a37c5b9c98a75051d01eecf4d1583b5e992",
+  "recipes": {
+    "recipe-analysis": {
+      "generator_sha256": "c1f63d4309a67150bf1f4bcb50e10a37c5b9c98a75051d01eecf4d1583b5e992",
+      "source_sha256": "ac3b0212d1ab3df6cebb85854da17822677a6086aceb1597be6f1f7c245042a9",
+      "svg_sha256": "e1ca7268f943eb84a228806713bc8b70e0735d042d4b628f78b43b1db791db7e"
+    },
+    "recipe-compare": {
+      "generator_sha256": "c1f63d4309a67150bf1f4bcb50e10a37c5b9c98a75051d01eecf4d1583b5e992",
+      "source_sha256": "0ef28e2396739a2c34c7bed2b4f4039399ac8dc03ab51fc39ddeb393c046e92b",
+      "svg_sha256": "0a19d3c583c2ce8510bdb65cf554061fb69d32be0ac9064c065a50aa61ac806c"
+    },
+    "recipe-data": {
+      "generator_sha256": "c1f63d4309a67150bf1f4bcb50e10a37c5b9c98a75051d01eecf4d1583b5e992",
+      "source_sha256": "fedb15a81620b80a9428d89bab79951b69cdd56595d9f3ac539a96a9bf33a16e",
+      "svg_sha256": "ee0a3d1fd2def5538da6ed827aa47a2964b9de10a875d4f005ad82e9503598c3"
+    },
+    "recipe-ensemble": {
+      "generator_sha256": "c1f63d4309a67150bf1f4bcb50e10a37c5b9c98a75051d01eecf4d1583b5e992",
+      "source_sha256": "79570651dd697d7864e0f249faa8ccc2f2ed5d9708c1a09038efd8a1ad78cfa9",
+      "svg_sha256": "768a82e9d3852d2613f03fd15df23ac765f7a8edaa22b5765d510f3807713ae3"
+    },
+    "recipe-fields": {
+      "generator_sha256": "c1f63d4309a67150bf1f4bcb50e10a37c5b9c98a75051d01eecf4d1583b5e992",
+      "source_sha256": "f24cb1d40b9116b8de03474dfb044fd83328b32daeb6f6a265986f355c4f36e7",
+      "svg_sha256": "c2707586964dc73ef7c6e2247a1c67e12dafc812094686c968bf84e3836dc2cc"
+    },
+    "recipe-linked-views": {
+      "generator_sha256": "c1f63d4309a67150bf1f4bcb50e10a37c5b9c98a75051d01eecf4d1583b5e992",
+      "source_sha256": "42762d64a460e92ecf680bc9f39ab0a257036d66a8ae9078e801cf31c0cd918d",
+      "svg_sha256": "46b151c65c7e9919c8efb162ad7de787c13016557f102934ff3beeb1ba0fa9c1"
+    },
+    "recipe-spatial": {
+      "generator_sha256": "c1f63d4309a67150bf1f4bcb50e10a37c5b9c98a75051d01eecf4d1583b5e992",
+      "source_sha256": "e5455e0fbd37a605e9bef9b747aa325e88c1674db761cda557c999e1f7228165",
+      "svg_sha256": "0e128f3b6072ff5f9c64de329fe066239868907a75837b654a938da5417a9b53"
+    }
+  },
+  "version": 1
+}
