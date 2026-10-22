@@ -147,10 +147,63 @@ def test_large_tangent_growth_does_not_count_as_a_base_orbit_escape(backend):
     assert not result.unbounded
 
 
-def test_escaping_hyperlu_reference_start_is_refused_promptly():
-    # The previous implementation spent many minutes integrating an escaped
-    # trajectory whose rapidly growing oscillation rate kept RK45 busy. The
-    # process timeout also bounds this regression if the escape guard is lost.
+def _run_spectrum_process(source, *args):
+    try:
+        process = subprocess.run(
+            [sys.executable, "-c", source, *args],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as error:
+        pytest.fail(
+            f"Lyapunov subprocess exceeded 30s. stdout={error.stdout!r}; stderr={error.stderr!r}",
+            pytrace=False,
+        )
+    assert process.returncode == 0, (
+        f"Lyapunov subprocess exited {process.returncode}. "
+        f"stdout={process.stdout!r}; stderr={process.stderr!r}"
+    )
+    return json.loads(process.stdout)
+
+
+@pytest.mark.parametrize("backend", ["interp", "jit", "reference"])
+def test_deterministically_escaping_nonlinear_orbit_is_refused_promptly(backend):
+    # x(t)=exp(20t), while y,z rotate at exp(5t) with constant radius.
+    # Escape is guaranteed, unlike a particular chaotic orbit. Without an
+    # escape check, reaching t=4 requires resolving an enormous rotation rate.
+    # The guard should stop at the first .05 interval after log(1e8)/20.
+    source = """
+import json,sys,time
+import tsdynamics as ts
+class GrowingOscillator(ts.ContinuousSystem):
+    dim = 3
+    params = {}
+    @staticmethod
+    def _equations(y,t):
+        omega = y(0)**.25
+        return [20*y(0),-omega*y(2),omega*y(1)]
+start = time.process_time()
+try:
+    ts.analysis.lyapunov_spectrum(GrowingOscillator(ic=[1.,1.,0.]), k=1,
+                                 dt=.05, transient=0., final_time=4., backend=sys.argv[1])
+except ts.errors.ConvergenceError as exc:
+    print(json.dumps({'cpu':time.process_time()-start,'error':str(exc)}))
+else:
+    raise AssertionError('the escaped orbit produced a finite attractor spectrum')
+"""
+    result = _run_spectrum_process(source, backend)
+    # The stop interval checks the algorithm; the subprocess fuse bounds a
+    # runaway without treating a shared CI runner as calibrated benchmark hardware.
+    assert "base orbit escaped at t=0.95" in result["error"]
+    assert "bounded orbit" in result["error"]
+
+
+def test_hyperlu_reference_start_returns_a_bounded_result_or_refuses_promptly():
+    # Roundoff can send this chaotic orbit onto bounded or escaping branches on
+    # different platforms. Either outcome must be prompt and report honestly;
+    # the deterministic nonlinear case above independently requires refusal.
     source = """
 import json,time,zlib
 import numpy as np
@@ -159,21 +212,19 @@ seed = zlib.crc32(b'HyperLu') & 0x7fffffff
 ic = .1 * (2 * np.random.default_rng(seed).random(4) - 1)
 start = time.process_time()
 try:
-    ts.analysis.lyapunov_spectrum(ts.systems.HyperLu(), k=1, ic=ic,
-                                 dt=.05, transient=50., final_time=400.)
+    spectrum = ts.analysis.lyapunov_spectrum(ts.systems.HyperLu(), k=1, ic=ic,
+                                            dt=.05, transient=50., final_time=400.)
 except ts.errors.ConvergenceError as exc:
-    print(json.dumps({'cpu':time.process_time()-start,'error':str(exc)}))
+    result = {'status':'refused','error':str(exc)}
 else:
-    raise AssertionError('the escaped orbit produced a finite attractor spectrum')
+    assert np.isfinite(spectrum).all(), spectrum
+    assert not spectrum.unbounded, spectrum
+    result = {'status':'bounded','spectrum':np.asarray(spectrum).tolist()}
+result['cpu'] = time.process_time()-start
+print(json.dumps(result))
 """
-    process = subprocess.run(
-        [sys.executable, "-c", source],
-        capture_output=True,
-        text=True,
-        timeout=30,
-        check=True,
-    )
-    result = json.loads(process.stdout)
-    assert result["cpu"] < 2.0
-    assert "base orbit escaped at t=" in result["error"]
-    assert "bounded orbit" in result["error"]
+    result = _run_spectrum_process(source)
+    assert result["status"] in {"bounded", "refused"}, result
+    if result["status"] == "refused":
+        assert "base orbit escaped at t=" in result["error"]
+        assert "bounded orbit" in result["error"]

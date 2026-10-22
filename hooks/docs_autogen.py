@@ -50,8 +50,6 @@ import os
 import sys
 from pathlib import Path
 
-from mkdocs.structure.files import File, InclusionLevel
-
 _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT / "docs" / "_tooling"))
 
@@ -1205,6 +1203,10 @@ def on_config(config):
 
 def on_files(files, config):
     """Register generated pages + viewers, replacing any physical placeholder file."""
+    # Only the MkDocs build needs its file types. The catalogue and its runnable
+    # examples also serve core/dev tooling, where the docs extra is optional.
+    from mkdocs.structure.files import File, InclusionLevel
+
     for uri, content in _GENERATED.items():
         existing = files.get_file_from_path(uri)
         if existing is not None:

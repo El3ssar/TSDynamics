@@ -5,6 +5,9 @@ from __future__ import annotations
 import html
 import importlib.util
 import re
+import subprocess
+import sys
+import textwrap
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -18,6 +21,7 @@ _ROOT = Path(__file__).resolve().parents[1]
 
 def test_landing_page_workflow_runs_and_exports_a_plot(tmp_path, monkeypatch):
     """Execute the exact HTML example that first-time readers copy."""
+    pytest.importorskip("matplotlib")
     source = (_ROOT / "docs/overrides/home.html").read_text()
     examples = re.findall(
         r'<pre><code class="language-python">(.*?)</code></pre>', source, re.DOTALL
@@ -29,6 +33,54 @@ def test_landing_page_workflow_runs_and_exports_a_plot(tmp_path, monkeypatch):
         exec(compile(html.unescape(example), "landing-page-workflow", "exec"), namespace)
     assert (tmp_path / "lorenz.png").read_bytes().startswith(b"\x89PNG")
     assert np.isfinite(np.asarray(namespace["spectrum"])).all()
+
+
+def test_every_quickstart_runs_without_docs_or_plotting_dependencies():
+    """Keep model examples executable in core/dev environments, without extras."""
+    script = textwrap.dedent(
+        """
+        import importlib.abc
+        import importlib.util
+        import re
+        import sys
+        from pathlib import Path
+
+        class WithoutOptionalExtras(importlib.abc.MetaPathFinder):
+            def find_spec(self, fullname, path=None, target=None):
+                blocked = {
+                    'mkdocs', 'mkdocstrings', 'material', 'mkdocs_glightbox',
+                    'markdown', 'pymdownx', 'griffe', 'matplotlib', 'plotly',
+                }
+                if fullname.split('.')[0] in blocked:
+                    raise ModuleNotFoundError('Optional extra blocked: ' + fullname, name=fullname)
+
+        sys.meta_path.insert(0, WithoutOptionalExtras())
+        import numpy as np
+        from tsdynamics import registry
+
+        spec = importlib.util.spec_from_file_location(
+            'lean_docs_hook', Path('hooks/docs_autogen.py').resolve()
+        )
+        hook = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(hook)
+        catalogue = hook._catalog.load_catalog()
+        names = [entry.name for entry in registry.all_systems() if entry.is_builtin]
+        for name in names:
+            block = '\\n'.join(hook._define_block(catalogue.by_name(name)))
+            source = re.search(r'```python\\n(.*?)```', block, re.DOTALL).group(1)
+            namespace = {}
+            exec(compile(source, 'lean-quickstart:' + name, 'exec'), namespace)
+            trajectory = namespace['traj']
+            assert len(trajectory) > 1, name
+            assert np.isfinite(trajectory.y).all(), name
+        print(len(names))
+        """
+    )
+    result = subprocess.run(  # noqa: S603
+        [sys.executable, "-c", script], cwd=_ROOT, text=True, capture_output=True, timeout=120
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert int(result.stdout.strip()) == sum(entry.is_builtin for entry in registry.all_systems())
 
 
 @pytest.fixture(scope="module")
