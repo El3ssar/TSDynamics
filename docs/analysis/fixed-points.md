@@ -6,13 +6,11 @@ description: Fixed points and equilibria of maps and flows (Newton, Schmelcher�
 
 # Fixed points & periodic orbits
 
-Every attractor, every bifurcation, every route to chaos is organised by a
-skeleton of invariant sets — the equilibria a flow can rest at, the fixed points
-a map holds, the periodic orbits both can loop on. Find that skeleton and you
-understand the phase portrait: the stable pieces are what you observe, the
-unstable ones are the saddles that route trajectories between them. This page
-searches for these sets in **maps and autonomous flows**, with linear-stability
-data for the solutions it finds. A finite numerical search can miss solutions.
+Equilibria and periodic orbits help organize a phase portrait and identify
+bifurcations. This page searches for them in **maps and autonomous flows** and
+computes linear-stability data for the solutions found. Stable sets can attract
+nearby trajectories; unstable sets can organize transitions between regions.
+A finite numerical search can miss solutions.
 
 | Function | Finds | For |
 | --- | --- | --- |
@@ -25,7 +23,7 @@ data for the solutions it finds. A finite numerical search can miss solutions.
 
 A **map** fixed point solves $f(x) = x$; an **autonomous flow** equilibrium solves
 $f(x) = 0$ on the right-hand side. `fixed_points` finds both by multi-start root
-finding on the exact analytic Jacobian and classifies each solution from the
+finding using the analytic Jacobian and classifies each solution from the
 Jacobian spectrum, using the right convention for the family — a map fixed point
 is stable iff every multiplier $|\lambda_i| < 1$, a flow equilibrium iff every
 eigenvalue has $\operatorname{Re}\lambda_i < 0$. These strict inequalities
@@ -57,9 +55,12 @@ ts.analysis.fixed_points(ts.systems.Lorenz())   # the origin and the two C± equ
 
 The `FixedPoint.continuous` flag records which convention was applied and
 switches the `repr` gauge (`|λ|max` for a map, `Re(λ)max` for a flow). The
-result is a list-like `FixedPointSet` with `.stable` / `.unstable` sublists and
+result is a `FixedPointSet` with `.stable` / `.unstable` subsets and
 an `.eigenvalue_plane()` spectrum plot; each `FixedPoint` carries `.x`,
-`.eigenvalues`, `.stable`, and the `.plot` result surface.
+`.eigenvalues`, `.stable`, and the `.plot` result surface. The historical
+`.unstable` subset is the complement of `.stable`, so it also includes
+nonhyperbolic points whose nonlinear stability is unresolved. Read each point's
+classification and eigenvalues before treating that subset as proof of instability.
 </div>
 
 <figure class="ts-fig" markdown>
@@ -74,7 +75,7 @@ an `.eigenvalue_plane()` spectrum plot; each `FixedPoint` carries `.x`,
 1. **Seeding** — `n_seeds` random points are drawn from a search `region`
    (default: a burn-in orbit's bounding box padded by 50 %), plus a subsample of
    a short orbit, biasing the search toward where the dynamics actually live.
-2. **Root finding** — each seed runs Newton on the residual using the exact
+2. **Root finding** — each seed runs Newton on the residual using the
    analytic Jacobian.
 3. **Dedup & classify** — converged roots closer than `dedup_tol` are merged,
    and each survivor is classified from $J(x^\*)$.
@@ -113,7 +114,7 @@ ts.analysis.fixed_points(ts.systems.Logistic(params={"r": 4.0}),
 
 ### Deterministic interval search: `method="interval"`
 
-Any multi-start method can *silently miss* a root whose basin no seed landed in.
+A multi-start method can miss a root if no seed reaches its convergence basin.
 `method="interval"` instead searches the required `region` with a **Krawczyk**
 operator and interval branch-and-prune. It needs no `seed` and can recover more
 roots than a modest multi-start search. The implementation uses plain floats
@@ -193,11 +194,11 @@ orb.multipliers  # one trivial multiplier ≈ 1 (the flow direction) …
 orb.stable       # … and the other inside the unit circle → stable
 ```
 
-**One verb, one return type.** A flow's limit cycle comes back as an `OrbitSet`
+A flow's limit cycle is returned in an `OrbitSet`
 of one, exactly as a map's period-$p$ orbits do — the second positional argument
 is the *period*: an integer period for a map, a period **guess** for a flow.
 
-A periodic orbit always carries one trivial Floquet multiplier $\approx 1$ along
+A non-equilibrium periodic orbit of an autonomous flow carries a trivial Floquet multiplier $\approx 1$ along
 the flow direction; stability is read from the *other* multipliers. Shooting has
 a small basin, so seed it well: `transient` forward-integrates the guess onto a
 stable cycle first (widening the Newton basin), and the guess itself defaults to
@@ -244,7 +245,7 @@ or supply `dt=` explicitly when the rows should be interpreted at that spacing.
 
 ## The numbers, and the records behind them
 
-**Indexing a result set gives you an array, never a class to learn.** `fps[i]` is
+`fps[i]` is
 the `(dim,)` point, `orbits[i]` is the `(p, dim)` orbit, and `np.asarray(...)` is
 the whole block — so a located root drops straight into arithmetic. The
 per-member quantities are vectorised alongside:

@@ -1,20 +1,17 @@
 # Systems
 
-The catalogue of **177 built-in systems** — 142 continuous flows (ODEs), 6
-delay systems (DDEs), 3 stochastic systems (SDEs), and 26 discrete maps —
-browsable by family and subcategory.
+Browse the built-in models by family and subcategory. Each generated model page
+contains equations, default parameters, a runnable example, an illustration and
+numerical diagnostics with their settings and limitations.
 
-Each system ships with its equations, literature defaults, named variables, an
-interactive attractor, and its published properties (parameters and, where
-known, Lyapunov values).
+The catalogue includes ordinary, delay and stochastic differential equations
+and discrete maps. Use `ts.systems.names()` or `ts.systems.find(...)` to explore
+the installed catalogue; `ts.analysis.find(model)` lists analyses compatible with
+a particular model.
 
-Browse by family:
+- [Continuous systems](continuous/index.md)
+- [Delay systems](delay/index.md)
+- [Discrete maps](discrete/index.md)
 
-- **Continuous (ODEs)** — 120 flows, from Lorenz and Rössler to Thomas and
-  Aizawa.
-- **Delay (DDEs)** — 5 delay-differential systems, including Mackey–Glass.
-- **Stochastic (SDEs)** — 3 diagonal-Itô systems.
-- **Discrete (maps)** — 26 maps, from Hénon and the logistic map onward.
-
-Every catalogue class also drives the [analysis toolkit](../analysis/) and the
-[visualization layer](../visualization/) through one shared protocol.
+For a first simulation, follow [First trajectory](../start/first-trajectory.md).
+For a custom model, see [Defining systems](../start/defining-systems.md).

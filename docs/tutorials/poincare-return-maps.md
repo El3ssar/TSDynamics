@@ -7,11 +7,10 @@ description: A Poincaré-to-return-map walkthrough — section the Rössler flow
 
 # Poincaré sections & return maps
 
-A three-dimensional strange attractor looks like an impenetrable tangle of
-wire. A scalar return plot can sometimes reveal an approximately
+A scalar return plot can sometimes reveal an approximately
 **one-dimensional map** — a curve relating successive observed values,
 $v_{n+1} \approx F(v_n)$. This tutorial is
-the two-step descent that finds it: first Poincaré's trick of watching only
+a two-step construction: first record only
 where the flow pierces a surface (dropping one dimension and turning the flow
 into a discrete map), then the return map that reads the surviving dynamics off
 a recurring scalar. We do it on the Rössler flow, then reproduce Lorenz's 1963
@@ -89,8 +88,9 @@ sec = pmap.run(500, transient=50, ic=[1.0, 1.0, 1.0])
 len(sec.y)              # 500 crossings (after discarding the first 50)
 ```
 
-Here `transient` counts **crossings** to discard, not time — the glossary
-distinction that keeps section transients separate from integration transients.
+On `pmap.run`, `transient` counts **crossings**, not time. On
+`ts.analysis.poincare_section` and `return_map`, the corresponding keyword is
+`skip_crossings`. Check the entry point before transferring settings.
 Because a `PoincareMap` *is* a map, you can use compatible discrete analyses
 through it. An [`orbit_diagram`](../analysis/orbit-diagrams.md) over a control
 parameter of the wrapped flow, for instance, is a genuine **bifurcation diagram
@@ -107,7 +107,7 @@ od.bifurcation_points()[:3]     # where the cascade branches
 
 Sectioning gives full crossing *states*; the **return map** goes one step
 further and plots a single observable at successive crossings against itself —
-$v_{n+1}$ vs $v_n$ — the literal 1-D map. [`return_map`](../analysis/orbit-diagrams.md)
+$v_{n+1}$ vs $v_n$ — a candidate scalar return relation. [`return_map`](../analysis/orbit-diagrams.md)
 with `kind="poincare"` does this on the same section:
 
 ```python
@@ -165,14 +165,14 @@ peak timing and avoid missing extrema.
 
 ## Reading the result
 
-- **A tight, single-valued curve** (both panels of Fig 2) means the asymptotic
+- **A tight, single-valued curve** (both panels of Fig 2) suggests that
   a one-dimensional approximation may be useful. Check how the apparent curve
   changes with the observable, sampling and numerical accuracy before using
   one-dimensional map theory.
-- **A filled, multi-valued cloud** means it is not 1-D — the section is genuinely
-  two- or higher-dimensional, and the return map is only a projection. That is
-  a limitation of this scalar reduction. Noise, transient data, the chosen
-  observable and projection overlap can also produce thickness.
+- **A filled, multi-valued cloud** does not resolve a scalar return law.
+  Unobserved state variables, noise, transient data and projection overlap can
+  all produce thickness; inspect these possibilities before drawing a
+  dimensional conclusion.
 - **Extrema vs Poincaré.** `kind="max"`/`"min"` need no plane — they read peaks
   of one coordinate (Lorenz's construction). `kind="poincare"` reads the
   observable at section crossings and needs a `plane`. Use extrema when a
@@ -185,7 +185,7 @@ peak timing and avoid missing extrema.
 |---|---|
 | First crossings look transient | Settle first (integrate, take `y[-1]` as `ic`) or pass `skip_crossings=` / `transient=` (crossings, not time). |
 | Return map is a fuzzy band, not a curve | The attractor is not near-1-D on this observable — try a different component, or inspect noise, transients and projection overlap before drawing a dimensional conclusion. |
-| `dt` too coarse, peaks missed | In `kind="poincare"` `dt` only has to not *skip* a crossing; in extremum mode interpolation refines a resolved peak but cannot recover missed maxima. Compare a finer grid in both cases. |
+| `dt` too coarse, peaks missed | Reduce `dt` to check crossing or peak convergence. Interpolation refines resolved events but cannot recover missed crossings or maxima. |
 | Section on a stiff / DDE flow | The engine fast path needs a numeric RHS and an explicit method; stiff defaults, DDEs and `backend="reference"` fall back to the (correct, slower) Python loop automatically. |
 
 ## See also

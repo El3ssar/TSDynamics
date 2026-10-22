@@ -1127,7 +1127,7 @@ export function renderThreejsPayload(container, payload, opts = {}) {
   let frameId = 0;
   function animate() {
     if (!running) return;
-    if (visibility.visible) {
+    if (visibility.visible && !document.hidden) {
       controls.update();
       for (const ax of axesFrames) ax.userData.update(camera);
       renderer.render(scene, camera);

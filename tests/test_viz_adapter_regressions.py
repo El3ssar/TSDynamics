@@ -10,6 +10,27 @@ from tsdynamics.errors import InvalidInputError, InvalidParameterError
 from tsdynamics.viz.spec import PlotKind
 
 
+@pytest.mark.parametrize("primitive", [None, "points", "bars", "line"])
+def test_a_computed_spectrum_can_use_its_named_transform_without_being_reestimated(primitive):
+    from tsdynamics.analysis.lyapunov import LyapunovSpectrum
+
+    result = LyapunovSpectrum(values=np.array([-2.0, 0.0, 0.4]))
+    assert "lyapunov_spectrum" in ts.viz.transforms.find(subject=result)
+    plot = ts.plot(result, "lyapunov_spectrum", primitive=primitive)
+    assert plot.kind is PlotKind.LYAPUNOV_SPECTRUM
+    # The final part carries the ordered rates, preceded by stems/zero geometry.
+    np.testing.assert_array_equal(plot.layers[-1].data["y"], [0.4, 0.0, -2.0])
+    assert plot.layers[-1].kind is (
+        PlotKind.BAR
+        if primitive == "bars"
+        else (PlotKind.LINE if primitive == "line" else PlotKind.SCATTER)
+    )
+    with pytest.raises(InvalidInputError, match="already computed"):
+        ts.plot(result, "lyapunov_spectrum", final_time=100)
+    with pytest.raises(InvalidParameterError, match="need"):
+        ts.plot(result, "vector_field")
+
+
 @pytest.mark.parametrize("transform", [None, "phase_portrait"])
 @pytest.mark.parametrize("color_by", [None, "time"])
 @pytest.mark.parametrize("components", [["x", "y"], ["x", "y", "z"]])

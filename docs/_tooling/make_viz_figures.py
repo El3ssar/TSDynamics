@@ -29,6 +29,8 @@ import pathlib
 import re
 import subprocess
 
+from figure_style import INK, PAPER, PAPER_RC, FigureCanvas
+
 OUT = pathlib.Path(__file__).resolve().parents[1] / "assets" / "figures" / "viz"
 
 #: The self-contained three.js demo payload the Backends page embeds live.
@@ -40,9 +42,8 @@ THREEJS_DEMO = (
 #: amber / rose warm secondaries, bright teal for a fifth series.
 TEAL, INDIGO, AMBER, ROSE, TEAL2 = "#11857A", "#574FCF", "#E8912D", "#D64562", "#2CC5AE"
 
-#: Label font — IBM Plex Sans, with DejaVu as the layout fallback. Emitted
-#: verbatim into the SVG so the page's IBM Plex webfont renders it in-browser.
-_FONT_FAMILY = "IBM Plex Sans"
+#: Portable sans-serif text also works when an SVG is viewed as an image.
+_FONT_FAMILY = "sans-serif"
 
 #: The brand **dark stage** every animation is rendered on (matches the three.js
 #: viewer's ``#0B0F14`` background and the hero).  A GIF cannot carry a transparent
@@ -54,22 +55,14 @@ _STAGE = "#0B0F14"
 
 
 def _prepare():
-    """Configure matplotlib for SVG-friendly transparent output and register the brand theme.
+    """Configure local SVG paper styling and register the documentation theme.
 
-    Returns the ``matplotlib.pyplot`` handle (so ``plt.close("all")`` can run
-    between figures) — but the *drawing* goes entirely through ``ts.viz``.
+    Returns a local Agg figure workspace (so ``plt.close("all")`` can run
+    between figures without affecting the caller) — but the *drawing* goes entirely through ``ts.viz``.
     """
-    import matplotlib
+    plt = FigureCanvas()
 
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
-    plt.rcParams.update(
-        {
-            "svg.fonttype": "none",  # keep text as <text> so IBM Plex applies in-browser
-            "savefig.transparent": True,
-        }
-    )
+    plt.rcParams.update(PAPER_RC)
 
     from tsdynamics.viz import register_theme, set_theme
     from tsdynamics.viz.style import Theme
@@ -77,11 +70,11 @@ def _prepare():
     brand = Theme(
         name="tsdynamics",
         palette=(TEAL, INDIGO, AMBER, ROSE, TEAL2),
-        background=None,  # transparent — the SVG carries no facecolor
-        foreground="#888888",
+        background=PAPER,  # clean analytical paper in both site colour schemes
+        foreground=INK,
         font_family=_FONT_FAMILY,
-        font_size=9.0,
-        title_size=10.0,
+        font_size=11,
+        title_size=12.5,
         grid=False,
         line_width=1.3,
         marker_size=5.0,
@@ -91,28 +84,22 @@ def _prepare():
     return plt
 
 
-def _save_svg(spec, out_path, *, transparent=True):
+def _save_svg(spec, out_path, *, transparent=False):
     """Render a ``PlotSpec`` through matplotlib and write a tight SVG.
 
-    Transparent by default (the brand look); pass ``transparent=False`` when a
-    theme's own background (e.g. the dark theme) must show through — a transparent
-    save would drop the theme facecolor and leave dark-theme ink illegible.
+    Opaque by default so a theme's background also appears when embedded as an
+    image in either site colour scheme. Transparency is an explicit opt-in.
     """
     fig = spec.render("matplotlib")
     figure = getattr(fig, "figure", fig)
-    save_kw = {"bbox_inches": "tight"}
-    if transparent:
-        save_kw["transparent"] = True
-    else:
-        # Opaque page WITHOUT passing savefig(facecolor=) — that would override every
-        # patch and drop a per-panel theme background (e.g. the dark theme). Instead
-        # paint only the figure patch white and keep the axes' own facecolors.
-        figure.patch.set_facecolor("white")
-        save_kw["transparent"] = False
+    save_kw = {
+        "bbox_inches": "tight",
+        "pad_inches": 0.16,
+        "transparent": transparent,
+        "metadata": {"Date": None},
+    }
     figure.savefig(out_path, **save_kw)
-    import matplotlib.pyplot as plt
-
-    plt.close(figure)
+    figure.clear()
 
 
 def _optimise_gif(path):
@@ -260,7 +247,8 @@ def fig_kind_phase_3d(plt, out_path):
     spec = (
         traj.__plot_spec__(components=["x", "y", "z"])
         .style(lw=0.35, alpha=0.85, axes=False)
-        .recolor(INDIGO)
+        .recolor("#47D7BF")
+        .theme("dark", background=_STAGE)
         .camera(elev=22, azim=-60)
         .size(5.6, 4.8)
     )
@@ -360,7 +348,7 @@ def fig_styling(plt, out_path):
         traj.__plot_spec__(components=["x", "z"])
         .recolor(INDIGO)
         .style(lw=1.1, alpha=0.9)
-        .grid(True, color="#b9b4ec", alpha=0.5)
+        .gridlines(True, color="#b9b4ec", alpha=0.35)
         .background("#f4f3fb")
     )
     after.relabel(title="after")
@@ -740,7 +728,20 @@ def main():
     parser.add_argument("--only", nargs="+", choices=choices, help="Render only these examples.")
     args = parser.parse_args()
     selected = set(args.only or choices)
-    plt = _prepare()
+    import matplotlib as mpl
+
+    from tsdynamics.viz import get_theme, set_theme
+
+    previous_theme = get_theme()
+    try:
+        with mpl.rc_context():
+            plt = _prepare()
+            _render_selected(plt, selected)
+    finally:
+        set_theme(previous_theme)
+
+
+def _render_selected(plt, selected):
     OUT.mkdir(parents=True, exist_ok=True)
     for slug, fn in FIGURES.items():
         if slug not in selected:

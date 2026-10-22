@@ -103,7 +103,7 @@ Two shared control layers do almost all the work — you supply a Butcher tablea
 
 === "Implicit / stiff"
 
-    The shared `implicit/control.rs` gives you adaptive error control for free
+    The shared `implicit/control.rs` supplies adaptive error control
     via step-doubling + Richardson extrapolation: implement the `BaseStep` trait
     (the one-step formula + `order()`), and `DoublingWork::doubled_step` handles
     the rest.
@@ -194,8 +194,8 @@ does not teach it a third stochastic scheme.
   `Caps`.
 - **Rust cross-validation** — `crates/tsdyn-solvers/tests/explicit_accuracy.rs`
   and `implicit_stiff.rs` are the strong oracle for tableau correctness: they
-  assert cross-method agreement on Lorenz / stiff reference problems. A wrong
-  tableau constant fails here, not in a subtle downstream number.
+  assert cross-method agreement on Lorenz / stiff reference problems. Add analytic accuracy or convergence tests appropriate to the new method;
+  cross-method agreement alone can miss shared errors.
 
 ## The invariants your kernel must hold
 

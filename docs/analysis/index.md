@@ -6,27 +6,22 @@ description: The analysis toolkit — trajectories, the uniform stepping protoco
 
 # Analysis
 
-The quantifier toolkit. Everything that steps — a map, a flow, a delay or
-stochastic system, or a Poincaré section of a flow — implements the same
-`System` protocol. Each analysis declares the inputs and families it supports:
+Use these routines to study stability, sensitivity, recurrence and attractor
+geometry. Systems share a stepping protocol, but each analysis declares its
+supported inputs and families:
 for example, a deterministic Lyapunov spectrum and a stochastic sample-path
 statistic have different assumptions. Use `ts.analysis.find(system)` to find
 compatible routines for a [built-in or user-defined system](../systems/index.md).
 
-Two things tie it together. First, **the `Trajectory`** — a single-system `run`
-returns one (an ensemble returns a batch): a `(T, dim)` array of states with named components (`traj["x"]`),
-row/column selection (`traj[10:50]`, `traj["x", "z"]`, `traj.after(t)`) and
-provenance carried in `traj.meta`. Second, **the calling convention**:
+Call an analysis as `ts.analysis.name(subject, ...)`, where the first argument
+is a system, sampled data or a previous result. A single-system `run` returns a
+`Trajectory` containing `(T, dim)` states, component names, sample times and
+provenance. Ensembles return a batch of trajectories.
 
-> **Every analysis is a free function whose FIRST argument is the thing it is
-> about** — a system, a trajectory, or a result another analysis returned.
-
-There is no bound method on a system, on a `Trajectory`, or on a result. One
-concept, one spelling; and the free function is the one that cannot hide a
-sampling choice from you. Most quantifiers return a rich result object that is a drop-in for
-its underlying value (a `float`, an array) while also carrying `.meta`,
-`.to_dict()`, `.to_frame()` and a `.plot` seam — **and whose `repr` is the
-answer**, so `print(result)` is the whole reporting story.
+Most analyses return a result object with a numerical value, calculation settings
+in `.meta`, export methods and a `.plot` interface. `print(result)` gives a short
+summary; inspect its diagnostic curves and settings before interpreting an
+estimate. Some results can also be converted to a `float` or NumPy array.
 
 Some analyses have different return shapes, documented in their `Returns`
 sections: field dataclasses or curve lists; a `PoincareSection` trajectory;
@@ -47,9 +42,7 @@ ts.analysis.kaplan_yorke_dimension(exps)                      # a property of th
 
 ## Finding the one you want
 
-`ts.analysis` is **52 flat, sorted names** — 49 analyses plus `find`, `register`
-and `results` — so `ts.analysis.<TAB>` is the index. Two questions get answered
-without leaving the REPL:
+Use tab completion to browse `ts.analysis`, or search by subject and task:
 
 ```python
 ts.analysis.find(traj)             # what can I measure on THIS?
@@ -73,7 +66,7 @@ min_dim=..., autonomous=...)`; omitting them preserves existing plugin behavior.
 Equation-based plugins can additionally declare `system_types=(...)` when a
 family name alone is insufficient to guarantee access to the required equations.
 
-Guess a name that used to exist and the error is the migration guide:
+Older method names produce a message with the current function call:
 
 ```
 >>> lor.lyapunov_spectrum()
@@ -90,15 +83,14 @@ literature it implements.
 
 ### Integration & methods
 
-The one verb that drives everything — `run`, on every family — the fixed /
-adaptive / implicit solver families, automatic stiffness selection, and the
-`interp` / `jit` / `reference` backends.
+Simulate each family with `run`, choose fixed-step, adaptive or implicit solvers,
+and compare the `interp`, `jit` and `reference` execution backends.
 
 - [**Integration & methods**](integration-and-methods.md) — choosing a solver and a backend, plus the complete solver capability table.
 
 ### Lyapunov exponents
 
-The average exponential separation rate — the defining quantifier of chaos.
+Estimate the average exponential growth and decay of infinitesimal perturbations.
 
 - [**Lyapunov spectra**](lyapunov.md) — full spectra for flows / maps / DDEs, `lyapunov_from_data` (Kantz / Rosenstein), and the Kaplan–Yorke dimension.
 
@@ -119,7 +111,9 @@ linear stability.
 
 ### Chaos indicators
 
-Fast "is this orbit chaotic?" verdicts that stand in for the full spectrum.
+Measure tangent-vector alignment, the 0–1 statistic or regional expansion.
+These indicators have different assumptions and are not interchangeable chaos
+classifiers.
 
 - [**Chaos indicators**](chaos.md) — GALI (Skokos), the 0–1 test (Gottwald–Melbourne), and expansion entropy (Hunt–Ott).
 
@@ -147,7 +141,7 @@ is structured.
 
 ## Beyond the prepackaged routines
 
-Every routine above is built on the same uniform **stepping protocol** —
+For custom model-based calculations, use the **stepping protocol** —
 `reinit(...)` / `step(n_or_dt)` / `state()` / `time()` — that
 every system implements. Most also offer `set_state(u)`; DDEs require an entire
 history and use `reinit(history=...)` instead. When a prepackaged analysis does not fit (covariant
@@ -165,5 +159,5 @@ for _ in range(1000):
 ## See also
 
 - [Systems](../systems/index.md) — the 177 built-in systems and their families
-- [Integration & methods](integration-and-methods.md) — the march underneath every quantifier
+- [Integration & methods](integration-and-methods.md) — simulation settings and their numerical meaning
 - [Lyapunov spectra](lyapunov.md) — the natural first stop for a new attractor

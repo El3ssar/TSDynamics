@@ -6,13 +6,11 @@ description: Orbit and bifurcation diagrams — sweep a parameter of a map (or o
 
 # Orbit & bifurcation diagrams
 
-Fix a system, vary one parameter, and watch where the long-term motion
-settles. That single picture — the asymptotic state stacked against the
-control parameter — is the most recognisable image in nonlinear dynamics: a
-fixed point that splits in two, splits again, and cascades into a smear of
-chaos threaded with periodic windows. `orbit_diagram` builds it for any
-discrete-time view, and `return_map` reveals the one-dimensional map hiding
-inside a continuous flow.
+An orbit diagram plots sampled long-term states against a control parameter.
+It can reveal period doubling, periodic windows and changes between attractors.
+`orbit_diagram` works with discrete-time systems and views; `return_map` plots
+successive values of a recurring observable. Both are finite-sample summaries,
+so check transient length, parameter spacing and initial conditions.
 
 ## The idea
 
@@ -56,7 +54,7 @@ recorded point, and the asymptotic state — ready to scatter as
 `plt.plot(param, state, ",k")`. The result is an `OrbitDiagram`: iterate it for
 `(value, points)` pairs, index its `.values` / `.points`, and it carries the
 usual `.meta` / `.to_dict()` / `.plot` result surface. `transient` is a *step*
-count discarded before recording; `n` is how many states you keep, enough to
+count discarded before recording; `points_per_value` is how many states you keep, enough to
 resolve the widest band you care about.
 </div>
 
@@ -84,9 +82,9 @@ By default (`carry_state=True`) each parameter value starts from the *previous*
 value's final state. This walks the attractor branch continuously and produces
 clean diagrams without re-converging through a transient basin at every step —
 the standard way to draw the picture above. Set `carry_state=False` to restart
-every value from the same `ic`, which is what you want when **coexisting
-attractors** are in play (a hysteresis loop, a subcritical branch): following a
-single branch would hide the others. The swept system is never mutated — each
+every value from the same `ic`. With **coexisting attractors**, compare several
+initial conditions and sweep directions: neither a single carried branch nor
+a single fixed initial condition reveals all basins. The swept system is never mutated — each
 value gets a fresh `with_params` copy.
 
 ## Quantifying the cascade
@@ -135,7 +133,7 @@ od = ts.analysis.orbit_diagram(
     "c", np.linspace(4.0, 6.0, 120),
     points_per_value=60, transient=30,
 )
-x_cross, c = od.flat()   # x-coordinate of the crossings vs. c
+c, x_cross = od.flat()   # parameter values, then x-coordinate of the crossings
 ```
 
 `with_params` re-parametrizes the *inner* Rössler system and rebuilds the
@@ -186,8 +184,8 @@ vn, vn1 = rm.flat()
 # plt.plot(vn, vn1, ".")   # the famous single-humped z-maxima cusp map
 ```
 
-The Lorenz $z$-maxima fall on a tight, single-valued curve — direct evidence
-that a 1-D map governs the strange attractor. Recorded values are sharpened by
+The Lorenz $z$-maxima form a narrow curve, supporting an approximate scalar
+return relation. Recorded values are sharpened by
 parabolic interpolation of each peak's three samples, so a coarse detection step
 still locates the extremum accurately.
 
@@ -202,8 +200,9 @@ rm = ts.analysis.return_map(ts.systems.Rossler(), "y", kind="poincare",
 Either source can be a live system (integrated for you), an existing
 `Trajectory`, or — for the extremum methods — a bare 1-D array. A `ReturnMap`
 can also draw its own **cobweb** (`rm.cobweb()`), the staircase that traces the
-iteration $v_{n+1} = F(v_n)$ against the diagonal. A filled cloud instead of a
-curve is the signature that the dynamics are *not* effectively one-dimensional.
+iteration $v_{n+1} = F(v_n)$ against the diagonal. A filled cloud may indicate
+unresolved state variables or noisy observations; a scalar plot cannot decide
+between them on its own.
 
 ## Cost notes
 
@@ -222,7 +221,7 @@ curve is the signature that the dynamics are *not* effectively one-dimensional.
 - [Poincaré sections](poincare.md) — the section machinery behind `sys.poincare(...)`, and `return_map(kind="poincare")`
 - [Fixed points & periodic orbits](fixed-points.md) — the invariant sets that are born and lost at the bifurcations above
 - [Lyapunov spectra](lyapunov.md) — the exponent that turns positive as the cascade reaches chaos
-- [Integration & methods](integration-and-methods.md) — the `integrate` / stepping machinery every sweep drives
+- [Integration & methods](integration-and-methods.md) — simulation, solver settings and incremental stepping
 
 ## References
 

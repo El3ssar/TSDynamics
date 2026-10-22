@@ -1,295 +1,143 @@
 # The naming glossary
 
-> **One word per concept.** This page is the *frozen* vocabulary for the public
-> API: the single canonical spelling — and unit — for every recurring idea that
-> appears in more than one function signature. It is the contract that the
-> calling-convention unification (`WS-CONV`) implements and that the CI naming
-> gate (`WS-NAMEGATE`) enforces. A build fails if a public signature reintroduces
-> a banned spelling for a concept defined here.
-
-The analysis layer grew one stream at a time, each authored independently, so the
-*same* concept ended up spelled up to **five** ways — `transient` / `burn_in` /
-`n_cut`; `final_time` / `steps` / `n` / `n_rescale`; `delay` / `tau` / `lag` /
-`max_lag`; and a first argument named nine different things for the one role "the
-thing you analyse" (`sys`, `system`, `sys_or_traj`, `source`, `map_sys`,
-`observable`, `data`, `x`, `series`). Each function was locally reasonable; the
-*aggregate* was obscure. `seed` and `ic` — already consistent across the whole
-surface — prove a single convention is achievable. This glossary makes it the law
-for everything else.
-
-**Scope.** The glossary and the gate cover the whole public callable surface —
-`tsdynamics.analysis` (`registry.analyses`). It is a v4 change: spellings are corrected outright (the
-v3→v4 token map in §6 lists every rename; the `_migration` shim raises a precise
-"renamed to *X*" error for one release). **Every ban below targets a parameter
-*name* in a public signature** — never an attribute (`system.dim` is untouched), a
-return-object field, or a value. Domain-specific parameters that belong to a
-single function (`radii`, `metric`, `q`, `eps`, `n_scales`, …) are out of scope —
-each function owns those. The glossary fixes only the **cross-cutting**
-vocabulary, plus the handful of homonyms (§5) the gate must whitelist by exact
-name.
-
----
+Use consistent names and units when adding public analyses. This guide describes
+the current conventions and the tests that check signatures. Function-specific
+parameters remain documented in each function's API reference.
 
 ## 1. The first positional argument — three roles, two names
 
-Every analysis takes its primary input as the **first positional argument**, with
-exactly one canonical name per kind:
+Put the primary input first:
 
-| Input kind | Canonical name | Accepts |
+| Input | Name | Examples |
 |---|---|---|
-| A dynamical system (flow / map / derived wrapper) | **`system`** | any `System` (`ContinuousSystem`, `DiscreteMap`, `PoincareMap`, …) |
-| A measured series / point set | **`data`** | `Trajectory`, `ndarray` shaped `(N,)` or `(N, dim)` |
-| A prior analysis result | *named by kind* (whitelisted — §5) | the upstream result object |
+| A system or a function accepting both systems and data | `system` | `fixed_points(system)`, `return_map(system)` |
+| Recorded states or a signal | `data` | `correlation_dimension(data)`, `embed(data)` |
+| An earlier analysis result | Name the result | `kaplan_yorke_dimension(spectrum)`, `tipping_points(result)` |
 
-**Choosing `system` vs `data`.** A function whose job is to *integrate or iterate
-the dynamics itself* takes `system` (it produces its own trajectory internally —
-`gali`, `expansion_entropy`, `fixed_points`, `attractors`). A function whose
-job is to *operate on an already-measured signal* takes `data` (`recurrence_matrix`,
-`correlation_dimension`, `lyapunov_from_data`).
-
-**Dual-input functions take `system` as the first argument** and coerce / accept a
-measured series through internal handling or a `data=` overload — they never invent
-a third name. The three current offenders are pinned:
-
-| Function | v4 first arg | v3 first arg |
-|---|---|---|
-| `zero_one_test` | **`system`** (integrates internally like its sibling `gali`; series via coercion) | `observable` |
-| `poincare_section` | **`system`** (a `Trajectory` is accepted and coerced) | `sys_or_traj` |
-| `return_map` | **`system`** (a `Trajectory` / 1-D series is accepted and coerced) | `source` |
-
-**Banned first-arg spellings** (all → `system` or `data`):
-
-| Banned | Canonical | Reason |
-|---|---|---|
-| `sys` | `system` | abbreviation |
-| `sys_or_traj` | `system` | the dual nature is handled by coercion, not the name |
-| `map_sys` | `system` | a map *is* a `System` |
-| `observable` (as 1st arg) | `system` / `data` | the *quantity observed* is the `component` keyword, not the input |
-| `source` | `system` / `data` | vague |
-| `x` | `data` | the data-series convention; unify on `data` |
-| `series` | `data` | synonym |
-
----
+A name describes the input role, not a guarantee that every system family is
+supported. Declare supported subjects when registering an analysis, and document
+any dimension, autonomy or differentiability requirements. Existing sampling
+and binary-distance functions have specific names recorded in the signature tests.
 
 ## 2. The canonical keyword glossary
 
-One spelling, one unit, everywhere the concept appears. The **Bans** column lists
-the spellings the naming gate rejects for that concept (subject to the exact
-homonym whitelist in §5). Bans marked *†* do not occur in v3 today — they are
-pre-emptive, kept so the concept can never drift into them.
+| Concept | Name | Meaning / unit |
+|---|---|---|
+| Initial condition | `ic` | State vector of length `system.dim` |
+| Random seed | `seed` | Integer or `None` |
+| Discarded transient | `transient` | Time for flows; iterations for maps |
+| Flow horizon | `final_time` | Time in the model's units; check whether a function takes an endpoint or elapsed duration |
+| Primary iteration count | `n` | Count used by the analysis; `run` uses `steps` for maps |
+| Sampling or numerical step | `dt` | Time units; its numerical role depends on the solver |
+| Component selection | `components` | Name, index or selection, as accepted by the function |
+| Embedding dimension | `dimension` | Number of delay coordinates |
+| Embedding delay | `delay` | Samples |
+| Theiler window | `theiler` | Exclusion distance in sample indices |
+| Neighbour count | `n_neighbors` | Count |
+| Spatial search region | `region` | Per-component bounds or an accepted region object |
+| Estimation algorithm | `method` | For example `method="mi"` or `method="interval"` |
+| Integration kernel | `solver` | For example `solver="dop853"` |
 
-| Concept | Canonical | Type / unit | Bans |
-|---|---|---|---|
-| Initial condition | **`ic`** | array-like, length = `system.dim` | `x0`†, `initial`†, `u0`†, `y0`† |
-| RNG seed | **`seed`** | `int \| None` | `random_state`†, `rng`† |
-| Discard-transient amount | **`transient`** | **time** (flows) / **steps** (maps) — see §3 | `burn_in`, `n_transient`†, `warmup`† |
-| Integration horizon (flows) | **`final_time`** | `float`, in the system's time units | `T`†, `t_final`†, `tmax`† |
-| Iteration / sampling horizon | **`n`** | `int` — see §3 | `steps`, `n_rescale` |
-| Step size | **`dt`** | `float`, time units | `h`† |
-| Observed component | **`component`** | `int` index or `str` name (`None` = all) | `components`, `observable`, `coord`†, `col`† |
-| Embedding dimension | **`dimension`** | `int` | `m`, `emb_dim`†, `dim` (as a *parameter*) |
-| Embedding delay / lag | **`delay`** | `int`, in samples | `tau`, `lag`, `max_lag` (→ `max_delay`, §5) |
-| Theiler window | **`theiler`** | `int`, in samples | `theiler_window`, `w`† |
-| Nearest-neighbour count | **`n_neighbors`** | `int` | `min_neighbors`, `num_neighbors`† |
-| Spatial region | **`region`** | `Box` / `Ball` / `Grid`, or `region([(lo, hi, n), …])` | `grid`, `box`, `domain`†, `bounds`† |
-| Estimator / algorithm selector | **`method`** | `str` | `mode`†, `estimator`†, `scheme`† |
-| Numerical solver kernel | **`solver`** | `str` | `method` (v5), `integrator`† |
-
-`seed` and `ic` are already universal — they are listed so the gate treats them as
-locked, not because they need fixing.
-
-**`solver=` and `method=` are two concepts, and v6 gives each one word.**
-`solver=` selects a *numerical kernel* and is a keyword of `run` / `reinit` /
-`ensemble` (`lor.run(solver="dop853")`); `method=` selects an *estimator
-algorithm* on an analysis (`optimal_delay(x, method="mi")`,
-`fixed_points(sys, method="interval")`). Passing `method=` to `run` raises and
-names `solver=`. Both are always-allowed tokens in their own half and need no
-per-site whitelist.
-
----
+Use `components` even when a particular analysis accepts only one selected
+channel. Its signature and validation should make that restriction clear.
+Avoid introducing synonyms such as `x0`, `random_state`, `burn_in`, `tau` or
+`emb_dim` for the shared concepts above. The full set of checked spellings is in
+`tests/test_polish_standards.py`.
 
 ## 3. Unit rules (documentation-only — not gate-enforceable)
 
-A signature gate sees parameter *names*, not their meaning, so the rules in this
-section are **documentation-only**: they bind authors and reviewers, not the CI
-naming gate. (The gate-enforceable rules are in §7.)
+State units in the docstring; signature tests cannot verify them.
 
-**`transient` follows the unit of the call's horizon.**
-
-- Paired with `final_time` (a flow) → `transient` is a **time** (same units as
-  `final_time`): `lyapunov_spectrum(lorenz, final_time=300, transient=50)` discards
-  the first 50 time units.
-- Paired with `n` (a map / discrete view) → `transient` is a count of **steps**:
-  `orbit_diagram(logistic, "r", vals, points_per_value=200, transient=500)` discards the
-  first 500 iterations.
-- A few flow estimators parametrise their run by a *count of rescaling cycles*
-  (canonical `n`, replacing v3's `n_rescale`) rather than `final_time`; there
-  `transient` is in **protocol steps**, following the count horizon (e.g.
-  the Jacobian-free two-trajectory branch of `lyapunov_spectrum`).
-- `transient` **never** means "section crossings." A Poincaré / return view that
-  wants to discard the first few section hits uses the dedicated `skip_crossings`
-  keyword (§5), so the unit of `transient` stays unambiguous.
-
-**`final_time` (flows) vs `n` (maps).** A flow's run length is a time →
-`final_time`. A map's / discrete view's run length is a count of iterations → `n`.
-Analyses that serve *both* families expose both horizons and pick by the input
-(`gali`, `expansion_entropy` carry `final_time` *and* `steps`→`n`). The unified
-`lyapunov_spectrum` follows its documented signature
-(`lyapunov_spectrum(system, *, k=None, final_time=None, transient=None, dt=None,
-ic=None, method=None, seed=None)`) — `final_time` is its headline horizon.
-
-**`n` vs `n_<thing>`.** Bare `n` is the *primary* run length / number of produced
-units — iterations of a map, points recorded per orbit, surrogate realisations to
-draw. A prefixed `n_<thing>` is a *count of that specific thing* and is a distinct,
-function-owned parameter: `n_samples`, `n_seeds`, `n_radii`, `n_scales`,
-`n_internal`, `n_c`, `n_ref`, `n_ks`. These are **not** the iteration horizon and
-are not renamed to `n` (§7 lists them so the gate does not mistake them for bare-`n`
-violators).
-
-**`dt` is a time step.** The sampling / integration step. A window *stride*
-(`windowed_rqa`) is a different concept and is **not** `dt` (§5).
-
----
+- For a flow, `transient` is a duration in the same units as `final_time`.
+- For a map, `transient` counts discarded iterations.
+- `skip_crossings` counts discarded section crossings. It is separate from a
+  time or iteration transient.
+- `dt` can mean output spacing, numerical step or both. Adaptive ODE solvers
+  separate internal steps from output sampling; fixed-step and stochastic
+  schemes use `dt` as the numerical step too. DDEs have additional history
+  resolution constraints.
+- `delay`, `theiler`, and window strides count samples, not physical time.
+- Counts such as `n_samples`, `n_seeds`, `n_scales` and `n_c` name distinct work
+  quantities; they need not be shortened to `n`.
+- Descriptive counts such as `points_per_value` and `crossings` identify the
+  output being requested. Preserve their meaning across overloads.
 
 ## 4. Verbs — one intent, one word
 
-| Intent | Canonical | Removed in v6 |
-|---|---|---|
-| Produce a trajectory (any family) | **`system.run(...)`** | `.integrate` (flows), `.iterate` (maps), `.trajectory` |
-| Ask what a system is | **`system.family`** | `.is_discrete` |
-| Derive a section or a strobe | **`system.poincare(...)`** | `.stroboscope(...)` |
-| Measure something | **`ts.analysis.<name>(subject)`** | every bound analysis method and the `.lyap`/`.chaos`/`.dims`/`.recurrence` accessors |
+| Task | Public form |
+|---|---|
+| Simulate a system | `system.run(...)` |
+| Advance a live cursor | `system.step(...)` |
+| Read the system family | `system.family` |
+| Derive a section or stroboscopic view | `system.poincare(...)` |
+| Compute an analysis | `ts.analysis.name(subject, ...)` |
 
-**One verb, closed signatures.** `Lorenz().run(final_time=100, dt=0.01)` and
-`Henon().run(steps=5000)` are the one verb a newcomer learns, and each family
-binds exactly the keywords its mathematics admits — a map handed `final_time=`
-raises and says why. `integrate` / `iterate` / `trajectory` are **removed**, not
-aliased: `hasattr(sys, "integrate")` is `False`, and the `AttributeError` names
-`run`.
-
----
+A flow's `run` takes a time horizon; a map's takes `steps`. Old
+`.integrate`, `.iterate` and `.trajectory` methods were removed in v6. Their
+migration messages point to `run`.
 
 ## 5. Homonym carve-outs (the same token, a *different* concept)
 
-These `(function, parameter)` pairs are **deliberately allowed** because each names
-a genuinely different concept there. The naming gate whitelists **exactly** these
-pairs; the same token used for a *banned* concept anywhere else still fails.
+Some names have a distinct mathematical role in a particular function:
 
-| Token | Allowed at (exact) | Means | Why it is not the banned concept |
-|---|---|---|---|
-| **`k`** | `gali.k` | GALI **order** — number of deviation vectors evolved (`2 ≤ k ≤ dim`) | an *order*, not a neighbour count |
-| **`k`** | `lyapunov_spectrum.k` | number of **Lyapunov exponents** to compute (was `n_exp`; *may exceed `dim`* for DDEs — a function-space tangent) | a count of *exponents*, not neighbours |
-| **`k_max`** | `lyapunov_from_data.k_max` | length of the divergence / stretching curve `S(k)`, evolved over `k = 0 … k_max` | an *abscissa horizon* of the scaling curve, not a neighbour count |
-| **`step`** | `windowed_rqa.step` | window **stride** in samples | a stride between windows, not the integration time step `dt` |
-| **`max_steps`** | `attractors`, `basins`, `continuation`, `basin_fractions` | integration **safety cap** — max steps before a trajectory is declared lost / non-recurrent | a divergence/abort bound, not the run length `n` |
-| **`max_delay`** | `optimal_delay`, `mutual_information`, `estimate_period`, `autocorrelation` | the **search ceiling** for a delay scan (supersedes `max_lag`) | a bound on the delay search, distinct from a single embedding `delay`; the `lag`/`tau` tokens stay banned |
-
-**New tokens WS-CONV introduces** (not v3 renames — they do not exist yet, so a
-reviewer should not expect to find them in v3 code):
-
-- **`skip_crossings`** (`poincare_section`, `return_map`): number of section
-  crossings to discard before recording. It replaces the crossing-counting *use* of
-  `transient` on those two views so that `transient` keeps a single unit (§3).
-- **`region([(lo, hi, n), …])`** in `tsdynamics.data`: a builder for the `region`
-  argument, replacing the three-parallel-array `Grid(lo, hi, counts)` constructor.
-
-**Prior-result first arguments** (the third role in §1). These are named by the
-*kind* of result they consume and are intentionally **not** unified onto a single
-spelling; the gate whitelists each exact `(function, first-arg)` pair:
-
-| Function | First arg | Consumes |
+| Name | Function | Meaning |
 |---|---|---|
-| `kaplan_yorke_dimension` | `spectrum` | a Lyapunov spectrum (array / `LyapunovSpectrum`) |
-| `uncertainty_exponent`, `wada_property`, `basin_entropy` | `basins` | a `BasinsResult` |
-| `resilience`, `tipping_points` | `result` | a `BasinsResult` / `ContinuationResult` |
+| `k` | `gali` | Number of deviation vectors; `2 <= k <= dim` |
+| `k` | `lyapunov_spectrum` | Number of exponents; DDE tangent spaces can require more than the instantaneous state dimension |
+| `k_max` | `lyapunov_from_data` | Length of the stretching curve |
+| `step` | `windowed_rqa` | Window stride in samples |
+| `max_steps` | Basin and attractor searches | Per-trajectory search limit |
+| `max_delay` | Delay selection, autocorrelation and period estimation | Search ceiling in samples |
+| `grid` | Planar field analyses | Grid resolution, rather than a search-region object |
+| `steps` | `streamlines` | Integration-length cap for a streamline |
+| `kind` | `return_map` | Maxima, minima or section-crossing construction |
+| `n_cut` | `zero_one_test` | Maximum displacement lag, rather than a discarded transient |
 
-**Domain-owned, out of scope** (not renamed, not banned — each function owns them):
-`zero_one_test.n_cut` (the mean-square-displacement *lag ceiling*, **not** a
-transient — default `N // 10`), and the `n_<thing>` counts in §3.
-
----
+Prior-result inputs use names such as `spectrum`, `basins` and `result`, as
+listed in their signatures. The signature tests record these exceptions by
+function and parameter, so an exception does not broaden the convention for
+unrelated functions.
 
 ## 6. v3 → v4 token map (quick reference)
 
-Mechanical renames the migration shim and codemod (`WS-MIGRATE`) cover. The old
-name raises a precise "renamed to *X* in v4.0" error for one release.
+This heading is retained for older links. For current migration guidance,
+consult [Top level](../reference/top-level.md#the-error-ladder-how-you-find-a-name-that-moved)
+and the error raised by the installed version. Several early renames changed
+again in v6:
 
-| v3 | v4 | Scope |
+| Older spelling | Current spelling | Scope |
 |---|---|---|
-| `sys`, `sys_or_traj`, `map_sys`, `source`, `observable` (1st arg) | `system` | `lyapunov_spectrum`, `orbit_diagram`, `periodic_orbits`, `poincare_section`, `return_map`, `zero_one_test` |
-| `x`, `series` (1st arg) | `data` | `lyapunov_from_data` |
-| `observable` (kwarg) | `component` | `return_map` |
-| `components` | `component` | `orbit_diagram` |
-| `burn_in` | `transient` | `periodic_orbit` |
-| `steps`, `n_rescale` | `n` *(or `final_time` for flows)* | `gali`, `expansion_entropy`, `lyapunov_spectrum`, `poincare_section`, `return_map` |
-| `tau`, `lag` | `delay` | `embed`, `embedding_dimension`, `lyapunov_from_data` |
-| `max_lag` | `max_delay` | `optimal_delay`, `mutual_information`, `estimate_period`, `autocorrelation` |
-| `m`, `emb_dim` | `dimension` | `embed`, `lyapunov_from_data` |
-| `theiler_window` | `theiler` | dimensions / recurrence family |
-| `min_neighbors` | `n_neighbors` | `lyapunov_from_data` |
-| `kind` (variant selector) | `method` | `return_map` (`max`/`min`/`poincare`) |
-| `grid`, `box` (region arg) | `region` | `basins`, `fixed_points`, `periodic_orbits` |
-| `n_exp` | `k` | `lyapunov_spectrum` |
-| `.integrate` / `.iterate` | `.run` | every family (`.trajectory` kept, not rewritten) |
-| `bifurcation_diagram` | `orbit_diagram` | `ts.analysis` (alias **deleted** in v6 — one concept, one spelling; the old name redirects) |
+| `.integrate`, `.iterate`, `.trajectory` | `.run` | Model simulation |
+| `component`, `observable` | `components` | Observed channel selection |
+| `method` on `run` | `solver` | Numerical integration kernel |
+| `method` on `return_map` | `kind` | Type of recurring observable |
+| `tau`, `lag` | `delay` | Delay coordinates |
+| `m`, `emb_dim` | `dimension` | Delay-coordinate count |
+| `max_lag` | `max_delay` | Search ceiling |
+| `theiler_window` | `theiler` | Temporal pair exclusion |
+| `min_neighbors` | `n_neighbors` | Neighbour count |
+| `n_exp` | `k` | Number of Lyapunov exponents |
 
-> `n_cut` (`zero_one_test`) is **not** in this table: it is a domain-owned lag
-> ceiling (§5), not a transient — it is neither renamed nor banned.
-
-> **v6 scope note.** The Scope column above names only functions that still
-> exist. The v6 scope surgery deleted the entropy, surrogate and transforms
-> families outright (see the scope boundary in `CLAUDE.md`), so the
-> `tau`/`lag` → `delay` and `m`/`emb_dim` → `dimension` renames are now carried
-> by the surviving *phase-space* users (the embedding family and
-> `lyapunov_from_data`); `detrend` left with the transforms package. The
-> renames themselves are unchanged — only their scope shrank.
-
----
+These are migration examples, not interchangeable aliases. Check the current
+signature before updating an older script.
 
 ## 7. For the gate (`WS-NAMEGATE`) and signature (`WS-CONV`) authors
 
-**Gate-enforceable rules** (decidable from `inspect.signature` alone):
+`tests/test_polish_standards.py` checks registered analysis signatures for the
+first-input names, shared parameter spellings and explicit exceptions described
+above. `tests/test_calling_convention.py` covers a focused subset. Add or update
+an exact exception when a name represents a different concept; do not exempt an
+entire function to avoid choosing a consistent name.
 
-1. **First argument** of every public callable is `system` or `data`, *or* the
-   `(function, first-arg)` pair is in the prior-result whitelist (§5).
-2. **No parameter name** is a banned spelling from §2, *unless* the
-   `(function, parameter)` pair is in the homonym whitelist (§5). Build the
-   banned→canonical map straight from the §2 Bans column; build the whitelist from
-   the §5 exact-pair tables. `method` is never banned (no whitelist needed).
-3. The `n_<thing>` domain counts (`n_samples`, `n_seeds`, `n_radii`, `n_scales`,
-   `n_internal`, `n_c`, `n_ref`, `n_ks`) are **not** `n` violations — they are
-   distinct names, so a prefix check on bare `n` already passes them; they are
-   listed here only so the gate author does not special-case them by mistake.
-4. The gate sweeps `registry.analyses`.
-
-**Documentation-only rules** (a signature gate cannot see units or semantics, so
-do **not** try to encode these — they are enforced in review, not CI): the
-`transient`-follows-horizon rule, the `final_time`(flows) / `n`(maps) split, and
-the `n` vs `n_<thing>` meaning (all §3).
-
-**For `WS-CONV`:** the §5 whitelist references names that do not exist in v3 yet
-(`lyapunov_spectrum.k`, `skip_crossings`) — these are the *targets* WS-CONV
-creates; the gate whitelists the new names, so the entries are correct despite
-being absent from the v3 signatures.
-
----
+Tests can check a spelling, but reviews and numerical tests must check units,
+accepted families, array orientation and the meaning of a horizon.
 
 ## 8. Adding a new analysis — the naming checklist
 
-When you write a new public analysis, before it can merge:
-
-1. **First argument** is `system` (you integrate/iterate it) or `data` (you
-   consume a measured series). Nothing else.
-2. **Every recurring concept** in §2 uses its canonical spelling and documented
-   unit. Function-specific parameters are free to be named whatever reads best.
-3. **A new homonym?** If you genuinely need a §2 token for a *different* concept,
-   add a row to §5 (an exact `(function, parameter)` pair) and the matching
-   whitelist entry to the naming gate — don't silently reuse it.
-4. **`transient` and the horizon agree on units** (§3): `final_time`+`transient`
-   in time for a flow; `n`+`transient` in steps for a map.
-5. **The naming gate** (`tests/test_polish_standards.py`, registry-driven) sweeps
-   your function automatically — no test edits needed. If it fails, it names the
-   offending parameter and the canonical spelling.
-
-The goal is simple: a user who has learned one analysis can guess the signature
-of the next.
+1. Name the first argument for its input role.
+2. Reuse the shared names and state their units.
+3. Give function-specific parameters descriptive names; add an exact exception
+   if one conflicts with a shared spelling for a different concept.
+4. Keep time, iteration, sample and crossing counts distinct.
+5. Register supported inputs and add numerical tests for the new behavior.
+6. Run the signature checks and the analysis's focused tests.

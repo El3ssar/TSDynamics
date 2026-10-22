@@ -189,8 +189,18 @@ def plotly_clock_probe():
       }
       const Plotly = {extendTraces:(...a) => change(a[1],a[2],true,a[3]),
                       restyle:(...a) => change(a[1],a[2],false)};
-      const document = {hidden:false, getElementById:() => gd, createElement:() => new Element()};
-      const window = {Plotly, matchMedia:() => ({matches:reduced}),
+      let observed, motionListener;
+      class IntersectionObserver {
+        constructor(fn) { observed = fn; }
+        observe() { observed([{isIntersecting:true}]); }
+        disconnect() { observed = null; }
+      }
+      const query = {matches:reduced, addEventListener:(k,fn) => {motionListener=fn;},
+                     removeEventListener:() => {motionListener=null;}};
+      const document = {hidden:false, getElementById:() => gd, createElement:() => new Element(),
+        addEventListener:(k,fn) => listeners.set('document:'+k,fn),
+        removeEventListener:k => listeners.delete('document:'+k)};
+      const window = {Plotly, matchMedia:() => query,
         addEventListener:(k, fn) => listeners.set('window:'+k, fn),
         removeEventListener:k => listeners.delete('window:'+k)};
       gd.addEventListener = (k, fn) => listeners.set('gd:'+k, fn);
@@ -203,15 +213,18 @@ def plotly_clock_probe():
         .replace('__REVERSE_DURATION_MS__',String(pingpong ? (reverseDuration ?? duration)*1000 : 0))
         .replace('__IS3D__','false').replace('__PERSISTENT__','false');
       new Function('document','window','Plotly','requestAnimationFrame','cancelAnimationFrame',
-        'getComputedStyle',script)(document,window,Plotly,requestFrame,id => frames.delete(id),
-                                 () => ({position:'static'}));
+        'getComputedStyle','IntersectionObserver',script)(document,window,Plotly,requestFrame,id => frames.delete(id),
+                                 () => ({position:'static'}), IntersectionObserver);
       const [play,restart,readout] = gd.children[0].children;
       async function flush() { for(let i=0;i<4;i++) await Promise.resolve(); }
       return {play,restart,readout,
         heads:() => layers.map(m => gd.data[m.head].x[0]),
         colors:() => layers.map(m => gd.data[m.head].marker.color), calls:() => calls,
         resources:() => [frames.size,listeners.size],
-        hidden:value => { document.hidden=value; }, detached:() => { gd.isConnected=false; },
+        hidden:value => { document.hidden=value; listeners.get('document:visibilitychange')?.(); },
+        visible:value => observed([{isIntersecting:value}]),
+        reduced:value => {query.matches=value;motionListener?.();},
+        detached:() => { gd.isConnected=false; },
         async settle() { while(pending.length) pending.shift()(); await flush(); },
         async frame(now) {
           const callbacks=[...frames.values()];frames.clear();
@@ -362,3 +375,23 @@ def test_animated_point_cloud_remains_unconnected_and_colored():
     assert list(fig.frames[-1].data[0].marker.color) == [0, 1, 2, 3, 4]
     assert fig.frames[-1].data[0].marker.cmin == 0
     assert fig.frames[-1].data[0].marker.cmax == 4
+
+
+def test_offscreen_and_motion_preference_changes_preserve_an_explicit_pause(plotly_clock_probe):
+    results = plotly_clock_probe("""
+      const v=mount(); await v.frame(0); await v.frame(2000);
+      const start=v.heads(); const calls=v.calls();
+      v.visible(false); await v.frame(90000); await v.frame(100000);
+      const offscreen=[v.heads(),v.calls()-calls];
+      v.visible(true); await v.frame(110000); await v.frame(111000);
+      const resumed=v.heads();
+      v.play.onclick(); v.visible(false); await v.frame(120000);
+      v.visible(true); await v.frame(130000); await v.frame(131000);
+      const manual=v.heads();
+      v.play.onclick(); v.reduced(true); await v.frame(140000); await v.frame(141000);
+      v.reduced(false); await v.frame(150000); await v.frame(151000);
+      const motion=[v.heads(),v.play.attributes['aria-label']];
+      v.detached(); await v.frame(152000);
+      console.log(JSON.stringify([start,offscreen,resumed,manual,motion,v.resources()]));
+    """)
+    assert results == [[20], [[20], 0], [30], [30], [[30], "Play animation"], [0, 0]]

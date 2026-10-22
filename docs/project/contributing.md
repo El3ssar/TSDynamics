@@ -6,18 +6,18 @@ description: Contributing to TSDynamics — dev setup with uv, the quality gates
 
 # Contributing
 
-Clear math, minimal API, no hacks. Contributions are welcome — a new attractor,
-a sharper docstring, a bug fix, a whole analysis. The full text lives in
-[CONTRIBUTING.md](https://github.com/El3ssar/TSDynamics/blob/main/CONTRIBUTING.md);
-this page is the working version.
+Contributions can add models, analyses, numerical fixes or clearer
+documentation. This page covers development setup, focused tests and the
+release workflow. See also the repository
+[contribution guide](https://github.com/El3ssar/TSDynamics/blob/main/CONTRIBUTING.md).
 
 ## Dev setup
 
-You need Python ≥ 3.12 and [uv](https://docs.astral.sh/uv/). The native Rust
-engine ships as a prebuilt `abi3` wheel, so **no compiler is needed** to install
-or work on the pure-Python side (see [Install](../start/install.md)). Building
-from source — only needed if you edit the Rust engine — needs a
-[Rust toolchain](https://rustup.rs/).
+For the editable source checkout below, install Python ≥ 3.12,
+[uv](https://docs.astral.sh/uv/) and a [Rust toolchain](https://rustup.rs/).
+The build includes the native extension even when your changes are Python-only.
+Using a published prebuilt wheel requires no compiler; see
+[Install](../start/install.md).
 
 ```bash
 git clone https://github.com/El3ssar/TSDynamics.git
@@ -31,8 +31,7 @@ uv run pre-commit install    # optional: ruff lint + format enforced at commit t
 The test suite is **registry-driven**: every per-system test is parametrised
 over all 177 built-in systems, and every analysis test over the whole
 toolkit. A plain `uv run pytest` is therefore thousands of items and takes
-minutes. **Don't reach for the full suite as your inner loop.** Instead run only
-what your diff touches:
+minutes. During development, start with the tests selected for your changes:
 
 ```bash
 make test          # change-scoped FAST tier for your diff — the everyday loop
@@ -45,8 +44,9 @@ systems (plus the catalogue-correctness gates), a touched analysis area runs
 that area's tests, a touched test file runs itself. It is deliberately biased to
 **over-select**: any foundational change (the engine, a family base, the
 registry, `pyproject`, or any Rust crate) disables selection and runs the full
-tier, so a mis-scoped run can never *ship* a regression — the full suite runs on
-every merge to `main` and nightly. The selector prints exactly what it kept and
+tier. The full default tier also runs on merges to `main`; nightly checks run
+the exhaustive tier. Selection and shared tests reduce feedback time but do
+not guarantee that a change has no regressions. The selector prints exactly what it kept and
 why.
 
 Override the diff base when you need to (defaults to `origin/main`):
@@ -79,9 +79,10 @@ make test                                # change-scoped fast tier
   issues.
 - **`mypy --strict`** is a hard gate. The core library is fully strict; the
   system *catalogue* (`tsdynamics.systems.*`) relaxes exactly three codes
-  inherent to its framework-contract kernels — `override`, `no-untyped-def`,
-  `no-untyped-call` — via a documented `[tool.mypy.overrides]` block, because the
-  `_equations` / `_step` / `_drift` bodies receive their parameters positionally.
+  used by the family method signatures — `override`, `no-untyped-def`,
+  `no-untyped-call` — via a documented `[tool.mypy.overrides]` block. Maps
+  receive positional parameters; symbolic flow and SDE methods receive named
+  parameters.
 - **Docstrings** follow the NumPy convention. Cite the **original paper** for any
   method — the scholarly norm (and it keeps the API docs pointing at the source,
   not at whichever library we happened to look at).

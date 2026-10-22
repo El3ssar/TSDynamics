@@ -6,9 +6,8 @@ description: Install TSDynamics with pip or uv from a prebuilt wheel — the com
 
 # Install
 
-TSDynamics runs on **Python ≥ 3.12**. Installing it is a single command, and
-the compiled integration engine ships inside the wheel — you need no Rust
-toolchain, no C compiler, and no build step.
+TSDynamics requires **Python ≥ 3.12**. Prebuilt wheels include the compiled
+integration engine, so installation on a supported platform needs no compiler.
 
 ```bash
 pip install tsdynamics
@@ -27,28 +26,26 @@ per platform and architecture — manylinux, musllinux, macOS (Intel and Apple
 silicon), and Windows — and each bundles the native Rust engine
 (`tsdynamics._rust`) alongside the pure-Python package. Because the wheel is
 built against CPython's stable ABI (`abi3`, tagged `cp312`), a *single* wheel
-covers every CPython ≥ 3.12.
+covers supported CPython versions ≥ 3.12.
 
 Concretely, this means:
 
 - **No external toolchain.** Installing a prebuilt wheel needs no compiler.
   The default execution backend uses its bundled JIT compiler in-process.
-- **No build step, nothing on disk.** Every family — ODEs, delay equations,
-  stochastic equations, and maps — lowers its symbolic equations to an
-  in-process engine *tape* the first time you run it, in a fraction of a second,
-  and the tape is compiled to native code by the built-in JIT. Both steps are
-  in-process and memoised per system; there is no ahead-of-time compilation and
-  nothing is written to disk. Editing a system's equations simply takes effect on
-  the next run; there is no cache to wipe.
-- **The same numbers everywhere.** The tape runs on a Cranelift JIT by default,
+- **In-process equation compilation.** On first use, the library translates
+  equations to an expression tape and the bundled JIT compiles it to native code.
+  Both are cached in memory. Startup cost depends on the size of the system;
+  repeated runs can reuse the compiled equations. No compiled-equation files
+  are written to disk.
+- **Interpreter and JIT agreement.** The tape runs on a Cranelift JIT by default,
   or on a Rust interpreter that is bit-for-bit identical — see
   [backends](concepts.md#backends-jit-interp-reference). This parity applies on
   the same machine for the same solver and inputs; floating-point results
   across platforms or numerical-library builds can still differ.
 
 !!! note "Building from source"
-    Only building *from the source distribution* — the `sdist`, the fallback for
-    a platform outside the wheel matrix — needs a Rust toolchain, because the
+    Building from a source distribution or editable checkout needs a Rust
+    toolchain because the
     package build backend is [maturin](https://www.maturin.rs/). The normal
     wheel installation path never reaches it. Use
     `pip install --only-binary=:all: tsdynamics` to require a wheel and fail
@@ -62,7 +59,7 @@ dependencies, including NumPy and SciPy. The plotting backends are opt-in extras
 | Extra | Installs | When you want it |
 | ----- | -------- | ---------------- |
 | `tsdynamics[viz]` | `matplotlib` | The reference renderer: static 2-D and 3-D figures, movies (mp4/gif) |
-| `tsdynamics[interactive]` | `plotly` | The interactive backend: rotatable 3-D and self-contained HTML export |
+| `tsdynamics[interactive]` | `plotly` | Interactive figures and HTML export; exported pages use CDN JavaScript by default |
 | `tsdynamics[plot]` | `matplotlib` | A back-compatible alias of `viz` |
 
 Combine extras in the usual way:
@@ -93,7 +90,7 @@ print(traj.y.shape)             # (101, 2): initial state plus 100 iterates
 ts.systems.Lorenz().run(final_time=1.0).y.shape   # (51, 3)
 ```
 
-also returns cleanly, the engine is wired up and you are ready to go.
+also returns successfully, the installation can run both maps and ODEs.
 
 ## Next
 

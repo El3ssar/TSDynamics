@@ -27,7 +27,7 @@ copying the definitions into every script.
 | A rendering backend | `tsdynamics.renderers` | A callable that consumes a plot description | `plot.render(backend="model_summary")` |
 | A solver declaration | `tsdynamics._solvers` | A `SolverSpec` describing an implemented numerical kernel | `system.run(solver="oscillator_rk4")` |
 
-The first five can be written in Python. A genuinely new integration algorithm
+The first five can be written in Python. A new integration algorithm
 also needs a Rust implementation; [the solver section](#solver-extensions) explains
 the boundary.
 
@@ -317,7 +317,7 @@ uses the existing `rk4` implementation. Trajectory metadata records the kernel
 that actually ran. Capability flags must describe that implementation; setting
 `kernel="new_algorithm"` cannot create a new solver.
 
-To add a genuinely new method, implement and register it in Rust, mirror its
+To add a new method, implement and register it in Rust, mirror its
 capabilities in Python, and build an engine extension that includes it. The
 registration is part of that compiled engine, not a runtime loader for arbitrary
 Rust libraries. Adaptive methods also need their tolerance handling wired into

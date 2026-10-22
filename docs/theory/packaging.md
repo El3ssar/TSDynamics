@@ -8,8 +8,7 @@ description: How TSDynamics is packaged and distributed — one maturin wheel ca
 
 TSDynamics ships as **one [maturin](https://www.maturin.rs/) wheel** — the
 pure-Python package and the compiled Rust engine in the same distribution. This
-page records the shape, why it is shaped that way, and how the prebuilt wheels
-are produced.
+page explains the installed layout and how prebuilt wheels are produced.
 
 ## What you install
 
@@ -17,9 +16,9 @@ are produced.
 | ------------ | ------------- | -------- | ---------------- |
 | `tsdynamics` | maturin (wheel + sdist) | the whole library — systems, families, analysis, visualization — **plus** `tsdynamics/_rust.abi3.so`, the Cranelift JIT + SSA-tape interpreter + solver kernels | **No** for the prebuilt wheel; building *from the sdist* needs a Rust toolchain |
 
-`pip install tsdynamics` pulls a prebuilt `abi3` wheel for your platform, so the
+On a supported platform, `pip install tsdynamics` selects a prebuilt `abi3` wheel, so the
 engine arrives compiled — no Rust toolchain and no C compiler. Every family
-(ODEs, DDEs, maps) lowers its symbolic equations to the engine in-process and
+(ODEs, DDEs, SDEs and maps) lowers its symbolic equations to the engine in-process and
 runs in-process, reached through `backend="jit"` (the default) or
 `backend="interp"` (see the [compilation pipeline](compilation.md)).
 
@@ -39,11 +38,10 @@ tsdynamics/_rust.abi3.so          # the compiled engine
 package rather than a stray top-level `_rust/` package.
 
 !!! note "Editable installs"
-    An *editable* `tsdynamics` (`pip install -e .`) puts `tsdynamics.__path__` at
-    `src/tsdynamics/`. For development the engine is `cargo build`-ed and the
-    `.so` dropped straight into `src/tsdynamics/_rust.abi3.so` (see
-    `.github/workflows/engine-bindings.yml`); the prebuilt-wheel install carries
-    it directly. Both routes satisfy `import tsdynamics._rust`.
+    An editable install imports Python sources from the checkout while using a
+    locally built extension. Rebuild after changing Rust sources. Follow the
+    [development setup](../project/contributing.md#dev-setup) to keep the Python
+    package and native extension consistent.
 
 ## How the wheels are built
 

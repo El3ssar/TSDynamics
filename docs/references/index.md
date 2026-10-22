@@ -6,11 +6,9 @@ description: The reference shelf for TSDynamics — cross-library benchmarks, th
 
 # References
 
-The reference shelf: where the library sits against the rest of the Python
-ecosystem, the papers its methods and systems come from, and the complete
-public API generated from the source docstrings. Everything here is meant to be
-looked *up*, not read front to back — start from [Start](../start/index.md) or
-[Analysis](../analysis/index.md) for the prose-first tour.
+Use this section to look up benchmark methods, original literature and API
+documentation. For a guided introduction, begin with [Start](../start/index.md)
+or the [Analysis guides](../analysis/index.md).
 
 ## Benchmarks
 
@@ -20,12 +18,10 @@ A head-to-head comparison against the established Python dynamical-systems
 libraries on a shared set of classic tasks — short and long ODE integration,
 integration accuracy, the Lyapunov family, correlation dimension, the
 bifurcation sweep, basins, fixed points, the Poincaré section, and a spread of
-from-a-signal complexity measures. It records both **speed** (every task) and,
-where there is a ground truth, **precision** (the estimate and its deviation
-from the literature value). The short version: integration is the clear
-strength — the Rust engine runs roughly two orders of magnitude faster than
-`scipy.integrate.solve_ivp` while returning the whole dense trajectory in one
-call — and the analysis toolkit is accurate wherever a literature value exists.
+signal-based complexity measures. It records task-specific **timings** and,
+where a comparison value is available, the estimate and its deviation. Results
+apply to the stated hardware, inputs and settings; a literature comparison is
+a cross-check, not a general accuracy guarantee.
 
 ## Bibliography
 

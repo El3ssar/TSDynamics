@@ -5,7 +5,7 @@ description: Overlay with +, arrange with | and /, and build nested figures from
 
 <span class="ts-kicker">Visualization · Composition</span>
 
-# One plot becomes a figure
+# Composing figures {#one-plot-becomes-a-figure}
 
 <div class="tsd-page-intro" markdown="1">
 
@@ -40,7 +40,7 @@ overlay = a + b
 beside = a | b
 above = a / b
 figure = (overlay | beside) / above
-figure.theme("publication").font(family="sans-serif").size(10, 7)
+figure.theme("publication", foreground="#273947").font(family="sans-serif", size=12).size(10, 7)
 ```
 
 <figure class="tsd-showcase" markdown="1">
@@ -84,7 +84,7 @@ spectrum = ts.plot(trajectory, "psd", components="x", title="Frequency content",
 trace = ts.plot(trajectory, "time_series", components="x", title="x over time", color="#11857A")
 
 figure = (portrait | spectrum) / trace
-figure.theme("publication").font(family="sans-serif").size(10, 7)
+figure.theme("publication", foreground="#273947").font(family="sans-serif", size=12).size(10, 7)
 ```
 
 <figure class="tsd-showcase" markdown="1">

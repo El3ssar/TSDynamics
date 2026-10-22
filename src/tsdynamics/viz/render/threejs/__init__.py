@@ -272,7 +272,7 @@ def register(registry: Registry) -> bool:
                 assets=assets,
                 loader_url=loader_url,
                 poster=poster,
-                axes=axes,
+                axes=axes and not spec._axes_hidden(),
             )
             if path is None:
                 return page

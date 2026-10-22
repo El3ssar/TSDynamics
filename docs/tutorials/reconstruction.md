@@ -7,18 +7,12 @@ description: You have one recorded signal x(t) and no equations — reconstruct 
 
 # Reconstruction from one signal
 
-The first two tutorials had the luxury every textbook has and no experiment ever
-does: the equations. Real data arrives the other way round. You have a single
-recorded channel — a voltage, a concentration, a light curve — sampled over time,
-and *nothing else*. No state vector, no model, no idea whether the wiggle in
-front of you is a deterministic system worth analysing or just filtered noise.
-
-This tutorial walks the whole inference the other direction: from one scalar
-$x(t)$ back to the geometry and invariants of the system that produced it. We
-will **reconstruct** the attractor from the single channel, choose the two
-reconstruction parameters with principled heuristics, and measure the
-attractor's fractal dimension and its largest Lyapunov exponent *from the
-recording* — then compare these finite-data estimates with the full-state model.
+Suppose you have one sampled channel, such as a voltage or concentration,
+but not the full state or equations. Delay coordinates provide a candidate
+state-space reconstruction. This tutorial selects a delay and embedding
+dimension, then inspects correlation-dimension and Lyapunov estimates from
+the reconstructed record. Noise, sampling and finite record length limit what
+can be inferred.
 
 We generate the signal from the Rössler flow and analyse one observed channel,
 keeping its sampling times. The full trajectory is set aside for a comparison
@@ -60,8 +54,8 @@ diagnostic curves, then test sensitivity to those choices. The
 
 The delay trades two failures against each other. Too small, and $x_i$ and
 $x_{i+\tau}$ are nearly identical — the reconstruction collapses onto the
-diagonal. Too large, and on a chaotic signal they become causally unrelated — the
-geometry folds noise into itself. A common heuristic is the **first local
+diagonal. Too large, and the coordinates can lose useful local dependence, making
+neighbourhood geometry harder to resolve. A common heuristic is the **first local
 minimum of the time-delayed mutual information** (Fraser & Swinney, 1986).
 It seeks delayed coordinates with reduced redundancy; it does not guarantee
 an optimal reconstruction.
@@ -77,8 +71,8 @@ mi.optimal_lag          # 25   — the same lag, read off the I(tau) curve
 `optimal_delay` returns a count that *is* the integer $\tau = 25$ — it prints,
 formats and indexes as that integer — so it drops straight into `embed`. The linear alternative — the autocorrelation $1/e$
 rule, `method="acf"` — gives $\tau \approx 22$ here, close to the
-mutual-information choice; when they disagree, prefer the mutual-information lag,
-which sees nonlinear dependence the autocorrelation misses.
+mutual-information choice. If they disagree, inspect both curves and compare
+reconstructions rather than automatically preferring one estimator.
 
 ## 3. Choose the dimension
 
@@ -126,7 +120,7 @@ The returned `Embedding` behaves as that bare array, so it drops straight into
 any point-set analysis. The two leading columns $(x_i,\,x_{i+\tau})$ are the
 reconstructed plane — plot them and the folded Rössler loop reappears, rebuilt
 from the single channel. Because a `Trajectory` can build the same delay view
-directly, you can eyeball the reconstruction with the plotting front door:
+directly, you can inspect the reconstruction with `ts.plot`:
 
 ```python
 # skip-doctest — .save() writes a file; needs the optional tsdynamics[viz] backend
@@ -181,14 +175,13 @@ res = ts.analysis.lyapunov_from_data(x, dimension=3, delay=tau, dt=0.05, k_max=8
 float(res)             # approximately 0.06 per unit time in this finite record
 ```
 
-!!! warning "Never quote the automatic fit blind"
+!!! warning "Inspect the fitted interval"
     A divergence curve can have several slopes before it saturates, so the
     automatic interval can give a biased estimate. The result is only as good as the scaling region you
-    choose — always look at `res.times` vs `res.divergence` and pass an explicit
-    `fit=(lo, hi)` before quoting a publishable value. This is *the* place
-    from-data exponents go wrong.
+    choose. Plot `res.times` against `res.divergence`, compare plausible intervals
+    with `fit=(lo, hi)`, and check sensitivity to record length and neighbours.
 
-**How did we do?** We can cheat now and check against the model we threw away:
+**Full-state comparison.** Compare with estimates from the simulated model:
 
 ```python
 # a second estimate, from the full state and the equations

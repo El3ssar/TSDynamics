@@ -36,10 +36,10 @@ from tsdynamics.analysis.embedding import (
 
 ## The reconstruction, from one channel
 
-The figure makes the theorem concrete. On the left is the *true* $(x, y)$
-projection of the Rössler attractor; on the right is a delay reconstruction built
-from the **single observable $x(t)$** — the $y$ channel is never used, yet the
-reconstructed loop is topologically the same object.
+The figure compares the measured $(x, y)$ projection of a Rössler trajectory with
+delay coordinates constructed from **$x(t)$ alone**. The reconstruction shows
+related folded structure; similarity between two projections does not establish
+a topological equivalence or verify the embedding theorem's assumptions.
 
 <div class="ts-ref" markdown>
 
@@ -63,7 +63,7 @@ analyses.
 </div>
 <figure class="ts-fig" markdown>
 ![Rössler true state space beside a delay reconstruction from x(t) alone](../assets/figures/analysis/embedding.svg){ loading=lazy }
-<figcaption><span class="lbl">FIG 1</span> · left: the true (x, y) projection of the Rössler attractor. Right: a Takens reconstruction from the single observable x(t) at a mutual-information-chosen delay — the same loop, recovered from one channel.</figcaption>
+<figcaption>Left: a Rössler trajectory projected onto its measured (x, y) coordinates. Right: delayed coordinates from x(t), using a delay selected by mutual information. Both views use a finite record.</figcaption>
 </figure>
 
 </div>
@@ -83,16 +83,16 @@ coordinates into one joint reconstruction, with an optional per-channel
 
 ## Choosing the delay
 
-The delay trades two failures against each other. Too small, and successive
+The delay balances two practical limitations. Too small, and successive
 coordinates $x_i$ and $x_{i+\tau}$ are nearly identical — the reconstruction
 collapses onto the diagonal (redundancy). Too large, and on a chaotic signal
-they become causally unrelated, so the reconstruction folds noise into the
-geometry (irrelevance). The good $\tau$ sits between.
+their statistical dependence may become weak and neighbouring reconstructed
+states less useful. Inspect the delay diagnostic and reconstruction together.
 
 The recommended nonlinear criterion is the **first local minimum of the
 time-delayed mutual information** (Fraser & Swinney 1986): the lag at which
-$x_{i+\tau}$ adds the most *new* information about the state while still being
-dynamically related to $x_i$.
+dependence between $x_i$ and $x_{i+\tau}$ first reaches a local minimum. This is a
+selection heuristic rather than an optimum guaranteed for every signal.
 
 ```python
 tau = ts.analysis.optimal_delay(x, method="mi", max_delay=120)   # 25   (first MI minimum)

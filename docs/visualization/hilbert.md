@@ -7,16 +7,11 @@ description: Lay a long 1-D record on a space-filling curve — the four hilbert
 
 # Space-filling curves
 
-A long scalar record is a bad plot. Twenty thousand samples of `x(t)` become a
-strip a few hundred pixels wide by the time it reaches a page, so structure at
-the scale of a few hundred samples — the thing you are usually looking for — is
-smeared into ink.
-
-A **space-filling curve** fixes the aspect ratio instead of the data. Walk a
-curve that visits every cell of a square grid exactly once, drop sample `i` into
-the `i`-th cell it visits, and the record becomes an image whose *locality* is
-inherited from the curve: on a Hilbert curve, samples that are close in the
-record land close in the picture. Long-range texture becomes visible texture.
+A long scalar record can be difficult to inspect as a narrow time-series panel.
+A space-filling layout places successive samples in cells of a square image,
+using color for the measured value. This can reveal texture over several scales,
+but the layout changes spatial neighbourhoods: nearby image cells are not
+necessarily nearby samples. Retain a time-series view when timing matters.
 
 This is the Hilbert plot of Estévez-Rams *et al.* (2015), and TSDynamics ships
 four views of it as ordinary [plot transforms](plotting.md) — so they compose,
@@ -82,11 +77,8 @@ to exist by Estévez-Rams *et al.* (2017):
 pip install "tsdynamics[hilbert]"
 ```
 
-Only its **numpy core** is used. TSDynamics deliberately never installs or
-touches hilbertplot's own `[plot]` extra: a Hilbert plot must arrive as a
-`Plot` `IMAGE` layer like every other picture in this library, or it would
-bypass the [`Theme`](styling.md), [`STYLE_KEYS`](styling.md) and three of the
-four [backends](backends.md).
+TSDynamics uses its NumPy core to build ordinary plot layers, so the resulting
+images support the same styling and export API as other figures.
 
 **Without the extra**, asking for a Hilbert curve raises and names it:
 
@@ -100,14 +92,11 @@ whole claim of this plot. If you want a picture now, ask for one of the
 dependency-free orderings explicitly: curve=['morton', 'rowmajor', 'snake'].
 ```
 
-It is **never** silently replaced, because the substitute would be a different
-plot making the same claim (see [the measurement](#the-locality-trade-off)).
-Three dependency-free orderings do ship in-tree, and asking for one explicitly
-always works:
+For dependency-free alternatives, choose an ordering explicitly:
 
 | ordering | path |
 |---|---|
-| `"rowmajor"` | left to right, bottom to top — no locality, the honest baseline |
+| `"rowmajor"` | left to right, bottom to top — a row-wise baseline |
 | `"snake"` | boustrophedon: row-major with alternate rows reversed |
 | `"morton"` | Z-order (bit-interleaved); needs a power-of-two side |
 
@@ -121,8 +110,7 @@ ts.viz.transforms.hilbert.curve_names()
 
 ## Sizing the grid: `fit`
 
-`n` samples do not generally make a square. Three rules, and TSDynamics always
-picks one **explicitly** — it never leaves the choice to another package:
+`n` samples do not generally fill a square. Choose how the grid fits them:
 
 | `fit` | side | keeps every sample? |
 |---|---|---|
@@ -142,8 +130,7 @@ is reported:
 ```
 
 45,535 of 65,536 cells are padding, because `Moore` is not a generalizing curve
-and 20,001 samples must be padded up to a 256 × 256 grid. That is not a bug and
-it is not hidden — it is the honest cost of that curve at that length, and
+and 20,001 samples must be padded up to a 256 × 256 grid. This is the padding required by that curve and record length;
 `fit="truncate"` (a 128 × 128 grid, 3,617 samples dropped) is the other trade.
 
 ---
@@ -161,7 +148,7 @@ ts.plot(lorenz, "hilbert", components="x", granularity=16)
 
 ---
 
-## Reading a Hilbert plot honestly
+## Interpreting the layout {#reading-a-hilbert-plot-honestly}
 
 ### The locality trade-off
 
@@ -176,10 +163,9 @@ record-distance between every pair of 8-adjacent cells of a 128 × 128 grid
 | snake | 85.5 | **96.1** | 0.275 |
 | row-major | 127.5 | **96.1** | 0.251 |
 
-The median says Hilbert is 43× more local than row-major. The mean says it is
-19% *worse*. **Both are true**: Hilbert buys that median by making its few worst
-jumps much longer. Quote one of these numbers and you are advertising, not
-measuring.
+Hilbert has a much smaller median neighbour gap here, but a larger mean.
+It concentrates large gaps at a smaller number of layout boundaries. Report
+both when comparing locality; a single summary can hide this trade-off.
 
 ### Where the locality breaks
 
@@ -196,17 +182,16 @@ ts.plot(
 ```
 
 The Hilbert panel is a recursive tree of ridges. The row-major panel is a
-**featureless plateau** — every vertical neighbour is exactly one grid-width
-apart in the record, which is the precise sense in which a raster layout has no
-locality at all.
+**uniform plateau**: vertical neighbours are one grid-width apart in the
+record, while horizontal neighbours remain consecutive. Its locality is
+strongly direction-dependent.
 
 The field depends only on the curve and the grid size, never on your values.
 
 ### Which sample is this pixel?
 
-A wrong pixel-to-sample map is the worst failure available here: the image still
-renders and only the annotation lies. So the map comes from public API and is
-checked on every call.
+Use the sample-index map to identify the source value represented by a pixel.
+Padding must be masked before indexing the record.
 
 ```python
 index = ts.viz.transforms.hilbert.sample_index_map(lorenz, components="x")
@@ -223,7 +208,7 @@ reached. Mask it, as above, rather than indexing blindly. The map is kept **off*
 serialized by [`ts.viz.to_json`](backends.md) — but `with_sample_index=True`
 puts it there when you want it travelling with the spec.
 
-Three independent locks make it trustworthy:
+The adapter checks layout consistency:
 
 1. **The fit is always explicit**, so nothing depends on how another package
    resolves `fit="auto"`.

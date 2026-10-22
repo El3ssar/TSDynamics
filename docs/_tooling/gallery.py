@@ -53,6 +53,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+from figure_style import INK, PALETTE, PAPER, PAPER_RC, FigureCanvas
+
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 CACHE_DIR = ROOT / ".cache" / "docs-gallery"
 
@@ -74,9 +76,9 @@ TOKEN = "{{ gallery }}"
 TEAL, INDIGO, AMBER, ROSE, TEAL2 = "#11857A", "#574FCF", "#E8912D", "#D64562", "#2CC5AE"
 
 #: Default figure geometry, in inches-at-``DPI``.
-FIGSIZE = (5.4, 3.7)
-FIGSIZE_SQUARE = (4.4, 4.0)
-DPI = 130
+FIGSIZE = (6.2, 4.1)
+FIGSIZE_SQUARE = (5.2, 4.8)
+DPI = 140
 
 
 # ===========================================================================
@@ -1017,18 +1019,13 @@ def cache_key(setup: str, call: str) -> str:
 
 
 def _prepare_matplotlib():
-    """Configure matplotlib and install the brand theme; return ``pyplot``."""
+    """Configure paper styling and install the local documentation theme."""
     import logging
 
-    import matplotlib
+    plt = FigureCanvas()
 
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
-    plt.rcParams.update({"savefig.transparent": True})
-    # The brand face is a webfont: the site has it, a build machine usually does
-    # not, and matplotlib's silent DejaVu fallback is the right answer — but it
-    # logs a line per text artist, which is thousands of lines per gallery build.
+    plt.rcParams.update(PAPER_RC)
+    # Keep build logs quiet while Matplotlib resolves portable fallback fonts.
     logging.getLogger("matplotlib.font_manager").setLevel(logging.ERROR)
 
     from tsdynamics.viz import register_theme, set_theme
@@ -1037,12 +1034,12 @@ def _prepare_matplotlib():
     register_theme(
         Theme(
             name="tsdynamics-gallery",
-            palette=(TEAL, INDIGO, AMBER, ROSE, TEAL2),
-            background=None,  # transparent — readable in both docs colour schemes
-            foreground="#888888",
-            font_family="IBM Plex Sans",
-            font_size=8.5,
-            title_size=9.5,
+            palette=PALETTE,
+            background=PAPER,  # the same light paper surface in both site schemes
+            foreground=INK,
+            font_family="sans-serif",
+            font_size=10.5,
+            title_size=12,
             grid=False,
             line_width=1.2,
             marker_size=4.0,
@@ -1103,8 +1100,6 @@ def _render_one(
     variant: Variant, out_path: pathlib.Path, *, primitive: str | None, ns_cache
 ) -> None:
     """Execute one snippet, check it drew what the tab claims, write the figure."""
-    import matplotlib.pyplot as plt
-
     setup = variant.setup or ""
     call = variant.call or ""
     _check_snippet(setup, call)
@@ -1121,8 +1116,8 @@ def _render_one(
     fig = spec.render("matplotlib")
     figure = getattr(fig, "figure", fig)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    figure.savefig(out_path, dpi=DPI, bbox_inches="tight", transparent=True)
-    plt.close(figure)
+    figure.savefig(out_path, dpi=DPI, bbox_inches="tight", transparent=False)
+    figure.clear()
 
 
 def _check_primitive(spec, primitive: str, call: str) -> None:

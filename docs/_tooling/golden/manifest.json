@@ -2,27 +2,27 @@
   "default_tolerance": 0.06,
   "figures": {
     "Henon": {
-      "ahash": "0000ffffffffffffffff87fff00fffc1ff81f807e1ffffffffffffffffff7ffe",
+      "ahash": "0000000000000000000078000ff8003e007e07f81e0000000000000000000000",
       "family": "map"
     },
     "Logistic": {
-      "ahash": "efc76efed7f8d7f0d6f8dbb83af8bbe8baf83bf8fbfcfbfcfdfefeffd100ffff",
+      "ahash": "e7e7ffffe6fcd7f016e8dbf85a78bbe8baf83bf8fafc7ffcfcfec301c100efff",
       "family": "map"
     },
     "Lorenz": {
-      "ahash": "fffffffffffffffff1ffe0e3c403c627e607e00ff0ffffffffffffffffffffff",
+      "ahash": "00000000000000000c001f1c3ffc39f839f81fe00f0000000000000000000000",
       "family": "ode"
     },
     "Lorenz96": {
-      "ahash": "ffffc001c001c001c001c001c001c001c001c001c001c001c001ffffffffffff",
+      "ahash": "ffffc007c007c007c007c007c007c007c007c007c007c007c003ffffffffffff",
       "family": "ode"
     },
     "MackeyGlass": {
-      "ahash": "fffffdcfadc78cc141c942c40aa4a3b0b371b779b77bf7fbffff0041e673ffff",
+      "ahash": "fffffde795c3c16181c4808444b00490e679a659fadbfefbbfdfc060fffbfffb",
       "family": "dde"
     },
     "Rossler": {
-      "ahash": "ffffffffffffffffffdfff9fff8fff0ffc0ff00ff08ff00ff81ffe7fffffffff",
+      "ahash": "000000000000000000000040007000f007f00ff00ff00ff007e0000000000000",
       "family": "ode"
     }
   },

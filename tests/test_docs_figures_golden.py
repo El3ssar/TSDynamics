@@ -143,3 +143,47 @@ def test_renders_match_golden_within_tolerance():
         )
         + "; regenerate via `python docs/_tooling/golden/__main__.py` if intentional"
     )
+
+
+def test_golden_renderer_preserves_caller_state_and_dark_stage():
+    """The oracle uses production export colours and restores state on failure."""
+    code = f"""
+import importlib.util
+import io
+import sys
+import matplotlib as mpl
+import matplotlib.image as mpimg
+import numpy as np
+
+path = {str(_GOLDEN_DIR)!r}
+spec = importlib.util.spec_from_file_location(
+    'isolated_golden', path + '/__init__.py', submodule_search_locations=[path]
+)
+golden = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(golden)
+mpl.get_backend()
+with mpl.rc_context({{'axes.facecolor': '#123456', 'font.size': 17,
+                     'savefig.facecolor': 'white', 'savefig.transparent': True}}):
+    before_rc = dict(mpl.rcParams)
+    before_path = sys.path[:]
+    png = golden.render_png('Henon')
+    assert dict(mpl.rcParams) == before_rc
+    assert sys.path == before_path
+    image = mpimg.imread(io.BytesIO(png), format='png')
+    assert np.all(image[0, 0, :3] < 0.15)
+    assert np.all(image[..., 3] == 1)
+    assert np.count_nonzero(image[..., 1] > 0.4) > 500
+
+    def failed(*args, **kwargs):
+        raise RuntimeError('deliberate render failure')
+    sys.modules['figures']._render_map = failed
+    try:
+        golden.render_png('Henon')
+    except RuntimeError as error:
+        assert str(error) == 'deliberate render failure'
+    else:
+        raise AssertionError('A failed golden render must remain a failure')
+    assert dict(mpl.rcParams) == before_rc
+    assert sys.path == before_path
+"""
+    subprocess.run([sys.executable, "-c", code], check=True, capture_output=True, text=True)

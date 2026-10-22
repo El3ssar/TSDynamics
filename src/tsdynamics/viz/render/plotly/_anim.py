@@ -127,13 +127,33 @@ _REALTIME_JS = """
   var readout = document.createElement('span'); readout.textContent = '0%';
   bar.appendChild(playBtn); bar.appendChild(restartBtn); bar.appendChild(readout); gd.appendChild(bar);
   var dragging = false, dead = false, busy = false, wheelTimer = null, rafId = null;
-  var userPaused = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  var motionQuery = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : null;
+  var userPaused = !!(motionQuery && motionQuery.matches);
+  var visible = typeof IntersectionObserver === 'undefined', observer = null;
+  if (typeof IntersectionObserver !== 'undefined') {
+    observer = new IntersectionObserver(function(entries) {
+      visible = entries.some(function(entry) { return entry.isIntersecting; });
+      lastTime = null;
+    }, {threshold: 0});
+    observer.observe(gd);
+  }
   var position = 0, direction = 1, lastTime = null, reset = false, generation = 0;
   function showPlayState() {
     playBtn.textContent = userPaused ? '▶' : '❚❚';
-    playBtn.setAttribute('aria-label', userPaused ? 'Play animation' : 'Pause animation');
+    var label = userPaused ? 'Play animation' : 'Pause animation';
+    playBtn.setAttribute('aria-label', label); playBtn.title = label;
   }
   showPlayState();
+  function resetClock() { lastTime = null; }
+  function onMotionChange() {
+    if (motionQuery.matches) { userPaused = true; }
+    lastTime = null; showPlayState();
+  }
+  document.addEventListener('visibilitychange', resetClock);
+  if (motionQuery) {
+    if (motionQuery.addEventListener) { motionQuery.addEventListener('change', onMotionChange); }
+    else if (motionQuery.addListener) { motionQuery.addListener(onMotionChange); }
+  }
   function endDrag() { dragging = false; lastTime = null; }
   function beginDrag(e) { if (!bar.contains(e.target)) { dragging = true; lastTime = null; } }
   function wheel() {
@@ -154,6 +174,12 @@ _REALTIME_JS = """
     gd.on('plotly_relayouting', mirrorCam); gd.on('plotly_relayout', relayout);
   }
   function cleanup() {
+    if (observer) { observer.disconnect(); }
+    document.removeEventListener('visibilitychange', resetClock);
+    if (motionQuery) {
+      if (motionQuery.removeEventListener) { motionQuery.removeEventListener('change', onMotionChange); }
+      else if (motionQuery.removeListener) { motionQuery.removeListener(onMotionChange); }
+    }
     gd.removeEventListener('pointerdown', beginDrag, true); gd.removeEventListener('wheel', wheel, true);
     window.removeEventListener('pointerup', endDrag, true); window.removeEventListener('pointercancel', endDrag, true);
     if (typeof gd.removeListener === 'function') {
@@ -219,9 +245,9 @@ _REALTIME_JS = """
     if (dead) { return; }
     if (gd.isConnected === false) { stop(); cleanup(); return; }
     schedule();
-    if (userPaused || dragging || document.hidden) {
+    if (userPaused || dragging || document.hidden || !visible) {
       lastTime = null;
-      if (reset && !busy && !dragging && !document.hidden) { paint(0, false); }
+      if (reset && !busy && !dragging && !document.hidden && visible) { paint(0, false); }
       return;
     }
     if (lastTime === null) { lastTime = now; }

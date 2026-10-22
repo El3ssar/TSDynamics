@@ -111,9 +111,9 @@ _PLOTLY_ANIMATION_GAPS: frozenset[str] = frozenset(
 
 #: Animation directive fields that the **threejs** backend does *not* honor.
 #: (three.js has no camera-spin API tied to the reveal comet; no clock overlay;
-#: no trail fade; no per-frame head symbol; elev/azim camera are not wired.)
+#: no trail fade; no per-frame head symbol. Static elev/azim are honored.)
 _THREEJS_ANIMATION_GAPS: frozenset[str] = frozenset(
-    {"spin", "clock", "clock_format", "trail_fade", "head_symbol", "elev", "azim"}
+    {"spin", "clock", "clock_format", "trail_fade", "head_symbol"}
 )
 
 #: Animation directive fields (as they appear on the :class:`~tsdynamics.viz.spec.Animation`
@@ -460,6 +460,10 @@ def style_honoring_gaps(spec: PlotSpec, backend_name: str) -> list[str]:
     # ``None`` — otherwise every render of an unthemed plot warns about the
     # library's own defaults, which is noise, not honesty.
     if theme_gaps:
+        if canonical_name == "threejs" and spec._axes_hidden():
+            # A frameless export has no ticks or grid to paint. Theme changes to
+            # these invisible elements are not a visible degradation.
+            theme_gaps = theme_gaps - {"foreground", "grid", "grid_color", "grid_alpha"}
         t = spec.resolved_theme
         base = _baseline_theme()
         for field in (

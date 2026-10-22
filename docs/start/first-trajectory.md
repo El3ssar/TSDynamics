@@ -1,15 +1,14 @@
 ---
-description: Instantiate the Lorenz system, run it, read its named components, plot the attractor, and measure its Lyapunov spectrum — the full loop in a dozen lines.
+description: Simulate Lorenz and Hénon, select trajectory components, make a plot and estimate a Lyapunov spectrum.
 ---
 
 <span class="ts-kicker">Start · 02</span>
 
 # First trajectory
 
-Every workflow in TSDynamics starts the same way: pick a system, run it,
-and work with the result. This page walks the whole loop for the Lorenz
-attractor — instantiate, run, read components, plot, and quantify — then
-does the same for a discrete map. A dozen lines end to end.
+This example simulates the Lorenz system, selects components from its trajectory,
+plots the orbit and estimates its Lyapunov spectrum. A Hénon-map example then
+shows which parts of the workflow change for discrete time.
 
 ## Instantiate a system
 
@@ -30,8 +29,7 @@ draws a random initial condition; a random start need not lie in an attractor's 
 
 ## Run it
 
-**`run` is the one verb that produces data** — on flows, delay systems, maps and
-SDEs alike. It returns a single
+Use `run` to simulate a flow, delay system, map or SDE. It returns a
 [`Trajectory`](../analysis/integration-and-methods.md).
 
 <div class="ts-ref" markdown>
@@ -57,7 +55,7 @@ Prefer explicit control? Pass `solver=`, `rtol=`/`atol=`, `ic=`, `max_step=` or 
 [Integration & methods](../analysis/integration-and-methods.md).
 
 !!! note "`solver=` picks a numerical kernel; `method=` picks an estimator"
-    One concept, one spelling. `lor.run(solver="dop853")` chooses the
+    `lor.run(solver="dop853")` chooses the
     integration kernel; `ts.analysis.optimal_delay(x, method="mi")` chooses an
     estimation algorithm. Passing `method=` to `run` raises and says so.
 </div>
@@ -82,12 +80,11 @@ tail = traj.after(20.0)       # drop the transient before t = 20
 t, y = traj.t, traj.y         # the two arrays: (10001,) and (10001, 3)
 ```
 
-**Strings select columns, everything else selects rows** — the pandas grammar.
+Strings select named components; integer indices, slices and masks select rows.
 `traj[10:50]`, `traj[::5]` and `traj[mask]` all give you a trajectory back.
 
 !!! warning "`traj.y` is the whole state array; `traj[\"y\"]` is the component named `y`"
-    `traj.y` has shape `(T, dim)`; `traj["y"]` has shape `(T,)`. Two characters
-    apart on more than a hundred catalogue systems, so the repr prints both.
+    `traj.y` has shape `(T, dim)`; `traj["y"]` has shape `(T,)`.
     (Note also that `traj.y` is the **transpose** of SciPy's
     `solve_ivp(...).y`, which is `(dim, T)`. Every comparison in these docs
     writes `sol.y.T`.)
@@ -102,8 +99,8 @@ version — and that metadata survives slicing.
 
 ## Plot it
 
-With a plotting backend installed (`pip install "tsdynamics[viz]"`) one verb
-draws anything you hand it. `ts.plot` auto-dispatches on how many components you
+With a plotting backend installed (`pip install "tsdynamics[viz]"`), `ts.plot`
+chooses a default view from the number of components you
 select — one is a time series, two a 2-D phase portrait, three a 3-D one — and
 returns a `Plot` you can save, style or compose:
 
@@ -114,16 +111,16 @@ ts.plot(traj, components="x").save("x.png")          # a single-component series
 ts.plot(traj, color="crimson", title="Lorenz")       # styled at the door
 ```
 
-A positional **string** says *how* to draw; everything else says *what* to draw —
-so `ts.plot(traj, "psd")` is the power spectrum of that orbit, and
+A positional string names a transform: `ts.plot(traj, "psd")` plots its power
+spectrum, and
 `ts.plot(traj_a, traj_b, "phase_portrait")` is both orbits on one pair of axes.
 The whole plotting layer — grids, primitives, themes, animation — is documented
 under [Visualization](../visualization/index.md).
 
 ## Quantify: the Lyapunov spectrum
 
-**Every analysis is a free function whose first argument is the thing it is
-about.** The Lyapunov spectrum gives the average exponential rates at which
+Analysis functions take the system or data as their first argument. The
+Lyapunov spectrum estimates the average exponential rates at which
 nearby trajectories separate. For this model, TSDynamics differentiates the
 symbolic equations and integrates the resulting variational equations. The
 derivatives are symbolic; the reported exponents are numerical, finite-time estimates.
@@ -143,7 +140,7 @@ One positive exponent, one near-zero (the direction along the flow), one
 strongly negative — numerical evidence consistent with a chaotic attractor.
 A finite-time estimate is not a proof. The verdict word is only printed when it survives a tenfold
 change of the zero tolerance; otherwise the result says `indeterminate at this
-horizon` instead of guessing.
+horizon`.
 
 Feed the spectrum to the Kaplan–Yorke formula for a fractal-dimension estimate —
 an analysis whose subject is *another analysis's answer*:
@@ -167,13 +164,13 @@ same `Trajectory`.
 h = ts.systems.Henon()                        # a=1.4, b=0.3
 orbit = h.run(steps=5000, ic=[0.1, 0.1])
 orbit.t                                       # array([0, 1, 2, ...]) — step indices
-orbit.y.shape                                 # (5000, 2)
+orbit.y.shape                                 # (5001, 2)
 
 ts.analysis.lyapunov_spectrum(h, n=5000, ic=[0.1, 0.1])   # ≈ [0.42, -1.62]
 ```
 
-Ask for the wrong horizon word and the error names the mathematics, not just the
-signature:
+Use `steps=` for maps. Passing `final_time=` gives an error explaining the
+required argument:
 
 ```
 InvalidParameterError: final_time is not a valid Henon.run() keyword, got 10.0.
@@ -183,9 +180,9 @@ count of iterations.
 ```
 
 The map spectrum is computed by a QR decomposition of the Jacobian product in a
-single forward pass on the engine. Everything downstream — the trajectory
-object, named components, the analysis toolkit — behaves exactly as it does for
-a flow.
+single forward pass on the engine. Map trajectories support the same component
+selection and plotting methods as flow trajectories. Each analysis documents
+which families it supports.
 
 !!! tip "Give a map an explicit initial condition"
     A random start can land in a divergent basin; the library retries from a new

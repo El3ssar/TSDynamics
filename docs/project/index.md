@@ -10,14 +10,13 @@ TSDynamics is developed in the open at
 [El3ssar/TSDynamics](https://github.com/El3ssar/TSDynamics) by
 **Daniel Estevez**, under the MIT license. It is a Python library for studying
 dynamical systems — ODEs, delay and stochastic differential equations, and
-discrete maps — on a native Rust engine, with a full
-[analysis toolkit](../analysis/index.md) that composes over every
-[built-in or user-defined system](../systems/index.md).
+discrete maps — on a native Rust engine, with an
+[analysis toolkit](../analysis/index.md) for supported
+[built-in and user-defined systems](../systems/index.md). Individual analyses
+state which families and inputs they accept.
 
-This section is the contributor's and citer's handbook: how to give the software
-and its methods credit, how the project is developed and released, and the two
-extension paths — a new **system** for the catalogue, and a new **solver** kernel
-for the engine.
+This section explains how to cite the software and its methods, contribute
+changes, and add a system or solver.
 
 ## In this section
 
@@ -30,7 +29,7 @@ for the engine.
 - [**Changelog**](changelog.md) — release notes, maintained automatically by
   python-semantic-release from the commit history.
 - [**Adding a system**](adding-a-system.md) — drop one class into the catalogue;
-  the registry, the test sweep, and the docs page follow for free.
+  the registry adds shared tests and a generated documentation page.
 - [**Adding a solver**](adding-a-solver.md) — the recipe for contributing a new
   integration kernel to the Rust engine and mirroring it in the Python registry.
 
@@ -44,10 +43,10 @@ wheel per platform covers every CPython ≥ 3.12, and installing needs
 
 Two conventions run through everything a contributor touches:
 
-- **The registry is load-bearing.** Every concrete family subclass
-  auto-registers at class-definition time, and the bulk test suite, the docs
-  generator, and the top-level namespace all iterate over it. A new system needs
-  no test file and no docs page — it inherits both.
+- **Register models consistently.** Concrete family subclasses register at
+  class definition, making them available to shared tests, generated
+  documentation and catalogue discovery. Add model-specific numerical tests
+  when shared checks cannot establish correctness.
 - **Cite the original literature.** Docstrings and docs pages cite the paper a
   method or model comes from, so the attribution points at the source rather than
   at whichever implementation we consulted.
@@ -62,4 +61,4 @@ Two conventions run through everything a contributor touches:
 | See what changed in a release | [Changelog](changelog.md) · [GitHub Releases](https://github.com/El3ssar/TSDynamics/releases) |
 | Contribute a new attractor / map / SDE | [Adding a system](adding-a-system.md) |
 | Contribute a new integration method | [Adding a solver](adding-a-solver.md) |
-| Read the full API | [Reference](../references/index.md) |
+| Read the full API | [API reference](../reference/index.md) |

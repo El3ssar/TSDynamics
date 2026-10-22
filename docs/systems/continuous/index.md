@@ -21,21 +21,11 @@ traj = ross.run(final_time=200.0, dt=0.02)
 traj["x"]                                        # named components
 ```
 
-## Categories
+## Browse the catalogue
 
-| Category | Count | Flavor |
-| -------- | ----- | ------ |
-| `chaotic_attractors` | 47 | The classics: Lorenz, Rössler, Chen, Chua, Sprott flows, Duffing, Thomas, ... |
-| `chem_bio_systems` | 14 | Chemical oscillators and excitable media: Brusselator, FitzHugh–Nagumo, ... |
-| `climate_geophysics` | 9 | Atmosphere and geodynamo models: Lorenz-84, Lorenz-96, Rikitake, ... |
-| `coupled_systems` | 14 | Coupled and driven oscillator networks |
-| `exotic_systems` | 15 | Hyperchaos, multiscroll, and other unusual flows |
-| `oscillatory_systems` | 8 | Tori, Lissajous figures, stick–slip and relaxation oscillators |
-| `physical_systems` | 8 | Mechanical and electrical models: pendula, circuits |
-| `population_dynamics` | 3 | Ecological flows: predator–prey and competition models |
-
-Each system has its own generated page in this section with equations,
-defaults, and a phase portrait.
+The built documentation groups ODE models by subject, with equations, defaults,
+illustrations and measured diagnostics on each model page. Use
+`ts.systems.find(family="ode")` to inspect the installed catalogue.
 
 ## Integrating
 
@@ -47,19 +37,14 @@ sys.run(
     t0=0.0,              # start time (warm restarts allowed)
     ic=None,             # initial state; falls back to self.ic, then random
     solver="rk45",       # "rk45" (default), "dop853", "tsit5", "rk4", "bdf", ...
-    rtol=1e-9, atol=1e-12,   # the accuracy knob (tightened in v6 — see below)
+    rtol=1e-9, atol=1e-12,   # local error tolerances
 ) -> Trajectory
 ```
 
-!!! info "Changed in v6: `rtol` is now the accuracy knob"
-    Before v6 the adaptive stepper was forced to land on every output sample, so
-    a fine `dt` silently bought accuracy `rtol` never asked for. Now `dt` is
-    purely an output grid and `rtol` alone sets accuracy — so the default
-    tightened from `1e-6`/`1e-9` to `1e-9`/`1e-12` to carry the accuracy the old
-    forced landing supplied for free. Measured over a fifteen-system sample at
-    the defaults, that is a **median 1459×** improvement in the delivered error
-    for a **median 1.74×** wall-clock cost. Pass `rtol=1e-6, atol=1e-9` for the
-    pre-v6 trade.
+For adaptive ODE solvers, `rtol` and `atol` control local error while `dt` sets
+output spacing. For fixed-step methods, `dt` is the numerical step too. Check
+convergence for the observable you plan to measure; dense output does not make
+coarse saved data adequate for every analysis.
 
 `ts.analysis.lyapunov_spectrum(system, final_time=200.0, dt=0.1, transient=50.0, k=None, ...)`
 computes the spectrum from the variational equations — see
@@ -76,9 +61,9 @@ adjustable at runtime:
 l96 = ts.systems.Lorenz96(N=10, f=8.0)     # N is structural; f is a control param
 ```
 
-Changing `f` is free; changing `N` re-lowers the equations for the new size.
+Changing `f` reuses the lowered equations; changing `N` re-lowers the equations for the new size.
 
 ## See also
 
 - [The mental model](../../start/concepts.md) — the `_equations` contract in full
-- [Integrate & iterate](../../analysis/integration-and-methods.md) — methods, tolerances, the `Trajectory` object
+- [Integration & methods](../../analysis/integration-and-methods.md) — methods, tolerances, the `Trajectory` object

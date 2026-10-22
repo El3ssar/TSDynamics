@@ -5,6 +5,7 @@ same Pygments token vocabulary so they remain highlighted without JavaScript or
 a network request, including when navigating with Material's instant loading.
 """
 
+import sys
 from pathlib import Path
 from runpy import run_path
 from textwrap import dedent
@@ -25,9 +26,18 @@ def on_pre_build(config):
 
     tooling = Path(__file__).resolve().parents[1] / "docs" / "_tooling"
     failures = []
-    for generator in ("make_viz_recipes.py", "make_animation_showcase.py"):
-        namespace = run_path(str(tooling / generator))
-        failures.extend(namespace["validate_assets"]())
+    previous_path = sys.path.copy()
+    try:
+        sys.path.insert(0, str(tooling))
+        for generator in (
+            "make_viz_recipes.py",
+            "make_animation_showcase.py",
+            "make_interactive_showcase.py",
+        ):
+            namespace = run_path(str(tooling / generator))
+            failures.extend(namespace["validate_assets"]())
+    finally:
+        sys.path[:] = previous_path
     if failures:
         raise PluginError("Illustrated examples need regeneration:\n" + "\n".join(failures))
 

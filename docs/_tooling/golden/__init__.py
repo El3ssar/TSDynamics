@@ -158,22 +158,39 @@ def render_png(name: str) -> bytes:
     """
     import sys
 
-    sys.path.insert(0, str(GOLDEN_DIR.parent))  # docs/_tooling on the path
-    import figures as _figures  # type: ignore[import-not-found]
+    import matplotlib as mpl
 
-    entry = _entry(name)
-    opts = _figures.FIG_OVERRIDES.get(entry.name, {})
-    plt = _figures._style()
-    if entry.family == "ode":
-        fig = _figures._render_ode(entry, plt, opts)
-    elif entry.family == "dde":
-        fig = _figures._render_dde(entry, plt, opts)
-    else:
-        fig = _figures._render_map(entry, plt, opts)
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    return buf.getvalue()
+    previous_path = sys.path[:]
+    try:
+        sys.path.insert(0, str(GOLDEN_DIR.parent))
+        import figures as _figures  # type: ignore[import-not-found]
+
+        entry = _entry(name)
+        opts = _figures.FIG_OVERRIDES.get(entry.name, {})
+        with mpl.rc_context():
+            canvas = _figures._style()
+            try:
+                if entry.family == "ode":
+                    fig = _figures._render_ode(entry, canvas, opts)
+                elif entry.family == "dde":
+                    fig = _figures._render_dde(entry, canvas, opts)
+                else:
+                    fig = _figures._render_map(entry, canvas, opts)
+                buf = io.BytesIO()
+                fig.savefig(
+                    buf,
+                    format="png",
+                    dpi=150,
+                    bbox_inches="tight",
+                    pad_inches=0.12,
+                    transparent=False,
+                    facecolor=fig.get_facecolor(),
+                )
+                return buf.getvalue()
+            finally:
+                canvas.close("all")
+    finally:
+        sys.path[:] = previous_path
 
 
 def load_manifest() -> dict:

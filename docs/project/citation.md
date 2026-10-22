@@ -6,10 +6,8 @@ description: How to cite TSDynamics — its Zenodo DOI and software BibTeX entry
 
 # Citation
 
-If TSDynamics contributes to published work, please cite it — and, just as
-importantly, cite the **original papers** behind the methods and models you
-relied on. The scholarly credit belongs first to the people who invented the
-model and the algorithm; the software is the instrument.
+When publishing work that uses TSDynamics, cite the software version and the
+original papers for the methods and models used.
 
 ## Citing the software
 
@@ -42,7 +40,7 @@ A BibTeX entry for the software:
     `10.5281/zenodo.20945679` is the **concept DOI**: it always resolves to the
     newest published release. Zenodo also mints a distinct version DOI for each
     release, so if you need to pin a specific archived version cite that release's
-    own DOI instead — but for a citation that never goes stale, use the concept
+    own DOI instead — for a citation to the evolving software, use the concept
     DOI above and pin the `version` field to your installed
     `tsdynamics.__version__`.
 
@@ -87,7 +85,7 @@ registry.get("Lorenz").reference
 ```
 
 Most systems also carry the bare DOI of that primary reference, sourced where
-available from the published catalogue metadata — the registry entry is the door:
+available from the published catalogue metadata — the registry entry provides it:
 
 ```python
 registry.get("Lorenz").doi
@@ -110,6 +108,5 @@ for entry in registry.all_systems():
     print(f"{entry.name:24s} {ref}")
 ```
 
-If your results hinge on a particular model, cite its original paper. The model
-deserves the credit before the implementation does — the Lorenz attractor is
-Lorenz's, not ours.
+Use each model's reference to identify the source appropriate to your study;
+read its scope before attributing a dynamical result to that source.

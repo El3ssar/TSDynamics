@@ -30,6 +30,7 @@ import warnings
 import diagnostics
 import numpy as np
 import plot_dt as _plot_dt  # the ONE sagitta-dt selector both renderers call
+from figure_style import BRIGHT_TEAL, PALETTE, PAPER_RC, FigureCanvas, dark_portrait
 
 
 def _quiet_numerics(fn):
@@ -62,7 +63,7 @@ _TEAL = "#2CC5AE"  # bright brand teal — SDE sample paths / primary time serie
 
 #: Brand-palette line colours for a multi-component time series (Oregonator's
 #: three scaled concentrations): teal, indigo, deep teal — the docs identity.
-_SERIES_PALETTE = ("#2CC5AE", "#4f46e5", "#11857A")
+_SERIES_PALETTE = PALETTE
 
 #: Per-system rendering overrides: final_time, dt, ic, kind, transient_frac.
 FIG_OVERRIDES: dict[str, dict] = {
@@ -240,24 +241,9 @@ def _viewer_cfg(entry) -> dict:
 
 
 def _style():
-    import matplotlib
+    plt = FigureCanvas()
 
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
-    plt.rcParams.update(
-        {
-            "figure.facecolor": "none",
-            "axes.facecolor": "none",
-            "savefig.transparent": True,
-            "axes.edgecolor": "#88888855",
-            "axes.labelcolor": "#888888",
-            "xtick.color": "#888888",
-            "ytick.color": "#888888",
-            "axes.grid": False,
-            "font.size": 9,
-        }
-    )
+    plt.rcParams.update(PAPER_RC)
     return plt
 
 
@@ -311,7 +297,13 @@ def _render_source_signature(*, whole_library: bool = False) -> tuple:
     tooling = pathlib.Path(__file__).parent
     sources += [
         ("tooling/" + name, tooling / name)
-        for name in ("figures.py", "plot_dt.py", "threejs_viewer.py", "gallery.py")
+        for name in (
+            "figures.py",
+            "plot_dt.py",
+            "threejs_viewer.py",
+            "gallery.py",
+            "figure_style.py",
+        )
     ]
     if whole_library:
         crates = ROOT / "crates"
@@ -675,12 +667,12 @@ def _render_ode(entry, plt, opts):
     if dim >= 3:
         fig = plt.figure(figsize=(5.4, 4.2))
         ax = fig.add_subplot(projection="3d")
-        ax.plot(view[:, 0], view[:, 1], view[:, 2], lw=0.35, color=_ACCENT)
-        ax.set_axis_off()
+        ax.plot(view[:, 0], view[:, 1], view[:, 2], lw=0.4, color=BRIGHT_TEAL, alpha=0.85)
+        dark_portrait(fig, ax)
     elif dim == 2:
         fig, ax = plt.subplots(figsize=(5.4, 4.0))
-        ax.plot(view[:, 0], view[:, 1], lw=0.4, color=_ACCENT)
-        ax.set_xticks([]), ax.set_yticks([])
+        ax.plot(view[:, 0], view[:, 1], lw=0.5, color=BRIGHT_TEAL, alpha=0.85)
+        dark_portrait(fig, ax)
     else:
         fig, ax = plt.subplots(figsize=(5.6, 2.6))
         ax.plot(t, view[:, 0], lw=0.8, color=_ACCENT)
@@ -701,15 +693,15 @@ def _render_polar(entry, plt, opts, vcfg):
     x = r * np.cos(theta)
     z = r * np.sin(theta)
     fig, ax = plt.subplots(figsize=(4.8, 4.6))
-    ax.plot(x, z, lw=0.3, color=_ACCENT)
+    ax.plot(x, z, lw=0.45, color=BRIGHT_TEAL, alpha=0.85)
     ax.set_aspect("equal")
-    ax.set_xticks([]), ax.set_yticks([])
+    dark_portrait(fig, ax)
     return fig
 
 
 def _render_spacetime(entry, plt, t, y):
     fig, ax = plt.subplots(figsize=(5.6, 3.4))
-    ax.imshow(
+    image = ax.imshow(
         y.T,
         aspect="auto",
         origin="lower",
@@ -717,7 +709,8 @@ def _render_spacetime(entry, plt, t, y):
         extent=(float(t[0]), float(t[-1]), 0, y.shape[1]),
     )
     ax.set_xlabel("t")
-    ax.set_ylabel("cell")
+    ax.set_ylabel("Cell index")
+    fig.colorbar(image, ax=ax, label="State value", fraction=0.04, pad=0.04)
     return fig
 
 
@@ -733,8 +726,11 @@ def _render_field(entry, plt, y):
     cells = int(np.prod(shape))
     block = y[-1, -cells:]  # the last field block at the final time
     fig, ax = plt.subplots(figsize=(4.6, 4.2))
-    ax.imshow(block.reshape(shape), origin="lower", cmap="viridis")
-    ax.set_xticks([]), ax.set_yticks([])
+    image = ax.imshow(block.reshape(shape), origin="lower", cmap="viridis", interpolation="nearest")
+    names = entry.field_labels or ("State value",)
+    fig.colorbar(image, ax=ax, label=names[-1], fraction=0.04, pad=0.04)
+    ax.set_xlabel("Column index")
+    ax.set_ylabel("Row index")
     return fig
 
 
@@ -766,8 +762,8 @@ def _render_timeseries(entry, plt, t, y, opts):
         ax.set_yscale("log")
     ax.set_xlabel("t")
     if len(idx) > 1:
-        ax.legend(loc="upper right", fontsize=7, frameon=False, labelcolor="#888888")
-    ax.set_yticks([]) if len(idx) == 1 else None
+        ax.legend(loc="upper right", fontsize=9, frameon=False)
+    ax.set_ylabel(names[idx[0]] if len(idx) == 1 and names else "State components")
     fig.tight_layout()
     return fig
 
@@ -838,8 +834,7 @@ def _render_dde(entry, plt, opts):
     ax2.plot(x[lag:], x[:-lag], lw=0.5, color=_ACCENT_2)
     ax2.set_xlabel("x(t)")
     ax2.set_ylabel("x(t-τ)")
-    for ax in (ax1, ax2):
-        ax.set_yticks([])
+    ax1.set_ylabel("x(t)")
     fig.tight_layout()
     return fig
 
@@ -987,22 +982,22 @@ def _render_map(entry, plt, opts):
         # horizontal axis (Chirikov: angle x across, action p up) opts in via
         # ``swap_axes`` — otherwise the raw (col-0, col-1) ordering.
         cx, cy = (1, 0) if mcfg.get("swap_axes") else (0, 1)
-        ax.scatter(y[:, cx], y[:, cy], s=ps, color=_ACCENT, linewidths=0)
+        ax.scatter(y[:, cx], y[:, cy], s=ps, color=BRIGHT_TEAL, linewidths=0, alpha=0.8)
         # Equal aspect is the honest default for a phase-space cloud, but a map
         # whose two coordinates live on very different scales (Zaslavskii's phase
         # ``x`` on [0,1) vs its action ``y`` spanning several units) reads better on
         # a free (auto) aspect that fills the frame — opt in via ``aspect``.
         if mcfg.get("aspect") != "auto":
             ax.set_aspect("equal", adjustable="datalim")
-        ax.set_xticks([]), ax.set_yticks([])
+        dark_portrait(fig, ax)
     else:
         fig = plt.figure(figsize=(5.4, 4.6))
         ax = fig.add_subplot(projection="3d")
-        ax.scatter(y[:, 0], y[:, 1], y[:, 2], s=ps, color=_ACCENT, linewidths=0)
+        ax.scatter(y[:, 0], y[:, 1], y[:, 2], s=ps, color=BRIGHT_TEAL, linewidths=0, alpha=0.8)
         view = mcfg.get("view")
         if view:
             ax.view_init(elev=float(view[0]), azim=float(view[1]))
-        ax.set_axis_off()
+        dark_portrait(fig, ax)
     return fig
 
 
@@ -1041,7 +1036,14 @@ def render(entry) -> pathlib.Path | None:
                 fig = _render_sde(entry, plt, opts)
             else:
                 fig = _render_map(entry, plt, opts)
-            fig.savefig(cached, dpi=150, bbox_inches="tight")
+            fig.savefig(
+                cached,
+                dpi=150,
+                bbox_inches="tight",
+                pad_inches=0.12,
+                transparent=False,
+                facecolor=fig.get_facecolor(),
+            )
             plt.close(fig)
         except Exception as exc:  # noqa: BLE001 — retain model page, disclose failure
             RENDER_FAILURES[entry.name] = (

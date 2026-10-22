@@ -11,8 +11,7 @@ Wrappers that re-present an existing system through a new lens while keeping the
 family and capabilities meet their requirements, and it still answers `run`. Prose
 introduction: [the mental model](../start/concepts.md#derived-systems-composition).
 
-Two of them are reached by a **verb on the system**, because they speak the same
-vocabulary the class does:
+Construct section, stroboscopic and ensemble views from the model:
 
 ```python
 # skip-doctest — the two verbs, for reference (`sys` is any flow)
@@ -21,8 +20,7 @@ sys.poincare(period=4.488)      # a StroboscopicMap — the phase circle
 sys.ensemble(states)            # an Ensemble     — many copies, one object
 ```
 
-The other two are Lyapunov and projection machinery rather than everyday verbs,
-so they are constructed at their own address
+Construct tangent and projected systems explicitly
 (`ts.derived.TangentSystem(system, k=2)`, `ts.derived.ProjectedSystem(system, (0, 2))`).
 
 ::: tsdynamics.derived.poincare.PoincareMap

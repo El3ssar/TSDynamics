@@ -1,21 +1,21 @@
 ---
-description: Recurrence plots and recurrence quantification analysis — read determinism, laminarity, and predictability off the geometric fingerprint of when a trajectory revisits its own past.
+description: Construct recurrence plots, quantify diagonal and vertical line structure, and compare statistics in sliding windows.
 ---
 
 <span class="ts-kicker">Analysis · Recurrence & RQA</span>
 
 # Recurrence & RQA
 
-Almost every structural question you can ask of a trajectory — is it periodic,
-chaotic, intermittent, drifting between regimes? — is written into one simple
-object: the times at which the orbit comes back close to where it has been.
-A **recurrence plot** marks every pair of times $(i, j)$ at which the state
-returns near a state it visited before (Eckmann, Kamphorst & Ruelle 1987), and
-**recurrence quantification analysis** (RQA) reduces that plot's line structure
-to scalar measures of determinism, laminarity, and predictability (Marwan,
-Romano, Thiel & Kurths 2007). TSDynamics builds the matrix sparsely with a
-`cKDTree`, quantifies it in one vectorised pass, and runs the same measures in a
-sliding window to localise transitions in time.
+A **recurrence plot** marks pairs of times at which two recorded states are
+close (Eckmann, Kamphorst & Ruelle 1987). Its line structure can help compare
+periodic, intermittent or changing dynamics. **Recurrence quantification
+analysis** (RQA) summarizes diagonal and vertical lines using measures such as
+DET and laminarity (Marwan, Romano, Thiel & Kurths 2007). These statistics depend
+on sampling, embedding and the recurrence threshold; they do not by themselves
+establish determinism or chaos.
+
+TSDynamics constructs a sparse recurrence matrix, calculates its line statistics
+and supports sliding-window comparisons.
 
 | Function | Returns | Gives you |
 |---|---|---|
@@ -48,15 +48,14 @@ traj = ts.systems.Logistic(params={"r": 4.0}).run(steps=500, ic=[0.31])
 rm = ts.analysis.recurrence_matrix(traj.y[:, 0], threshold=0.05)
 
 rm.epsilon           # 0.05     — the radius actually used
-rm.size              # 500      — N states (the matrix is N x N)
+rm.size              # 501      — N states (the matrix is N x N)
 rm.recurrence_rate   # ≈ 0.108  — density of recurrent pairs
-rm.matrix            # scipy.sparse boolean R_ij, shape (500, 500)
+rm.matrix            # scipy.sparse boolean R_ij, shape (501, 501)
 ```
 
-The plot tells periodic from chaotic at a glance. A periodic orbit recurs on
-long, clean, evenly spaced diagonals; deterministic chaos shatters them into a
-short-lined speckle — the visible signature the RQA measures below make
-numeric.
+In the comparison below, the periodic logistic orbit has long, regularly spaced
+diagonals, while the chaotic record has shorter, less regular lines. RQA makes
+this comparison quantitative; other signals need not follow the same pattern.
 
 </div>
 <figure class="ts-fig" markdown>
@@ -87,9 +86,9 @@ The radius $\varepsilon$ is set one of two mutually-exclusive ways — pass
 
     `recurrence_rate` chooses $\varepsilon$ from the empirical distribution of
     pairwise distances so the plot has the requested density. This is the
-    scale-free, comparable choice — always prefer it when sweeping parameters or
-    comparing systems, so that differences in the *structure* are not confounded
-    with differences in the *density*.
+    useful choice when comparing line structure at matched density. A fixed
+    radius instead retains changes in recurrence density, which may themselves
+    be scientifically relevant. State which convention you use in a comparison.
 
 `metric` selects the norm — `"euclidean"` (default), `"manhattan"`,
 `"chebyshev"` (the maximum norm, the traditional RQA choice), or a numeric $p$
@@ -101,9 +100,10 @@ for a densely sampled flow.
 
 !!! note "The matrix is stored sparse"
     The recurrent pairs are found with a k-d tree range search
-    (`cKDTree.query_pairs`), so a long series never materialises the dense
-    $N \times N$ array. `rm.recurrence_rate` reads the stored density directly;
-    call `rm.toarray()` only when you genuinely need the dense boolean image.
+    (`cKDTree.query_pairs`) and stored sparsely. Memory still grows with the
+    number of recurrent pairs, which can approach $N^2$ at high density.
+    `rm.recurrence_rate` reads the stored density directly; `rm.toarray()`
+    explicitly creates a dense boolean matrix.
 
 ## Quantification: `rqa`
 
@@ -177,7 +177,7 @@ them yourself.
 
 ## Tracking regime change
 
-The whole point of RQA is that it is *local*. `windowed_rqa` slides a window of
+To examine changes over time, `windowed_rqa` slides a window of
 `window` samples (advancing by `step`, default `= window` for non-overlapping
 windows) and runs `rqa` in each — so every measure becomes a time series that
 steps up or down as the dynamics cross between regimes. Each scalar RQA field is
@@ -216,7 +216,7 @@ choose an existing measure explicitly, for example
 ## See also
 
 - [Lyapunov spectra](lyapunov.md) — $\mathrm{DIV} = 1/\mathrm{L}_{\max}$ is a recurrence statistic, not a calibrated Lyapunov-exponent estimate
-- [Chaos indicators](chaos.md) — GALI, the 0–1 test, and expansion entropy: complementary chaos verdicts
+- [Chaos indicators](chaos.md) — complementary statistics with different assumptions
 - [Delay embedding](embedding.md) — reconstruct a phase space before building the plot
 
 ## References

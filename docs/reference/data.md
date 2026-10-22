@@ -6,8 +6,7 @@ description: API reference for tsdynamics.data — the Trajectory result type an
 
 # Data & state-space
 
-The lingua franca every analysis consumes. `Trajectory` is the result type
-all families produce (documented with the [base classes](base.md#tsdynamics.data.Trajectory));
+`Trajectory` holds sampled states and times from each model family (documented with the [base classes](base.md#tsdynamics.data.Trajectory));
 the regions, samplers and distances below are the state-space primitives the
 attractor/basin layer is built on — Monte-Carlo and full-grid sampling, and
 the attractor-matching distance used by continuation.

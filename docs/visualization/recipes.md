@@ -5,7 +5,7 @@ description: Seven complete, editable figures built from arrays, simulations, en
 
 <span class="ts-kicker">Visualization · Recipes</span>
 
-# Build the figure you need
+# Scientific figure recipes {#build-the-figure-you-need}
 
 Start with the question, then choose the views that answer it. Each recipe below
 is complete: copy the code, change the data or model, then adjust the individual
@@ -54,10 +54,12 @@ trace.relabel(x="Time (s)", y="Amplitude").limits(x=(0, 5))
 power = ts.plot(signal, "psd", dt=dt, nperseg=1000,
                 title="Two frequency components", color="#574FCF")
 power.relabel(x="Frequency (Hz)", y="PSD (amplitude²/Hz)")
-power.rescale(x="linear").limits(x=(0, 6))
+power.rescale(x="linear").limits(x=(0, 6), y=(1e-6, 10))
 
 figure = trace | power
-figure.theme("publication").font(family="sans-serif", size=10).size(10, 3.6)
+figure.theme("minimal", background="white", foreground="#273947",
+             palette=["#11857A", "#574FCF", "#B76D18"],
+             font_family="sans-serif", font_size=12, title_size=13.5).size(10, 3.6)
 ```
 
 <figure class="tsd-showcase" markdown="1">
@@ -69,7 +71,8 @@ seconds. Its units follow the supplied 0.01-second sampling interval.</figcaptio
 The linear frequency axis makes peak locations easy to compare; power remains
 logarithmic to reveal weaker components. The default Welch estimate uses density
 normalization, so its ordinate is amplitude squared per unit frequency. The
-1,000-sample segments give a 0.1-Hz frequency grid for this record.
+1,000-sample segments give a 0.1-Hz frequency grid for this record. The visible
+density range excludes the numerical floor; it changes the view, not the data.
 
 For multiple channels, columns are components:
 
@@ -108,7 +111,9 @@ separate = ts.plot(a, b, layout="stack", share_x=True, share_y=True)
 separate.limits(y=(-22, 22))
 
 figure = overlay | separate
-figure.theme("publication").font(family="sans-serif", size=9).size(10, 5.2)
+figure.theme("minimal", background="white", foreground="#273947",
+             palette=["#11857A", "#574FCF", "#B76D18"],
+             font_family="sans-serif", font_size=12, title_size=13.5).size(10, 5.2)
 ```
 
 <figure class="tsd-showcase" markdown="1">
@@ -141,8 +146,10 @@ trace = ts.plot(trajectory, "time_series", components="x", color="#11857A",
                 title="A closer look in time")
 
 figure = (phase | power) / trace
-figure.theme("publication").font(family="sans-serif", size=9).size(10, 7)
-figure[0][1].rescale(x="linear").limits(x=(0, 3)).gridlines(alpha=0.2)
+figure.theme("minimal", background="white", foreground="#273947",
+             palette=["#11857A", "#574FCF", "#B76D18"],
+             font_family="sans-serif", font_size=12, title_size=13.5).size(10, 7)
+figure[0][1].rescale(x="linear").limits(x=(0, 3), y=(1e-3, 1e3))
 figure[1].limits(x=(30, 40)).relabel(x="Time", y="x")
 ```
 
@@ -156,6 +163,8 @@ Only the trace is zoomed. The spectrum still uses the complete retained record.<
 lower trace. Set the outer theme first, then panel-specific overrides. Use
 `color="…"` for one categorical color, `color_by=` for a measured scalar, and a
 labeled colorbar for its meaning. More options are in [styling](styling.md).
+The spectrum's displayed density range also omits values near its numerical
+floor without filtering the record.
 
 ## An ensemble fan
 
@@ -172,14 +181,17 @@ rng = np.random.default_rng(7)
 states = np.array([1.0, 1.0, 1.0]) + rng.normal(scale=0.03, size=(64, 3))
 batch = ts.systems.Lorenz().ensemble(states).run(final_time=20, dt=0.04)
 x_band = ts.plot(batch, "ensemble_fan", components=0, spread=(10, 90),
-                 title="x: 10–90% of initial-condition ensemble")
+                 title="x: initial-condition spread")
 z_band = ts.plot(batch, "ensemble_fan", components=2, spread=(10, 90),
                  title="z: the same 64 members")
 x_band.relabel(y="x").recolor("#11857A")
 z_band.relabel(y="z").recolor("#574FCF")
 
 figure = ts.plot(x_band, z_band, layout="stack", share_x=True)
-figure.theme("publication").font(family="sans-serif", size=9).size(10, 5.5)
+figure.theme("minimal", background="white", foreground="#273947",
+             palette=["#11857A", "#574FCF", "#B76D18"],
+             font_family="sans-serif", font_size=12, title_size=13.5).size(10, 5.5)
+figure.colorize(legend={"location": "upper left", "frame": False, "font_size": 11})
 ```
 
 <figure class="tsd-showcase" markdown="1">
@@ -209,16 +221,20 @@ rates = ts.analysis.lyapunov_spectrum(model, k=3, final_time=120, transient=20, 
 section = ts.analysis.poincare_section(trajectory, plane=("z", 27), direction=1)
 returns = ts.analysis.return_map(trajectory, components="z", kind="max")
 
-bars = ts.plot(rates, title="Finite-time Lyapunov spectrum")
+spectrum = ts.plot(rates, "lyapunov_spectrum", legend=False, color="#11857A",
+                   title="Finite-time spectrum").ticks(x=[0, 1, 2])
 running = ts.plot(model, "lyapunov_convergence", steps=2400, dt=0.05, k=3,
-                  ic=[1, 1, 1], title="Check finite-time convergence")
+                  ic=[1, 1, 1], title="Running exponent estimates")
 crossings = ts.plot(section, "phase_portrait", components=["x", "y"], primitive="points",
-                    title="Upward crossings of z = 27")
-peaks = ts.plot(returns, title="Successive z maxima")
-figure = ts.plot(bars, running, crossings, peaks, layout="grid", cols=2)
-figure.theme("publication").font(family="sans-serif", size=9).size(10, 7)
+                    title="Upward crossings of z = 27", legend=False)
+peaks = ts.plot(returns, title="Successive z maxima", legend=False)
+figure = ts.plot(spectrum, running, crossings, peaks, layout="grid", cols=2)
+figure.theme("minimal", background="white", foreground="#273947",
+             palette=["#11857A", "#574FCF", "#B76D18"],
+             font_family="sans-serif", font_size=12, title_size=13.5).size(10, 7)
 figure[2].style(markersize=2.5, alpha=0.6, color="#11857A")
-figure[3].style(markersize=3, alpha=0.7)
+figure[3].style(markersize=3, alpha=0.7, color="#574FCF")
+figure[1].colorize(legend={"frame": False, "font_size": 11})
 ```
 
 <figure class="tsd-showcase" markdown="1">
@@ -252,21 +268,26 @@ import tsdynamics as ts
 model = ts.systems.VanDerPol(ic=[2.5, 0])
 trajectory = model.run(final_time=24, dt=0.02)
 domain = [(-3.2, 3.2), (-4, 4)]
-speed = ts.plot(model, "flow_speed", domain=domain, grid=80, title="Orbit over speed")
-orbit = ts.plot(trajectory, color="#F590A8", linewidth=1.1, labels=["orbit"])
+speed = ts.plot(model, "flow_speed", domain=domain, grid=80, title="Orbit over speed", cmap="magma")
+orbit = ts.plot(trajectory, color="#47D7BF", linewidth=1.6, labels=["orbit"])
 nullclines = ts.plot(model, "nullclines", domain=domain)
-nullclines.recolor("white", "#E8912D").style(linewidth=0.9)
+nullclines.recolor("white", "#E8912D").style(linewidth=1.2)
 left = (speed + orbit + nullclines).relabel(title="Orbit over flow speed")
+left.colorize(legend=False)
 right = ts.plot(model, "vector_field", "nullclines", domain=domain, grid=21,
                  title="Direction and nullclines")
+right.style("vector_field", color="#526675", alpha=0.7)
+right.colorize(legend={"location": "lower left", "frame": False, "font_size": 11})
 
 figure = left | right
-figure.theme("publication").font(family="sans-serif", size=9).size(10, 4.5)
+figure.theme("minimal", background="white", foreground="#273947",
+             palette=["#11857A", "#574FCF", "#B76D18"],
+             font_family="sans-serif", font_size=12, title_size=13.5).size(10, 4.5)
 ```
 
 <figure class="tsd-showcase" markdown="1">
 ![Van der Pol trajectory and nullclines over a speed image beside arrows showing the governing vector field in the same state-space box](../assets/figures/viz/recipe-fields.svg){ loading=lazy }
-<figcaption>The pink curve is one integrated orbit; the background and arrows
+<figcaption>The teal curve is one integrated orbit; the background and arrows
 evaluate the equations across the displayed box. Nullclines mark where one
 velocity component is zero.</figcaption>
 </figure>
@@ -293,7 +314,9 @@ late = ts.plot(trajectory[-1], "spatial_field", components="v", title="Activator
 early.colorize(clim=(0, 0.45))
 late.colorize(clim=(0, 0.45))
 figure = ts.plot(early, late, layout="row", share_color=True)
-figure.theme("publication").font(family="sans-serif", size=9).size(10, 4.5)
+figure.theme("minimal", background="white", foreground="#273947",
+             palette=["#11857A", "#574FCF", "#B76D18"],
+             font_family="sans-serif", font_size=12, title_size=13.5).size(10, 4.5)
 figure.colorize(cmap="viridis", clim=(0, 0.45), colorbar={"label": "Activator v"})
 ```
 
@@ -308,7 +331,7 @@ A one-dimensional spatial field becomes a profile. Use `"spacetime"` to inspect
 its evolution as an image, and [animation](animation.md) to play a sequence of
 snapshots. For dense images, check raster output at its intended resolution.
 
-## Keep going
+## Related guides {#keep-going}
 
 - [Styling and themes](styling.md): make variants, control colorbars and legends,
   and override individual layers or panels.

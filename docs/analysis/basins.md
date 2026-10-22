@@ -1,37 +1,35 @@
 ---
-description: The global stability picture of a multistable system — locate its attractors, paint the basins that feed each one, and quantify boundary structure, continuation, tipping, and resilience.
+description: Search for attractors, sample their basins, and estimate boundary structure, basin fractions and parameter-dependent changes.
 ---
 
 <span class="ts-kicker">Analysis · Attractors & basins</span>
 
 # Attractors & basins
 
-A Lyapunov exponent or a fractal dimension describes *one* attractor. But many
-systems are **multistable**: several attractors coexist, and which one you reach
-depends entirely on where you start. That is a global question — it lives in the
-whole state space, not on a single orbit — and it is the one this toolkit
-answers. It locates the attractors a system has in a region, paints the basin of
-initial conditions feeding each, quantifies how tangled the boundaries between
-them are, tracks how those basins deform as a parameter moves, and measures how
-robust an attractor is to a perturbation.
+In a **multistable** system, several attractors coexist. Basin analysis studies
+which initial conditions approach each one. These functions use finite
+trajectories and a cell partition to search a chosen region, assign sampled
+initial conditions to recurrent sets, and estimate basin fractions and boundary
+structure. Results depend on the search region, resolution and observation time;
+a finite search need not find every attractor.
 
 | Function | Answers | Reads |
 |---|---|---|
-| [`attractors`](#locating-attractors) | what attractors exist | a system + region |
+| [`attractors`](#locating-attractors) | recurrent sets found in a search | a system + region |
 | [`basins`](#painting-basins) | which initial condition goes where | a system + per-axis bounds |
 | [`basin_fractions`](#basin-stability) | each basin's volume share | a system + region |
-| [`basin_entropy`](#boundary-structure) | is the boundary fractal? | a label image |
+| [`basin_entropy`](#boundary-structure) | finite-grid mixing of basin labels | a label image |
 | [`uncertainty_exponent`](#boundary-structure) | boundary dimension $D_0$ | a label image |
 | [`wada_property`](#boundary-structure) | do ≥ 3 basins share a boundary? | a label image |
 | [`continuation`](#continuation-tipping-resilience) | attractors versus a parameter | a system |
-| [`tipping_points`](#continuation-tipping-resilience) | where a basin dies | a `ContinuationResult` |
+| [`tipping_points`](#continuation-tipping-resilience) | where a sampled basin fraction crosses a threshold | a `ContinuationResult` |
 | [`resilience`](#continuation-tipping-resilience) | distance to the boundary | a `BasinsResult` |
 
-Everything is built on one engine — a recurrence finite-state machine
-(Datseris & Wagemakers 2022) — so the same machinery drives maps and flows
-alike. On a supported engine run (an ODE flow, or a map whose `_step` lowers) the
-whole per-initial-condition march runs in one sequential Rust kernel call,
-bit-identical to the pure-Python fallback.
+The recurrence algorithm of Datseris & Wagemakers (2022) supports deterministic
+maps and flows. Supported equations run in a Rust kernel; a Python fallback
+implements the same classification procedure. Small numerical differences can
+change a label close to a basin boundary, so check resolution and solver settings
+when comparing runs.
 
 ## A bistable example
 
@@ -40,9 +38,9 @@ The running example is the damped **two-well Duffing oscillator**,
 $$\ddot{x} = x - x^3 - \delta\,\dot{x},$$
 
 a unit mass in the double-well potential $V(x) = -\tfrac12 x^2 + \tfrac14 x^4$
-with linear damping $\delta$. The two wells sit at $x = \pm 1$; with damping,
-every trajectory eventually rolls into one of them, and *which* one is exactly
-the basin question. It is a two-line system:
+with linear damping $\delta$. The stable equilibria sit at $x = \pm 1$.
+Most trajectories approach one of them; the origin and its stable manifold
+separate the basins. Define the system as follows:
 
 ```python
 import numpy as np
@@ -103,18 +101,16 @@ non-finite step is treated as divergence; a finite excursion outside the box is
 counted by a lost-counter, and a trajectory that never settles within
 `max_steps` is reported as diverged.
 
-**Indexing an `AttractorSet` gives you numbers, not a class to learn.** `att[i]`
-is the `(dim,)` centre of attractor `i` and `np.asarray(att)` is the whole
-`(n, dim)` block, so a located attractor drops straight into arithmetic. The
-records are still there, one word away and aligned with the same index:
+`att[i]` is the `(dim,)` centre of attractor `i`; `np.asarray(att)` contains all
+centres as an `(n, dim)` array. The corresponding records are available through
 `att.details[i]` is the `Attractor`, carrying its sampled `.points`, its
 `.center`, and the number of `.cells` it occupies. `att.by_id(k)` is the same
 record by the label painted into a basin image.
 
 !!! note "Tune `resolution` to the attractor scale"
     Too coarse and the tessellation merges genuinely distinct attractors; too
-    fine and a chaotic trajectory never recurs into the same cell, so it is never
-    recognised as settled. Size the cells to the attractor's own scale. The
+    fine and a chaotic trajectory may not revisit a cell during the observation
+    window. Size the cells to the attractor's scale. The
     per-seed march is **sequential by design** — earlier seeds leave persistent
     cell labels that let later seeds settle cheaply, and that shared,
     order-dependent labelling is exactly what makes the sweep amortise.
@@ -183,7 +179,7 @@ These three examples pin the fractions to values you can check by symmetry:
 ## Boundary structure
 
 Once you have a basin *label image* — a `.labels` array — three metrics read
-it directly and do **no** further integration, so they run instantly. They answer
+it directly without further integration. They address
 the question a smooth-boundary two-well system and a fractal-boundary map answer
 very differently: *how predictable is the outcome near the boundary?*
 
@@ -202,8 +198,8 @@ ue.boundary_dimension      # ≈ 1.12  — D₀ = D − α
 
 A **fractal** basin tells a different story. The figure below is Newton's method
 on $z^3 = 1$ — three roots, three basins, and a Julia-set boundary where every
-boundary point touches all three colours. That is the **Wada** property, and
-`wada_property` detects it:
+boundary point touches all three colours. That is the **Wada** property.
+`wada_property` tests the sampled image for evidence of it:
 
 <div class="ts-ref" markdown>
 
@@ -289,7 +285,8 @@ The three metrics, in one place:
     The grid test of Daza et al. (2015) for the **Wada property**: with three or
     more basins, a boundary cell is Wada-complete when its neighbourhood contains
     *every* basin colour, and the fraction of such cells tends to one for a
-    genuine Wada boundary. A sufficient grid criterion, not a topological proof.
+    genuine Wada boundary under the method's assumptions. The finite-grid result
+    is evidence to check across resolutions, not a topological proof.
 
     ```python
     wr = ts.analysis.wada_property(res.labels)
@@ -331,14 +328,17 @@ tips = ts.analysis.tipping_points(cont)
 ```
 
 `tipping_points` reads off the parameter values where a basin's share crosses a
-threshold (default $0$ — true appearance / annihilation); raise the threshold to
-flag basins shrinking past a safety margin. Each event is a dict with
+threshold (default $0$ — appearance / disappearance in the sampled result).
+A missing branch can reflect undersampling or failed recurrence detection as
+well as a bifurcation. Raise the threshold to track a chosen minimum basin
+fraction. Each event is a dict with
 `"value"`, `"attractor"`, `"kind"` (`"appear"` / `"disappear"`), and the
 `"before"` / `"after"` fractions.
 
 `resilience` measures, for a chosen attractor in a painted `BasinsResult`, the
-distance from the attractor to the nearest cell of another basin — the largest
-perturbation it can absorb without tipping (Halekotte & Feudel 2020):
+distance from the sampled attractor to the nearest cell of another basin
+(Halekotte & Feudel 2020). This is a finite-grid estimate in the selected domain
+and norm, not a guaranteed safe perturbation radius:
 
 ```python
 r = ts.analysis.resilience(basins, attractor_id=1)   # from the two-well basin image

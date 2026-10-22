@@ -264,7 +264,7 @@ def render_page(
   html, body {{ margin: 0; height: 100%; background: {bg}; overflow: hidden; }}
   #tsdyn-viewer {{ position: absolute; inset: 0; }}
   #tsdyn-poster {{
-    position: absolute; inset: 0; display: none; object-fit: contain;
+    position: absolute; inset: 0; object-fit: contain;
     width: 100%; height: 100%; background: {bg};
   }}
 </style>
@@ -397,6 +397,7 @@ try {{
     background: {json.dumps(background)},
     axes: {"true" if axes else "false"},
   }});
+  if (poster) poster.style.display = "none";
 }} catch (err) {{
   degrade(err);
 }}

@@ -117,7 +117,7 @@ CACHE_DIR = ROOT / ".cache" / "docs-threejs"
 LOADER_URI = "_static/tsdyn-threejs-loader.js"
 
 #: Bump when the emitted HTML or payload shaping materially changes (cache buster).
-VIEWER_VERSION = "11"
+VIEWER_VERSION = "13"
 
 #: CDN three.js build (pinned) — matches docs/visualization/threejs-export.md.
 _THREE_VERSION = "0.160.0"
@@ -585,21 +585,37 @@ def _axis_labels(entry, n: int, comps: tuple[int, ...] | None) -> list[str]:
 def view_description(entry, *, second: bool = False) -> str:
     """Describe what is actually drawn, including the playback interpretation."""
     if entry.family == "map":
-        view = (
-            "successive-iterate return map" if entry.dim == 1 else "single-orbit state projection"
-        )
+        if entry.dim == 1:
+            name = _axis_labels(entry, 1, (0,))[0]
+            view = f"successive-iterate return map ({name}[n], {name}[n+1])"
+        else:
+            labels = _axis_labels(entry, min(3, entry.dim), None)
+            view = f"single-orbit state projection ({', '.join(labels)})"
         return f"{view}; points appear in iteration order, without interpolated motion"
-    if entry.family == "sde":
-        return "one seeded sample path; playback follows recorded time, not a distribution"
     if _uses_time_series(entry):
-        return "selected state component over time; playback follows recorded sample order"
+        component = int((_viewer_cfg(entry).get("components") or [0])[0])
+        name = _axis_labels(entry, 1, (component,))[0]
+        if entry.family == "sde":
+            return (
+                f"one seeded sample path (t, {name}); playback follows recorded time, "
+                "not a distribution"
+            )
+        return f"state component over time (t, {name}); playback follows recorded sample order"
     if _viewer_cfg(entry).get("static_kind") == "polar":
         return (
             "Cartesian position (r cos θ, r sin θ); playback follows arc length, not physical speed"
         )
     if entry.family == "dde" and entry.dim == 1:
-        return "delay embedding (x(t), x(t − τ)); playback follows arc length, not physical speed"
-    return "labelled state projection; playback follows arc length, not physical speed"
+        name = _axis_labels(entry, 1, (0,))[0]
+        return (
+            f"delay embedding ({name}(t), {name}(t − τ)); playback follows arc length, "
+            "not physical speed"
+        )
+    components = tuple(_view_components(entry, entry.dim, second=second))
+    labels = _axis_labels(entry, len(components), components)
+    return (
+        f"state projection ({', '.join(labels)}); playback follows arc length, not physical speed"
+    )
 
 
 def _build_payload(entry, *, second: bool) -> dict | None:
@@ -797,7 +813,7 @@ def cache_key(entry, *, second: bool) -> str:
 
 def _html(entry, payload: dict, *, second: bool) -> str:
     """Wrap ``payload`` in a self-contained viewer document for an ``<iframe>``."""
-    payload_json = json.dumps(payload, separators=(",", ":"))
+    payload_json = json.dumps(payload, separators=(",", ":")).replace("<", "\\u003c")
     png = f"../figures/systems/{entry.name}.png"
     alt = html.escape(f"{entry.name} simulated trajectory")
     title = html.escape(f"{entry.name} — interactive simulation")
@@ -811,7 +827,7 @@ def _html(entry, payload: dict, *, second: bool) -> str:
   html, body {{ margin: 0; height: 100%; background: {_BG}; overflow: hidden; }}
   #viewer {{ position: absolute; inset: 0; }}
   #fallback {{
-    position: absolute; inset: 0; display: none; object-fit: contain;
+    position: absolute; inset: 0; object-fit: contain;
     width: 100%; height: 100%; background: {_BG};
   }}
 </style>
@@ -841,7 +857,8 @@ def _html(entry, payload: dict, *, second: bool) -> str:
   }}
   try {{
     const {{ renderThreejsPayload }} = await import("../../_static/tsdyn-threejs-loader.js");
-    renderThreejsPayload(viewer, payload, {{ background: "{_BG}", axes: true }});
+    renderThreejsPayload(viewer, payload, {{ background: "{_BG}", axes: false }});
+    fallback.style.display = "none";
   }} catch (err) {{
     degrade(err);
   }}

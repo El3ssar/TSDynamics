@@ -11,7 +11,7 @@ bases users subclass — `ContinuousSystem` (ODEs), `DelaySystem` (DDEs),
 `DiscreteMap` (maps) and `StochasticSystem` (diagonal-Itô SDEs) — and the
 `System` protocol the analysis toolkit is written against.
 
-`run` is the one verb that produces data on every one of them; `reinit` /
+Use `run` to simulate each family; `reinit` /
 `step` / `state` / `time` are the stepping protocol underneath it.
 
 ::: tsdynamics.families.base.ParamSet

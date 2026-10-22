@@ -7,13 +7,14 @@ description: The end-to-end recipe for contributing a new system to the catalogu
 # Adding a system
 
 Adding a system to the catalogue is a **one-class** contribution. You write the
-math as a symbolic method; the [registry](../references/index.md) picks the class
-up at import, the bulk test suite sweeps it, and the docs build generates its
-page — all for free.
+dynamics in the appropriate family method. The [registry](../reference/registry.md)
+registers the class at import, shared tests include it, and the documentation
+build generates a page. Add model-specific tests for numerical identities,
+reference values or behavior the shared checks cannot establish.
 
 <figure markdown>
 ![The lifecycle of a new system — one class definition flows into auto-registration, then fans out to the bulk test sweep, the analysis toolkit, and an auto-generated docs page](../assets/figures/references/system-lifecycle.svg){ loading=lazy }
-<figcaption>One class, three things for free. The registry is the pivot: a concrete family subclass auto-registers at class-definition time, and the test sweep, the whole analysis toolkit, and the docs generator all iterate over it.</figcaption>
+<figcaption>A concrete family subclass registers at class definition. Shared tests and documentation use this registry; individual analyses check the model's family and capabilities.</figcaption>
 </figure>
 
 This page is the contributor's recipe. For a gentler, worked introduction to
@@ -32,7 +33,7 @@ To distribute models in your own package, use the complete
    `src/tsdynamics/systems/continuous/__init__.py` or `.../discrete/__init__.py`.
    (`systems/__init__.py` flat-re-exports it automatically as
    `ts.systems.MyAttractor`.) A
-   registry consistency test fails loudly if you forget this step.
+   registry consistency test fails if you forget this step.
 3. **Build the documentation.** The same template generates the new page and
    catalogue entry: equations, parameter descriptions, a runnable example,
    static and animated views, numerical diagnostics and the literature reference.
@@ -198,10 +199,9 @@ and can use supported NumPy operations through the map tracer.
     Milstein solver requires each `g_k` to depend only on its own state component
     and time, `g_k(X_k, t)`; independent Wiener increments alone are not enough.
 
-## It really is that easy — a from-scratch run
+## Run a custom model {#it-really-is-that-easy-a-from-scratch-run}
 
-Because the same contract drives everything, a class you define outside the
-package is a full citizen the moment it is imported. Pin an initial condition
+A class defined outside the package supports the same public simulation API. Pin an initial condition
 (and a `seed` for the SDE) so the numbers are reproducible:
 
 ```python
@@ -259,9 +259,9 @@ distributions publish the same entry-point name, all entries with that name are
 skipped before their targets are imported; installation order never chooses a
 model for you.
 
-## Optional metadata that improves everything downstream
+## Optional metadata {#optional-metadata-that-improves-everything-downstream}
 
-None of these are required, but each unlocks something:
+Use these attributes to describe the model and configure its defaults:
 
 ```python
 class MyAttractor(ts.ContinuousSystem):
@@ -315,8 +315,8 @@ directly cannot resize an existing object.
 The registry sweep is automatic, with two guard-enforced exceptions:
 
 - **A new DDE** needs a non-equilibrium history in
-  `tests/_sampling.py::DDE_HISTORIES` (a constant past sitting at a fixed point
-  gives Lyapunov exponents $\approx 0$ and defeats the test). A guard test fails
+  `tests/_sampling.py::DDE_HISTORIES` (a history at an equilibrium can fail to exercise the intended
+  non-equilibrium dynamics). A guard test fails
   until you add one.
 - **A new built-in SDE** needs a `{"seed": ..., "ic": ...}` entry in
   `tests/_sampling.py::SDE_SAMPLES`. A `sde`-family guard test enforces
@@ -330,7 +330,7 @@ The registry sweep is automatic, with two guard-enforced exceptions:
 | Variable-dim system without `_structural_params` | Lowering-time `range(N)` fails — declare the dimension parameter structural |
 | Map param order ≠ `_step` signature order | **`TypeError` at import** |
 | Forgot the category `__all__` | A registry consistency test fails |
-| New DDE with a fixed-point constant past | Lyapunov exponents $\approx 0$ — provide a non-equilibrium history |
+| New DDE with an equilibrium history | The test may only exercise equilibrium dynamics; provide a non-equilibrium history |
 
 !!! tip "PR checklist"
     - [ ] Class follows the family contract (symbolic ops only for flows;

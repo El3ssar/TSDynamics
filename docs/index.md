@@ -9,10 +9,10 @@ hide:
 
 # TSDynamics
 
-Dynamical systems and chaos analysis for Python, on a native Rust engine —
-177 built-in systems, JIT-compiled integration with no build step, and a full
-chaos-analysis toolkit. Define the dynamics once, then use the analyses that
-support your system's family and capabilities.
+Simulate and analyse dynamical systems in Python with compiled solvers,
+expressive plots and 177 built-in models. Start with a known system or define
+your own equations, then choose the analyses supported by that system's family
+and capabilities.
 
 <!-- The landing page (hero, install, cards) is rendered by the
      home.html template; this body is a fallback for non-template contexts. -->

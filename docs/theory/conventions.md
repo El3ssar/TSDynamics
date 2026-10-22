@@ -6,7 +6,8 @@ description: TSDynamics conventions stated precisely — time vs. steps, array s
 
 # Conventions
 
-The contracts the implementation commits to, stated once and precisely.
+This page defines time, array shapes, initialization and metadata conventions
+so that simulation and analysis results can be compared consistently.
 
 ## Time: `t` for flows, steps for maps
 
@@ -62,16 +63,16 @@ verb that continues from the live state.
 **positionally, in the insertion order of the class-level `params`
 dict**. The two must agree; since the names are visible in the signature,
 the base class checks them at class-definition time and raises a
-`TypeError` on mismatch (names *and* order). This is enforced precisely
-because a silent swap once produced plausible-but-wrong dynamics.
+`TypeError` if either names or order disagree. ODE/DDE `_equations` and SDE
+`_drift`/`_diffusion` receive parameters by name.
 
 ## `meta`: provenance travels with the data, not with the system
 
-A system carries no analysis log. Provenance lives on the **things that were
-produced**: `traj.meta` is a plain dict frozen at creation (the system, the
-parameters, the solver, `dt`, the tolerances, the IC, the library version), and
-every analysis result carries its own `result.meta` recording the horizon it
-actually used.
+A system carries no analysis log. `traj.meta` records a snapshot of the system,
+parameters, solver, `dt`, tolerances, initial condition and library version.
+Analysis results carry their own `result.meta` describing the calculation. These
+dictionaries are editable; changing a system later does not update metadata on
+previously returned results.
 
 ```python
 import tsdynamics as ts
@@ -85,14 +86,15 @@ spec = ts.analysis.lyapunov_spectrum(lor, dt=0.1, final_time=200.0)
 spec.meta["final_time"]                        # 200.0 — what this number came from
 ```
 
-Re-running an analysis therefore never destroys anything: the previous result
-object still holds its own numbers and its own settings.
+Re-running an analysis creates a separate result. Keep the previous object if
+you want to compare estimates or settings.
 
 ## Cloning
 
 `system.copy()` and `system.with_params(**overrides)` return *new*
-instances with independent `params` and `meta`; nothing in the library
-mutates a system you pass in (sweeps clone per value). Parameter keys are
+instances with independent `params` and `meta`. Parameter sweeps clone the model
+per value. In contrast, stepping methods update the model's live state, and an
+automatically resolved initial condition may be retained for later runs. Parameter keys are
 fixed at class definition: values may change, keys may not, and unknown
 keys raise immediately.
 

@@ -7,9 +7,10 @@ description: Choose a useful view for arrays, trajectories, models and analysis 
 
 # Transforms & primitives
 
-[`ts.plot`](index.md) is the verb. This page is its vocabulary: **what** it can
-draw (a *transform*), **how** each one can be drawn (a *primitive*), and how to
-add either.
+Choose a view with [`ts.plot`](index.md), then choose how to draw it.
+A *transform* selects or computes plot coordinates; a *primitive* draws them
+as lines, points, images or other marks. This page covers inputs, built-in
+views and extensions.
 
 Looking for a complete picture to adapt? Start with the
 [scientific figure recipes](recipes.md): measured arrays, comparison panels,
@@ -59,7 +60,7 @@ components you are drawing** — the natural view for that dimensionality:
 | --- | --- | --- |
 | 1 | `TIME_SERIES` | the channel against time |
 | 2 | `PHASE_PORTRAIT_2D` | a 2-D orbit on equal axes |
-| 3 | `PHASE_PORTRAIT_3D` | a 3-D attractor |
+| 3 | `PHASE_PORTRAIT_3D` | a 3-D trajectory view |
 | 4 or more | `SPACETIME` | a component-vs-time field image |
 
 ```python
@@ -77,7 +78,7 @@ sequence), not a joined line, because successive iterates are not continuous.
 
 You override the auto-dispatch by **naming a transform positionally** —
 `ts.plot(traj, "time_series")` — and you pick *which* channels with
-`components=`. (On the method doors, `traj.plot(...)` and `system.plot(...)`,
+`components=`. (With the methods `traj.plot(...)` and `system.plot(...)`,
 `kind=` selects a semantic plot kind directly.) The next
 sections walk every default view; then come the named transforms, the
 primitives, and how to add your own.
@@ -140,7 +141,7 @@ rather than squashed.
 
 ## 3-D phase portrait
 
-Three components in space — the attractor itself. Auto-selected for a 3-D
+Three components in space — a sampled orbit or its projection. Auto-selected for a 3-D
 trajectory. Hide the axes for a clean "object floating in space" look and frame
 it with the camera.
 
@@ -203,7 +204,7 @@ you prefer time on the vertical.
 
 ## Delay embedding
 
-Reconstruct the attractor of a *single scalar observable* by plotting it against
+Inspect a *single scalar observable* by plotting it against
 a delayed copy of itself — `x(t)` vs `x(t − τ)`. This is the natural 2-D view of
 a delay system, where the true state lives in an infinite-dimensional history
 space you cannot plot directly.
@@ -250,7 +251,7 @@ ts.plot(gs, "spatial_field", components="v").save("gs-v.pdf")  # pick a field bl
 A multi-block field (Gray–Scott packs an activator `u` and inhibitor `v`)
 declares `field_labels`; `components=` picks the block, defaulting to the last
 (the activator). A system with **no** `_field_shape` (or a 1-D one) plots as a
-1-D profile — honest, never guessing a 2-D grid.
+1-D profile; it is not automatically reshaped into a square.
 
 <figure markdown>
 ![Two panels: left, a Gray-Scott 2-D activator field as a viridis heatmap of self-replicating spots; right, a Kuramoto-Sivashinsky 1-D space-time diagram in viridis showing chaotic cellular stripes](../assets/figures/viz/spatial-field.svg){ loading=lazy }
@@ -363,8 +364,7 @@ option is valid for one kind only.
 
 ## Per-kind options
 
-Options that make sense for one kind only ride on `**kind_kw` rather than
-cluttering the signature. Passing one to the wrong kind raises
+Some options apply only to particular views. Passing one to the wrong kind raises
 `InvalidParameterError`:
 
 | Kind | Option | Meaning |
@@ -435,7 +435,7 @@ p.show()                        # render inline (a notebook shows it)
 p.render(backend="plotly")      # force a backend
 ```
 
-Every door also accepts **inline tweaks** — `title=`, `xlabel=`, `yscale=`,
+The plotting entry points also accept **inline tweaks** — `title=`, `xlabel=`, `yscale=`,
 `xlim=`, `clim=`, `colorbar=`, `legend=`, `theme=` (seventeen in all) — applied
 before rendering, so a quick one-off needs no chain:
 
@@ -443,7 +443,7 @@ before rendering, so a quick one-off needs no chain:
 traj.plot(components=["x", "z"], title="Lorenz (x, z)", yscale="linear")
 ```
 
-The **style** vocabulary rides along at the same door — `color=`, `linewidth=`
+The **style** vocabulary rides along at creation time — `color=`, `linewidth=`
 (or `lw=`), `alpha=`, `cmap=` — with the same spellings and the same meanings at
 all three of `ts.plot(subject, ...)`, `traj.plot(...)` and `system.plot(...)`:
 
@@ -495,9 +495,9 @@ ts.plot(r1, r2, components=["x", "y"], layout="overlay").save("rossler-overlay.p
 
 ## Animation
 
-Any spec of any kind becomes a movie by carrying an `Animation` — an *orthogonal
-modifier*, so the semantic kind is unchanged and a backend that cannot animate
-draws the final frame. Turn it on with `animate=True` (or a dict / `Animation`),
+Add animation settings to a plot to reveal a trajectory or play field snapshots.
+The plot keeps its view and coordinates; supported animation modes vary by
+view and renderer. Turn it on with `animate=True` (or a dict / `Animation`),
 then tune with the chainable `.animate` / `.trail` / `.head` / `.camera` /
 `.clock` methods:
 
@@ -521,8 +521,8 @@ lor = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]).run(final_time=60.0, dt=0.01)
 </figure>
 
 !!! tip "Animate on a solid background"
-    A GIF has no alpha channel — a transparent animation is flattened to one fill
-    colour (often a jarring green). Give a movie a **solid** background:
+    GIF supports only fully transparent or opaque pixels, so it cannot retain
+    smooth alpha fading. Give a movie a **solid** background:
     `.background("#0B0F14")` here. A still `.png`/`.svg` keeps real transparency.
 
 There are two frame models. **`reveal`** (the default) keeps the full static
@@ -601,10 +601,10 @@ the printed row is a union. The legal row for **your** subject is one call away:
 ts.viz.geometry(traj, "phase_portrait").primitives
 ```
 
-## The arrays, and nothing else
+## Get plot coordinates {#the-arrays-and-nothing-else}
 
 `ts.viz.geometry(subject, name, **options)` runs a transform and stops. You get
-the typed channels — not a figure — so you can take the numbers and leave:
+coordinate arrays and their labels for use in another plotting workflow:
 
 ```python
 g = ts.viz.geometry(ts.systems.VanDerPol(), "ftle", grid=41)
@@ -627,7 +627,7 @@ No registration, no library type, no dummy subject:
 r = np.logspace(-1.0, 1.0, 40)
 c = r ** 2.06
 
-ts.viz.draw({"x": r, "y": c}, "line", labels=("log r", "log C(r)"))
+ts.viz.draw({"x": r, "y": c}, "line", labels=("r", "C(r)")).rescale(x="log", y="log")
 ```
 
 A **list** of mappings is several parts in one drawing, and four keys are
@@ -640,11 +640,11 @@ fit = 1.2 * r ** 2.0
 ts.viz.draw([{"x": r, "y": c, "label": "data"},
              {"x": r, "y": fit, "label": "fit",
               "style": {"linestyle": "dashed"}}],
-            "line", labels=("log r", "log C(r)"), title="correlation sum")
+            "line", labels=("r", "C(r)"), title="correlation sum").rescale(x="log", y="log")
 ```
 
-Hand-built geometry lives in the `free` frame — you opted out of the coordinate
-system, so there is no claim to violate and it **overlays with anything**:
+Hand-built geometry uses the `free` frame. It can overlay a named frame without
+coordinate validation, so you must check that coordinates and units match:
 
 ```python
 ts.plot(ts.plot(traj, "psd"), ts.viz.draw({"x": r, "y": c}, "line"))
@@ -686,7 +686,7 @@ import tsdynamics as ts
 @ts.viz.transforms.register(source="data", frame="time", kind="diagnostic_curve",
                             primitives=("line", "points", "steps"))
 def speed(traj):
-    """Instantaneous speed |dx/dt| along the orbit."""
+    """Finite-difference speed between recorded samples."""
     dt = np.diff(traj.t)
     return {"x": traj.t[1:], "y": np.linalg.norm(np.diff(traj.y, axis=0), axis=1) / dt}
 ```
@@ -704,7 +704,7 @@ optional keywords are `name=`, `default_primitive=`, `aliases=`, `labels=`,
 `role=`, `analysis=` (the estimator this adapts) and `example=` (a small subject
 for the gallery).
 
-The optional declarations let an extension state stronger contracts:
+Optional declarations specify supported subjects and coordinate meaning:
 
 - **`source=` is enforced by the registry**, so a `model` transform handed an
   array gets the message above rather than an `AttributeError` from inside your
@@ -713,11 +713,11 @@ The optional declarations let an extension state stronger contracts:
   draw time. Set a semantic kind explicitly when the transform represents a
   specific diagnostic rather than generic channel geometry.
 
-!!! note "A transform owns no math"
+!!! note "Keep estimators in the analysis layer"
     If your picture needs a new estimator, write the estimator first: it belongs
     in [`ts.analysis`](../analysis/index.md), with its own citation and its own
-    tests, and the transform then adapts it. That rule is what keeps a plotting
-    layer from quietly becoming a second numerics library.
+    tests. The transform can then adapt the result without duplicating numerical
+    algorithms.
 
 ## Writing a primitive
 
@@ -741,8 +741,8 @@ def stem(part, **options):
 ```
 
 `requires=` names the channels it needs, `marks=` the frozen marks it lowers to.
-**Adding a primitive never needs a new plot kind** — that is the invariant that
-keeps the matrix growable. Afterwards `ts.viz.draw(data, "stem")` works, and any
+A new primitive uses the existing drawing marks; it does not require a new
+plot kind. Afterwards `ts.viz.draw(data, "stem")` works, and any
 transform may declare `"stem"` among its primitives.
 
 Out-of-tree, both doors are also entry points: `tsdynamics.plot_transforms` and
@@ -756,7 +756,7 @@ Out-of-tree, both doors are also entry points: `tsdynamics.plot_transforms` and
 - **`kind="delay"` needs `delay` or `delay_time`.** Exactly one is required:
   `delay` is a lag in *samples* (what `optimal_delay` returns), `delay_time` is in
   *time units* — the
-  trajectory must carry a `dt` (it does, from `integrate`) so the lag can be
+  trajectory must carry a `dt` (a physical-time simulation does, from `run`) so the lag can be
   resolved.
 - **Overlaying incompatible kinds.** You cannot overlay an image and a portrait,
   or a 2-D and a 3-D plot, on one set of axes — use `layout="stack"` / `"grid"`

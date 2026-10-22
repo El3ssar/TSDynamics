@@ -217,6 +217,7 @@ def _example_spectrum(_primitive: str) -> tuple[Any, dict[str, Any]]:
 @plot_transform(
     name="lyapunov_spectrum",
     source="data",
+    subjects=("system", "array", "LyapunovSpectrum"),
     kind=PlotKind.LYAPUNOV_SPECTRUM,
     frame=FrameSpace.INDEX,
     ndim=1,
