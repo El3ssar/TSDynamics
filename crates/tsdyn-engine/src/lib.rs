@@ -62,6 +62,8 @@ pub mod alloc;
 pub mod interrupt;
 pub mod pool;
 
+mod tangent_frame;
+
 #[cfg(test)]
 mod testkit;
 

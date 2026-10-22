@@ -58,7 +58,7 @@ CACHE_DIR = ROOT / ".cache" / "docs-gallery"
 #: Bump when the *rendering* changes (theme, size, dpi) so every cached figure
 #: is re-rendered.  The snippet text and the library version are already in the
 #: key, so ordinary content changes need no bump.
-RENDERER_VERSION = "gallery-3"
+RENDERER_VERSION = "gallery-4"  # Regenerate analysis plots after the tangent-frame repair.
 
 #: Where the figures live on the site.  They are registered as *generated* files
 #: from the cache directory (like the field movies), so nothing is ever written
@@ -565,11 +565,12 @@ SHOWCASE: dict[str, Showcase] = {
     ),
     "gali_curves": Showcase(
         setup="hh = ts.systems.HenonHeiles()",
-        call='ts.plot(hh, "gali_curves", k=(2, 3), ic=[0.0, -0.1, 0.49, 0.0], final_time=1000.0)',
+        call='ts.plot(hh, "gali_curves", k=(2, 3), frequencies=2,\n'
+        "        ic=[0.0, -0.1, 0.49, 0.0], final_time=1000.0)",
         caption=(
             "GALI₂ and GALI₃ on log axes for a chaotic Hénon–Heiles orbit, against the "
-            "analytic reference slope `-(k-1)λ₁`. Exponential decay is the chaos "
-            "verdict; a regular orbit would leave GALI₂ flat."
+            "Hamiltonian 2-torus guides: constant for GALI₂ and `t⁻²` for GALI₃. "
+            "This orbit falls rapidly away from those regular-orbit references."
         ),
     ),
     "zero_one_pq_plane": Showcase(

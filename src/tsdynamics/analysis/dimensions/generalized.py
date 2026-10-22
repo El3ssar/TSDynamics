@@ -367,10 +367,20 @@ def _partition_ordinate(counts: np.ndarray, n: int, q: float) -> float:
     :math:`q \approx 1` — the :math:`q \to 1` limit of the Rényi definition,
     which is a 0/0 there — and :math:`\log(\sum_i p_i^q)/(q-1)` otherwise.
     """
+    from scipy.special import logsumexp
+
     p = counts / n
     if abs(q - 1.0) < _Q1_BAND:
         return float(np.sum(p * np.log(p)))
-    return float(np.log(np.sum(p**q)) / (q - 1.0))
+    log_p = np.log(p)
+    largest = float(log_p.max())
+    # p**q underflows even for ordinary, finite q (e.g. q=2000 for
+    # two equally populated boxes). Shift before exponentiation and divide the
+    # large term before multiplying, so even very large finite orders retain
+    # their finite maximum-probability limit.
+    with np.errstate(over="ignore"):
+        shifted = q * (log_p - largest)
+    return float((q / (q - 1.0)) * largest + logsumexp(shifted) / (q - 1.0))
 
 
 def _fit_masked(

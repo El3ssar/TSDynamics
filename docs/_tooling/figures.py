@@ -266,7 +266,11 @@ def _style():
     return plt
 
 
-RENDERER_VERSION = "10"  # bump manually when rendering output materially changes
+RENDERER_VERSION = "12"  # bump manually when rendering output materially changes
+
+# Expose a useful reason to generated pages instead of silently deleting a
+# failed illustration. Cleared for each attempted render, including cache hits.
+RENDER_FAILURES: dict[str, str] = {}
 
 
 def cache_key(entry) -> str:
@@ -298,7 +302,7 @@ def _resolve_ic(sys_obj, override):
     """
     from tsdynamics.registry import _classvar
 
-    if override == "0.1*ones":
+    if isinstance(override, str) and override == "0.1*ones":
         return 0.1 * np.ones(sys_obj.dim)
     if override is not None:
         return np.asarray(override, dtype=float)
@@ -409,7 +413,7 @@ def _ode_trajectory_engine(entry, opts) -> tuple[np.ndarray, np.ndarray]:
     ic = _resolve_ic(sys_obj, opts.get("ic"))
     for attempt in range(4):
         if ic is None or attempt > 0:
-            ic = sys_obj.resolve_ic(rng.uniform(0.0, 1.0, sys_obj.dim))
+            ic = rng.uniform(0.0, 1.0, sys_obj.dim)
         try:
             traj = sys_obj.run(
                 final_time=final_time,
@@ -457,7 +461,7 @@ def _ode_trajectory_scipy(entry, opts) -> tuple[np.ndarray, np.ndarray]:
     ic = _resolve_ic(sys_obj, opts.get("ic"))
     for attempt in range(4):
         if ic is None or attempt > 0:
-            ic = sys_obj.resolve_ic(rng.uniform(0.0, 1.0, sys_obj.dim))
+            ic = rng.uniform(0.0, 1.0, sys_obj.dim)
 
         # Hard wall-time guard: a stiff or pathological system must not stall
         # the whole docs build — cap the RHS evaluation budget per attempt.
@@ -670,7 +674,7 @@ def _render_timeseries(entry, plt, t, y, opts):
     multi-decade concentration); a component that dips non-positive gets a linear
     axis.  Component names come from the ``variables`` ClassVar when present.
     """
-    names = list(opts.get("series_labels") or getattr(entry.cls, "variables", None) or [])
+    names = list(opts.get("series_labels") or entry.variables or [])
     # A ``components`` filter (viewer directive) restricts a high-dim system to the
     # few informative channels (ExcitableCell's spiking V; WINDMI's i, v — dropping
     # the runaway pressure integral p).
@@ -728,7 +732,7 @@ def _render_sde(entry, plt, opts):
     for line in opts.get("guides", ()):  # faint horizontal reference levels
         ax.axhline(float(line), lw=0.6, color="#88888855", ls="--")
     ax.plot(t, x, lw=0.7, color=_TEAL)
-    names = list(getattr(entry.cls, "variables", None) or [])
+    names = list(entry.variables or [])
     ax.set_xlabel("t")
     ax.set_ylabel(names[0] if names else "x")
     fig.tight_layout()
@@ -935,8 +939,10 @@ def render(entry) -> pathlib.Path | None:
 
     Cache hit → copy; miss → render + cache.  Returns None on soft failure.
     """
+    RENDER_FAILURES.pop(entry.name, None)
     opts = FIG_OVERRIDES.get(entry.name, {})
     if opts.get("skip"):
+        RENDER_FAILURES[entry.name] = "An illustration is not configured for this model."
         return None
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -960,7 +966,10 @@ def render(entry) -> pathlib.Path | None:
             fig = _render_map(entry, plt, opts)
         fig.savefig(cached, dpi=150, bbox_inches="tight")
         plt.close(fig)
-    except Exception:  # noqa: BLE001 — soft-fail, page ships without figure
+    except Exception as exc:  # noqa: BLE001 — retain the model page, disclose the failure
+        RENDER_FAILURES[entry.name] = (
+            f"The illustration could not be rendered ({type(exc).__name__})."
+        )
         plt.close("all")
         return None
 

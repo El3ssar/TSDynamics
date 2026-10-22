@@ -140,13 +140,20 @@ def test_baker_exponents_are_ln2_and_ln_alpha(alpha: float) -> None:
     ``y`` and expanded *both* coordinates, giving |det J| = 4 and two positive
     exponents in an invertible 2-D map.
     """
-    spec = ts.analysis.lyapunov_spectrum(
-        ts.systems.Baker(params={"alpha": alpha}), steps=20_000, ic=[0.31415926535, 0.2718281828]
-    )
+    system = ts.systems.Baker(params={"alpha": alpha})
+    ic = [0.31415926535, 0.2718281828]
+    n = 20_000
+    tangent = ts.derived.TangentSystem(system, backend="reference")
+    tangent.reinit(ic)
+    projection = abs(float(tangent.deviations()[0, 0]))
+    spec = ts.analysis.lyapunov_spectrum(system, steps=n, transient=0, ic=ic)
     assert spec.shape == (2,)
-    # Constant slopes → the estimate is exact up to float roundoff.
-    assert spec[0] == pytest.approx(np.log(2.0), abs=1e-6)
-    assert spec[1] == pytest.approx(np.log(alpha), abs=1e-6)
+    # A mixed initial direction needs to align even for a diagonal Jacobian:
+    # ||J^n q|| ~ 2^n |q_x|. The resulting log|q_x|/n finite-time correction
+    # is analytic, rather than estimator error or an arbitrary tolerance band.
+    correction = np.log(projection) / n
+    assert spec[0] == pytest.approx(np.log(2.0) + correction, abs=1e-6)
+    assert spec[1] == pytest.approx(np.log(alpha) - correction, abs=1e-6)
     assert spec.sum() == pytest.approx(np.log(2.0 * alpha), abs=1e-6)
 
 
@@ -325,7 +332,8 @@ def test_duffing_is_a_bounded_double_well_with_divergence_minus_delta() -> None:
 
     In the autonomous 3-D form (x, y, z=drive phase) the Jacobian trace is the
     state-independent -delta, so sum_i lambda_i = -delta exactly, and the drive
-    phase contributes an exponent that is identically zero.
+    phase contributes a zero asymptotic exponent. A generic finite-time QR
+    estimate still includes tangent-alignment and endpoint projection terms.
 
     The catalogue's defaults (beta = -1 linear, alpha = +1 cubic) give the
     double-well potential V = beta x^2/2 + alpha x^4/4, whose orbit hops between
@@ -347,9 +355,40 @@ def test_duffing_is_a_bounded_double_well_with_divergence_minus_delta() -> None:
     # Trace(J) = -delta identically, so the sum is exact to estimator roundoff.
     assert spec.sum() == pytest.approx(-delta, abs=1e-6)
     # Genuinely chaotic (an independent scipy variational computation of the
-    # same vector field gives lambda_1 = 0.123), and the drive phase is neutral.
+    # same vector field gives lambda_1 = 0.123). Neutrality is checked through
+    # its exact tangent dynamics below, rather than a finite-time QR snapshot.
     assert spec.max() == pytest.approx(0.125, abs=0.03)
-    assert np.min(np.abs(spec)) < 1e-6
+
+
+@pytest.mark.parametrize("backend", ["interp", "jit", "reference"])
+def test_duffing_neutral_direction_has_the_exact_finite_time_norm_correction(backend):
+    """Time translation evolves as f(y(t)); its phase component is constant.
+
+    The autonomous variational equation has the exact solution v(t)=f(y(t)).
+    Its finite-time rate is log(||f(y(T))||/||f(y(0))||)/T, not identically zero.
+    Since z'=omega, v_z=omega stays constant even while its norm changes.
+    """
+    system = ts.systems.Duffing()
+    tangent = ts.derived.TangentSystem(system, k=1, backend=backend)
+    ic = np.array([-1.0, 0.0, 0.0])
+    tangent.reinit(ic, rtol=1e-10, atol=1e-12)
+    rhs = system._rhs_numeric()
+    initial_velocity = rhs(ic, 0.0)
+    initial_norm = np.linalg.norm(initial_velocity)
+    # Seed the analytic time-translation direction instead of the generic
+    # production frame. Each streaming step reseats its native extended state.
+    tangent._z = np.r_[ic, initial_velocity / initial_norm]
+    for _ in range(200):
+        tangent.step(0.05)
+
+    elapsed = tangent.time()
+    final_velocity = rhs(tangent.state(), elapsed)
+    expected_rate = np.log(np.linalg.norm(final_velocity) / initial_norm) / elapsed
+    rate = float(tangent.exponents()[0])
+    assert rate == pytest.approx(expected_rate, abs=1e-8)
+    # Undo QR normalization to recover the unchanged phase perturbation.
+    phase = abs(tangent.deviations()[2, 0]) * np.exp(rate * elapsed)
+    assert phase == pytest.approx(abs(initial_velocity[2]) / initial_norm, abs=1e-10)
 
 
 def test_pan_xu_zhou_default_parameters_are_above_the_hopf_threshold() -> None:

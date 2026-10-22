@@ -622,8 +622,30 @@ ts.plot(ts.plot(traj, "psd"), ts.viz.draw({"x": r, "y": c}, "line"))
 
 ## Writing a transform
 
-Four declarations and a function that returns a mapping. That is the whole
-recipe, and nothing else in the library is edited:
+A function that returns channel arrays is enough. Register it once in your
+module, then call it by name through the ordinary plotting entry point:
+
+```python
+# skip-doctest — registration changes the process-wide plot registry
+import tsdynamics as ts
+
+@ts.viz.transforms.register()
+def xy_view(traj):
+    """Plot the first two state components."""
+    return {"x": traj.y[:, 0], "y": traj.y[:, 1]}
+
+traj = ts.systems.Lorenz().run(final_time=10.0, dt=0.01)
+ts.plot(traj, "xy_view")
+```
+
+On first use the registry derives compatible primitives from the returned
+channels and their shapes. The default `source="data"` accepts systems and
+sampled data. An undeclared two-channel coordinate frame is `free`; declare a
+meaningful frame when the axes represent a known quantity, so incompatible
+overlays can be caught.
+
+You can also declare the choices explicitly. For a time diagnostic with three
+useful drawing styles:
 
 ```python
 # skip-doctest — registering here would add a row to every listing for the rest
@@ -639,27 +661,27 @@ def speed(traj):
     return {"x": traj.t[1:], "y": np.linalg.norm(np.diff(traj.y, axis=0), axis=1) / dt}
 ```
 
-With no other edit anywhere you now have `ts.plot(traj, "speed")`,
-`primitive="steps"`, a row in `ts.viz.compatibility()`, an entry in
-`ts.viz.transforms.names()`, reachability from `ts.viz.transforms.find(...)`,
-a generated gallery figure, and every declared cell exercised by the
-compatibility gate.
+The example adds `ts.plot(traj, "speed")` and `primitive="steps"`, plus discovery
+through `ts.viz.transforms.names()` and `ts.viz.transforms.find(...)`.
+`ts.viz.compatibility()` shows the declared row, or the inferred row after first
+use. Supply a small `example=` factory if the transform should participate in
+the gallery and compatibility checks.
 
-Everything else is **derived, never declared**: the name from the function, the
+Several useful defaults are derived: the name from the function, the
 summary from the docstring, the axis count from the frame's arity, the default
 primitive from the first one listed, the accepted subjects from `source`. The
 optional keywords are `name=`, `default_primitive=`, `aliases=`, `labels=`,
 `role=`, `analysis=` (the estimator this adapts) and `example=` (a small subject
 for the gallery).
 
-Two rules keep the layer honest, and both are checked at registration:
+The optional declarations let an extension state stronger contracts:
 
 - **`source=` is enforced by the registry**, so a `model` transform handed an
   array gets the message above rather than an `AttributeError` from inside your
   function.
-- **`kind=` is required** for a single-frame transform. It was once optional in
-  name and mandatory in fact — registration succeeded and *plotting* failed —
-  and deferring an author's mistake to a user's machine is the defect.
+- **`kind=` is optional.** Without it the drawing primitive supplies the kind at
+  draw time. Set a semantic kind explicitly when the transform represents a
+  specific diagnostic rather than generic channel geometry.
 
 !!! note "A transform owns no math"
     If your picture needs a new estimator, write the estimator first: it belongs

@@ -37,10 +37,10 @@ fn to_engine_err(e: MapLyapunovError) -> EngineError {
 /// Run the discrete-map QR tangent-map Lyapunov spectrum over a **map** tape.
 ///
 /// Builds the evaluator over `tape` (which must carry its step Jacobian), seeds the
-/// deviation frame to the leading `k` identity columns, iterates `steps` map steps
+/// deviation frame to a deterministic mixed orthonormal frame, iterates `steps` map steps
 /// propagating the frame through `J(x_n)` (pre-image convention) with a QR
 /// reorthonormalisation every `reortho_interval` steps, and returns the `k`
-/// time-averaged exponents (largest first) plus the completed-interval count. The
+/// time-averaged exponents in QR order plus the completed-interval count. The
 /// map tape folds its parameters in, so `p` is empty. `jit` selects the Cranelift
 /// evaluator (numerically identical to the interpreter).
 #[allow(clippy::too_many_arguments)]

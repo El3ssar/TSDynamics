@@ -961,42 +961,62 @@ function installAnimation(container, comets, anim, visibility) {
   nSamples = Math.max(2, nSamples);
   const trail = anim.trail_length_samples != null ? anim.trail_length_samples | 0 : null;
 
-  // Speed: traverse the whole series in ~duration seconds at the browser's ~60fps.
+  // Playback duration is elapsed time, independent of display refresh rate and
+  // sample count. A two-point curve must take just as long as a dense one.
   const duration = anim.duration && anim.duration > 0 ? anim.duration : 12.0;
-  const stride = Math.max(1, Math.round(nSamples / (duration * 60.0)));
+  const durationMs = duration * 1000;
+  const motionQuery =
+    typeof window.matchMedia === "function"
+      ? window.matchMedia("(prefers-reduced-motion: reduce)")
+      : null;
 
   // --- play/pause + restart overlay (mirrors the plotly export) --------------
   if (getComputedStyle(container).position === "static") {
     container.style.position = "relative";
   }
   const bar = document.createElement("div");
+  bar.setAttribute("role", "group");
+  bar.setAttribute("aria-label", "Animation controls");
   bar.style.cssText =
     "position:absolute;left:10px;bottom:10px;z-index:10;display:flex;gap:6px;" +
     "align-items:center;font:12px system-ui,sans-serif;color:#aaa;user-select:none;";
-  const mkBtn = (txt) => {
+  const mkBtn = (txt, label) => {
     const b = document.createElement("button");
+    b.type = "button";
     b.textContent = txt;
+    b.setAttribute("aria-label", label);
+    b.title = label;
     b.style.cssText =
       "cursor:pointer;border:1px solid #8888;border-radius:6px;" +
       "background:rgba(127,127,127,.18);color:inherit;width:30px;height:26px;" +
       "font-size:13px;line-height:1;padding:0;";
     return b;
   };
-  const playBtn = mkBtn("❚❚");
-  const restartBtn = mkBtn("↺");
+  const playBtn = mkBtn("❚❚", "Pause animation");
+  const restartBtn = mkBtn("↺", "Restart animation");
   const readout = document.createElement("span");
+  readout.setAttribute("aria-label", "Animation progress");
   bar.appendChild(playBtn);
   bar.appendChild(restartBtn);
   bar.appendChild(readout);
   container.appendChild(bar);
 
-  let i = 1;
-  let playing = true;
+  let i = 0;
+  let elapsedMs = 0;
+  let previousTime = null;
+  let playing = !(motionQuery && motionQuery.matches);
   let stopped = false;
   let rafId = 0;
 
+  function updatePlayButton() {
+    const label = playing ? "Pause animation" : "Play animation";
+    playBtn.textContent = playing ? "❚❚" : "▶";
+    playBtn.setAttribute("aria-label", label);
+    playBtn.title = label;
+  }
+
   function paint() {
-    const hi = i % nSamples;
+    const hi = i;
     for (const c of comets) {
       c.seek(Math.min(hi, c.nVerts - 1), trail);
     }
@@ -1008,46 +1028,87 @@ function installAnimation(container, comets, anim, visibility) {
   // viewer has scrolled out of view (`visibility.visible === false`) the clock
   // idles: a catalogue page with six viewers otherwise runs six comets — and six
   // WebGL draws — forever, for nobody.
-  function tick() {
+  function tick(timestamp) {
     if (stopped) return;
-    if (playing && (!visibility || visibility.visible)) {
-      paint();
-      i += stride;
-      if (i >= nSamples) {
+    if (playing && !document.hidden && (!visibility || visibility.visible)) {
+      if (previousTime !== null) elapsedMs += Math.max(0, timestamp - previousTime);
+      previousTime = timestamp;
+      if (elapsedMs >= durationMs) {
         if (anim.loop === false) {
+          elapsedMs = durationMs;
           playing = false;
-          playBtn.textContent = "▶";
+          updatePlayButton();
         } else {
-          i = 1;
+          elapsedMs %= durationMs;
         }
       }
+      i = Math.floor((elapsedMs / durationMs) * (nSamples - 1));
+      paint();
+    } else {
+      previousTime = null;
     }
     rafId = requestAnimationFrame(tick);
   }
 
   playBtn.onclick = () => {
+    if (!playing && elapsedMs >= durationMs) {
+      elapsedMs = 0;
+      i = 0;
+      paint();
+    }
     playing = !playing;
-    playBtn.textContent = playing ? "❚❚" : "▶";
+    previousTime = null;
+    updatePlayButton();
   };
   restartBtn.onclick = () => {
-    i = 1;
+    elapsedMs = 0;
+    previousTime = null;
+    i = 0;
     paint();
   };
 
+  // Hidden tabs may receive no frames at all. Reset on the visibility event,
+  // rather than counting the hidden interval when their first frame returns.
+  const resetClock = () => {
+    previousTime = null;
+  };
+  const onMotionChange = () => {
+    if (motionQuery.matches) playing = false;
+    previousTime = null;
+    updatePlayButton();
+  };
+  document.addEventListener("visibilitychange", resetClock);
+  if (motionQuery) {
+    if (motionQuery.addEventListener) motionQuery.addEventListener("change", onMotionChange);
+    else motionQuery.addListener(onMotionChange);
+  }
+
+  updatePlayButton();
   paint(); // paint frame 0 immediately so the comet is visible at rest
   rafId = requestAnimationFrame(tick);
   console.info("tsd-anim(threejs): starting", {
     n: nSamples,
     trail: trail,
-    stride: stride,
+    duration: duration,
   });
 
   return {
     objects: comets.map((c) => c.group),
+    resetClock,
     stop() {
       stopped = true;
       if (rafId) cancelAnimationFrame(rafId);
       rafId = 0;
+      document.removeEventListener("visibilitychange", resetClock);
+      if (motionQuery) {
+        if (motionQuery.removeEventListener) {
+          motionQuery.removeEventListener("change", onMotionChange);
+        } else {
+          motionQuery.removeListener(onMotionChange);
+        }
+      }
+      playBtn.onclick = null;
+      restartBtn.onclick = null;
       if (bar.parentNode === container) container.removeChild(bar);
     },
   };
@@ -1292,7 +1353,22 @@ export function renderThreejsPayload(container, payload, opts = {}) {
   // A reveal comet holds the camera still by default (the geometry reveal is the
   // motion — auto-rotation would mask it); the user can still orbit by mouse.
   // Without an installed comet the camera auto-rotates as in the static export.
-  controls.autoRotate = opts.autoRotate ?? !revealing;
+  const autoRotate = opts.autoRotate ?? !revealing;
+  const cameraMotionQuery =
+    typeof window.matchMedia === "function"
+      ? window.matchMedia("(prefers-reduced-motion: reduce)")
+      : null;
+  const onCameraMotionChange = () => {
+    controls.autoRotate = autoRotate && !(cameraMotionQuery && cameraMotionQuery.matches);
+  };
+  onCameraMotionChange();
+  if (cameraMotionQuery) {
+    if (cameraMotionQuery.addEventListener) {
+      cameraMotionQuery.addEventListener("change", onCameraMotionChange);
+    } else {
+      cameraMotionQuery.addListener(onCameraMotionChange);
+    }
+  }
   controls.autoRotateSpeed = 0.6;
   controls.update();
 
@@ -1348,7 +1424,9 @@ export function renderThreejsPayload(container, payload, opts = {}) {
   if (typeof IntersectionObserver !== "undefined") {
     intersectionObserver = new IntersectionObserver(
       (entries) => {
-        visibility.visible = entries.some((e) => e.isIntersecting);
+        const visible = entries.some((e) => e.isIntersecting);
+        if (visible !== visibility.visible && animationHandle) animationHandle.resetClock();
+        visibility.visible = visible;
       },
       { threshold: 0 }
     );
@@ -1362,6 +1440,13 @@ export function renderThreejsPayload(container, payload, opts = {}) {
     if (animationHandle) animationHandle.stop();
     if (resizeObserver) resizeObserver.disconnect();
     if (intersectionObserver) intersectionObserver.disconnect();
+    if (cameraMotionQuery) {
+      if (cameraMotionQuery.removeEventListener) {
+        cameraMotionQuery.removeEventListener("change", onCameraMotionChange);
+      } else {
+        cameraMotionQuery.removeListener(onCameraMotionChange);
+      }
+    }
     window.removeEventListener("resize", onResize);
     controls.dispose();
     disposeObject(scene);

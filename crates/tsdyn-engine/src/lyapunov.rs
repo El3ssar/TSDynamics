@@ -188,7 +188,7 @@ pub struct LyapunovOutcome {
 /// - `dim` — the **base** system dimension.
 /// - `k` — the number of tangent vectors (`1 ≤ k ≤ dim`).
 /// - `z0` — the initial extended state (length `dim*(k+1)`): base IC ⊕ the seed
-///   tangent frame (`I[:, :k]` column-major), exactly the Python `embed_extended`.
+///   tangent frame (column-major), exactly the Python `embed_extended`.
 /// - `t0` — the start time.
 /// - `dt` — the renormalisation interval (the Python `dt`).
 /// - `burn_in` — discard this much time before accumulating (`max(0, burn_in)`).
@@ -212,6 +212,44 @@ pub fn lyapunov_spectrum_ode<F>(
     dt: f64,
     burn_in: f64,
     final_time: f64,
+) -> Result<LyapunovOutcome, LyapunovError>
+where
+    F: Fn() -> Box<dyn Solver>,
+{
+    lyapunov_spectrum_ode_guarded(
+        ev,
+        solver_factory,
+        p,
+        dim,
+        k,
+        z0,
+        t0,
+        dt,
+        burn_in,
+        final_time,
+        f64::INFINITY,
+    )
+}
+
+/// The Benettin loop with a caller-supplied base-orbit escape limit.
+///
+/// Only the first `dim` state components are checked: a growing tangent vector
+/// is not an escaping base orbit. Python derives this limit from its shared
+/// scale-and-growth policy; the unguarded Rust entry point remains available
+/// for callers measuring non-attractor finite-time growth.
+#[allow(clippy::too_many_arguments)]
+pub fn lyapunov_spectrum_ode_guarded<F>(
+    ev: &dyn Evaluator,
+    solver_factory: F,
+    p: &[f64],
+    dim: usize,
+    k: usize,
+    z0: &[f64],
+    t0: f64,
+    dt: f64,
+    burn_in: f64,
+    final_time: f64,
+    escape_limit: f64,
 ) -> Result<LyapunovOutcome, LyapunovError>
 where
     F: Fn() -> Box<dyn Solver>,
@@ -257,6 +295,11 @@ where
             "final_time must be finite and positive, got {final_time}"
         )));
     }
+    if escape_limit.is_nan() || escape_limit <= 0.0 {
+        return Err(LyapunovError::BadShape(
+            "escape_limit must be positive (or infinite)".to_string(),
+        ));
+    }
 
     let mut z = z0.to_vec();
     let mut t = t0;
@@ -277,6 +320,7 @@ where
     while t < t_burn - EPS {
         let h = dt.min(t_burn - t);
         advance_chunk(ev, &solver_factory, &mut z, t, h, p, &mut poll).map_err(classify)?;
+        check_base_orbit(&z[..dim], t + h, escape_limit)?;
         if !renorm_step(&mut z, dim, k, &mut last_growths)? {
             return Err(LyapunovError::Diverged(
                 "extended variational state went non-finite during burn-in".to_string(),
@@ -291,6 +335,7 @@ where
     while t < t_end - EPS {
         let h = dt.min(t_end - t);
         advance_chunk(ev, &solver_factory, &mut z, t, h, p, &mut poll).map_err(classify)?;
+        check_base_orbit(&z[..dim], t + h, escape_limit)?;
         if !renorm_step(&mut z, dim, k, &mut last_growths)? {
             return Err(LyapunovError::Diverged(
                 "extended variational state went non-finite during the averaging window"
@@ -315,6 +360,20 @@ where
         final_state: z,
         last_growths,
     })
+}
+
+fn check_base_orbit(state: &[f64], t: f64, limit: f64) -> Result<(), LyapunovError> {
+    let peak = state
+        .iter()
+        .fold(0.0_f64, |peak, value| peak.max(value.abs()));
+    if peak >= limit {
+        return Err(LyapunovError::Diverged(format!(
+            "Lyapunov base orbit escaped at t={t:.6}: state magnitude {peak:.6e} \
+             reached the scale-and-growth limit {limit:.6e}. Use an initial condition \
+             on a bounded orbit before estimating attractor exponents."
+        )));
+    }
+    Ok(())
 }
 
 /// Unpack the tangent block of the extended state `z`, QR-reorthonormalise it in
@@ -458,6 +517,62 @@ mod tests {
             lyapunov_spectrum_ode(&ev, rk45_factory, &[], 2, k, &z0, 0.0, 0.1, 5.0, 50.0).unwrap();
         assert_eq!(out.spectrum.len(), 1);
         assert!((out.spectrum[0] - 0.5).abs() < 1e-4, "{}", out.spectrum[0]);
+    }
+
+    #[test]
+    fn guarded_spectrum_refuses_base_escape_but_not_growing_tangents() {
+        let ev = VmEval::new(linear_extended(200.0, -2.0, 1));
+        let bounded = lyapunov_spectrum_ode_guarded(
+            &ev,
+            rk45_factory,
+            &[],
+            2,
+            1,
+            &[0.0, 0.0, 1.0, 0.0],
+            0.0,
+            0.1,
+            0.0,
+            0.2,
+            10.0,
+        )
+        .unwrap();
+        assert!((bounded.spectrum[0] - 200.0).abs() < 1e-4);
+        let err = lyapunov_spectrum_ode_guarded(
+            &ev,
+            rk45_factory,
+            &[],
+            2,
+            1,
+            &[1.0, 0.0, 1.0, 0.0],
+            0.0,
+            0.1,
+            0.0,
+            0.2,
+            10.0,
+        )
+        .unwrap_err();
+        assert!(matches!(err, LyapunovError::Diverged(_)));
+        assert!(err.to_string().contains("base orbit escaped at t="));
+    }
+
+    #[test]
+    fn guarded_spectrum_accepts_large_units_with_a_relative_limit() {
+        let ev = VmEval::new(linear_extended(0.0, 0.0, 1));
+        let out = lyapunov_spectrum_ode_guarded(
+            &ev,
+            rk45_factory,
+            &[],
+            2,
+            1,
+            &[1e12, -1e12, 1.0, 0.0],
+            0.0,
+            0.1,
+            0.0,
+            1.0,
+            1e15,
+        )
+        .unwrap();
+        assert_eq!(out.spectrum, vec![0.0]);
     }
 
     #[test]

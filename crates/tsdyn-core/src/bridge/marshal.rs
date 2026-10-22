@@ -544,6 +544,12 @@ pub(super) fn validate_grid(t_eval: &[f64]) -> Result<(), EngineError> {
                 w[0]
             )));
         }
+        if !(w[1] - w[0]).is_finite() {
+            return Err(EngineError::InvalidParameter(format!(
+                "t_eval gap {i} is not finite: {} - {} exceeds float64 range",
+                w[1], w[0]
+            )));
+        }
     }
     Ok(())
 }

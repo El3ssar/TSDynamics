@@ -731,6 +731,23 @@ mod tests {
     }
 
     #[test]
+    fn integrate_dense_rejects_overflowing_finite_grid_gap() {
+        let err = integrate_dense(
+            decay_tape(),
+            &[1.0],
+            &[2.0],
+            &[-f64::MAX, f64::MAX],
+            "rk45",
+            1e-6,
+            1e-9,
+            false,
+        )
+        .unwrap_err();
+        assert!(matches!(err, EngineError::InvalidParameter(_)), "{err:?}");
+        assert!(err.to_string().contains("gap"));
+    }
+
+    #[test]
     fn ensemble_rejects_non_finite_times() {
         let err = ensemble_final(
             decay_tape(),

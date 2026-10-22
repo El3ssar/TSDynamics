@@ -21,9 +21,9 @@ The pieces:
 - :func:`krawczyk_roots` — the branch-and-prune loop.  For a box ``[x]`` with
   midpoint ``m`` and a preconditioner ``Y ≈ J(m)^{-1}`` it forms the Krawczyk
   image :math:`K([x]) = m - Y g(m) + (I - Y G([x]))([x] - m)`.  If
-  :math:`K \subset \operatorname{int}[x]` the box holds a **unique** root
-  (existence + uniqueness certificate); if :math:`K \cap [x] = \varnothing` the
-  box holds **no** root and is pruned; otherwise the box is contracted to
+  :math:`K \subset \operatorname{int}[x]`, rigorous interval enclosures would
+  certify a unique root; if :math:`K \cap [x] = \varnothing`, they would exclude
+  roots and allow pruning. Otherwise the box is contracted to
   :math:`K \cap [x]` (or bisected when contraction stalls).
 
 The interval arithmetic here is *not* outward-rounded (it uses plain ``float``
@@ -810,7 +810,7 @@ def _polish(
     tol: float,
     polish_iter: int,
 ) -> np.ndarray:
-    """Run a few float Newton steps to land the certified-box midpoint on the root."""
+    """Run a few float Newton steps to polish a candidate-box midpoint."""
     x = np.asarray(m, dtype=float).copy()
     for _ in range(polish_iter):
         g = residual_float(x)

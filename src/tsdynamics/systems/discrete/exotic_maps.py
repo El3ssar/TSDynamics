@@ -51,10 +51,7 @@ class Bogdanov(DiscreteMap):
         return row1, row2
 
 
-# Classical compendium attractor: the Svensson map circulates as a "popular"
-# trigonometric strange attractor (attributed to Johnny Svensson, documented on
-# Paul Bourke's site and in fractal-art galleries) with no single primary
-# academic source, so it is carried without a literature citation.
+# The reference is a first-hand implementation account, not a research paper.
 class Svensson(DiscreteMap):
     """Svensson attractor -- a sinusoidal planar strange-attractor map.
 
@@ -76,13 +73,21 @@ class Svensson(DiscreteMap):
     Default parameters ``(a, b, c, d) = (1.5, -1.8, 1.6, 0.9)`` give one of the
     commonly illustrated chaotic attractors.
 
-    This is a classical compendium ("strange attractor art") map with no single
-    primary research source; it is intentionally carried without a citation.
+    The reference is Jason Rampe's first-hand account of the implementation in
+    Visions of Chaos. Its Johnny Svensson section prints these exact equations.
+    It is implementation provenance, not a claim that Rampe introduced the map
+    or a research proof of its dynamics.
     """
 
     params = {"a": 1.5, "b": -1.8, "c": 1.6, "d": 0.9}
     dim = 2
     variables = ("x", "y")
+    reference = (
+        "J. Rampe (2017), '2D Strange Attractors', Softology's Blog, "
+        "(first-hand implementation account, not a research paper; "
+        "Bedhead is credited to Ivan Emrich and the Johnny Svensson equations are listed). "
+        "[Source](https://softologyblog.wordpress.com/2017/03/04/2d-strange-attractors/)"
+    )
 
     @staticmethod
     def _step(X, a, b, c, d):
@@ -99,10 +104,7 @@ class Svensson(DiscreteMap):
         return row1, row2
 
 
-# Classical compendium attractor: the Bedhead map circulates as a "popular"
-# trigonometric strange attractor (attributed to Ivan Emrich, documented on Paul
-# Bourke's site and in fractal-art galleries) with no single primary academic
-# source, so it is carried without a literature citation.
+# Rampe's implementation account credits Ivan Emrich and gives the equations.
 class Bedhead(DiscreteMap):
     """Bedhead attractor -- a sinusoidal planar strange-attractor map.
 
@@ -124,13 +126,21 @@ class Bedhead(DiscreteMap):
     Default parameters ``(a, b) = (-0.67, 0.83)``, iterated from ``x = y = 1``,
     give the commonly illustrated attractor.
 
-    This is a classical compendium ("strange attractor art") map with no single
-    primary research source; it is intentionally carried without a citation.
+    Jason Rampe's first-hand implementation account credits Ivan Emrich,
+    prints these exact equations, and illustrates the shipped parameter pair.
+    The reference records that provenance; it is not a research paper or a
+    mathematical proof of the attractor's properties.
     """
 
     params = {"a": -0.67, "b": 0.83}
     dim = 2
     variables = ("x", "y")
+    reference = (
+        "J. Rampe (2017), '2D Strange Attractors', Softology's Blog, "
+        "(first-hand implementation account, not a research paper; "
+        "Bedhead is credited to Ivan Emrich and the Johnny Svensson equations are listed). "
+        "[Source](https://softologyblog.wordpress.com/2017/03/04/2d-strange-attractors/)"
+    )
 
     @staticmethod
     def _step(X, a, b):

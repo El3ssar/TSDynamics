@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any, cast
 import numpy as np
 
 if TYPE_CHECKING:
-    from tsdynamics.families import ContinuousSystem, DiscreteMap
+    from tsdynamics.families import ContinuousSystem, DelaySystem, DiscreteMap
     from tsdynamics.families.base import ParamSet
 
 # ── state coercion ────────────────────────────────────────────────────────────
@@ -117,6 +117,40 @@ def finite_diff_jac(
 
 
 # ── tangent dynamics: flows ──────────────────────────────────────────────────
+
+
+def flow_has_explicit_time(system: ContinuousSystem | DelaySystem) -> bool:
+    """Whether the concrete RHS depends on time at the current parameters.
+
+    Test the equations themselves, not only the Jacobian: additive forcing has
+    a time-independent Jacobian but still has no autonomous equilibrium problem.
+    Substituting parameter values also lets a disabled forcing term disappear.
+    """
+    import symengine
+
+    from tsdynamics._engine.symbols import state_time_symbols
+
+    y, t = state_time_symbols()
+    varying_delay = False
+    delayed: dict[tuple[int, str], Any] = {}
+
+    def state(i: int, when: Any = None) -> Any:
+        nonlocal varying_delay
+        if when is None:
+            return y(i)
+        lag = symengine.sympify(when) - t
+        varying_delay |= t in lag.free_symbols
+        if lag == 0:
+            return y(i)
+        # A constant-delay access is an independent history-state coordinate,
+        # not external forcing, even though its accessor contains t - tau.
+        key = (int(i), str(lag))
+        if key not in delayed:
+            delayed[key] = symengine.Symbol(f"delayed_state_{len(delayed)}")
+        return delayed[key]
+
+    expressions = type(system)._equations(state, t, **system.params)
+    return varying_delay or any(t in symengine.sympify(expr).free_symbols for expr in expressions)
 
 
 def flow_fns(

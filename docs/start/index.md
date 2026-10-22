@@ -35,3 +35,27 @@ Once you are comfortable, the rest of the site opens up:
   quantification, delay embeddings, basins of attraction, and more. Each routine
   documents its supported families and inputs; `ts.analysis.find(system)` helps
   select compatible tools.
+
+## Choose a starting point for your question
+
+| What you want to do | Where to start | What to look for |
+| --- | --- | --- |
+| Understand the motion of a model | [First trajectory](first-trajectory.md) | Compare its phase portrait with its component time series. |
+| See how a parameter changes the behaviour | [Orbit diagrams](../analysis/orbit-diagrams.md) | Branch splitting, periodic windows and changes in the attractor. |
+| Estimate sensitivity to initial conditions | [Lyapunov spectra](../analysis/lyapunov.md) | The signs of the exponents, and whether they have converged. |
+| Find stationary states and their stability | [Fixed points](../analysis/fixed-points.md) | The residual, eigenvalues and stability classification of each candidate. |
+| Find which initial conditions reach which attractor | [Basins of attraction](../analysis/basins.md) | Basin boundaries, competing outcomes and dependence on the search region. |
+| Work from recorded observations rather than equations | [Delay embeddings](../analysis/embedding.md) | Sampling assumptions, delay choice and reconstruction dimension. |
+| Study a model you wrote yourself | [Defining systems](defining-systems.md) | The family contract and one complete runnable example. |
+
+Each analysis page states which inputs it supports. A flow, a discrete map,
+a delay equation and a noisy model have different mathematical assumptions;
+choose a compatible tool before interpreting its answer.
+
+## Read the result, then check the assumptions
+
+A picture helps you decide what to measure. A numerical result needs context:
+which parameters and starting state were used, how long the calculation ran,
+and whether increasing that horizon changes the conclusion. The worked
+tutorials show the code beside the plot, and the system catalogue distinguishes
+published reference values from finite-time measurements.

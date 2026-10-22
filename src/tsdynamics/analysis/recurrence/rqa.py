@@ -227,7 +227,7 @@ class RQAResult(AnalysisResult):
         the category axis carrying the measure labels.  This is the at-a-glance
         readout of "how deterministic / laminar is this trajectory"; the
         unbounded measures (``L_max`` / ``V_max`` / ``DIV``) stay in
-        :meth:`summary` rather than crushing the bar scale.  No line-length
+        the textual readout rather than crushing the bar scale.  No line-length
         histogram is walked — the values are the already-computed scalar fields.
         The :mod:`tsdynamics.viz.spec` import is lazy, so building a spec never
         pulls a plotting library.
@@ -255,7 +255,9 @@ class RQAResult(AnalysisResult):
             xscale="categorical",
             xcategories=labels,
             ylabel="value",
-            ylimits=(0.0, 1.0),
+            # Entropy is in nats and can exceed one; the fraction measures
+            # share this plot but must not force its entropy bar off-canvas.
+            ylimits=(0.0, max(1.0, 1.05 * float(np.max(values)))),
             title=f"RQA  DET = {self.determinism:.3g}, LAM = {self.laminarity:.3g}",
         )
 

@@ -92,7 +92,7 @@ impl std::error::Error for MapLyapunovError {}
 /// The accumulated spectrum a [`map_lyapunov`] run returns.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MapLyapunovOutcome {
-    /// The `k` Lyapunov exponents, largest first (QR order) — the time-averaged
+    /// The `k` Lyapunov estimates in QR order — the time-averaged
     /// `log|R_ii|`.
     pub exponents: Vec<f64>,
     /// The number of reorthonormalisation intervals completed (the `_elapsed` the
@@ -215,12 +215,9 @@ pub fn map_lyapunov(
     // Live state and the next-state buffer (a map's RHS writes the next state).
     let mut x = ic[..dim].to_vec();
     let mut x_next = vec![0.0; dim];
-    // The deviation frame, column-major dim × k, seeded to the leading k columns of
-    // the identity (matching the released `np.eye(dim)[:, :k]`).
-    let mut w = vec![0.0; dim * k];
-    for j in 0..k {
-        w[j * dim + j] = 1.0;
-    }
+    // A mixed frame avoids getting stuck in a coordinate-aligned contracting
+    // subspace. The Python reference uses the identical fixed stream and QR.
+    let mut w = crate::tangent_frame::initial_frame(dim, k);
     // The propagated frame W' = J · W (column-major dim × k), a scratch buffer.
     let mut w_prop = vec![0.0; dim * k];
     let mut jac = vec![0.0; dim * dim];

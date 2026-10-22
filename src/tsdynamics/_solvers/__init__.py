@@ -1,9 +1,9 @@
-"""The Python solver registry — the discovery half of the pluggable engine (D4).
+"""Solver metadata, capability checks, and installed solver discovery.
 
 .. note::
     **Advanced / internal.**  Reachable as :mod:`tsdynamics._solvers` to inspect or
     extend the available integrators, but most users only ever pass a solver by
-    name (``integrate(method="rk45")``) rather than importing this package.
+    name (``system.run(10.0, solver="rk45")``) rather than importing this package.
 
 This package is the Python-side mirror of the Rust link-time solver registry in
 the ``tsdyn-solvers`` crate.  It holds a ``name -> SolverSpec`` table of solver
@@ -16,12 +16,10 @@ auto-populates it from two sources at import time:
 2. **out-of-tree plugins** declared under the ``tsdynamics._solvers`` entry-point
    group (see :mod:`tsdynamics.plugins`).
 
-Stream **F2** owns this *mechanism* only.  It ships no built-in solvers — those
-arrive with the Rust kernels (streams E3/E4/E-SDE) and the selection layer
-(``method=`` resolution + auto-stiffness) is stream **C-SOLV**, which builds on
-top of this registry.  A :class:`SolverSpec` therefore carries no Python
-implementation; its :attr:`SolverSpec.kernel` names the Rust kernel to dispatch
-to once the engine bindings (stream E7) land.
+A :class:`SolverSpec` carries metadata rather than an implementation. Its
+:attr:`SolverSpec.kernel` names the executable kernel selected by the engine.
+An installed plugin may expose an existing kernel under a new name; adding an
+algorithm requires implementing and rebuilding the compiled engine as well.
 """
 
 from __future__ import annotations
@@ -44,7 +42,7 @@ _VALID_KINDS = frozenset({"explicit", "implicit"})
 class SolverCaps:
     """A solver's capabilities — the Python mirror of ``tsdyn_solvers::Caps``.
 
-    Drives ``method=`` resolution and the auto-stiffness layer (stream C-SOLV).
+    Drives solver resolution and the auto-stiffness layer.
     The four flags are how the selection layer reasons about a kernel without
     running it: ``kind`` is the auto-stiffness axis (:func:`~select.select`
     returns an ``"implicit"`` kernel only on a stiff RHS), ``needs_jacobian``

@@ -655,7 +655,7 @@ def test_every_printed_verdict_is_reachable_by_name(name):
         ("ScalarResult", "chaotic", True),  # max_lyapunov
         ("RQAResult", "deterministic", True),
         ("UncertaintyExponent", "final_state_sensitive", True),
-        ("GALIResult", "chaotic", True),
+        ("GALIResult", "chaotic", None),
         ("BasinEntropy", "fractal_boundary", False),
         ("LyapunovSpectrum", "chaotic", True),
     ],

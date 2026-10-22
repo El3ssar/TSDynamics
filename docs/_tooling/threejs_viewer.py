@@ -124,7 +124,7 @@ CACHE_DIR = ROOT / ".cache" / "docs-threejs"
 LOADER_URI = "_static/tsdyn-threejs-loader.js"
 
 #: Bump when the emitted HTML or payload shaping materially changes (cache buster).
-VIEWER_VERSION = "9"
+VIEWER_VERSION = "10"
 
 #: CDN three.js build (pinned) — matches docs/visualization/threejs-export.md.
 _THREE_VERSION = "0.160.0"
@@ -154,9 +154,9 @@ _SAGITTA_TARGET = 0.008
 _POS_DECIMALS = 4
 _COL_DECIMALS = 3
 
-#: Reveal timing: traverse the whole attractor in ~14 s, trailing a comet of this
+#: Reveal timing: traverse the whole attractor in 60 s, trailing a comet of this
 #: many *samples*.
-_DURATION_S = 14.0
+_DURATION_S = 60.0
 _TRAIL_SAMPLES = 600
 
 #: Integration windows (the pilot / sagitta-dt refine the *output* step within these).
@@ -388,7 +388,7 @@ def _ode_cloud(entry, *, second: bool) -> np.ndarray | None:
     ic = figures._resolve_ic(sys_obj, ic_override)
     for attempt in range(_IC_RETRIES):
         if ic is None or attempt > 0:
-            ic = sys_obj.resolve_ic(rng.uniform(0.0, 1.0, sys_obj.dim))
+            ic = rng.uniform(0.0, 1.0, sys_obj.dim)
         try:
             traj = sys_obj.run(
                 final_time=final_time,
@@ -474,9 +474,11 @@ def _dde_delay_embedding(entry) -> np.ndarray | None:
     opts = figures.FIG_OVERRIDES.get(entry.name, {})
     final_time = opts.get("final_time", _DDE_FINAL_TIME)
     fine_dt = _DDE_FINE_DT
+    center = opts.get("history_center", 0.8)
+    amplitude = opts.get("history_amp", 0.2)
 
     def history(s):
-        return [0.8 + 0.2 * np.sin(0.2 * s)] * sys_obj.dim
+        return [center + amplitude * np.sin(0.2 * s)] * sys_obj.dim
 
     try:
         traj = sys_obj.run(final_time=final_time, dt=fine_dt, history=history)

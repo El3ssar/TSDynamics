@@ -180,6 +180,7 @@ _AREA_TESTS: dict[str, tuple[str, ...]] = {
         "test_dde_lyapunov.py",
         "test_known_values.py",
         "test_map_lyapunov_kernel.py",
+        "test_lyapunov_frame.py",
         "test_audit_WP1_results_lyap.py",
     ),
 }

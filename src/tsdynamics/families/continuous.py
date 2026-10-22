@@ -573,12 +573,12 @@ class ContinuousSystem(SystemBase, ABC):
 
         Notes
         -----
-        A ``reinit`` that raises leaves the system exactly as it was — ``self.ic``
-        is rolled back rather than left holding the initial condition that failed.
+        If initialization raises, ``self.ic`` is rolled back rather than left
+        holding the initial condition that failed. Parameter updates validate
+        every key before applying any values.
         """
         if params:
-            for k, v in params.items():
-                self.params[k] = v
+            self.params.update(params)
         # ``resolve_ic`` commits the resolved IC to ``self.ic`` before any of the
         # work below happens, and plenty below can raise (an unknown backend, an
         # unresolvable method, a tape that will not lower, an unavailable engine).
@@ -665,7 +665,7 @@ class ContinuousSystem(SystemBase, ABC):
             resolution = solvers.resolve(self._step_method, family="ode")
         # Cache the canonical kernel name (``"RK45"`` → ``"rk45"``) so the per-step
         # loop hits the engine core directly without re-resolving every call.
-        self._step_method_canonical = resolution.name
+        self._step_method_canonical = resolution.kernel
         prob = ode_problem(self, ic=ic_arr, t0=t0, **resolution.build_kwargs)
         # Marshal the (loop-invariant) tape to its engine wire arrays once here so the
         # per-``dt`` ``step`` loop reuses them instead of rebuilding the tuple on every
@@ -1518,6 +1518,7 @@ class ContinuousSystem(SystemBase, ABC):
             method=method,
             backend=backend,
             orbit_peak=orbit_peak(tangent),
+            orbit_start=tangent._lyapunov_start_peak,
         )
 
 

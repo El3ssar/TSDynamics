@@ -120,23 +120,24 @@ through those ufuncs to build its tape.
 !!! warning "Parameter order is positional for maps and SDEs"
     `_step`/`_jacobian` (and `_drift`/`_diffusion`) receive parameters
     **positionally**, in the insertion order of the `params` dict — whereas an
-    ODE/DDE `_equations` takes them keyword-only (`*, a`). A map signature that
+    ODE/DDE `_equations` receives them by name (`a=...`). A map signature that
     disagrees with the `params` order is rejected with a `TypeError` at import,
     so this can never fail silently.
 
 The full worked example — from a blank class to an integrated, plotted,
 auto-registered system — is on [Defining systems](defining-systems.md).
 
-## Lower once, sweep for free
+## Reuse compiled equations across parameter sweeps
 
 A continuous system lowers its equations to the Rust engine in-process, with
 nothing cached on disk and no ahead-of-time build step. Ordinary parameters
-become *control parameters* of the lowered tape — changing them is free:
+become *control parameters* of the lowered tape: updating their values reuses
+the compiled equations rather than compiling a separate program for every value.
 
 ```python
 lor = ts.systems.Lorenz()
-lor.run(final_time=10)     # lowers + compiles once, in milliseconds
-lor.rho = 35.0                   # zero cost
+lor.run(final_time=10)     # lowers + compiles on first use
+lor.rho = 35.0            # update a value without changing the equations
 lor.run(final_time=10)     # same tape, new parameter value
 ```
 
@@ -154,7 +155,7 @@ supported families and mathematical assumptions:
 
 ```python
 # skip-doctest — the protocol surface, not a runnable snippet (`sys` is any system)
-sys.run(...)           # run and return a uniform-grid Trajectory
+sys.run(...)           # run and return a Trajectory
 sys.step(n_or_dt)      # advance by n iterations / dt of time → new state
 sys.state()            # current state vector (a copy)
 sys.set_state(u)       # overwrite the state (absent on DDEs — by design)

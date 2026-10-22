@@ -12,7 +12,7 @@
 //! [`super::marshal`]; the renormalisation loop and the QR live in
 //! [`tsdyn_engine::lyapunov`].
 
-use tsdyn_engine::lyapunov::{lyapunov_spectrum_ode, LyapunovError, LyapunovOutcome};
+use tsdyn_engine::lyapunov::{lyapunov_spectrum_ode_guarded, LyapunovError, LyapunovOutcome};
 use tsdyn_ir::Tape;
 use tsdyn_solvers::Solver;
 
@@ -59,6 +59,7 @@ pub fn lyapunov_spectrum_ode_bridge(
     burn_in: f64,
     final_time: f64,
     jit: bool,
+    escape_limit: f64,
 ) -> Result<LyapunovOutcome, EngineError> {
     // The extended tape is `n_state == ev.dim()` (a plain ODE-shaped tape over the
     // stacked state), validated by the kernel against `dim*(k+1)`. Resolve the
@@ -71,8 +72,20 @@ pub fn lyapunov_spectrum_ode_bridge(
     // march); the name is a registry name and the tolerances are validated, so
     // `build_solver` always succeeds.
     let factory = move || -> Box<dyn Solver> { build_solver(name, tol) };
-    lyapunov_spectrum_ode(&*ev, factory, p, dim, k, z0, t0, dt, burn_in, final_time)
-        .map_err(to_engine_err)
+    lyapunov_spectrum_ode_guarded(
+        &*ev,
+        factory,
+        p,
+        dim,
+        k,
+        z0,
+        t0,
+        dt,
+        burn_in,
+        final_time,
+        escape_limit,
+    )
+    .map_err(to_engine_err)
 }
 
 #[cfg(test)]
@@ -124,6 +137,7 @@ mod tests {
                 5.0,
                 50.0,
                 jit,
+                f64::INFINITY,
             )
             .unwrap()
         };
@@ -160,6 +174,7 @@ mod tests {
             1.0,
             1.0,
             false,
+            f64::INFINITY,
         )
         .unwrap_err();
         assert!(matches!(err, EngineError::UnknownMethod(_)), "got {err:?}");
@@ -186,6 +201,7 @@ mod tests {
                 1.0,
                 1.0,
                 false,
+                f64::INFINITY,
             )
             .unwrap_err();
             assert!(

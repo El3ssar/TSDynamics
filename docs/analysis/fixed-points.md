@@ -11,24 +11,32 @@ skeleton of invariant sets — the equilibria a flow can rest at, the fixed poin
 a map holds, the periodic orbits both can loop on. Find that skeleton and you
 understand the phase portrait: the stable pieces are what you observe, the
 unstable ones are the saddles that route trajectories between them. This page
-locates all of them, for **maps and flows**, each returned with its
-linear-stability data.
+searches for these sets in **maps and autonomous flows**, with linear-stability
+data for the solutions it finds. A finite numerical search can miss solutions.
 
 | Function | Finds | For |
 | --- | --- | --- |
-| [`fixed_points`](#fixed-points-and-equilibria) | $f(x) = x$ / $f(x) = 0$ | maps + flows |
+| [`fixed_points`](#fixed-points-and-equilibria) | $f(x) = x$ / $f(x) = 0$ | maps + autonomous flows |
 | [`periodic_orbits`](#periodic-orbits-of-maps) | period-$p$ cycles | maps |
 | [`periodic_orbits`](#periodic-orbits-of-flows-single-shooting) | a limit cycle | flows |
 | [`estimate_period`](#estimating-a-period) | dominant period | any signal |
 
 ## Fixed points and equilibria
 
-A **map** fixed point solves $f(x) = x$; a **flow** equilibrium solves
+A **map** fixed point solves $f(x) = x$; an **autonomous flow** equilibrium solves
 $f(x) = 0$ on the right-hand side. `fixed_points` finds both by multi-start root
 finding on the exact analytic Jacobian and classifies each solution from the
 Jacobian spectrum, using the right convention for the family — a map fixed point
 is stable iff every multiplier $|\lambda_i| < 1$, a flow equilibrium iff every
-eigenvalue has $\operatorname{Re}\lambda_i < 0$.
+eigenvalue has $\operatorname{Re}\lambda_i < 0$. These strict inequalities
+establish linear asymptotic stability; a zero real part or a multiplier on the
+unit circle requires further analysis.
+
+An explicitly time-dependent right-hand side has no autonomous root problem:
+solving $f(x,0)=0$ would freeze the forcing at one phase. `fixed_points` rejects
+that input. For periodic forcing, study a
+[stroboscopic map](../reference/derived.md) or
+[Poincaré section](poincare.md) and the corresponding recurring response.
 
 <div class="ts-ref" markdown>
 

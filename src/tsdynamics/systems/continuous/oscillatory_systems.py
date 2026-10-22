@@ -328,9 +328,7 @@ class Torus(ContinuousSystem):
         return xdot, ydot, zdot
 
 
-# Intentionally citation-free: a standard Lissajous (Bowditch) figure is a
-# classical parametric curve, not a research-introduced dynamical system, so no
-# primary reference is attached (and none should be invented).
+# Cite the historical planar construction; the third coordinate is an extension.
 class Lissajous3D(ContinuousSystem):
     """
     Three-dimensional Lissajous (Bowditch) figure.
@@ -338,13 +336,15 @@ class Lissajous3D(ContinuousSystem):
     Not a chaotic system: the right-hand side is purely time-driven (independent
     of the state), so integrating it traces the classical parametric curve
     ``(A cos(a t), B cos(b t + delta_y), C cos(c t + delta_z))``.  The shape is
-    closed and periodic when the frequency ratios are rational.
+    closed and periodic when the frequency ratios are rational. An arbitrary
+    initial condition translates the curve by a constant coordinate offset.
 
     Note
     ----
-    A Lissajous (Bowditch) figure is a classical parametric construction, not a
-    system introduced by a single research paper; it is deliberately carried
-    without a literature citation.
+    The reference concerns Lissajous's historical planar construction. This
+    class extends that construction coordinate by coordinate into three
+    dimensions and integrates its analytic derivatives; the reference does
+    not introduce this particular three-dimensional ODE implementation.
 
     Parameters
     ----------
@@ -368,6 +368,13 @@ class Lissajous3D(ContinuousSystem):
     }
     dim = 3
     variables = ("x", "y", "z")
+    reference = (
+        "J.-A. Lissajous (1857), 'Mémoire sur l'étude optique des mouvements vibratoires', "
+        "Annales de Chimie et de Physique, 3e série, 51, 147–231 "
+        "(historical planar construction; catalogue ODEs integrate its analytic derivatives, "
+        "with a coordinate-wise extension for 3D). "
+        "[Original memoir](https://gallica.bnf.fr/ark:/12148/bpt6k34792z/f146.item)"
+    )
 
     @staticmethod
     def _equations(Y, t, *, A, B, C, a, b, c, delta_y, delta_z):
@@ -399,9 +406,7 @@ class Lissajous3D(ContinuousSystem):
         return dxdt, dydt, dzdt
 
 
-# Intentionally citation-free: a standard Lissajous (Bowditch) figure is a
-# classical parametric curve, not a research-introduced dynamical system, so no
-# primary reference is attached (and none should be invented).
+# The numerical RHS differentiates the classical parametric construction.
 class Lissajous2D(ContinuousSystem):
     """
     Two-dimensional Lissajous (Bowditch) figure.
@@ -409,13 +414,14 @@ class Lissajous2D(ContinuousSystem):
     Not a chaotic system: the right-hand side is purely time-driven (independent
     of the state), so integrating it traces the classical parametric curve
     ``(A cos(a t), B cos(b t + delta))``.  The figure is closed and periodic
-    when the frequency ratio ``a : b`` is rational.
+    when the frequency ratio ``a : b`` is rational. An arbitrary initial
+    condition translates the curve by a constant coordinate offset.
 
     Note
     ----
-    A Lissajous (Bowditch) figure is a classical parametric construction, not a
-    system introduced by a single research paper; it is deliberately carried
-    without a literature citation.
+    The reference records the historical planar construction. This class
+    integrates the analytic derivatives of that curve; it is not a chaotic
+    oscillator introduced by the cited memoir.
 
     Parameters
     ----------
@@ -430,6 +436,13 @@ class Lissajous2D(ContinuousSystem):
     params = {"A": 1, "B": 1, "a": 3, "b": 2, "delta": pi / 2}
     dim = 2
     variables = ("x", "y")
+    reference = (
+        "J.-A. Lissajous (1857), 'Mémoire sur l'étude optique des mouvements vibratoires', "
+        "Annales de Chimie et de Physique, 3e série, 51, 147–231 "
+        "(historical planar construction; catalogue ODEs integrate its analytic derivatives, "
+        "with a coordinate-wise extension for 3D). "
+        "[Original memoir](https://gallica.bnf.fr/ark:/12148/bpt6k34792z/f146.item)"
+    )
 
     @staticmethod
     def _equations(Y, t, *, A, B, a, b, delta):

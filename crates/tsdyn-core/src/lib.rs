@@ -1245,7 +1245,7 @@ use bridge::lyapunov_spectrum_ode_bridge;
 /// window. Returns `(spectrum, final_state, last_growths)` — the `k` exponents,
 /// the final extended state, and the last per-step log-stretch contributions. A
 /// divergence raises (it must not become a plausible-looking spectrum).
-#[pyfunction]
+#[pyfunction(signature = (ops, a, b, imm, outputs, jac_outputs, n_state, n_param, p, method, rtol, atol, dim, k, z0, t0, dt, burn_in, final_time, jit, escape_limit=None))]
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn lyapunov_spectrum_ode<'py>(
     py: Python<'py>,
@@ -1269,6 +1269,7 @@ fn lyapunov_spectrum_ode<'py>(
     burn_in: f64,
     final_time: f64,
     jit: bool,
+    escape_limit: Option<f64>,
 ) -> PyResult<(
     Bound<'py, PyArray1<f64>>,
     Bound<'py, PyArray1<f64>>,
@@ -1292,6 +1293,7 @@ fn lyapunov_spectrum_ode<'py>(
             burn_in,
             final_time,
             jit,
+            escape_limit.unwrap_or(f64::INFINITY),
         )
     })
     .map_err(to_py_err)?;

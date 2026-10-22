@@ -8,12 +8,14 @@ a state-space trajectory by the *delay-coordinate map*
 
     y_i = \big(x_i,\; x_{i+\tau},\; x_{i+2\tau},\; \dots,\; x_{i+(m-1)\tau}\big),
 
-with embedding dimension :math:`m` and delay :math:`\tau` (in samples).  Takens'
-theorem (Takens, 1981) guarantees that for a generic observable and
-:math:`m > 2d` — where :math:`d` is the box-counting dimension of the original
-attractor — this map is an embedding: it preserves the attractor's topology, so
-invariants such as the correlation dimension and the Lyapunov spectrum are
-recovered from the single series.
+with embedding dimension :math:`m` and delay :math:`\tau` (in samples).
+Takens' theorem (1981) concerns generic smooth dynamics and observables on a
+compact manifold of dimension :math:`d`, using :math:`m \ge 2d+1` coordinates.
+Extensions to fractal attractors use box-counting dimension under additional
+conditions. These theorems motivate reconstruction; they do not guarantee that
+an arbitrary observable, delay, or finite noisy recording resolves an attractor
+or its numerical invariants. This function constructs the requested coordinates
+without certifying that those embedding assumptions hold.
 
 :func:`embed` builds the :math:`(N - (m-1)\tau)\times m` matrix of delay vectors,
 and also performs **multivariate** embedding — stacking delay coordinates of

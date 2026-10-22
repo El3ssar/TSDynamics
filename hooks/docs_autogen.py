@@ -50,8 +50,6 @@ import os
 import sys
 from pathlib import Path
 
-from mkdocs.structure.files import File, InclusionLevel
-
 _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT / "docs" / "_tooling"))
 
@@ -194,10 +192,7 @@ def _viewer_iframe(rec, uri: str, *, second: bool, projection_label: str) -> str
     depth = uri.count("/") + 1
     suffix = "-b" if second else ""
     src = "../" * depth + f"assets/threejs/{rec.name}{suffix}.html"
-    title = (
-        f"{rec.name} attractor{projection_label} — drag to orbit, "
-        "scroll to zoom (plays automatically)"
-    )
+    title = f"{rec.name} attractor{projection_label} — drag to orbit, scroll to zoom"
     return (
         f'<iframe class="ts-attractor" src="{src}" loading="lazy" '
         f'title="{title}" scrolling="no"></iframe>'
@@ -334,9 +329,15 @@ def _attractor_block(
             "    interactive attractor / static field image for this system.",
             "",
         ]
-    # Figures are enabled but this system genuinely has no attractor image — say
-    # nothing rather than the misleading "build with figures enabled" note.
-    return []
+    reason = _figures.RENDER_FAILURES.get(
+        rec.name, "No bounded illustrative trajectory was obtained."
+    )
+    return [
+        '!!! note "Illustration unavailable"',
+        f"    {reason}",
+        "    The model definition and runnable example below remain available.",
+        "",
+    ]
 
 
 def _fmt_default(v) -> str:
@@ -352,11 +353,13 @@ def _fmt_default(v) -> str:
 
 def _parameter_table(rec) -> list[str]:
     """Build a SYMBOL / DEFAULT / ROLE table; role from editorial ``param_roles``."""
-    if not rec.params:
-        return []
-    parts = ["## Parameters", "", "| Symbol | Default | Role |", "|---|---|---|"]
+    parts = ["## Parameters", ""]
+    if rec.params:
+        parts += ["| Symbol | Default | Role |", "|---|---|---|"]
+    else:
+        parts += ["This model has no adjustable parameters.", ""]
     for key, val in rec.params.items():
-        role = rec.param_roles.get(key, "")
+        role = rec.param_roles.get(key, "Coefficient in the model equations")
         parts.append(f"| `{key}` | `{_fmt_default(val)}` | {role} |")
     parts.append("")
     if rec.variables:
@@ -371,45 +374,126 @@ def _define_block(rec) -> list[str]:
 
     Two spellings are load-bearing here and are gated by
     :func:`_assert_define_block_uses_the_live_api`, because this block is
-    reproduced on all 177 generated pages and nothing else executes it:
+    reproduced on every generated page (and executed for all catalogue entries
+    by :mod:`tests.test_docs_system_pages`):
 
     * ``run`` is the one trajectory verb on every family (``integrate`` /
       ``iterate`` / ``trajectory`` do not exist);
     * an analysis is a **free function whose first argument is its subject**
       (``ts.analysis.lyapunov_spectrum(system)``) — there is no bound method.
     """
+    opts = _figures.FIG_OVERRIDES.get(rec.name, {})
     if rec.family == "map":
-        run = "traj = system.run(steps=10_000)"
+        run = "traj = system.run(steps=2_000, seed=0)"
     elif rec.family == "dde":
-        run = "traj = system.run(final_time=500.0, dt=0.5)"
+        if "history_center" in opts:
+            center, amplitude = opts["history_center"], opts["history_amp"]
+            run = (
+                "traj = system.run(final_time=500.0, dt=0.5,\n"
+                f"                  history=lambda t: [{center} + {amplitude} * np.sin(0.2 * t)] "
+                "* system.dim)"
+            )
+        else:
+            run = "traj = system.run(final_time=500.0, dt=0.5, seed=0)"
     else:
-        run = "traj = system.run(final_time=100.0, dt=0.01)"
+        # A first simulation should be small, but a fixed universal window is
+        # unusable for the fast chemical models and the slow spatial fields.
+        duration = opts.get("final_time", 20.0)
+        dt = opts.get("dt", 0.01)
+        run = f"traj = system.run(final_time={duration!r}, dt={dt!r}, seed=0)"
 
     lines = [
-        "## Use it in TSDynamics",
+        "## Start here",
         "",
         "```python",
+        *(["import numpy as np"] if rec.family == "dde" and "history_center" in opts else []),
         "import tsdynamics as ts",
         "",
         f"system = ts.systems.{rec.name}()",
         run,
         "ts.plot(traj)",
+        "```",
+        "",
+        "`traj.t` contains the sample times and `traj.y` the state array; "
+        "`system.info` shows the defaults. In a notebook the last line displays "
+        "the plot. In a Python script, call `.show()` on it to open a window, "
+        'or `.save("trajectory.svg")` to export it.',
+        "",
     ]
-    # A Lyapunov line where it is meaningful (flows + maps; not SDE — its estimator
-    # is a different object, shown on the stochastic pages).
-    if rec.family in ("ode", "map"):
+    if rec.family == "sde":
         lines += [
+            "`seed=0` fixes the noise realization. For SDEs, `dt` controls both "
+            "the numerical step and output spacing; compare smaller steps before "
+            "interpreting a statistic.",
             "",
-            "spectrum = ts.analysis.lyapunov_spectrum(system)",
-            "ts.analysis.kaplan_yorke_dimension(spectrum)",
+        ]
+    elif rec.family == "map":
+        lines += ["`steps` counts map iterations; there is no integration step size.", ""]
+    elif rec.family == "dde":
+        lines += [
+            "A delay system needs a past history, not just its present state. "
+            + (
+                "This example supplies a bounded sinusoidal history; a different "
+                "history can select another basin or escape."
+                if "history_center" in opts
+                else "This example uses the model's default history; pass `history=` "
+                "to describe a different past."
+            ),
+            "",
+        ]
+    else:
+        lines += [
+            "For the default adaptive ODE solver, `dt` is the output spacing. "
+            "Choose `rtol` and `atol` to control integration accuracy.",
+            "",
+        ]
+    return lines
+
+
+def _next_steps(rec, uri: str) -> list[str]:
+    """Link the model to methods that accept its actual family."""
+
+    def link(path):
+        return _rel(uri, path)
+
+    lines = ["## Explore further", ""]
+    from tsdynamics.analysis._tangent import flow_has_explicit_time
+
+    forced = rec.family == "ode" and flow_has_explicit_time(rec.cls())
+    if forced:
+        lines += [
+            f"- [Lyapunov estimates]({link('analysis/lyapunov.md')}) — measure "
+            "response separation rates. An attractor dimension needs the forcing "
+            "phase in an autonomous extension.",
+            f"- [Stroboscopic and Poincaré maps]({link('reference/derived.md')}) "
+            "— study recurring responses to periodic forcing; freezing time does "
+            "not define an autonomous equilibrium problem.",
+        ]
+    elif rec.family in ("ode", "map"):
+        lines += [
+            f"- [Lyapunov spectra and Kaplan–Yorke dimension]({link('analysis/lyapunov.md')}) "
+            "— measure separation rates, then check convergence with a longer run.",
+            f"- [Fixed points and stability]({link('analysis/fixed-points.md')}) "
+            "— find the equilibria or fixed points that organize the dynamics.",
         ]
     elif rec.family == "dde":
         lines += [
-            "",
-            "# DDE Lyapunov uses the infinite-dimensional-history estimator:",
-            "spectrum = ts.analysis.lyapunov_spectrum(system, k=1, dt=0.5, ic=traj.y[-1])",
+            f"- [Delay-system Lyapunov estimates]({link('analysis/lyapunov.md')}) "
+            "— estimate a few leading exponents of the history space; these do "
+            "not form a complete finite-dimensional spectrum.",
         ]
-    lines += ["```", ""]
+    else:
+        lines += [
+            f"- [Integration methods]({link('analysis/integration-and-methods.md')}) "
+            "— choose a numerical scheme and compare seeded sample paths.",
+        ]
+    lines += [
+        f"- [Plotting and export]({link('visualization/plotting.md')}) — choose "
+        "components, style a figure, or save it for a paper.",
+        f"- [Find a compatible analysis]({link('analysis/index.md')}) with "
+        "`ts.analysis.find(system)` or `ts.analysis.find(traj)`.",
+        "",
+    ]
     return lines
 
 
@@ -431,10 +515,9 @@ _DEAD_API_SPELLINGS: tuple[str, ...] = (
 def _assert_define_block_uses_the_live_api(rec, block: str) -> None:
     """Fail the build if a generated code block uses a name v6 removed.
 
-    The 177 generated pages are the library's largest single body of example
-    code and **no test executes them**, so a renamed verb would ship silently on
-    every one of them.  This turns that into a ``--strict`` build failure naming
-    the system and the dead spelling.
+    A renamed verb used to ship silently on every page. The executable-example
+    gate now covers each model, and this additional cheap build-time check names
+    a removed spelling immediately, even in a figures-free preview.
     """
     for dead in _DEAD_API_SPELLINGS:
         if dead in block:
@@ -521,7 +604,12 @@ def _bibtex(rec) -> str | None:
 def _reference_block(rec) -> list[str]:
     """Build a reference card: citation + DOI link + a collapsible BibTeX block."""
     if not rec.reference:
-        return []
+        return [
+            "## Reference",
+            "",
+            "No primary literature reference is recorded for this model.",
+            "",
+        ]
     parts = ["## Reference", ""]
     cite = rec.reference
     if rec.doi:
@@ -633,6 +721,31 @@ def _system_page(
         rec, uri, has_viewer, has_figure, has_viewer2=has_viewer2, field_movie=field_movie
     )
 
+    if has_viewer or has_figure or field_movie:
+        parts += [
+            '<p class="ts-model-note">The illustration is a finite simulation, '
+            "not a classification of every orbit. It may use a selected initial "
+            "condition or projection; diagnostics below state their own inputs.</p>",
+            "",
+        ]
+
+    # The first copyable example belongs before the symbolic details.
+    define = _define_block(rec)
+    _assert_define_block_uses_the_live_api(rec, "\n".join(define))
+    parts += define
+
+    parts += [
+        "## Dynamics at the default parameters",
+        "",
+        "Lyapunov exponents measure separation rates along an orbit. "
+        "The Kaplan–Yorke dimension is derived from those rates, not a direct "
+        "geometric measurement. Finite runs depend on the initial condition, "
+        "transient and observation window; a value near zero needs a convergence check.",
+        "",
+    ]
+    props = _properties.compute_properties(rec)
+    parts += [_properties.to_markdown(props), ""]
+
     # Definition: prose lead-in + the symbolic equations.
     parts += ["## Definition", ""]
     parts += [_equations_md(rec), ""]
@@ -640,19 +753,7 @@ def _system_page(
     # Parameters.
     parts += _parameter_table(rec)
 
-    # Properties (computed stat cards — Lyapunov / Kaplan–Yorke / divergence /
-    # equilibria, each with a graceful TODO where ill-defined or too slow).
-    parts += ["## Properties", ""]
-    try:
-        props = _properties.compute_properties(rec)
-        parts += [_properties.to_markdown(props), ""]
-    except Exception as exc:  # noqa: BLE001 — a property card must never break a build
-        parts += [f"_Properties unavailable ({type(exc).__name__})._", ""]
-
-    # Use it (the real v6 API), gated against spellings v6 removed.
-    define = _define_block(rec)
-    _assert_define_block_uses_the_live_api(rec, "\n".join(define))
-    parts += define
+    parts += _next_steps(rec, uri)
 
     # Reference — citation, resolvable DOI link, BibTeX.
     reference = _reference_block(rec)
@@ -695,7 +796,7 @@ def _systems_index(catalog) -> str:
         "# Systems",
         "",
         '<p class="ts-subtitle">A curated library of canonical dynamical systems — '
-        "each one defined, integrated, and analysis-ready out of the box. Browse by "
+        "each with equations, parameters and a runnable example. Browse by "
         "type, or drop straight into a definition and start simulating.</p>",
         "",
         '<div class="ts-stats" markdown>',
@@ -707,12 +808,31 @@ def _systems_index(catalog) -> str:
         '<div class="ts-stat-label">SUBCATEGORIES</div></div>',
         "</div>",
         "",
+        "## Pick a familiar starting point",
+        "",
+        "| Model | What you can explore |",
+        "|---|---|",
+        *[
+            f"| [{name}]({_rel('systems/index.md', _system_uri(catalog.by_name(name)))}) | {purpose} |"
+            for name, purpose in (
+                ("Lorenz", "A chaotic flow and its butterfly-shaped attractor"),
+                ("Henon", "A discrete map, stretching and folding, and fractal geometry"),
+                ("MackeyGlass", "Delayed feedback and history-dependent dynamics"),
+                ("OrnsteinUhlenbeck", "A noisy process with mean-reverting drift"),
+                (
+                    "DoublePendulum",
+                    "Coupled mechanical motion and sensitivity to initial conditions",
+                ),
+                ("GrayScott", "Reaction–diffusion patterns on a spatial grid"),
+            )
+        ],
+        "",
         "## One system, start to finish",
         "",
         "```python",
         "import tsdynamics as ts",
         "",
-        "lorenz = ts.systems.Lorenz()",
+        "lorenz = ts.systems.Lorenz(ic=[1, 1, 1])",
         "traj = lorenz.run(final_time=100.0, dt=0.01)             # trajectory → attractor",
         "exps = ts.analysis.lyapunov_spectrum(lorenz)             # [≈ +0.91, 0, ≈ −14.57]",
         "ts.analysis.kaplan_yorke_dimension(exps)                 # ≈ 2.06",
@@ -759,7 +879,7 @@ def _type_index(family: str, cats: dict) -> str:
     parts += [
         f'<p class="ts-count">{n_systems} systems · {len(cats)} subcategories</p>',
         "",
-        "## Define one",
+        "## Run one",
         "",
         "```python",
         *_type_define_snippet(family),
@@ -1083,6 +1203,10 @@ def on_config(config):
 
 def on_files(files, config):
     """Register generated pages + viewers, replacing any physical placeholder file."""
+    # Only the MkDocs build needs its file types. The catalogue and its runnable
+    # examples also serve core/dev tooling, where the docs extra is optional.
+    from mkdocs.structure.files import File, InclusionLevel
+
     for uri, content in _GENERATED.items():
         existing = files.get_file_from_path(uri)
         if existing is not None:

@@ -190,8 +190,6 @@ def fig_basins_continuation(plt, out_path):
 
 def fig_poincare_section(plt, out_path):
     """Rössler flow with the y=0 section and its crossings (x, z)."""
-    import numpy as np
-
     import tsdynamics as ts
 
     ros = ts.systems.Rossler()
@@ -224,8 +222,6 @@ def fig_poincare_section(plt, out_path):
 
 def fig_return_map(plt, out_path):
     """Two return maps: Rössler section x_{n+1}(x_n) and the Lorenz z-maxima cusp."""
-    import numpy as np
-
     import tsdynamics as ts
 
     # Rössler first-return in x at the section.
@@ -280,7 +276,7 @@ def fig_ou_ensemble(plt, out_path):
     fig, ax = plt.subplots(figsize=(6.4, 3.9))
 
     # A handful of sample paths.
-    for i, seed in enumerate((0, 3, 7, 11, 19)):
+    for seed in (0, 3, 7, 11, 19):
         p = ou.run(final_time=8.0, dt=0.01, ic=[2.0], seed=seed)
         ax.plot(p.t, p.y[:, 0], color=TEAL, lw=0.7, alpha=0.5, zorder=2)
 

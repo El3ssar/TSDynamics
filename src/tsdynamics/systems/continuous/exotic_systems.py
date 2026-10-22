@@ -494,9 +494,6 @@ class NewtonLiepnik(ContinuousSystem):
         return xdot, ydot, zdot
 
 
-# TODO(reference): unverified — needs a primary citation. No primary source
-# could be confidently matched to this specific three-dimensional Robinson
-# vector field; the maintainer should confirm the original reference.
 class Robinson(ContinuousSystem):
     """Robinson-labelled flow built from a Duffing-like oscillator.
 
@@ -507,9 +504,13 @@ class Robinson(ContinuousSystem):
 
     Note
     ----
-    The catalogue carries this vector field without a confirmed primary
-    citation: no published source could be confidently matched to this specific
-    three-dimensional form (see the module-level ``TODO`` above the class).
+    At ``v = -1`` the ``y*z`` feedback agrees with the polynomial family of
+    Robinson (1989), with ``(alpha, beta, gamma, delta) = (a, b, c, d)``.
+    Robinson's later paper, *Nonsymmetric Lorenz Attractors from a Homoclinic
+    Bifurcation* (2000), Section 6, identifies the original ``y*z`` coupling
+    while explaining how its new model differs. The extra ``v`` parameter here
+    independently scales that feedback; the citation does not establish chaos
+    at every parameter choice.
     At the shipped defaults, the catalogue audit measured near-zero leading
     finite-time exponents whose signs depend on the initial condition
     (approximately ``-6.5e-4`` to ``8.8e-4`` over the longer window). A chaotic
@@ -533,6 +534,12 @@ class Robinson(ContinuousSystem):
 
     dim = 3
     variables = ("x", "y", "z")
+    reference = (
+        "C. Robinson (1989), 'Homoclinic bifurcation to a transitive attractor of Lorenz type', "
+        "Nonlinearity 2(4), 495–518 (the y*z-coupled family at v=-1; "
+        "the shipped parameter regime is not a validated chaotic reference case)"
+    )
+    doi = "10.1088/0951-7715/2/4/001"
 
     @staticmethod
     def _equations(Y, t, *, a, b, c, d, v):

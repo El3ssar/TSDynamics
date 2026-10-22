@@ -66,6 +66,7 @@ def _svg(r, stroke_w):
 
 
 def main():
+    """Generate the legacy SVG brand mark, favicon, and a fidelity preview."""
     OUT.mkdir(parents=True, exist_ok=True)
     # Hero / nav mark — an open orb: a few interleaving Aizawa loops that keep
     # the strange-attractor structure legible while staying clean at small size.

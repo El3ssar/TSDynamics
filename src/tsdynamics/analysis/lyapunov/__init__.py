@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from numbers import Real
 from typing import Any, ClassVar
 
 import numpy as np
@@ -14,12 +15,13 @@ from tsdynamics.errors import (
     InvalidParameterError,
     remedy,
 )
-from tsdynamics.families import DelaySystem
+from tsdynamics.families import ContinuousSystem, DelaySystem
 
 from .._common import reject_data, reject_system
 from .._discovery import register as _register
 from .._result import ArrayResult, ScalarResult, _build_meta
 from .._result_json import _vector
+from .._tangent import flow_has_explicit_time
 from .from_data import LyapunovFromData, ScalingRegionWarning, lyapunov_from_data
 
 #: The data-first sibling every system-first Lyapunov entry point points at when
@@ -106,17 +108,30 @@ class LyapunovSpectrum(ArrayResult):
 
     @property
     def kaplan_yorke(self) -> float:
-        """The Kaplan--Yorke (Lyapunov) dimension implied by this spectrum."""
+        """Lyapunov dimension, or NaN when the recorded directions cannot define it.
+
+        A truncated leading spectrum must reach a negative cumulative sum.
+        Explicitly forced systems need an autonomous extension including the
+        forcing phase before these response rates define an attractor dimension.
+        """
+        if not self._dimension_supported():
+            return float("nan")
         return float(kaplan_yorke_dimension(self.values))
+
+    def _dimension_supported(self) -> bool:
+        e = np.asarray(self.values, dtype=float)
+        if self.meta and self.meta.get("autonomous") is False:
+            return False
+        return not (self.meta and self.meta.get("spectrum_complete") is False and np.sum(e) >= 0.0)
 
     @property
     def _is_flow(self) -> bool:
         """Whether the spectrum came from a continuous-time system.
 
-        A flow has at least one *structural* zero exponent (translation along
-        the orbit); a map has none.  That single fact is what calibrates the
-        classification below, so it has to be right — it is read off the
-        registry entry for ``meta["system"]``, falling back to the horizon
+        An autonomous flow on a bounded non-equilibrium orbit has a zero
+        exponent along its orbit; equilibria and externally forced systems need
+        not. The family is one input to the numerical threshold. It is read
+        from the registry entry for ``meta["system"]``, falling back to the horizon
         keyword the estimator recorded.  Absent evidence the answer is "map",
         the conservative choice: the map floor is a fixed relative one, so a
         misread flow is *hedged* by the band test rather than mislabelled.
@@ -127,17 +142,22 @@ class LyapunovSpectrum(ArrayResult):
     def _zero_tolerance(self) -> float:
         """The floor below which an exponent counts as zero, in this spectrum.
 
-        Calibrated on the estimator's **own realised zero**: a flow has a
-        structural zero exponent, so ``min|λ|`` measures how close to zero this
-        estimator got at this horizon — which is exactly the tolerance the
-        classification needs.  A map has no structural zero and keeps the
-        relative floor.
+        For a multi-direction autonomous flow, ``min|λ|`` is a conservative
+        empirical zero floor. A single leading direction cannot resolve the
+        neutral direction: using its magnitude would erase every positive
+        maximal exponent. Single-direction and explicitly forced results use
+        the relative floor, like maps.
         """
         e = np.abs(np.asarray(self.values, dtype=float))
         if e.size == 0:
             return 0.0
         base = 1e-3 * float(e.max())
-        return max(base, float(e.min())) if self._is_flow else max(1e-6, base)
+        realised_zero = (
+            self._is_flow
+            and e.size > 1
+            and not (self.meta and self.meta.get("autonomous") is False)
+        )
+        return max(base, float(e.min())) if realised_zero else max(1e-6, base)
 
     @property
     def zero_tolerance(self) -> float:
@@ -197,6 +217,11 @@ class LyapunovSpectrum(ArrayResult):
             # exponents: measured, an escaped Chua run reported a confident
             # λ = [0.3057, 0.3054, -6.068] and hedged only about the horizon.
             return "⚠ the orbit is UNBOUNDED — these are not attractor exponents"
+        if self._is_flow and e.size == 1:
+            return (
+                "indeterminate from one flow direction (finite-time shear can give a "
+                "positive rate on a regular orbit; measure more directions)"
+            )
         n_lo, n_hi = self._n_positive()
         if n_lo != n_hi:
             return (
@@ -215,13 +240,15 @@ class LyapunovSpectrum(ArrayResult):
     def unbounded(self) -> bool:
         """Whether the orbit these exponents were measured on **escaped**.
 
-        Read off ``meta["orbit_peak"]`` — the magnitude of the state the
-        estimator landed on, recorded by
-        :func:`tsdynamics.families.base.orbit_peak`.  A run that blows up
-        without reaching the engine's hard ``1e150`` guard still returns a full,
-        finite spectrum; this is what tells that apart from an answer.
+        When ``meta["orbit_start"]`` is available, the recorded peak must reach
+        both the shared absolute scale and growth factor. Large physical units
+        alone do not imply escape. Older results containing only
+        ``meta["orbit_peak"]`` retain the absolute-scale check.
         """
-        return escaped(self.meta.get("orbit_peak") if self.meta else None)
+        return escaped(
+            self.meta.get("orbit_peak") if self.meta else None,
+            start=self.meta.get("orbit_start") if self.meta else None,
+        )
 
     @property
     def n_positive(self) -> int:
@@ -248,7 +275,8 @@ class LyapunovSpectrum(ArrayResult):
         True
         """
         n_lo, n_hi = self._n_positive()
-        if np.asarray(self.values).size == 0 or n_lo != n_hi or self.unbounded:
+        size = np.asarray(self.values).size
+        if size == 0 or (self._is_flow and size == 1) or n_lo != n_hi or self.unbounded:
             return None
         return n_lo >= 1
 
@@ -258,7 +286,8 @@ class LyapunovSpectrum(ArrayResult):
         n_lo, n_hi = self._n_positive()
         if self.unbounded:
             return "unbounded"
-        if np.asarray(self.values).size == 0 or n_lo != n_hi:
+        size = np.asarray(self.values).size
+        if size == 0 or (self._is_flow and size == 1) or n_lo != n_hi:
             return "indeterminate"
         return "hyperchaotic" if n_lo >= 2 else "chaotic" if n_lo == 1 else "regular"
 
@@ -271,7 +300,12 @@ class LyapunovSpectrum(ArrayResult):
         e = np.asarray(self.values, dtype=float)
         if e.size == 0:
             return ()
-        kind = "flow (realised zero)" if self._is_flow else "map (relative floor)"
+        realised = (
+            self._is_flow
+            and e.size > 1
+            and not (self.meta and self.meta.get("autonomous") is False)
+        )
+        kind = "flow (empirical zero floor)" if realised else "relative floor"
         word = "exponent" if e.size == 1 else "exponents"
         return (f"({e.size} {word} · {kind} · λ > {self._zero_tolerance:.3g})",)
 
@@ -279,7 +313,7 @@ class LyapunovSpectrum(ArrayResult):
         """Export the derived answers the repr reports."""
         n_lo, _ = self._n_positive()
         return {
-            "kaplan_yorke": self.kaplan_yorke,
+            "kaplan_yorke": self.kaplan_yorke if np.isfinite(self.kaplan_yorke) else None,
             "n_positive": n_lo,
             "zero_tolerance": self._zero_tolerance,
             "chaotic": self.chaotic,
@@ -318,7 +352,7 @@ class LyapunovSpectrum(ArrayResult):
             xlabel="index $i$",
             ylabel=r"$\lambda_i$",
             title=f"Lyapunov spectrum ($D_{{KY}}$ = {self.kaplan_yorke:.3g})"
-            if exps.size
+            if exps.size and np.isfinite(self.kaplan_yorke)
             else "Lyapunov spectrum",
             annotations=[pb.hline(0.0, text=r"$\lambda = 0$")],
         )
@@ -333,8 +367,9 @@ def kaplan_yorke_dimension(spectrum: Any) -> ScalarResult:
 
     where :math:`j` is the largest index whose cumulative exponent sum is
     non-negative (Kaplan & Yorke 1979).  Interpolating between the :math:`j`-th
-    and :math:`(j+1)`-th exponents gives a fractional estimate of the attractor's
-    information dimension.
+    and :math:`(j+1)`-th exponents defines the Lyapunov dimension. Its equality
+    with an attractor's information dimension requires additional dynamical
+    assumptions; this interpolation alone does not establish that equality.
 
     When you already hold a :class:`LyapunovSpectrum`, ``spectrum.kaplan_yorke``
     is the same number and the shorter spelling — it calls this.  Reach for the
@@ -362,10 +397,11 @@ def kaplan_yorke_dimension(spectrum: Any) -> ScalarResult:
         * every exponent negative (:math:`\lambda_1 < 0`) — a stable fixed point:
           ``0.0``;
         * the cumulative sum never turns negative — the spectrum is *incomplete*
-          (a truncated ``k < dim`` spectrum, or a conservative system whose
-          exponents sum to zero, e.g. ``[1, -1]``): saturates at
-          ``len(spectrum)``, since :math:`D_{KY}` cannot exceed the number of
-          directions supplied.
+          (for example a conservative system with ``[1, -1]``): a bare array
+          saturates at ``len(spectrum)``. An array carries no evidence of whether
+          directions were omitted, so callers must provide the full spectrum.
+          A :class:`LyapunovSpectrum` known to be truncated instead raises when
+          more directions are needed; its length is not an attractor dimension.
 
         :math:`\lambda_{j+1}` cannot be zero at the interpolation step: if it
         were, the cumulative sum at ``j + 1`` would equal the one at ``j`` and
@@ -375,7 +411,8 @@ def kaplan_yorke_dimension(spectrum: Any) -> ScalarResult:
     ------
     InvalidParameterError
         If ``spectrum`` is empty, is not one-dimensional, or holds a non-finite
-        exponent.
+        exponent, or a recorded spectrum lacks the directions required to
+        define a dimension (including the forcing phase of a forced system).
 
     Examples
     --------
@@ -431,6 +468,13 @@ def kaplan_yorke_dimension(spectrum: Any) -> ScalarResult:
             f"({np.array2string(s, precision=4)}); the estimator did not converge, so "
             "any dimension read off it would be meaningless."
         )
+    if isinstance(spectrum, LyapunovSpectrum) and not spectrum._dimension_supported():
+        raise InvalidParameterError(
+            "kaplan_yorke_dimension cannot define an attractor dimension from these "
+            "directions. A truncated spectrum must reach a negative cumulative sum; "
+            "an explicitly forced system needs an autonomous extension including "
+            "its forcing phase. Request the missing directions before reporting a dimension."
+        )
     s = np.sort(s)[::-1]
     if s[0] < 0.0:
         dky = 0.0
@@ -460,7 +504,7 @@ def lyapunov_spectrum(
     steps_per: int | None = None,
     **aliases: Any,
 ) -> LyapunovSpectrum:
-    """Lyapunov spectrum — lambda_1 > 0 is the chaos test.
+    """Estimate tangent growth rates and inspect evidence of sensitive dependence.
 
     The **one** entry point for every family, and since v6 the one entry point
     for the maximal exponent too: ask for ``k=1``.
@@ -505,7 +549,7 @@ def lyapunov_spectrum(
         raises, as does any other keyword.
     rtol, atol : float, optional
         Solver tolerances for the flow / DDE variational integration (they have
-        no meaning for a map, whose tangent iteration is exact arithmetic).
+        no meaning for a map, whose tangent dynamics are iterated directly).
     transient : float, optional
         Dynamics discarded before the exponents are accumulated — **time units**
         for a flow (the same unit as ``final_time``, and the unit
@@ -572,7 +616,7 @@ def lyapunov_spectrum(
     LyapunovSpectrum
         The exponents (largest first), a drop-in for the bare ``(k,)`` array —
         ``np.asarray(result)``, indexing and iteration work — that also carries
-        ``.meta``, ``.summary()`` and the ``.kaplan_yorke`` dimension.
+        ``.meta``, a readable repr and the ``.kaplan_yorke`` dimension.
 
     Raises
     ------
@@ -587,6 +631,12 @@ def lyapunov_spectrum(
         / ``dt`` / ``solver`` for a map; ``n`` for a flow; or a ``solver`` for a
         DDE, which selects its engine via ``backend``), or ``k > 1`` is asked of
         a system with no Jacobian (two trajectories resolve one exponent).
+    ConvergenceError
+        If an ODE orbit crosses the shared escape scale and growth bounds.
+        Native and reference tangent integrations stop with the time and state
+        magnitude, rather than spending the remaining window on an escaping
+        orbit. Choose an initial condition in the bounded basin before retrying.
+        For other returned results, inspect ``result.unbounded`` as well.
 
     Examples
     --------
@@ -660,6 +710,24 @@ def lyapunov_spectrum(
                 + remedy("ts.analysis.lyapunov_spectrum(system, n=5000)")
             )
         n = steps
+
+    if getattr(system, "family", None) != "map":
+        for name, value, allow_zero in (
+            ("final_time", final_time, False),
+            ("dt", dt, False),
+            ("transient", transient, True),
+        ):
+            if value is None:
+                continue
+            valid = (
+                isinstance(value, Real)
+                and not isinstance(value, (bool, np.bool_))
+                and np.isfinite(value)
+                and (value >= 0.0 if allow_zero else value > 0.0)
+            )
+            if not valid:
+                rule = "non-negative" if allow_zero else "positive"
+                raise InvalidParameterError(f"{name} must be finite and {rule}, got {value!r}.")
 
     if method_fn is None:
         # No variational machine — an adapted external stepper (a
@@ -780,7 +848,10 @@ def lyapunov_spectrum(
         if atol is not None:
             fwd["atol"] = atol
     estimate = method_fn(**fwd)
-    exponents = np.asarray(estimate, dtype=float)
+    # QR directions retain their own accumulator order internally; finite-time
+    # rates can cross, especially in nearly degenerate directions. The public
+    # spectrum promises largest first and carries no live frame to reorder.
+    exponents = np.sort(np.asarray(estimate, dtype=float))[::-1]
     meta = _build_meta(
         system,
         analysis="lyapunov_spectrum",
@@ -788,11 +859,19 @@ def lyapunov_spectrum(
         final_time=final_time,
         n=n,
         transient=transient,
+        state_dimension=int(system.dim),
+        spectrum_complete=not isinstance(system, DelaySystem) and exponents.size == int(system.dim),
+        autonomous=not flow_has_explicit_time(system)
+        if isinstance(system, (ContinuousSystem, DelaySystem))
+        else True,
         # Carry the family estimator's record of where the orbit LANDED, so a
         # spectrum measured on an escaping orbit can refuse a verdict instead of
         # hedging about the horizon.  This function rebuilds ``meta`` from
         # scratch, so anything the family recorded has to be re-read here.
         orbit_peak=getattr(estimate, "meta", {}).get("orbit_peak"),
+        orbit_start=getattr(estimate, "meta", {}).get(
+            "orbit_start", getattr(system, "_lyapunov_start_peak", None)
+        ),
     )
     return LyapunovSpectrum(values=exponents, meta=meta)
 
@@ -1072,6 +1151,7 @@ def _two_trajectory_spectrum(
         transient=transient,
         estimator="two-trajectory",
         window=elapsed,
+        spectrum_complete=int(getattr(system, "dim", 1)) == 1,
     )
     return LyapunovSpectrum(values=np.array([log_sum / elapsed], dtype=float), meta=meta)
 

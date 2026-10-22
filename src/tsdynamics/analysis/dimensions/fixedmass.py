@@ -13,11 +13,13 @@ fractal, :math:`k/N \sim r_k^{D}`, so averaging over reference points,
 
 and :math:`D` is the slope of :math:`\psi(k)` against
 :math:`\langle \log r_k \rangle` in the scaling region.  The digamma function
-:math:`\psi(k)` — *not* :math:`\log k` — is the bias-free abscissa: for a fixed
+:math:`\psi(k)` — *not* :math:`\log k` — corrects the neighbour-order bias: for a fixed
 mass :math:`k` the enclosing radius is a random order statistic, and Grassberger
-(1985) showed that :math:`\langle \log r_k \rangle = D^{-1}\psi(k) + \text{const}`
-exactly (the same digamma correction that makes the Kozachenko–Leonenko / KSG
-nearest-neighbour estimators unbiased).  Since
+(1985) motivates the local-scaling relation
+:math:`\langle \log r_k \rangle \approx D^{-1}\psi(k) + \text{const}`.
+The correction does not make a finite-sample dimension estimate unbiased:
+boundaries, correlations, and departures from local power-law scaling remain.
+Since
 :math:`\psi(k) = \log k - \tfrac{1}{2k} + O(k^{-2})`, the two abscissae coincide
 for large :math:`k`, but using :math:`\log k` systematically biases the slope at
 the small-:math:`k` end of the scaling region, where the fixed-mass method earns
@@ -117,17 +119,17 @@ def fixed_mass_dimension(
     -------
     DimensionResult
         ``float(result)`` is the dimension; ``x`` is :math:`\langle\log r_k\rangle`
-        and ``y`` is the digamma :math:`\psi(k)` (the unbiased abscissa, *not*
+        and ``y`` is the digamma :math:`\psi(k)` (the order-statistic correction, *not*
         :math:`\log k`).
 
     Notes
     -----
     The ordinate is the digamma :math:`\psi(k)` rather than :math:`\log k`.  For
     a fixed mass the enclosing radius :math:`r_k` is a random order statistic, and
-    :math:`\langle\log r_k\rangle = D^{-1}\psi(k) + \text{const}` holds without the
-    :math:`O(1/k)` bias that :math:`\log k` carries at small :math:`k` (Grassberger
-    1985; the digamma correction of the Kozachenko–Leonenko nearest-neighbour
-    estimators).
+    :math:`\langle\log r_k\rangle \approx D^{-1}\psi(k) + \text{const}` uses the
+    order-statistic correction in place of :math:`\log k` at small :math:`k`
+    (Grassberger 1985). It still requires a resolved scaling region and does not
+    remove all finite-sample or boundary bias.
 
     References
     ----------
@@ -196,8 +198,8 @@ def fixed_mass_dimension(
 
     # D is the slope of psi(k) vs <log r_k>; <log r_k> increases with k, so it is
     # the (sorted-ascending) abscissa and the index windows are contiguous in scale.
-    # The digamma psi(k) is the unbiased ordinate: <log r_k> = (1/D) psi(k) + const
-    # exactly, so log(k) would bias the slope at small k (Grassberger 1985).
+    # The digamma ordinate corrects the small-k order-statistic contribution;
+    # the local-scaling relation remains an approximation on finite data.
     x = mean_log_r
     y = digamma(ks.astype(float))
     order = np.argsort(x)

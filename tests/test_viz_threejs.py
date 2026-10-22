@@ -1647,3 +1647,165 @@ def test_the_two_comet_window_formulas_agree_when_run() -> None:
         [node, "-e", script], capture_output=True, text=True, check=True
     )
     assert json.loads(out.stdout) == []
+
+
+@pytest.fixture(scope="module")
+def comet_clock_probe():
+    """Run the shipped clock with synthetic frame timestamps and browser events."""
+    from tsdynamics.viz.render.threejs import loader_source
+
+    node = shutil.which("node")
+    if node is None:  # pragma: no cover - node is present in CI
+        pytest.skip("node is not installed")
+    source = loader_source()
+    start = source.index("function installAnimation(")
+    clock = source[start : source.index("\n/**", start)]
+    harness = r"""
+    function mount({n = 101, duration = 10, loop = false, reduced = false} = {}) {
+      class Element {
+        constructor() { this.children = []; this.style = {}; this.attributes = {}; }
+        setAttribute(name, value) { this.attributes[name] = value; }
+        appendChild(child) { this.children.push(child); child.parentNode = this; }
+        removeChild(child) {
+          this.children.splice(this.children.indexOf(child), 1);
+          child.parentNode = null;
+        }
+      }
+      const frames = new Map(), docListeners = new Set(), motionListeners = new Set();
+      let nextFrame = 0, head = -1;
+      const document = {
+        hidden: false, createElement: () => new Element(),
+        addEventListener: (name, fn) => docListeners.add(fn),
+        removeEventListener: (name, fn) => docListeners.delete(fn),
+      };
+      const motion = {
+        matches: reduced,
+        addEventListener: (name, fn) => motionListeners.add(fn),
+        removeEventListener: (name, fn) => motionListeners.delete(fn),
+      };
+      const requestFrame = fn => { frames.set(++nextFrame, fn); return nextFrame; };
+      const install = new Function(
+        "document", "window", "requestAnimationFrame", "cancelAnimationFrame",
+        "getComputedStyle", "console", CLOCK + ";return installAnimation;"
+      )(document, {matchMedia: () => motion}, requestFrame,
+        id => frames.delete(id), () => ({position: "static"}), {info() {}});
+      const container = new Element(), visibility = {visible: true};
+      const handle = install(container, [{nVerts: n, group: {}, seek(i) { head = i; }}],
+        {n_samples: n, duration, loop}, visibility);
+      const [play, restart, readout] = container.children[0].children;
+      return {
+        handle, container, play, restart, readout,
+        head: () => head,
+        frame(timestamp) {
+          const pending = [...frames.values()]; frames.clear();
+          for (const fn of pending) fn(timestamp);
+        },
+        visible(value) { visibility.visible = value; handle.resetClock(); },
+        hidden(value) { document.hidden = value; for (const fn of docListeners) fn(); },
+        reduced(value) { motion.matches = value; for (const fn of motionListeners) fn(); },
+        resources: () => [frames.size, docListeners.size, motionListeners.size, container.children.length],
+      };
+    }
+    """
+
+    def run(scenario):
+        script = "const CLOCK = " + json.dumps(clock) + ";\n" + harness + scenario
+        out = subprocess.run(  # noqa: S603
+            [node, "-"], input=script, capture_output=True, text=True, check=True, timeout=10
+        )
+        return json.loads(out.stdout)
+
+    return run
+
+
+def test_comet_duration_uses_elapsed_time_at_every_refresh_rate(comet_clock_probe) -> None:
+    """Sparse and dense paths take the requested seconds at 30, 60 and 120 Hz."""
+    results = comet_clock_probe("""
+      const results = [];
+      for (const n of [2, 17, 40001]) for (const hz of [30, 60, 120]) {
+        const view = mount({n});
+        view.frame(0);
+        for (let i = 1; i <= 5 * hz; i++) view.frame(i * 1000 / hz);
+        const half = view.head();
+        for (let i = 5 * hz + 1; i <= 10 * hz; i++) view.frame(i * 1000 / hz);
+        const end = view.head();
+        view.frame(15000);
+        results.push([n, hz, half, end, view.head(), view.readout.textContent,
+          view.play.attributes['aria-label']]);
+        view.handle.stop();
+      }
+      console.log(JSON.stringify(results));
+    """)
+    for n, _hz, half, end, held, readout, action in results:
+        assert half == (n - 1) // 2
+        assert end == held == n - 1
+        assert readout == "100%"
+        assert action == "Play animation"
+
+
+def test_comet_resumes_without_counting_hidden_or_paused_time(comet_clock_probe) -> None:
+    """Offscreen views and hidden tabs resume at the prior sample without a jump."""
+    values = comet_clock_probe("""
+      const view = mount(), values = [];
+      view.frame(0); view.frame(1000); values.push(view.head());
+      // An offscreen iframe may receive no frames at all before returning.
+      view.visible(false); view.visible(true);
+      view.frame(20000); values.push(view.head());
+      view.frame(21000); values.push(view.head());
+      view.hidden(true); view.hidden(false);
+      view.frame(100000); values.push(view.head());
+      view.frame(101000); values.push(view.head());
+      view.play.onclick(); view.frame(150000);
+      view.play.onclick(); view.frame(200000); values.push(view.head());
+      view.frame(201000); values.push(view.head());
+      view.play.onclick(); view.restart.onclick(); view.frame(300000);
+      values.push(view.head(), view.play.attributes['aria-label']);
+      view.handle.stop();
+      console.log(JSON.stringify(values));
+    """)
+    assert values == [10, 10, 20, 20, 30, 30, 40, 0, "Play animation"]
+
+
+def test_comet_reduced_motion_controls_and_disposal(comet_clock_probe) -> None:
+    """Reduced motion pauses playback; native buttons stay named and listeners close."""
+    values = comet_clock_probe("""
+      const view = mount({reduced: true}), values = [];
+      view.frame(0); view.frame(1000);
+      values.push(view.head(), view.play.type, view.play.attributes['aria-label'],
+        view.restart.attributes['aria-label']);
+      view.reduced(false); view.frame(2000); values.push(view.head());
+      view.play.onclick(); view.frame(3000); view.frame(4000); values.push(view.head());
+      view.reduced(true); view.frame(5000); view.frame(6000);
+      values.push(view.head(), view.play.attributes['aria-label']);
+      view.handle.stop();
+      values.push(view.resources(), view.play.onclick, view.restart.onclick);
+      console.log(JSON.stringify(values));
+    """)
+    assert values == [
+        0,
+        "button",
+        "Play animation",
+        "Restart animation",
+        0,
+        10,
+        10,
+        "Play animation",
+        [0, 0, 0, 0],
+        None,
+        None,
+    ]
+
+
+def test_comet_loops_and_replays_a_finished_explicit_duration(comet_clock_probe) -> None:
+    """Looping wraps in elapsed seconds and a finished non-looping movie can replay."""
+    values = comet_clock_probe("""
+      const looping = mount({duration: 4, loop: true});
+      looping.frame(0); looping.frame(5000);
+      const finished = mount({duration: 4});
+      finished.frame(0); finished.frame(4000);
+      const end = finished.head();
+      finished.play.onclick(); finished.frame(20000); finished.frame(21000);
+      console.log(JSON.stringify([looping.head(), end, finished.head()]));
+      looping.handle.stop(); finished.handle.stop();
+    """)
+    assert values == [25, 100, 25]

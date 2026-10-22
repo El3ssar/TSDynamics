@@ -187,7 +187,8 @@ class Resolution:
     Attributes
     ----------
     name : str
-        The canonical kernel name (the resolved ``method=`` the engine receives).
+        The registered solver name. Plugins can select an implementation with a
+        different name through :attr:`kernel`.
     spec : SolverSpec
         The registered spec for :attr:`name`.
     family : str or None

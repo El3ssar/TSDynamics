@@ -9,13 +9,13 @@
   "type_blurbs": {
     "ode": "Continuous-time systems. Write the right-hand side; TSDynamics lowers it to the Rust engine and integrates with adaptive Dormand–Prince, implicit BDF, or fixed-step schemes.",
     "dde": "Feedback with a finite memory. Supply the delays and a history function; TSDynamics integrates by the method of steps with dense interpolation of the past.",
-    "sde": "Systems driven by noise. Provide drift and diffusion; TSDynamics integrates with Euler–Maruyama or Milstein and returns ensembles, moments, and the deterministic skeleton.",
+    "sde": "Itô systems driven by diagonal Wiener noise. Provide drift and diffusion; choose Euler–Maruyama, or Milstein for componentwise diffusion, then compare seeded paths and ensembles.",
     "map": "Discrete-time systems. Iterate orbits, cobweb and bifurcation diagrams, and Lyapunov exponents directly — no integration needed."
   },
   "type_definitions": {
     "ode": "\\dot{x} = f(x, t)",
-    "dde": "\\dot{x}(t) = f\\big(x(t),\\, x(t-\\tau)\\big)",
-    "sde": "dx = f(x)\\,dt + g(x)\\,dW",
+    "dde": "\\dot{x}(t) = f\\big(x(t),\\, x(t-\\tau_1),\\, \\ldots,\\, t\\big)",
+    "sde": "dx_k = f_k(x,t)\\,dt + g_k(x,t)\\,dW_k",
     "map": "x_{n+1} = f(x_n)"
   },
   "subcategory_labels": {
@@ -37,7 +37,7 @@
     "population_maps": "Population maps"
   },
   "subcategory_blurbs": {
-    "chaotic_attractors": "Dissipative flows with a positive Lyapunov exponent that settle onto a strange attractor — bounded, aperiodic, sensitive to initial conditions.",
+    "chaotic_attractors": "Classical models of chaotic flows. The chosen parameters and initial condition can also select equilibria, cycles, or escaping orbits; each system page reports evidence for its defaults.",
     "chem_bio_systems": "Reaction kinetics and excitable cells. Mass-action and Hill-type nonlinearities give oscillations, bistability, and spikes.",
     "climate_geophysics": "Low-order truncations of atmosphere, ocean, and flow — capturing regime behavior, tipping, and reversals with a handful of modes.",
     "coupled_systems": "Engineered and coupled chaotic flows — generalized Lorenz/Chen-family attractors and interacting units.",
@@ -46,9 +46,9 @@
     "physical_systems": "Mechanical and electrical models from first principles — pendula, circuits, lasers, and few-body motion.",
     "population_dynamics": "Interacting species and resources — cycles, coexistence, and predator–prey coevolution.",
     "spatial_fields": "Spatially extended PDEs reduced to large ODE systems by method-of-lines — pattern formation and spatiotemporal chaos.",
-    "delayed_systems": "The rate depends on the state τ ago — a scalar variable becomes effectively infinite-dimensional, giving high-dimensional chaos from one line.",
+    "delayed_systems": "The rate depends on a past history. Even a scalar delay equation has an infinite-dimensional state space and can support equilibria, oscillations, or chaos.",
     "stochastic_systems": "Deterministic skeletons perturbed by Wiener noise — mean reversion, escape, switching, and noise-induced transitions.",
-    "chaotic_maps": "Aperiodic, exponentially sensitive orbits — the simplest route to chaos.",
+    "chaotic_maps": "Maps studied for aperiodic and exponentially sensitive orbits. Their actual regime depends on the parameters and starting state.",
     "exotic_maps": "Strange and ornamental attractors — iterated trigonometric and polynomial maps prized for their structure.",
     "geometric_maps": "Area-preserving and piecewise-linear maps — mixing, horseshoes, circle and toral dynamics.",
     "polynomial_maps": "Low-degree polynomial maps — the canonical setting for period-doubling and renormalization.",
@@ -82,7 +82,7 @@
       }
     },
     "Chen": {
-      "blurb": "A dual to Lorenz with the opposite sign convention — a generalized chaotic flow in the Lorenz family.",
+      "blurb": "A three-variable quadratic flow related to the Lorenz family, with a different linear coupling structure.",
       "behavior": [
         "chaotic"
       ],
@@ -107,13 +107,13 @@
       }
     },
     "Thomas": {
-      "blurb": "Cyclically symmetric flow whose 27 equilibria and labyrinthine trajectories arise from pure sinusoidal feedback.",
+      "blurb": "A cyclically symmetric flow with sinusoidal feedback, multiple equilibria, and labyrinthine trajectories.",
       "behavior": [
         "chaotic",
         "cyclically symmetric"
       ],
       "param_roles": {
-        "a": "dissipation (friction) coefficient (smaller = more chaotic)",
+        "a": "linear dissipation (friction) coefficient",
         "b": "amplitude of the sinusoidal forcing"
       }
     },
@@ -128,7 +128,7 @@
       }
     },
     "Aizawa": {
-      "blurb": "An ornamental forced attractor with a pinched-torus geometry — the TSDynamics signature shape.",
+      "blurb": "An autonomous nonlinear flow with a pinched-torus attractor — the TSDynamics signature shape.",
       "featured": true,
       "behavior": [
         "chaotic"
@@ -156,9 +156,9 @@
       }
     },
     "NoseHoover": {
-      "blurb": "A conservative thermostatted oscillator — chaos without dissipation, sampling a canonical ensemble.",
+      "blurb": "A deterministic thermostatted oscillator with coexisting regular and chaotic trajectories; its phase-space divergence varies along the orbit.",
       "behavior": [
-        "conservative"
+        "thermostatted"
       ],
       "param_roles": {
         "a": "target-temperature parameter of the thermostat"
@@ -370,9 +370,9 @@
       }
     },
     "Lissajous2D": {
-      "blurb": "A planar Lissajous figure — the elementary two-frequency oscillation.",
+      "blurb": "A planar curve from two harmonic motions: periodic for a rational frequency ratio and quasiperiodic otherwise.",
       "behavior": [
-        "quasiperiodic"
+        "oscillatory"
       ],
       "param_roles": {
         "A": "amplitude along the x axis",
@@ -383,9 +383,9 @@
       }
     },
     "Lissajous3D": {
-      "blurb": "A three-frequency Lissajous curve traced on a torus.",
+      "blurb": "A coordinate-wise 3D extension of the classical planar Lissajous construction. Commensurate frequencies produce a closed curve.",
       "behavior": [
-        "quasiperiodic"
+        "oscillatory"
       ],
       "param_roles": {
         "A": "amplitude along the x axis",

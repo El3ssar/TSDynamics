@@ -53,7 +53,12 @@ def _assert_valid_spec(spec: object) -> PlotSpec:
 
 
 def _fixed_point(stable: bool = True, continuous: bool = False) -> FixedPoint:
-    eig = np.array([0.4 + 0.0j, 0.9 + 0.0j]) if not continuous else np.array([-1.0 + 2j, -1.0 - 2j])
+    # Keep the fixture's stability flag consistent with its actual spectrum.
+    eig = (
+        np.array([0.4 + 0.0j, (0.9 if stable else 1.2) + 0.0j])
+        if not continuous
+        else np.array([(-1.0 if stable else 1.0) + 2j, (-1.0 if stable else 1.0) - 2j])
+    )
     return FixedPoint(
         x=np.array([0.5, -0.3]), eigenvalues=eig, stable=stable, continuous=continuous
     )

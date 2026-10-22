@@ -418,8 +418,7 @@ class DelaySystem(SystemBase, ABC):
                 )
             self._step_backend = backend
         if params:
-            for k, v in params.items():
-                self.params[k] = v
+            self.params.update(params)
         if t is not None and float(t) != 0.0:
             raise NotImplementedError(
                 "DelaySystem.reinit only supports t=0 (the past starts there)."

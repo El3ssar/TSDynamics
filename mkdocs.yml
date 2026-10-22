@@ -33,7 +33,7 @@ theme:
   custom_dir: docs/overrides
   language: en
   logo: assets/brand/logo/icon-on-dark.svg
-  favicon: assets/brand/logo/favicon.svg
+  favicon: assets/brand/logo/favicon-32.png
   icon:
     repo: fontawesome/brands/github
   font:
@@ -87,6 +87,7 @@ extra_css:
 
 extra_javascript:
   - js/math.js
+  - js/home.js
   - https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js
   - https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js
 
@@ -232,6 +233,7 @@ nav:
       - "Changelog": project/changelog.md
       - "Adding a system": project/adding-a-system.md
       - "Adding a solver": project/adding-a-solver.md
+      - "Plugins & extensions": project/plugins.md
       - "Naming glossary": contributing/glossary.md
 
 # Every page under docs/ is published EXCEPT the few named here.

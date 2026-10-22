@@ -2827,8 +2827,9 @@ to opt out is an explicit, reviewed entry — never silence.
 
 - **The 177 generated system pages are gated at build time** (v6,
   `hooks/docs_autogen.py`). They are the library's largest single body of example
-  code and **nothing executes them**, so a renamed verb ships silently on all 177
-  at once — which is exactly what happened: the "Define it" block was emitting
+  code. `tests/test_docs_system_pages.py` now executes all 177 generated
+  quickstarts against the real API. Before that execution gate, renamed verbs
+  shipped silently: the "Define it" block was emitting
   `sys.integrate(...)` / `sys.iterate(steps=…)` / `sys.lyapunov_spectrum()` /
   `ts.kaplan_yorke_dimension(...)` / `n_exp=`, five spellings v6 removed. Two
   build-time assertions close it, and `--strict` turns either into a failure
