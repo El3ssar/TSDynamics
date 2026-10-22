@@ -81,7 +81,9 @@ trajectory = ts.systems.Lorenz(ic=[1, 1, 1]).run(final_time=30, dt=0.01)
 base = ts.plot(trajectory, components=["x", "z"], color="#2CC5AE").theme("dark")
 persistent = base.copy().relabel(title="Keep the path").trail(None)
 window = base.copy().relabel(title="Last 300 samples").trail(300, backdrop=False)
-fading = base.copy().relabel(title="Fade those 300").trail(300, fade=True, backdrop=False)
+fading = base.copy().relabel(title="Fade those 300").trail(
+    300, fade=True, backdrop=False
+)
 movie = (persistent | window | fading).font(family="sans-serif", size=10)
 movie.animate(duration=12, fps=24)
 ```
@@ -115,9 +117,15 @@ import tsdynamics as ts
 trajectory = ts.systems.Lorenz(ic=[1, 1, 1]).run(final_time=30, dt=0.01)
 base = ts.plot(trajectory, color="#2CC5AE").theme("dark").style(axes=False)
 base.trail(250, fade=True, backdrop_alpha=0.12).head(size=7, color="#E8912D")
-reverse = base.copy().relabel(title="spin = -0.25").camera(elev=24, azim=-60, spin=-0.25)
-fixed = base.copy().relabel(title="spin = 0").camera(elev=24, azim=-60, spin=0)
-forward = base.copy().relabel(title="spin = +0.25").camera(elev=24, azim=-60, spin=0.25)
+reverse = base.copy().relabel(title="spin = -0.25").camera(
+    elev=24, azim=-60, spin=-0.25
+)
+fixed = base.copy().relabel(title="spin = 0").camera(
+    elev=24, azim=-60, spin=0
+)
+forward = base.copy().relabel(title="spin = +0.25").camera(
+    elev=24, azim=-60, spin=0.25
+)
 movie = (reverse | fixed | forward).font(family="sans-serif", size=10)
 movie.animate(duration=12, fps=24)
 ```
@@ -148,8 +156,12 @@ import tsdynamics as ts
 model = ts.systems.Lorenz()
 a = model.run(final_time=30, dt=0.01, ic=[1, 1, 1])
 b = model.run(final_time=30, dt=0.01, ic=[1.005, 1, 1])
-first = ts.plot(a, components=["x", "z"], labels=["x₀ = 1.000"], color="#2CC5AE")
-second = ts.plot(b, components=["x", "z"], labels=["x₀ = 1.005"], color="#E8912D")
+first = ts.plot(
+    a, components=["x", "z"], labels=["x₀ = 1.000"], color="#2CC5AE"
+)
+second = ts.plot(
+    b, components=["x", "z"], labels=["x₀ = 1.005"], color="#E8912D"
+)
 movie = (first + second).theme("dark").font(family="sans-serif")
 movie.animate(duration=10, fps=24).trail(250, fade=True, backdrop_alpha=0.10)
 movie.head(size=7, symbol="s").clock("t = {t:.1f}")
@@ -178,8 +190,12 @@ advance along the same recorded trajectory.
 import tsdynamics as ts
 
 trajectory = ts.systems.Lorenz(ic=[1, 1, 1]).run(final_time=30, dt=0.01)
-portrait = ts.plot(trajectory, components=["x", "z"], title="State space", color="#2CC5AE")
-trace = ts.plot(trajectory, "time_series", components="x", title="x over time", color="#2CC5AE")
+portrait = ts.plot(
+    trajectory, components=["x", "z"], title="State space", color="#2CC5AE"
+)
+trace = ts.plot(
+    trajectory, "time_series", components="x", title="x over time", color="#2CC5AE"
+)
 
 movie = (portrait | trace).theme("dark").font(family="sans-serif").size(9, 4)
 movie.animate(duration=12, fps=24).trail(("time", 4), fade=True)
@@ -208,9 +224,16 @@ the full width; each panel keeps its own axes.
 import tsdynamics as ts
 
 trajectory = ts.systems.Lorenz(ic=[1, 1, 1]).run(final_time=30, dt=0.01)
-front = ts.plot(trajectory, components=["x", "z"], title="Front: x, z", color="#2CC5AE")
-side = ts.plot(trajectory, components=["y", "z"], title="Side: y, z", color="#E8912D")
-trace = ts.plot(trajectory, "time_series", components="x", title="One shared timeline", color="#2CC5AE")
+front = ts.plot(
+    trajectory, components=["x", "z"], title="Front: x, z", color="#2CC5AE"
+)
+side = ts.plot(
+    trajectory, components=["y", "z"], title="Side: y, z", color="#E8912D"
+)
+trace = ts.plot(
+    trajectory, "time_series", components="x",
+    title="One shared timeline", color="#2CC5AE"
+)
 movie = ((front | side) / trace).theme("dark").font(family="sans-serif")
 movie.animate(duration=12, fps=24).trail(300, fade=True, backdrop_alpha=0.10)
 ```
@@ -238,7 +261,10 @@ points and keep the iteration label explicit.
 import tsdynamics as ts
 
 iterates = ts.systems.Henon(ic=[0, 0]).run(steps=600)
-movie = ts.plot(iterates, "phase_portrait", components=["x", "y"], primitive="points", color="#2CC5AE")
+movie = ts.plot(
+    iterates, "phase_portrait", components=["x", "y"],
+    primitive="points", color="#2CC5AE"
+)
 movie.theme("dark").font(family="sans-serif").style(markersize=2)
 movie.animate(n_frames=240, fps=24).trail(None).head(False)
 movie.clock("n = {t:.0f} · frame {i}")

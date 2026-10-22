@@ -135,6 +135,7 @@ def test_an_old_renderer_or_changed_export_geometry_invalidates_only_its_record(
 
 @pytest.mark.parametrize("clip", showcase.CLIPS, ids=lambda clip: clip.slug)
 def test_each_recipe_executes_without_a_preseeded_namespace(clip):
+    assert max(map(len, showcase.example_source(clip.slug).splitlines())) <= 88
     movie = showcase.build_movie(clip.slug)
     assert movie.is_animated
     assert movie.animation.fps == 24
