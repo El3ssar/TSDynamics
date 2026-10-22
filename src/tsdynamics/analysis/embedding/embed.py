@@ -134,10 +134,11 @@ class Embedding(ArrayResult):
 
 def _as_per_channel(value: int | Sequence[int], n_channels: int, name: str) -> list[int]:
     """Broadcast an int (or validate a per-channel sequence) to a length-``n_channels`` list."""
-    if isinstance(value, (int, np.integer)):
-        vals = [int(value)] * n_channels
+    resolved = _as_count(value, name)
+    if isinstance(resolved, (int, np.integer)):
+        vals = [int(resolved)] * n_channels
     else:
-        vals = [int(v) for v in value]
+        vals = [_as_count(v, name) for v in resolved]
         if len(vals) != n_channels:
             raise ValueError(f"{name} has {len(vals)} entries but there are {n_channels} channels.")
     return vals
@@ -410,9 +411,10 @@ def _estimate_parameters(
 
 def _as_json_int(value: int | Sequence[int]) -> int | list[int]:
     """Coerce an int or int sequence to a JSON-friendly int / list of ints."""
-    if isinstance(value, (int, np.integer)):
-        return int(value)
-    return [int(v) for v in value]
+    resolved = _as_count(value, "embedding count")
+    if isinstance(resolved, (int, np.integer)):
+        return int(resolved)
+    return [int(v) for v in cast("Sequence[int]", value)]
 
 
 def _embed_meta(dimension: int | Sequence[int], delay: int | Sequence[int]) -> dict[str, Any]:

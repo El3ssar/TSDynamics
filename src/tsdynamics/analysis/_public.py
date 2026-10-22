@@ -44,7 +44,7 @@ AREA_SUBPACKAGES: tuple[str, ...] = (
 #:
 #: Seven need a **vector field** — they evaluate or integrate the right-hand side
 #: at points that are not in any trajectory — so they declare ``flow`` rather
-#: than ``system``: that is what makes ``find(henon)`` answer 14 and not 21.
+#: than ``system``: family metadata separately excludes ODE-only sections and returns.
 PLANAR_ANALYSES: tuple[tuple[str, tuple[str, ...], str, str], ...] = (
     ("escape_time_field", ("flow",), "fields", "escape leaking transient window region"),
     ("flow_field", ("flow",), "fields", "vector field arrows quiver direction"),

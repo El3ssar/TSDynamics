@@ -1160,6 +1160,7 @@ def _two_trajectory_spectrum(
 # (CONTRACT §7.7), through the public ``ts.analysis.register`` door.
 _register(
     lyapunov_spectrum,
+    families=("ode", "map", "dde"),
     subjects=("system",),
     area="lyapunov",
     returns=LyapunovSpectrum,

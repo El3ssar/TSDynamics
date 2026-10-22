@@ -326,6 +326,15 @@ _SEMANTIC_KINDS: frozenset[PlotKind] = frozenset(set(PlotKind) - _LAYER_MARKS)
 _THREE_D_MARKS: frozenset[PlotKind] = frozenset({PlotKind.LINE3D, PlotKind.SURFACE3D})
 
 
+def _layer_is_three_d(layer: Layer) -> bool:
+    """Recognise spatial point channels as well as explicitly spatial marks."""
+    return layer.kind in _THREE_D_MARKS or (
+        layer.kind in (PlotKind.SCATTER, PlotKind.MARKERS)
+        and "z" in layer.data
+        and np.ndim(layer.data["z"]) == 1
+    )
+
+
 # ---------------------------------------------------------------------------
 # The save() extension contract (see :meth:`PlotSpec.save`)
 # ---------------------------------------------------------------------------
@@ -1312,16 +1321,17 @@ class Animation:
     fps : float, optional
         Playback frames per second.  Default ``30``.
     duration : float, optional
-        Total wall-clock seconds; with :attr:`fps` this fixes the frame count
+        Wall-clock seconds for the forward pass; with :attr:`fps` this fixes its frame count
         (``n_frames = round(duration * fps)``).  ``None`` lets the renderer pick a
         frame count from the data length.
     n_frames : int, optional
-        Explicit frame count; overrides the :attr:`duration`/:attr:`fps` estimate.
+        Explicit forward-pass frame count; overrides the :attr:`duration`/:attr:`fps` estimate.
+        Ping-pong appends ``max(n_frames - 2, 0)`` reverse frames without repeating endpoints.
     loop : bool, optional
         Whether the animation repeats.  Default ``True``.
     pingpong : bool, optional
-        Play forward then in reverse each loop (implies looping).  Default
-        ``False``.
+        Append a reverse pass without repeated endpoints. ``loop=False`` plays
+        one forward/reverse cycle. Default ``False``.
     mode : {"reveal", "frames"}, optional
         The frame model (see above).  Default ``"reveal"``.
     trail_kind : {"time", "steps"}, optional
@@ -1407,7 +1417,7 @@ class Animation:
         from tsdynamics.errors import InvalidParameterError
 
         def _word(shown: str, noun: str, value: Any, allowed: tuple[str, ...], means: str) -> None:
-            if value not in allowed:
+            if not isinstance(value, str) or value not in allowed:
                 raise InvalidParameterError(
                     f"{shown} is not {noun} this library knows. "
                     f"The values that work: {', '.join(repr(a) for a in allowed)} — {means}"
@@ -1461,7 +1471,7 @@ class Animation:
                 "trail(length=('time', 4)) is 4 units of the system's own time, "
                 "trail(length=('steps', 4)) is 4 samples of the stored series.",
             )
-        if self.head_symbol not in _HEAD_SYMBOLS:
+        if not isinstance(self.head_symbol, str) or self.head_symbol not in _HEAD_SYMBOLS:
             raise InvalidParameterError(
                 f"head(symbol={self.head_symbol!r}) is not a marker any backend draws; "
                 "matplotlib would raise from inside .save() hundreds of frames later. "
@@ -1475,7 +1485,11 @@ class Animation:
             # convert string to float: '2s' — naming neither the knob, nor the
             # unit, nor a remedy, on the ONE knob of eleven with no typed
             # message.  Coercion belongs here, with the vocabulary.
-            if isinstance(value, bool) or not isinstance(value, int | float | np.number):
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int | float | np.number)
+                or np.iscomplexobj(value)
+            ):
                 raise InvalidParameterError(
                     f"{door.format(repr(value))} is {unit}, so it needs a number — got "
                     f"{type(value).__name__}. Pass it as a plain number, in {unit.split(' of ')[-1]}."
@@ -1489,6 +1503,8 @@ class Animation:
         _positive("animate(fps={})", self.fps, floor=1e-6, unit="frames per second")
         _positive("animate(duration={})", self.duration, floor=1e-6, unit="seconds of playback")
         _positive("animate(n_frames={})", self.n_frames, floor=1, unit="a count of frames")
+        if self.n_frames is not None and float(self.n_frames) != int(self.n_frames):
+            raise InvalidParameterError("animate(n_frames=...) needs a whole number of frames.")
         _positive("head(size={})", self.head_size, floor=0.0, unit="a marker size in points")
         _positive("trail(length=(unit, {}))", self.trail_length, floor=0.0, unit="a tail length")
         _positive("camera(spin={})", self.spin, floor=0.0, unit="full turns over the movie")
@@ -1507,6 +1523,7 @@ class Animation:
         self.trail_length = None if self.trail_length is None else float(self.trail_length)
         self.spin = float(self.spin)
         self.backdrop_alpha = float(self.backdrop_alpha)
+        self.clock_format = _validated_clock_format(self.clock_format)
 
     def updated(self, **changes: Any) -> Animation:
         """Return a **validated copy** carrying ``changes``; ``self`` is untouched.
@@ -1574,7 +1591,7 @@ class Animation:
     DEFAULT_FRAMES: ClassVar[int] = 360
 
     def playback_seconds(self, n_samples: int) -> float:
-        """How long a browser should take to traverse the whole series, in seconds.
+        """Return forward-pass playback seconds, excluding an optional reverse pass.
 
         [M41] The single home of the algebra both HTML exports need.  Neither
         browser loop has a frame clock — each traverses the series in
@@ -1586,24 +1603,29 @@ class Animation:
         definition: play ``frame_count(n_samples)`` frames at ``fps`` per second.
         At the defaults that is 12.0 s exactly, so no export changed speed.
 
-        An explicit ``duration`` always wins: it is the same quantity stated
-        directly.
+        Explicit ``n_frames`` wins over ``duration``; otherwise duration is
+        rounded to whole playback frames. This is also the duration encoded by
+        a movie writer's forward pass at the requested ``fps``. Ping-pong adds
+        ``max(frame_count(n_samples) - 2, 0) / fps`` seconds.
         """
-        if self.duration is not None:
-            return float(self.duration)
         fps = float(self.fps)
         if fps <= 0:  # pragma: no cover - Animation validates fps > 0
             return float(self.DEFAULT_FRAMES) / 30.0
         return float(self.frame_count(int(n_samples))) / fps
 
+    def _reverse_seconds(self, n_samples: int) -> float:
+        """Return the additional ping-pong time without repeating endpoint frames."""
+        return max(self.frame_count(n_samples) - 2, 0) / self.fps if self.pingpong else 0.0
+
     def frame_count(self, n_samples: int) -> int:
-        """Resolve the number of playback frames from the directive + data length.
+        """Resolve forward-pass frames from the directive and data length.
 
         ``n_frames`` wins; else ``round(duration * fps)``; else a capped default.
-        At most ``n_samples`` (you cannot reveal more distinct samples than exist),
-        and at least 2 — *except* a single-sample layer is a still, so a degenerate
-        ``n_samples <= 1`` yields exactly one frame (the ``max(2, …)`` floor never
-        overrides the data cap into a duplicate frame).
+        The default is capped by the sample count. Explicit durations and counts
+        may repeat sample positions: a short curve still plays for the requested
+        time. A degenerate ``n_samples <= 1`` is a still and yields one frame.
+        Ping-pong appends reverse frames in :meth:`head_indices`; it does not
+        change this forward count.
         """
         if n_samples <= 1:
             return 1
@@ -1613,7 +1635,7 @@ class Animation:
             n = int(round(self.duration * self.fps))
         else:
             n = min(n_samples, self.DEFAULT_FRAMES)
-        return max(2, min(n, n_samples))
+        return max(1, n)
 
     def head_indices(self, n_samples: int) -> list[int]:
         """Map each playback frame to a sample index (the comet head).
@@ -1646,27 +1668,26 @@ class Animation:
     @classmethod
     def from_dict(cls, d: Mapping[str, Any]) -> Animation:
         """Rebuild an :class:`Animation` from :meth:`to_dict` output."""
-        dur = d.get("duration")
-        n = d.get("n_frames")
-        tl = d.get("trail_length")
+        # Validate before normalising, exactly as direct construction does.
+        # int(2.5) and bool("false") would silently change a saved movie's meaning.
         return cls(
-            fps=float(d.get("fps", 30.0)),
-            duration=None if dur is None else float(dur),
-            n_frames=None if n is None else int(n),
-            loop=bool(d.get("loop", True)),
-            pingpong=bool(d.get("pingpong", False)),
+            fps=d.get("fps", 30.0),
+            duration=d.get("duration"),
+            n_frames=d.get("n_frames"),
+            loop=d.get("loop", True),
+            pingpong=d.get("pingpong", False),
             mode=d.get("mode", "reveal"),
             trail_kind=d.get("trail_kind"),
-            trail_length=None if tl is None else float(tl),
-            trail_fade=bool(d.get("trail_fade", False)),
-            backdrop=bool(d.get("backdrop", True)),
-            backdrop_alpha=float(d.get("backdrop_alpha", 0.18)),
-            head=bool(d.get("head", True)),
-            head_size=float(d.get("head_size", 6.0)),
+            trail_length=d.get("trail_length"),
+            trail_fade=d.get("trail_fade", False),
+            backdrop=d.get("backdrop", True),
+            backdrop_alpha=d.get("backdrop_alpha", 0.18),
+            head=d.get("head", True),
+            head_size=d.get("head_size", 6.0),
             head_color=d.get("head_color"),
             head_symbol=d.get("head_symbol", "o"),
-            spin=float(d.get("spin", 0.0)),
-            clock=bool(d.get("clock", False)),
+            spin=d.get("spin", 0.0),
+            clock=d.get("clock", False),
             clock_format=d.get("clock_format", "t = {t:.2f}"),
         )
 
@@ -2244,7 +2265,8 @@ class Plot:
         """Whether this spec draws in 3-D (the one definition every backend shares).
 
         True when the spec declares ``ndim == 3``, carries a ``z`` axis, or holds
-        any 3-D mark (``LINE3D`` / ``SURFACE3D``) — and, for a composite, when
+        any 3-D mark (``LINE3D`` / ``SURFACE3D``) or a point layer with a spatial
+        ``z`` channel — and, for a composite, when
         **any** panel is 3-D.
 
         This predicate lived in three byte-identical copies (the capability
@@ -2259,7 +2281,7 @@ class Plot:
             return any(p.is_three_d for p in self.panels)
         if self.ndim == 3 or self.z is not None:
             return True
-        return any(lyr.kind in _THREE_D_MARKS for lyr in self.layers)
+        return any(_layer_is_three_d(lyr) for lyr in self.layers)
 
     @property
     def resolved_frame(self) -> Frame:
@@ -3124,6 +3146,13 @@ class Plot:
             self.animation = Animation()
         return self.animation
 
+    def _update_animation(self, **changes: Any) -> None:
+        """Remember explicit figure overrides without mutating child directives."""
+        self.animation = self._ensure_animation().updated(**changes)
+        if self.is_composite and changes:
+            keys = set(self.meta.get("_animation_overrides", ()))
+            self.meta["_animation_overrides"] = sorted(keys | changes.keys())
+
     @_mutates
     @figure_scoped
     def animate(
@@ -3162,11 +3191,10 @@ class Plot:
         Plot
             ``self``, for chaining.
         """
-        a = self._ensure_animation()
         changes = _only_given(
             fps=fps, duration=duration, n_frames=n_frames, loop=loop, pingpong=pingpong, mode=mode
         )
-        self.animation = a.updated(**changes)
+        self._update_animation(**changes)
         return self
 
     @_mutates
@@ -3211,7 +3239,6 @@ class Plot:
 
             ts.plot(traj, animate=True).trail(("time", 4), backdrop=False)
         """
-        a = self._ensure_animation()
         changes = _only_given(trail_fade=fade, backdrop=backdrop, backdrop_alpha=backdrop_alpha)
         if length is not _UNSET:
             if length is None:
@@ -3220,7 +3247,7 @@ class Plot:
                 kind, value = _trail_pair(length)
                 changes["trail_kind"] = cast('Literal["time", "steps"]', kind)
                 changes["trail_length"] = value
-        self.animation = a.updated(**changes)
+        self._update_animation(**changes)
         return self
 
     @_mutates
@@ -3251,8 +3278,7 @@ class Plot:
         Plot
             ``self``, for chaining.
         """
-        a = self._ensure_animation()
-        self.animation = a.updated(
+        self._update_animation(
             **_only_given(head=show, head_size=size, head_color=color, head_symbol=symbol)
         )
         return self
@@ -3298,7 +3324,7 @@ class Plot:
         if elev is not None or azim is not None:
             self.meta["camera"] = camera
         if turns is not None:
-            self.animation = self._ensure_animation().updated(spin=turns)
+            self._update_animation(spin=turns)
         return self
 
     @_mutates
@@ -3346,7 +3372,7 @@ class Plot:
         changes: dict[str, Any] = {"clock": show}
         if fmt is not None:
             changes["clock_format"] = _validated_clock_format(fmt)
-        self.animation = self._ensure_animation().updated(**changes)
+        self._update_animation(**changes)
         return self
 
     # -- color / legend completeness ---------------------------------------
@@ -4963,6 +4989,8 @@ def _validated_clock_format(fmt: str) -> str:
             'and {i} (frame index). Try "t = {t:.1f}".'
         )
 
+    if not isinstance(fmt, str):
+        raise refuse("must be a string")
     try:
         parsed = list(string.Formatter().parse(fmt))
     except ValueError as exc:
@@ -4971,7 +4999,7 @@ def _validated_clock_format(fmt: str) -> str:
         raise refuse("names no field, so the readout would never change")
     out: list[str] = []
     for literal, name, spec, conversion in parsed:
-        out.append(literal)
+        out.append(literal.replace("{", "{{").replace("}", "}}"))
         if name is None:
             continue
         # An empty field name is Python's *auto-numbered positional* slot, and
@@ -4992,7 +5020,12 @@ def _validated_clock_format(fmt: str) -> str:
             + (f":{spec}" if spec else "")
             + "}"
         )
-    return "".join(out)
+    normalized = "".join(out)
+    try:
+        normalized.format(t=0.0, i=0)
+    except (ValueError, KeyError, IndexError, TypeError) as exc:
+        raise refuse(f"contains an invalid field format ({exc})") from None
+    return normalized
 
 
 def _degraded_warning() -> type[Warning]:

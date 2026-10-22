@@ -73,6 +73,10 @@ SUBJECT_ALIASES: dict[str, tuple[str, ...]] = {
 #: A system is one of these two.
 SYSTEM_TOKENS = frozenset({"flow", "map"})
 
+# Family support is independent of the older flow/map subject vocabulary: DDEs
+# and SDEs are flows too, but cannot use every deterministic ODE estimator.
+SYSTEM_FAMILIES = frozenset({"ode", "map", "dde", "sde"})
+
 #: Measured data is one of these two.
 DATA_TOKENS = frozenset({"trajectory", "array"})
 
@@ -364,7 +368,11 @@ def subject_tokens(what: Any) -> tuple[str, ...] | None:
         discrete = family == "map" or bool(getattr(subject, "_is_discrete", False))
         return ("map",) if discrete else ("flow",)
     if is_data(subject):
-        return ("trajectory", "array")
+        return (
+            ("trajectory", "array")
+            if hasattr(subject, "t") and hasattr(subject, "y")
+            else ("array",)
+        )
     return _result_token_of_class(type(subject))
 
 
@@ -375,6 +383,72 @@ def _result_token_of_class(cls: type) -> tuple[str, ...] | None:
     if not issubclass(cls, AnalysisResult):
         return None
     return tuple(base.__name__ for base in cls.__mro__ if issubclass(base, AnalysisResult))
+
+
+def supports_subject(entry: Any, what: Any) -> bool:
+    """Apply explicitly registered system restrictions without running an analysis.
+
+    Data and result inputs retain their subject-token behavior. Class queries
+    can check family and declared dimension; concrete parameter-dependent
+    restrictions are checked only for instances. A plugin which declares none
+    of these optional restrictions preserves the original discovery behavior.
+    """
+    from tsdynamics.analysis._common import is_system
+    from tsdynamics.families import (
+        ContinuousSystem,
+        DelaySystem,
+        DiscreteMap,
+        StochasticSystem,
+        SystemBase,
+    )
+
+    if isinstance(what, type):
+        if not issubclass(what, SystemBase):
+            return True
+        family = next(
+            (
+                name
+                for base, name in (
+                    (DiscreteMap, "map"),
+                    (ContinuousSystem, "ode"),
+                    (DelaySystem, "dde"),
+                    (StochasticSystem, "sde"),
+                )
+                if issubclass(what, base)
+            ),
+            None,
+        )
+    elif is_system(what):
+        family = "map" if getattr(what, "_is_discrete", False) else getattr(what, "family", None)
+    else:
+        return True
+    meta = entry.metadata
+    system_types = meta.get("system_types")
+    if system_types is not None:
+        matches = (
+            issubclass(what, system_types)
+            if isinstance(what, type)
+            else isinstance(what, system_types)
+        )
+        if not matches:
+            return False
+    families = meta.get("families")
+    if families is not None and family not in families:
+        return False
+    dim = getattr(what, "dim", None)
+    minimum = meta.get("min_dim")
+    if minimum is not None and isinstance(dim, int) and dim < minimum:
+        return False
+    if (
+        meta.get("autonomous", False)
+        and not isinstance(what, type)
+        and isinstance(what, ContinuousSystem | DelaySystem)
+    ):
+        from ._tangent import flow_has_explicit_time
+
+        if flow_has_explicit_time(what):
+            return False
+    return True
 
 
 # ── the rendered listings ────────────────────────────────────────────────────
@@ -521,7 +595,15 @@ def find_count(token: str) -> int:
     """
     from tsdynamics import registry
 
-    return sum(1 for e in registry.analyses.all() if token in e.metadata.get("subjects", ()))
+    family = {"flow": "ode", "map": "map"}.get(token)
+    return sum(
+        1
+        for e in registry.analyses.all()
+        if token in e.metadata.get("subjects", ())
+        and (
+            family is None or e.metadata.get("families") is None or family in e.metadata["families"]
+        )
+    )
 
 
 def find_line(held: str, *, lead: str = "all") -> str:
@@ -655,6 +737,10 @@ def register(
     subjects: Iterable[str],
     area: str,
     returns: type | None = None,
+    families: Iterable[str] | None = None,
+    system_types: Iterable[type] | None = None,
+    min_dim: int | None = None,
+    autonomous: bool = False,
     keywords: str = "",
     cite: str | None = None,
     doi: str | None = None,
@@ -682,6 +768,21 @@ def register(
     returns : type, optional
         The :class:`~tsdynamics.analysis.results.AnalysisResult` subclass it
         returns.
+    families : iterable of {"ode", "map", "dde", "sde"}, optional
+        Supported system families, independently of the broad ``"flow"`` /
+        ``"map"`` subject categories. Omit to preserve unrestricted discovery
+        for existing plugins. Does not restrict declared data/result inputs.
+    min_dim : int, optional
+        Minimum system state dimension; checked when the subject declares one.
+    system_types : iterable of type, optional
+        Concrete system base classes accepted by an equation-based analysis.
+        A protocol wrapper can share a family name without exposing that
+        family's equations. Omit for analyses which support such wrappers.
+    autonomous : bool, default False
+        Whether an ODE/DDE input must have no explicit time dependence at its
+        current parameter values. Instance queries check the concrete equations;
+        class queries cannot know the eventual parameter values. These optional
+        restrictions guide discovery; the analysis still validates its inputs.
     keywords : str
         Space-separated synonyms **a user types that the docstring does not
         contain** ("chaotic", "fractal", "multistability", "takens").  Measured:
@@ -713,6 +814,32 @@ def register(
         from tsdynamics.errors import invalid_value
 
         raise invalid_value("subjects", subjects, rule="must name at least one subject")
+    family_tokens = None if families is None else tuple(dict.fromkeys(families))
+    if family_tokens is not None and (
+        not family_tokens or not set(family_tokens) <= SYSTEM_FAMILIES
+    ):
+        from tsdynamics.errors import invalid_value
+
+        raise invalid_value(
+            "families", families, rule="must name supported ode/map/dde/sde families"
+        )
+    if min_dim is not None and (
+        isinstance(min_dim, bool) or not isinstance(min_dim, int) or min_dim < 1
+    ):
+        from tsdynamics.errors import invalid_value
+
+        raise invalid_value("min_dim", min_dim, rule="must be a positive integer")
+    type_tokens = None if system_types is None else tuple(system_types)
+    if type_tokens is not None and (
+        not type_tokens or not all(isinstance(item, type) for item in type_tokens)
+    ):
+        from tsdynamics.errors import invalid_value
+
+        raise invalid_value("system_types", system_types, rule="must name system classes")
+    if not isinstance(autonomous, bool):
+        from tsdynamics.errors import invalid_value
+
+        raise invalid_value("autonomous", autonomous, rule="must be a bool")
 
     def _apply(target: Callable[..., Any]) -> Callable[..., Any]:
         from tsdynamics import registry
@@ -724,6 +851,10 @@ def register(
             subjects=tokens,
             area=area,
             returns=returns,
+            families=family_tokens,
+            system_types=type_tokens,
+            min_dim=min_dim,
+            autonomous=autonomous,
             keywords=keywords,
             summary=summarise(target.__doc__),
             cite=cite,

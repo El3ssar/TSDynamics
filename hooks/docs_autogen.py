@@ -46,6 +46,8 @@ Environment flags
 
 from __future__ import annotations
 
+import json
+import logging
 import os
 import sys
 from pathlib import Path
@@ -101,6 +103,11 @@ _VERSION = "?"
 def _slug(category: str) -> str:
     """URL slug for a registry category (module stem) — kept underscore-free."""
     return category.replace("_", "-")
+
+
+def _page_heading(title: str) -> list[str]:
+    """Keep browser tabs, search results and visible headings in agreement."""
+    return ["---", f"title: {json.dumps(title, ensure_ascii=False)}", "---", "", f"# {title}", ""]
 
 
 def _system_dir(rec) -> str:
@@ -192,7 +199,9 @@ def _viewer_iframe(rec, uri: str, *, second: bool, projection_label: str) -> str
     depth = uri.count("/") + 1
     suffix = "-b" if second else ""
     src = "../" * depth + f"assets/threejs/{rec.name}{suffix}.html"
-    title = f"{rec.name} attractor{projection_label} — drag to orbit, scroll to zoom"
+    title = (
+        f"{rec.name} simulation{projection_label} — play or pause; drag to orbit, scroll to zoom"
+    )
     return (
         f'<iframe class="ts-attractor" src="{src}" loading="lazy" '
         f'title="{title}" scrolling="no"></iframe>'
@@ -250,7 +259,7 @@ def _static_caption(rec) -> str:
 
 
 #: The caption under an animated spatial-field movie hero.
-_FIELD_MOVIE_CAPTION = "spatiotemporal field — plays automatically"
+_FIELD_MOVIE_CAPTION = "Evolving spatial field — press play to follow the snapshots"
 
 
 def _attractor_block(
@@ -306,7 +315,8 @@ def _attractor_block(
         return [
             '<figure class="ts-attractor-fig" markdown>',
             primary,
-            f'<figcaption class="ts-attractor-cap">{_INTERACTIVE_CAPTION}</figcaption>',
+            f'<figcaption class="ts-attractor-cap">{_viewer.view_description(rec)}. '
+            f"{_INTERACTIVE_CAPTION}; play/pause controls below.</figcaption>",
             "</figure>",
             "",
         ]
@@ -359,7 +369,7 @@ def _parameter_table(rec) -> list[str]:
     else:
         parts += ["This model has no adjustable parameters.", ""]
     for key, val in rec.params.items():
-        role = rec.param_roles.get(key, "Coefficient in the model equations")
+        role = rec.param_roles.get(key, "Coefficient in the model equations").replace("|", r"\|")
         parts.append(f"| `{key}` | `{_fmt_default(val)}` | {role} |")
     parts.append("")
     if rec.variables:
@@ -708,7 +718,7 @@ def _system_page(
         ],
     )
 
-    parts: list[str] = [f"# {rec.name}", "", crumb, ""]
+    parts: list[str] = [*_page_heading(rec.name), crumb, ""]
 
     subtitle = _subtitle(rec)
     if subtitle:
@@ -716,11 +726,16 @@ def _system_page(
 
     parts += [_tag_pills(rec), ""]
 
-    # Attractor (field movie / viewer / figure / note).
-    parts += _attractor_block(
+    # Put the runnable example beside the model's actual illustration. On a
+    # narrow screen the shared responsive layout keeps the code before output.
+    attractor = _attractor_block(
         rec, uri, has_viewer, has_figure, has_viewer2=has_viewer2, field_movie=field_movie
     )
-
+    define = _define_block(rec)
+    _assert_define_block_uses_the_live_api(rec, "\n".join(define))
+    parts += ['<div class="tsd-example-pair" markdown="1">', '<div markdown="1">', ""]
+    parts += define
+    parts += ["</div>", '<div markdown="1">', "", *attractor]
     if has_viewer or has_figure or field_movie:
         parts += [
             '<p class="ts-model-note">The illustration is a finite simulation, '
@@ -729,10 +744,7 @@ def _system_page(
             "",
         ]
 
-    # The first copyable example belongs before the symbolic details.
-    define = _define_block(rec)
-    _assert_define_block_uses_the_live_api(rec, "\n".join(define))
-    parts += define
+    parts += ["</div>", "</div>", ""]
 
     parts += [
         "## Dynamics at the default parameters",
@@ -793,8 +805,7 @@ def _systems_index(catalog) -> str:
     n_subs = sum(len(cats) for cats in grouped.values())
 
     parts = [
-        "# Systems",
-        "",
+        *_page_heading("Systems"),
         '<p class="ts-subtitle">A curated library of canonical dynamical systems — '
         "each with equations, parameters and a runnable example. Browse by "
         "type, or drop straight into a definition and start simulating.</p>",
@@ -864,8 +875,7 @@ def _type_index(family: str, cats: dict) -> str:
         [("Systems", _SYSTEMS_ROOT + "/index.html"), (label, None)],
     )
     parts = [
-        f"# {label}",
-        "",
+        *_page_heading(label),
         crumb,
         "",
     ]
@@ -964,8 +974,7 @@ def _subcategory_index(family: str, category: str, records, generated: set[str])
         ],
     )
     parts = [
-        f"# {label}",
-        "",
+        *_page_heading(label),
         crumb,
         "",
     ]
@@ -1187,6 +1196,13 @@ def on_config(config):
         f"({n_pages_systems} system pages, {counts['total']} catalogued: {by_fam})"
     )
     if WITH_FIGURES:
+        missing_animation = sorted(generated_systems - set(viewer_names) - set(movie_names))
+        if missing_animation:
+            logging.getLogger("mkdocs.plugins.docs_autogen").warning(
+                "No animated preview was generated for: %s. "
+                "Check the model's illustration settings and renderer output.",
+                ", ".join(missing_animation),
+            )
         print(
             f"docs_autogen: {len(viewer_names)} interactive viewers, "
             f"{len(figure_names)} static figures, "

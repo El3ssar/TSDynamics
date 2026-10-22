@@ -164,13 +164,16 @@ them yourself.
     Theiler window is a *diagonal*-line correction (Theiler 1986): use it for
     DET / L / L_max / DIV, and quantify laminarity at `theiler=0`.
 
-!!! note "DET separates order from chaos"
+!!! note "DET describes recurrence-line structure"
     A periodic orbit recurs on perfectly parallel diagonals, so
     $\mathrm{DET} = 1$; deterministic chaos breaks them up. Verified here: the
     logistic map at $r = 3.2$ (a period-2 cycle) gives $\mathrm{DET} = 1.0$ and
     $\mathrm{LAM} = 0.0$, while the fully chaotic $r = 4$ gives
     $\mathrm{DET} \approx 0.65$ — squarely in the band Trulla, Giuliani, Zbilut
     & Webber (1996) report for that map.
+    This example is not a universal chaos classifier: threshold, sampling,
+    embedding and noise all change DET, and chaotic records can also have
+    long recurrence lines. Cross-check with a dynamical estimator.
 
 ## Tracking regime change
 
@@ -195,11 +198,12 @@ wr.centers        # window mid-points (the time axis)
 wr.determinism    # DET(t): 1.0 through the periodic half, ≈ 0.65 in the chaotic half
 ```
 
-`wr.determinism` — or any measure by name, `wr.measure("laminarity")` — reads
-$1.0$ across every window inside the periodic segment and drops to
-$\approx 0.65$ the moment the window enters the chaotic segment, pinning the
-transition to the window straddling sample $1500$. `wr.results` is the tuple of
-per-window `RQAResult` objects if you need every field at once.
+`wr.determinism` follows the change in diagonal-line structure. Other measures,
+such as `wr.measure("laminarity")`, describe different features and need not
+change by the same amount. `wr.results` is the tuple of per-window `RQAResult`
+objects if you need every field at once. Plot determinism with `wr.plot()`, or
+choose an existing measure explicitly, for example
+`wr.plot(measure="laminarity")`.
 
 !!! warning "Choose `window` to span the dynamics"
     The window must be long enough to contain several recurrences yet short
@@ -211,7 +215,7 @@ per-window `RQAResult` objects if you need every field at once.
 
 ## See also
 
-- [Lyapunov spectra](lyapunov.md) — $\mathrm{DIV} = 1/\mathrm{L}_{\max}$ tracks the largest exponent
+- [Lyapunov spectra](lyapunov.md) — $\mathrm{DIV} = 1/\mathrm{L}_{\max}$ is a recurrence statistic, not a calibrated Lyapunov-exponent estimate
 - [Chaos indicators](chaos.md) — GALI, the 0–1 test, and expansion entropy: complementary chaos verdicts
 - [Delay embedding](embedding.md) — reconstruct a phase space before building the plot
 

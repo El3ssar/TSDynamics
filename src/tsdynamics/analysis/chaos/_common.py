@@ -28,7 +28,7 @@ from tsdynamics.analysis._tangent import flow_fns as _flow_fns  # noqa: F401
 from tsdynamics.analysis._tangent import map_fns as _map_fns  # noqa: F401
 from tsdynamics.analysis._tangent import rk4_state as _rk4_state  # noqa: F401
 from tsdynamics.analysis._tangent import rk4_variational as _rk4_variational  # noqa: F401
-from tsdynamics.data import Box
+from tsdynamics.data import Ball, Box
 
 if TYPE_CHECKING:
     import numpy.typing as npt
@@ -201,7 +201,7 @@ def _pearson(x: np.ndarray, y: np.ndarray) -> float:
     return float(np.sum(xm * ym) / denom)
 
 
-def _resolve_region(system: SystemBase, region: object, *, margin: float = 0.1) -> Box:
+def _resolve_region(system: SystemBase, region: object, *, margin: float = 0.1) -> Box | Ball:
     """Coerce a region argument to a :class:`~tsdynamics.data.Box`.
 
     Reads the region through :func:`tsdynamics.data.as_region` — the library's
@@ -212,7 +212,7 @@ def _resolve_region(system: SystemBase, region: object, *, margin: float = 0.1) 
     if isinstance(region, Box):
         return region
     if region is not None:
-        from tsdynamics.data import Ball, as_region
+        from tsdynamics.data import as_region
 
         resolved = as_region(
             region,
@@ -222,7 +222,7 @@ def _resolve_region(system: SystemBase, region: object, *, margin: float = 0.1) 
             args="",
         )
         if isinstance(resolved, Ball):
-            return Box(resolved.center - resolved.r, resolved.center + resolved.r)
+            return resolved
         return Box(np.asarray(resolved.lo, dtype=float), np.asarray(resolved.hi, dtype=float))
     pts = _sample_orbit_box(system)
     lo, hi = pts.min(axis=0), pts.max(axis=0)

@@ -6,21 +6,18 @@ this module emits the **evolving field movie** the library already supports — 
 same ``system.__plot_spec__(kind="field", animate=True)`` →
 :data:`~tsdynamics.viz.spec.PlotKind.SPATIAL_FIELD` path a user reaches — rendered
 to a small H.264 ``.mp4`` (with a poster PNG) and embedded like the interactive
-three.js attractor viewers: a lazy-loading, autoplaying, looping ``<video>`` on the
+three.js attractor viewers: a controlled, on-demand ``<video>`` on the
 system page.  So a Gray–Scott / Swift–Hohenberg page opens with its pattern
 *growing on camera* instead of a frozen final still.
 
 Dispatch (who gets a movie)
 ---------------------------
-:func:`eligible` matches any system that declares an ``_field_shape`` ClassVar (the
-spatial grid) — today the two 2-D reaction-diffusion fields (:class:`GrayScott`,
-:class:`SwiftHohenberg`) and any future one.  The 1-D
-:class:`~tsdynamics.systems.continuous.chaotic_attractors.KuramotoSivashinsky`
-already has a curated spacetime-carpet figure and no ``_field_shape``, so it is not
-swept here (its hero stays the carpet); a movie is *additive* — an ineligible /
-disabled / soft-failing system keeps its static figure.
+:func:`eligible` matches declared one- and two-dimensional spatial fields, plus
+the curated Lorenz-96 and Kuramoto–Sivashinsky profiles. A one-dimensional field
+plays as an evolving line profile; a two-dimensional field plays as a heatmap.
+The static spatial or spacetime illustration remains available as a fallback.
 
-WOW recipe (per system)
+Showcase recipe (per system)
 -----------------------
 Each field's movie is tuned in :data:`MOVIE_RECIPES` for a striking, *clearly
 evolving* result — a higher-resolution grid than the fast test default, a vivid
@@ -65,7 +62,6 @@ import contextlib
 import functools
 import hashlib
 import html
-import inspect
 import os
 import pathlib
 import warnings
@@ -75,17 +71,9 @@ import numpy as np
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 CACHE_DIR = ROOT / ".cache" / "docs-field-movies"
 
-#: The matplotlib renderer package the field-movie path actually runs through
-#: (``_anim.py`` builds the ``FuncAnimation``; ``_core`` / ``_threed`` supply the
-#: cmap / norm / preset helpers it imports).  Its source is folded into
-#: :func:`cache_key` so a **renderer-only** change (e.g. a tweak to
-#: ``_field_movie_2d``) busts the on-disk movie cache — the recipe/class-source
-#: hash alone would serve a stale movie otherwise.
-_MPL_RENDER_DIR = ROOT / "src" / "tsdynamics" / "viz" / "render" / "mpl"
-
 #: Bump when the movie recipe / encoding / poster shaping materially changes
 #: (cache buster — invalidates every on-disk movie).
-MOVIE_VERSION = "2"
+MOVIE_VERSION = "3"
 
 #: Output pixel size (square) for the rendered field movie.  720 px is a crisp,
 #: web-light hero; the H.264 mp4 for a 96² field stays well under a couple hundred
@@ -115,6 +103,22 @@ _BG = "#0B0F14"
 #: output cadence (the adaptive engine sub-steps for accuracy), so a coarse ``dt``
 #: keeps the stack light while the pattern still integrates faithfully.
 MOVIE_RECIPES: dict[str, dict] = {
+    "Lorenz96": {
+        "grid": 20,
+        "profile": True,
+        "final_time": 60.0,
+        "dt": 0.2,
+        "fps": 25,
+        "size": (1000, 480),
+    },
+    "KuramotoSivashinsky": {
+        "grid": 32,
+        "profile": True,
+        "final_time": 150.0,
+        "dt": 0.5,
+        "fps": 25,
+        "size": (1000, 480),
+    },
     # Gray–Scott: nucleate from the seeded central square and let worms grow and
     # fill the frame on camera.  N=96 (finer than the coarse 48 default) reads
     # crisp; F=0.06/k=0.062 is the vivid worms/spots regime; ~9000 time units lets
@@ -172,7 +176,9 @@ def _figures_disabled() -> bool:
 
 def _field_shape(entry) -> tuple[int, ...] | None:
     """Return a system's ``_field_shape`` ClassVar (the spatial grid), or ``None``."""
-    shape = getattr(entry.cls, "_field_shape", None)
+    shape = getattr(entry, "field_shape", None)
+    if shape is None:
+        shape = getattr(entry.cls, "_field_shape", None)
     if shape is None:
         return None
     try:
@@ -184,15 +190,15 @@ def _field_shape(entry) -> tuple[int, ...] | None:
 def eligible(entry) -> bool:
     """Whether ``entry`` gets an animated field movie (else it keeps its static PNG).
 
-    Eligible when the system declares a **2-D** ``_field_shape`` (a method-of-lines
-    reaction-diffusion / pattern-forming field) and figures are enabled.  A 1-D
-    field (or none) is not swept here — its curated spacetime figure reads better as
-    the hero.
+    Declared 1-D/2-D field metadata handles new systems automatically. The two
+    older profile models have explicit recipes because their classes predate
+    that metadata; a large arbitrary state vector is never assumed spatial.
     """
     if _figures_disabled():
         return False
     shape = _field_shape(entry)
-    if shape is None or len(shape) != 2:
+    profile = bool(MOVIE_RECIPES.get(entry.name, {}).get("profile"))
+    if not profile and (shape is None or len(shape) not in (1, 2)):
         return False
     # A field movie is an ODE flow (the method-of-lines PDE); guard the family.
     return getattr(entry, "family", None) == "ode"
@@ -210,7 +216,8 @@ def _recipe(entry) -> dict:
     # grid and a modest horizon so the movie still plays.
     shape = _field_shape(entry) or (32, 32)
     return {
-        "grid": int(shape[0]),
+        "grid": None,
+        "profile": len(shape) == 1,
         "params": {},
         "final_time": 100.0,
         "dt": 0.5,
@@ -222,31 +229,30 @@ def _recipe(entry) -> dict:
 
 @functools.lru_cache(maxsize=1)
 def _renderer_fingerprint() -> str:
-    """Hash the matplotlib field-movie renderer's source (cache-key ingredient).
+    """Track drawing hooks as well as numerical and rendering implementations."""
+    import figures
 
-    The rendered movie is a pure function of the *math* (system + recipe) **and**
-    the renderer that plays the field stack (:mod:`tsdynamics.viz.render.mpl`).
-    Folding the renderer source into :func:`cache_key` means a renderer-only edit —
-    which leaves the class source and recipe untouched — is still a cache miss, so a
-    build never serves a movie produced by a stale renderer.  All ``*.py`` under the
-    ``mpl`` render package are hashed (sorted for determinism); a missing package
-    (never, in-tree) degrades to an empty fingerprint rather than raising.
-    """
-    h = hashlib.sha256()
-    if _MPL_RENDER_DIR.is_dir():
-        for path in sorted(_MPL_RENDER_DIR.rglob("*.py")):
-            with contextlib.suppress(OSError):
-                h.update(path.read_bytes())
-    return h.hexdigest()
+    # Numerical fingerprints intentionally omit __plot_spec__. Field movies
+    # actually call that protocol, so retain its semantics here, including the
+    # family implementation and model overrides. Reuse the gallery's portable
+    # whole-library digest, which ignores prose and release stamps.
+    return figures._library_render_fingerprint()
 
 
 def cache_key(entry) -> str:
     """Content hash: class source + this system's recipe + module knobs + renderer."""
-    cls_src = inspect.getsource(entry.cls)
+    import diagnostics
+
     recipe = repr(sorted(_recipe(entry).items()))
     knobs = "|".join(str(k) for k in (MOVIE_VERSION, _PX, _DPI, _BG))
     renderer = _renderer_fingerprint()
-    return hashlib.sha256((cls_src + recipe + knobs + renderer).encode()).hexdigest()[:20]
+    # Numerical repairs must also invalidate the footage; checking only the
+    # class body would retain a movie produced by an older integration engine.
+    implementation = diagnostics.fingerprint(entry)
+    generator = diagnostics._python_semantics(pathlib.Path(__file__).read_text())
+    digest = hashlib.sha256((recipe + knobs + renderer + implementation).encode())
+    digest.update(generator)
+    return digest.hexdigest()[:20]
 
 
 def _ffmpeg_available() -> bool:
@@ -269,10 +275,10 @@ def _build_spec(entry, recipe: dict):
     import tsdynamics as ts
 
     cls = entry.cls
-    grid = int(recipe.get("grid", (_field_shape(entry) or (32,))[0]))
+    grid = recipe.get("grid")
     params = dict(recipe.get("params", {}))
     # Build the system at the movie grid (N is structural → its own instance).
-    sys_obj = cls(N=grid) if grid else cls()
+    sys_obj = cls(N=int(grid)) if grid is not None and "N" in entry.params else cls()
     for key, val in params.items():
         if key in sys_obj.params:
             sys_obj.params[key] = val
@@ -282,6 +288,7 @@ def _build_spec(entry, recipe: dict):
         "final_time": float(recipe["final_time"]),
         "dt": float(recipe["dt"]),
         "animate": True,
+        "seed": 0,
     }
     component = recipe.get("component")
     if component is not None:
@@ -296,7 +303,7 @@ def _build_spec(entry, recipe: dict):
     # animated window's ``ic``.
     warmup = float(recipe.get("warmup", 0.0) or 0.0)
     if warmup > 0.0:
-        burn = sys_obj.run(final_time=warmup, dt=warmup)
+        burn = sys_obj.run(final_time=warmup, dt=warmup, seed=0)
         spec_kw["ic"] = np.asarray(burn.y[-1], dtype=float)
 
     spec = sys_obj.__plot_spec__(**spec_kw)
@@ -304,20 +311,24 @@ def _build_spec(entry, recipe: dict):
     # image interpolation, and no title / axes / frame so the field fills the panel;
     # the dark brand background matches the three.js viewer's canvas (and the
     # ``.ts-field-movie`` CSS) so there is no white margin around the square.
-    with contextlib.suppress(Exception):
+    profile = bool(recipe.get("profile"))
+    spec.theme("dark").font(family="sans-serif")
+    if profile:
+        spec.style(color="#2CC5AE", linewidth=1.8)
+        spec.relabel(x="grid point", y="state")
+    else:
         spec.style(
             cmap=recipe.get("cmap", "viridis"),
             interpolation=recipe.get("interpolation", "bilinear"),
             axes=False,
         )
-    with contextlib.suppress(Exception):
-        spec.background(_BG)
+    spec.background(_BG)
     # Optional colour-range override.  For a signed field (Swift–Hohenberg) a tight
     # SYMMETRIC clim scaled below the saturation amplitude makes the mature pattern
     # render at full diverging-colormap saturation instead of washing out against the
     # rare extreme; ``"symmetric"`` derives ``±q·max|field|`` from the stack.
     _apply_clim(spec, recipe.get("clim"))
-    spec.title = None  # drop the system-name title (the page already has the heading)
+    spec.relabel(title="")  # the page already has the system-name heading
     # Drop the colorbar so the poster (the movie's static final frame) is the same
     # chrome-free centred square as the movie itself — the animated field driver
     # draws no colorbar, so this only affects the still poster, keeping them matched.
@@ -386,15 +397,16 @@ def _stack_frames(spec) -> int | None:
     return None
 
 
-def _write_poster(spec, poster_path: pathlib.Path) -> bool:
-    """Write the movie's *final*-frame poster PNG (the ``<video poster>`` still).
+def _write_poster(spec, poster_path: pathlib.Path, size: tuple[int, int]) -> bool:
+    """Write the final simulated field as the ``<video poster>`` still.
 
     A still of the animated spec is its fully-evolved final field — the same image
     :mod:`figures` would render, but on the movie's grid / regime / colormap, so the
-    poster matches the last movie frame.  Returns ``True`` on success.
+    poster shows the end of the forward pass. A ping-pong movie subsequently
+    returns toward the initial field. Returns ``True`` on success.
     """
     try:
-        spec.save(str(poster_path), dpi=_DPI, size=(_PX, _PX))
+        spec.save(str(poster_path), dpi=_DPI, size=size)
         return poster_path.exists()
     except Exception:  # noqa: BLE001 — a missing poster is non-fatal (video still plays)
         return False
@@ -440,7 +452,8 @@ def _render_to_cache(entry, recipe: dict) -> tuple[pathlib.Path, pathlib.Path] |
     ext = "mp4" if use_mp4 else "gif"
     movie = CACHE_DIR / f"{entry.name}-{key}.{ext}"
     poster = CACHE_DIR / f"{entry.name}-{key}.png"
-    if movie.exists() and poster.exists():
+    size = tuple(int(n) for n in recipe.get("size", (_PX, _PX)))
+    if movie.exists() and movie.stat().st_size and poster.exists() and poster.stat().st_size:
         return movie, poster
 
     with warnings.catch_warnings(), np.errstate(all="ignore"):
@@ -460,23 +473,24 @@ def _render_to_cache(entry, recipe: dict) -> tuple[pathlib.Path, pathlib.Path] |
                 # +faststart (moov atom up front → instant streaming playback).
                 import matplotlib as mpl
 
-                extra = ["-pix_fmt", "yuv420p", "-movflags", "+faststart"]
+                extra = ["-pix_fmt", "yuv420p", "-movflags", "+faststart", "-threads", "2"]
                 with mpl.rc_context({"animation.ffmpeg_args": extra}):
-                    spec.save(str(tmp), fps=fps, dpi=_DPI, size=(_PX, _PX))
+                    spec.save(str(tmp), fps=fps, dpi=_DPI, size=size)
             else:
                 # Pillow-GIF fallback (ffmpeg absent): cap frames + downscale so the
                 # bulky per-frame-palettised GIF stays a few MB, not ~170 MB.
                 _cap_for_gif(spec)
-                spec.save(str(tmp), fps=fps, dpi=_DPI, size=(_GIF_PX, _GIF_PX))
+                gif_size = (_GIF_PX, max(2, round(_GIF_PX * size[1] / size[0])))
+                spec.save(str(tmp), fps=fps, dpi=_DPI, size=gif_size)
         except Exception:  # noqa: BLE001 — encoder failure → soft-fail to static PNG
             with contextlib.suppress(OSError):
                 tmp.unlink()
             return None
-        if not tmp.exists():
+        if not tmp.exists() or not tmp.stat().st_size:
             return None
         tmp.replace(movie)
         # The poster is the movie's fully-evolved final frame (a still of the spec).
-        _write_poster(spec, poster)
+        _write_poster(spec, poster, size)
 
     return movie, (poster if poster.exists() else movie)
 
@@ -519,23 +533,36 @@ def embed_html(entry, uri: str, *, movie_uri: str, poster_uri: str | None, ext: 
     than the source), so reaching a site-root asset needs one extra ``../`` over the
     source depth.  MkDocs does **not** rewrite ``<video>`` / ``<img>`` ``src``.
 
-    An **mp4** is a muted, looping, autoplaying, inline ``<video>`` (with the
-    final-frame ``poster`` shown until it loads); a **gif** fallback is a plain
-    ``<img>`` (a GIF autoplays and loops natively).
+    Videos have native controls and start on request. The GIF fallback lives in
+    a closed disclosure so readers choose when a non-pausable animation appears.
     """
     depth = uri.count("/") + 1
     prefix = "../" * depth
     src = prefix + movie_uri
     alt = html.escape(f"{entry.name} spatial-field movie")
+    profile_class = " ts-field-movie--profile" if _recipe(entry).get("profile") else ""
+    classes = f"ts-field-movie{profile_class}"
+    recipe = _recipe(entry)
+    settings = []
+    if recipe.get("grid") is not None:
+        settings.append(f"N={recipe['grid']}")
+    settings.extend(f"{key}={value:g}" for key, value in recipe.get("params", {}).items())
+    warmup = float(recipe.get("warmup", 0))
+    settings.append(f"simulation window: {warmup:g}–{warmup + recipe['final_time']:g}")
+    settings.append("forward/reverse playback" if recipe.get("pingpong") else "forward playback")
+    note = (
+        '<p class="ts-field-settings">Illustration: ' + html.escape(" · ".join(settings)) + "</p>"
+    )
     if ext == "gif":
-        return f'<img class="ts-field-movie" src="{src}" alt="{alt}" loading="lazy" />'
+        return (
+            f'<details class="ts-field-preview"><summary>Open animated field preview</summary>'
+            f'<img class="{classes}" src="{src}" alt="{alt}" loading="lazy" />{note}</details>'
+        )
     poster_attr = ""
     if poster_uri:
         poster_attr = f' poster="{prefix + poster_uri}"'
-    # autoplay+muted+playsinline is the reliable "plays automatically" combination
-    # across browsers (autoplay is only honoured for muted inline video).
     return (
-        f'<video class="ts-field-movie" src="{src}"{poster_attr} '
-        f'autoplay loop muted playsinline preload="metadata" '
-        f'aria-label="{alt}"></video>'
+        f'<video class="{classes}" src="{src}"{poster_attr} '
+        f'controls muted playsinline preload="none" '
+        f'aria-label="{alt}"></video>{note}'
     )

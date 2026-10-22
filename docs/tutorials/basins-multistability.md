@@ -1,4 +1,5 @@
 ---
+title: Basins and multistability
 description: A complete multistability walkthrough — define a bistable Duffing oscillator, find its attractors, paint their basins, quantify the boundary, then tilt the potential and watch a basin annihilate at a saddle-node tipping point.
 ---
 
@@ -6,8 +7,7 @@ description: A complete multistability walkthrough — define a bistable Duffing
 
 # Basins & multistability
 
-Some systems have more than one place to end up. A damped pendulum can stop
-hanging down or spun over the top; a climate can sit warm or frozen; a gene
+Some systems have more than one place to end up. A double-well oscillator can settle in either well; a climate can sit warm or frozen; a gene
 switch can latch on or off. When several stable states coexist, *which* one you
 reach is set entirely by where you start — and the map from initial conditions
 to final states is the **basin of attraction** picture. This tutorial builds
@@ -16,9 +16,9 @@ you push a parameter until a state disappears?
 
 We use the damped **two-well Duffing oscillator**, the textbook bistable flow,
 and take it all the way from three lines of math to a quantified, tipping-aware
-global-stability portrait. Every number below is reproducible — the initial
-conditions and seeds are pinned, and the printed values are what the shown code
-actually returns.
+global-stability portrait. Initial conditions and seeds are specified. Printed
+values illustrate finite-resolution results; check convergence when changing
+the grid, observation window or solver settings.
 
 ## 1. Write the equations
 
@@ -30,8 +30,9 @@ $$\ddot{x} = x - x^3 - \delta\,\dot{x} + F,$$
 
 written first order as $\dot x = y,\ \dot y = x - x^3 - \delta y + F$. We carry
 a tilt $F$ (zero for now) so the *same* class serves the continuation study in
-§6. The two wells sit at $x = \pm 1$; with damping every trajectory eventually
-rolls into one of them, and *which* one is the basin question.
+§6. For $F = 0$, the two stable equilibria sit at $x = \pm 1$. Generic starts
+settle in one well; the saddle at the origin and its stable manifold are the
+exception. Which stable outcome is reached is the basin question.
 
 ```python
 import numpy as np
@@ -62,7 +63,7 @@ sys = TiltedDuffing()
 
 ## 2. Integrate — see the bistability
 
-Two nearby initial conditions can fall into *different* wells. Integrate from
+Different initial conditions can fall into different wells. Integrate from
 each and read off the end state:
 
 ```python
@@ -77,12 +78,10 @@ the damped oscillation still ringing down at $t = 60$.)
 
 ## 3. Find the attractors
 
-[`ts.analysis.attractors`](../analysis/basins.md) drives the flow from a grid of
-random seeds over a `data.Box` of state space and follows
-each until it *recurrently* revisits the same cells — the signature of having
-reached an attractor (Datseris & Wagemakers, 2022). It samples over a
-`data.Box` of state space and needs no prior knowledge of where the attractors
-are:
+[`ts.analysis.attractors`](../analysis/basins.md) draws random seeds over a region of state space and follows each until it
+recurrently revisits the same cells (Datseris & Wagemakers, 2022). This detects
+candidate attractors without supplying their locations in advance; finite
+sampling can miss small basins:
 
 ```python
 region = data.Box(np.array([-2.0, -2.0]), np.array([2.0, 2.0]))
@@ -171,15 +170,16 @@ Read them in turn:
   full-grid `basins.fractions` above only by sampling noise). Its standard error
   is $\sqrt{p(1-p)/n}$ — dimension-free.
 - **`basin_entropy`** (Daza et al., 2016) measures how mixed the labels are.
-  `fractal_boundary=False` because the *boundary* entropy $S_{bb} = 0.49$ stays
-  below the $\ln 2 \approx 0.69$ threshold: at this damping the boundary is a
-  smooth curve.
+  The threshold flag is false here because the boundary entropy stays below
+  $\ln 2 \approx 0.69$. This flag is a resolution-dependent criterion, not a
+  proof of smoothness or fractality. Compare several box sizes and grid
+  resolutions.
 - **`uncertainty_exponent`** (Grebogi et al., 1983) quantifies final-state
   sensitivity: perturbing an initial condition by $\varepsilon$ flips its
   outcome with probability $\sim \varepsilon^{\alpha}$. Here $\alpha \approx
   0.997$ is essentially $1$, giving a boundary dimension $D_0 = D - \alpha
-  \approx 1.00$ — a genuine line (this fine $300 \times 300$ grid resolves the
-  smooth boundary cleanly; a coarser grid reads a slightly higher $D_0$).
+  \approx 1.00$, consistent with a smooth boundary at the resolved scales.
+  Inspect the scaling fit and vary resolution before interpreting the estimate.
 
 A fourth, [`resilience`](../analysis/basins.md), asks how *far* (in state space)
 a given attractor is from its basin boundary — the smallest perturbation that
@@ -193,9 +193,9 @@ ts.analysis.resilience(basins, 1)     # ScalarResult(value=0.575251)
     Smoothness is not guaranteed. Drive competing attractors hard enough — the
     canonical case is a magnetic pendulum over three magnets, or Newton's method
     on $z^3 = 1$ — and the boundary becomes fractal and even **Wada** (every
-    boundary point touches *all* basins at once). Then `basin_entropy` reports
-    `fractal_boundary=True` ($S_{bb} > \ln 2$) and
-    [`wada_property`](../analysis/basins.md) detects the Wada structure. For our
+    boundary point touches *all* basins at once). The entropy threshold and
+    [`wada_property`](../analysis/basins.md) provide finite-grid diagnostics;
+    neither alone certifies an asymptotic boundary property. For our
     two smooth basins `ts.analysis.wada_property(basins)` returns
     `WadaResult(is_wada=False, n_basins=2, W=0)`, as it should. The
     [Attractors & basins](../analysis/basins.md) page walks the fractal case.
@@ -205,7 +205,7 @@ ts.analysis.resilience(basins, 1)     # ScalarResult(value=0.575251)
 The basin picture is not fixed: change a parameter and it deforms, and a whole
 attractor — with its basin — can *vanish*. Our tilt $F$ does exactly this. The
 cubic drift $x - x^3 + F$ has three real roots (two wells plus the barrier) only
-while $|F| < 2 / 3\sqrt{3} \approx 0.385$; past that, a **saddle-node**
+while $|F| < 2/(3\sqrt{3}) \approx 0.385$; past that, a **saddle-node**
 bifurcation destroys the shallower well.
 
 [`continuation`](../analysis/basins.md) re-finds and *matches* the attractors at
@@ -235,7 +235,8 @@ ts.analysis.tipping_points(cont)
 ```
 
 One `disappear` event at $F = 0.4$: the left well and its basin are gone, and
-every initial condition now flows to the single surviving right well.
+the sampled starts reach the single surviving right well. A finite basin scan
+cannot by itself establish a statement about every initial condition.
 
 <figure class="ts-fig" markdown>
 ![Basin fractions vs tilt: the left-well fraction shrinks to zero at F≈0.4](../assets/figures/tutorials/basins-continuation.svg){ loading=lazy }

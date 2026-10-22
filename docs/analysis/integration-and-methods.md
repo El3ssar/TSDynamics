@@ -18,10 +18,10 @@ stiffness selection does, and which backend runs the numbers — followed by the
 <figcaption>One <code>Lorenz().run(...)</code> call returns one <code>Trajectory</code>. The same data is the strange attractor in state space (left, indigo) and the stacked <code>x(t)</code>, <code>y(t)</code>, <code>z(t)</code> time series it samples on the output grid (right) — <code>traj.y</code> is <code>(T, dim)</code>, <code>traj["x"]</code> is one column of it.</figcaption>
 </figure>
 
-## Two verbs: `integrate` and `iterate`
+## One verb: `run`
 
-Continuous families (ODEs, DDEs, SDEs) **integrate**; discrete maps **iterate**.
-Both return a single [`Trajectory`](index.md).
+Continuous families (ODEs, DDEs, SDEs) integrate in time; discrete maps iterate.
+Both use `run` and return a [`Trajectory`](index.md).
 
 ```python
 import tsdynamics as ts
@@ -41,10 +41,11 @@ loses resolution, never accuracy. (Fixed-step kernels are the exception: there
 
 ## The `Trajectory` object
 
-Every `integrate` or `iterate` call returns a `Trajectory`: time points `t` of
+Every `run` call returns a `Trajectory`: time points `t` of
 shape `(T,)`, states `y` of shape `(T, dim)`, and provenance. It is the lingua
-franca of the whole toolkit — every quantifier accepts one, and every derived
-wrapper produces one.
+franca of the data analysis toolkit. Model-based analyses such as equilibrium
+searches need the equations instead; `ts.analysis.find(traj)` lists the analyses
+that accept measured data.
 
 ```python
 traj.t, traj.y               # the arrays: (T,) and (T, dim)
@@ -80,7 +81,7 @@ every saved trajectory self-describing.
 
 ## The stepping API
 
-`integrate` / `iterate` produce whole trajectories in one call. For algorithms
+`run` produces a whole trajectory in one call. For algorithms
 that need *control* — advance a little, look at the state, decide, advance again
 — every system also implements the incremental `System` protocol:
 
@@ -99,8 +100,6 @@ lor.set_state(u + 1e-9)          # overwrite the state in place
   overrides are applied first.
 - **`state()` / `time()` / `set_state(u)`** — read the live state and time, or
   overwrite the state in place.
-- **`trajectory(...)`** — a protocol-uniform wrapper over `integrate` / `iterate`
-  with a `transient=` drop.
 
 !!! note "`set_state` on a DDE raises — by design"
     A delay system's instantaneous state is a *history function* over
@@ -118,7 +117,7 @@ analysis does not fit, you drive it directly; see
 
 ## Choosing a solver
 
-The **`solver=`** keyword selects the integration kernel. The default is `rk45`
+The **`solver=`** keyword selects the integration kernel. The usual ODE default is `rk45`
 (Dormand–Prince 5(4)), a robust general-purpose adaptive explicit solver that
 serves most non-stiff systems well.
 
@@ -127,6 +126,28 @@ serves most non-stiff systems well.
     `ensemble`; `method=` selects an *estimation algorithm* on an analysis
     (`optimal_delay(x, method="mi")`, `fixed_points(sys, method="interval")`).
     `run(method=...)` raises and names `solver=`.
+
+The integrating field analyses `ftle_field`, `escape_time_field` and
+`transient_time_field` also accept `solver=`. Omit it to use the model's declared
+default, including stiff defaults. Their older `method=` spelling remains
+accepted for compatibility; supplying both is an error.
+
+```python
+field = ts.analysis.ftle_field(
+    ts.systems.Lorenz(), xlim=(-2, 2), ylim=(-2, 2), grid=12,
+    final_time=0.2, solver="dop853",
+)
+```
+
+For a higher-dimensional model, FTLE on this two-coordinate initial slice uses
+stretching into **all** final state coordinates. It measures the largest
+stretch within the chosen initial plane, which need not equal the largest
+stretch over every possible initial direction.
+
+For `escape_time_field` and `transient_time_field`, `t0=` sets the forcing clock
+at launch, while `final_time=` remains the elapsed horizon and returned values
+are elapsed first-passage times. The default transient arrival test evaluates
+the actual speed at each checkpoint; `settled=` supplies a custom state test.
 
 ```python
 # skip-doctest — `sys` is any continuous system of yours

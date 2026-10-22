@@ -283,8 +283,12 @@ def select_renderer(spec: PlotSpec, backend: str | None = None) -> tuple[str, An
             fallback = _first_capable(spec, renderers, exclude=backend)
         if fallback is None:
             return backend, renderer  # nothing better; let the backend try / error clearly
+        caps = _capabilities_of(renderer)
+        reason_fn = getattr(caps, "_decline_reason", None)
+        reason = reason_fn(spec) if reason_fn is not None else None
+        detail = f" ({reason})" if reason else ""
         warnings.warn(
-            f"backend {backend!r} cannot draw a {spec.kind.value!r} spec; "
+            f"backend {backend!r} cannot draw a {spec.kind.value!r} spec{detail}; "
             f"falling back to {fallback[0]!r}.",
             VisualizationDegraded,
             stacklevel=2,
@@ -387,6 +391,29 @@ def render_spec(spec: PlotSpec, backend: str | None = None, **backend_kw: Any) -
         If ``backend_kw`` carries a keyword the **chosen** backend does not read.
     """
     register_builtin_renderers()
+    if backend is not None and backend_kw:
+        from tsdynamics.registry import renderers
+
+        requested_name = _normalize_backend_name(backend)
+        if requested_name in renderers:
+            requested = renderers.get(requested_name)
+            requested_caps = _capabilities_of(requested)
+            if (
+                requested_caps is not None
+                and (requested_caps.data_export or {"path", "html", "raw"}.intersection(backend_kw))
+                and not _can_render(requested, spec)
+            ):
+                from tsdynamics.errors import InvalidParameterError
+
+                reason_fn = getattr(requested_caps, "_decline_reason", None)
+                reason = reason_fn(spec) if reason_fn is not None else None
+                detail = f" ({reason})" if reason else ""
+                raise InvalidParameterError(
+                    f"{requested_name!r} cannot export the {spec.kind.value!r} arrangement{detail}. "
+                    "Render it with plot.render('matplotlib'), save a figure with "
+                    "plot.save('figure.svg'), or preserve the complete Plot with "
+                    "plot.save('plot.json'). A drawing fallback cannot write this backend's payload."
+                )
     chosen_name, renderer = select_renderer(spec, backend)
 
     # An unknown render keyword is a TYPO, not an option: before this check all
@@ -403,8 +430,13 @@ def render_spec(spec: PlotSpec, backend: str | None = None, **backend_kw: Any) -
     # backend will silently ignore (style keys, animation, theme/axis fields).
     gaps = style_honoring_gaps(spec, chosen_name)
     if gaps:
+        detail = (
+            "; WebGL line strokes remain one device pixel. Use matplotlib for wider lines."
+            if chosen_name == "threejs" and {"linewidth", "theme.line_width"}.intersection(gaps)
+            else ""
+        )
         warnings.warn(
-            f"{chosen_name}: ignoring {', '.join(gaps)}",
+            f"{chosen_name}: ignoring {', '.join(gaps)}{detail}",
             VisualizationDegraded,
             stacklevel=2,
         )

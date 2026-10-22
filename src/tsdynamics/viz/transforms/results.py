@@ -247,6 +247,7 @@ def _demo_flow() -> Any:
     frame=FrameSpace.PARAM1,
     kind=PlotKind.ORBIT_DIAGRAM,
     primitives=("points", "density"),
+    analysis="tsdynamics.analysis.orbit_diagram",
     example=lambda primitive: (_demo_map(), {"param": "r", "values": (3.4, 4.0, 60), "points": 40}),
     doc="The asymptotic orbit against a swept parameter — the bifurcation cascade.",
 )
@@ -257,7 +258,7 @@ def orbit_diagram(
     values: Sequence[float] | tuple[float, float, int] | None = None,
     points: int = 100,
     transient: int = 500,
-    components: int = 0,
+    components: int | str = 0,
     **kwargs: Any,
 ) -> Geometry:
     r"""Sweep a parameter and draw the asymptotic orbit at each value.
@@ -289,8 +290,8 @@ def orbit_diagram(
         Asymptotic points recorded per value.
     transient : int, optional
         Iterations discarded before recording.
-    components : int, optional
-        Which state component to record.
+    components : int or str, optional
+        Which state component to record, by index or declared variable name.
     **kwargs
         Forwarded to :func:`tsdynamics.analysis.orbit_diagram`.
 
@@ -344,8 +345,19 @@ def orbit_diagram(
         else:
             swept = np.asarray(values, dtype=float)
         result = _orbit_diagram(
-            subject, param, swept, points_per_value=points, transient=transient, **kwargs
+            subject,
+            param,
+            swept,
+            points_per_value=points,
+            transient=transient,
+            components=components,
+            **kwargs,
         )
+        observable = _observable_label(subject, result.meta.get("observable") or components)
+        # The estimator returns the selected observable as its first column.
+        # Applying the original state index again either chose another quantity
+        # or indexed past that single column.
+        components = 0
     # A diverged parameter value records an EMPTY orbit, so ``result.points`` is
     # ragged whenever the sweep crosses a divergence boundary.  Pad with NaN and
     # drop the pad below, rather than letting numpy refuse the whole picture.
@@ -487,6 +499,7 @@ def _needs_region(subject: Any) -> Exception:
 
 @register(
     source="data",
+    subjects=("array", "TrajectoryBatch"),
     frame=FrameSpace.TIME,
     kind=PlotKind.ENSEMBLE_FAN,
     primitives=("band",),
@@ -519,6 +532,10 @@ def ensemble_fan(
     -------
     Geometry
     """
+    from tsdynamics.errors import InvalidParameterError
+
+    if len(spread) != 2 or not (0 <= spread[0] < spread[1] <= 100):
+        raise InvalidParameterError("ensemble_fan spread must satisfy 0 <= low < high <= 100.")
     t, band = _ensemble_array(subject, components)
     lo, hi = (np.percentile(band, p, axis=0) for p in spread)
     median = np.median(band, axis=0)
@@ -549,15 +566,24 @@ def _ensemble_array(subject: Any, component: int) -> tuple[np.ndarray, np.ndarra
     members = list(getattr(subject, "trajectories", None) or subject)
     if members and hasattr(members[0], "y"):
         t = np.asarray(members[0].t, dtype=float)
+        if any(not np.array_equal(np.asarray(member.t, dtype=float), t) for member in members):
+            raise InvalidInputError(
+                "ensemble_fan needs every trajectory on the same time grid. "
+                "Resample members onto a common grid before comparing their percentiles."
+            )
         rows = [np.atleast_2d(np.asarray(m.y, dtype=float))[:, component] for m in members]
-        return t, np.asarray(rows, dtype=float)
-    arr = np.asarray(subject, dtype=float)
-    if arr.ndim != 2:
+        arr = np.asarray(rows, dtype=float)
+    else:
+        arr = np.asarray(subject, dtype=float)
+        t = np.arange(arr.shape[1], dtype=float) if arr.ndim == 2 else np.empty(0)
+    if arr.ndim != 2 or not arr.size:
         raise InvalidInputError(
             "ensemble_fan needs an ensemble: a TrajectoryBatch, a list of trajectories, or an "
-            f"(members, T) array; got shape {arr.shape}."
+            f"non-empty (members, T) array; got shape {arr.shape}."
         )
-    return np.arange(arr.shape[1], dtype=float), arr
+    if not np.isfinite(arr).all():
+        raise InvalidInputError("ensemble_fan needs finite samples for every member and time.")
+    return t, arr
 
 
 def _demo_batch() -> Any:

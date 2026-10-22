@@ -1,11 +1,9 @@
 # Documentation: build on every PR and push to main (validation),
 # deploy to GitHub Pages only on push to main.
 #
-# System figures (and the Gray-Scott / Swift-Hohenberg animated field-movie
-# heroes) are rendered at build time by hooks/docs_autogen.py with on-disk caches
-# (.cache/docs-figures, .cache/docs-field-movies) keyed by class-source hashes,
-# restored via actions/cache so only new/changed systems re-render.  The field
-# movies encode an mp4 via ffmpeg (installed below).
+# Catalogue figures, interactive viewers, the plot gallery and spatial-field
+# movies are generated at build time. Content keys track numerical and drawing
+# sources, so changes to inherited equations or renderers invalidate old output.
 
 name: Documentation
 
@@ -70,22 +68,28 @@ jobs:
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends ffmpeg
 
-      # Restore the figure + field-movie caches (both content-addressed by class
-      # source + tooling), so only new/changed systems ever re-render.
-      - name: Restore figure cache
+      # Persist every generated illustration family. Include runtime inputs in
+      # the outer key as well as each asset's content key, so newly rendered
+      # results are saved after an engine-only or renderer-only change.
+      - name: Restore illustration caches
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: .cache/docs-figures
-          key: docs-figures-${{ hashFiles('src/tsdynamics/systems/**', 'docs/_tooling/**') }}
+          path: |
+            .cache/docs-figures
+            .cache/docs-threejs
+            .cache/docs-gallery
+          key: docs-illustrations-v2-${{ hashFiles('src/tsdynamics/**', 'crates/**/src/**', 'crates/**/Cargo.toml', 'crates/Cargo.lock', 'docs/_tooling/**') }}
           restore-keys: |
+            docs-illustrations-v2-
             docs-figures-
 
       - name: Restore field-movie cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .cache/docs-field-movies
-          key: docs-field-movies-${{ hashFiles('src/tsdynamics/systems/**', 'docs/_tooling/field_movies.py', 'src/tsdynamics/viz/render/mpl/**') }}
+          key: docs-field-movies-v2-${{ hashFiles('src/tsdynamics/**', 'crates/**/src/**', 'crates/**/Cargo.toml', 'crates/Cargo.lock', 'docs/_tooling/**') }}
           restore-keys: |
+            docs-field-movies-v2-
             docs-field-movies-
 
       - name: Sync project + docs + test deps and plotting extras

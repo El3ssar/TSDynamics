@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import Any as _Any
 
 from .. import registry as _registry
+from ..families import ContinuousSystem as _ContinuousSystem
 from ..plugins import ANALYSES_GROUP, register_entry_points
 from . import _discovery
 
@@ -145,7 +146,14 @@ globals()["basins"] = _basins_fn
 # picture) had no door at all.
 for _name, _subjects, _area, _keywords in PLANAR_ANALYSES:
     register(
-        getattr(planar, _name), subjects=_subjects, area=_area, keywords=_keywords, replace=True
+        getattr(planar, _name),
+        subjects=_subjects,
+        area=_area,
+        keywords=_keywords,
+        families=("ode",) if "flow" in _subjects else None,
+        system_types=(_ContinuousSystem,) if "flow" in _subjects else None,
+        min_dim=2 if "flow" in _subjects else None,
+        replace=True,
     )
 del _name, _subjects, _area, _keywords
 
@@ -215,6 +223,8 @@ def find(what: _Any = None, /) -> AnalysisList:
     ``what`` is a **string** (free-text search over the name, area, keywords and
     summary), or a **subject** — a system, a :class:`~tsdynamics.data.Trajectory`,
     an array, a result, or any of their classes — or omitted, for all of them.
+    System instances are filtered by the registered family, state dimension and
+    concrete autonomy restrictions. A class query cannot check parameter values.
     Returns a plain ``list`` of the analysis *functions*, whose repr is the
     grouped table.
 
@@ -224,7 +234,7 @@ def find(what: _Any = None, /) -> AnalysisList:
     >>> sorted(f.__name__ for f in ts.analysis.find("multistability"))[:3]
     ['attractors', 'basin_fractions', 'basins']
     >>> len(ts.analysis.find(ts.systems.Henon()))    # a map has no vector field
-    13
+    11
     >>> len(ts.analysis.find(ts.systems.Lorenz()))
     20
     """
@@ -246,7 +256,12 @@ def find(what: _Any = None, /) -> AnalysisList:
             f"    ts.analysis.find(traj)        # a subject\n"
             f"    ts.analysis.find()            # everything"
         )
-    hits = [e for e in entries if set(tokens) & set(e.metadata.get("subjects", ()))]
+    hits = [
+        e
+        for e in entries
+        if set(tokens) & set(e.metadata.get("subjects", ()))
+        and _discovery.supports_subject(e, what)
+    ]
     subject = what.__name__ if isinstance(what, type) else type(what).__name__
     return AnalysisList(hits, f"{len(hits)} analyses take a {subject}")
 

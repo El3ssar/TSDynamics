@@ -315,7 +315,7 @@ def return_map(
         still gives accurate extrema.  In ``kind="poincare"`` mode it is the
         crossing-**detection** step of the section march.  Ignored for a
         ``Trajectory`` / a bare series, which are already sampled.
-        In ``kind="poincare"`` mode ``final_time``, ``ic``, ``transient`` and
+        In ``kind="poincare"`` mode ``final_time``, ``transient`` and
         ``**integrate_kwargs`` do not apply and are ignored (the section is
         marched until ``n`` crossings).
     transient : float, default 0.0
@@ -355,7 +355,7 @@ def return_map(
 
     if kind == "poincare":
         values, times, obs_idx = _poincare_observable(
-            system, components, plane, direction, n, skip_crossings, dt, seed
+            system, components, plane, direction, n, skip_crossings, dt, ic, seed
         )
     else:
         values, times, obs_idx = _extremum_observable(
@@ -452,6 +452,7 @@ def _poincare_observable(
     n: int,
     skip_crossings: int,
     dt: float,
+    ic: Any | None,
     seed: int | None,
 ) -> tuple[np.ndarray, np.ndarray, int]:
     """Extract the observable series (+ times) for Poincaré-return mode."""
@@ -461,7 +462,7 @@ def _poincare_observable(
         # the system path discards `skip_crossings` crossings inside
         # poincare_section; the data path has them all, so drop the first
         # `skip_crossings` here to match.
-        section = poincare_section(system, plane, direction=direction)
+        section = poincare_section(system, plane, direction=direction, ic=ic)
         idx = _observable_index(section, component)
         skip = int(skip_crossings)
         return section.y[skip:, idx], section.t[skip:], idx
@@ -473,6 +474,7 @@ def _poincare_observable(
             crossings=n,
             skip_crossings=int(skip_crossings),
             dt=dt,
+            ic=ic,
             seed=seed,
         )
         idx = _observable_index(section, component)
@@ -493,6 +495,13 @@ def _local_extrema(series: Any, times: Any | None, kind: str) -> tuple[np.ndarra
     s = np.asarray(series, dtype=float)
     if s.ndim != 1:
         raise ValueError(f"extremum series must be 1-D, got shape {s.shape}.")
+    if not np.isfinite(s).all():
+        raise ValueError("extremum series contains non-finite values (nan/inf).")
+    t = None if times is None else np.asarray(times, dtype=float)
+    if t is not None and (
+        t.shape != s.shape or not np.isfinite(t).all() or np.any(np.diff(t) <= 0.0)
+    ):
+        raise ValueError("extremum times must be finite, strictly increasing and match the series.")
     sign = 1.0 if kind == "max" else -1.0
     v = sign * s
     if v.size < 3:
@@ -507,20 +516,25 @@ def _local_extrema(series: Any, times: Any | None, kind: str) -> tuple[np.ndarra
     y0 = v[idx]
     ym = v[idx - 1]
     yp = v[idx + 1]
-    denom = ym - 2.0 * y0 + yp
-    # vertex offset in samples, in [-1/2, 1/2]; flat (denom==0) -> no shift
-    delta = np.where(denom != 0.0, 0.5 * (ym - yp) / denom, 0.0)
-    delta = np.clip(delta, -0.5, 0.5)
-    peak = sign * (y0 - 0.25 * (ym - yp) * delta)
-
-    if times is None:
+    if t is None:
+        denom = ym - 2.0 * y0 + yp
+        delta = np.where(denom != 0.0, 0.5 * (ym - yp) / denom, 0.0)
+        delta = np.clip(delta, -0.5, 0.5)
+        peak = sign * (y0 - 0.25 * (ym - yp) * delta)
         peak_t = idx.astype(float) + delta
     else:
-        t = np.asarray(times, dtype=float)
-        # scale the offset by the spacing on the side it points to — correct on a
-        # non-uniform grid, and equal to dt on the uniform output grid.
-        spacing = np.where(delta >= 0.0, t[idx + 1] - t[idx], t[idx] - t[idx - 1])
-        peak_t = t[idx] + delta * spacing
+        # Fit y0 + b*h + a*h^2 in actual time coordinates. Applying the uniform
+        # sample-index vertex formula and scaling only its time afterwards
+        # biases both the value and time on an irregular recording.
+        left = t[idx] - t[idx - 1]
+        right = t[idx + 1] - t[idx]
+        slope_left = (y0 - ym) / left
+        slope_right = (yp - y0) / right
+        a = (slope_right - slope_left) / (left + right)
+        b = (right * slope_left + left * slope_right) / (left + right)
+        shift = np.clip(-b / (2.0 * a), -0.5 * left, 0.5 * right)
+        peak = sign * (y0 + b * shift + a * shift**2)
+        peak_t = t[idx] + shift
     return peak, peak_t
 
 

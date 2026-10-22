@@ -30,6 +30,9 @@ Davidchack & Lai (1999), *Phys. Rev. E* 60, 6172.
 
 from __future__ import annotations
 
+from tsdynamics.families import ContinuousSystem as _ContinuousSystem
+from tsdynamics.families import DiscreteMap as _DiscreteMap
+
 from .._discovery import register as _register
 from .._result import ScalarResult
 from .fixed import FixedPoint, FixedPointSet, fixed_points
@@ -56,6 +59,9 @@ __all__ = [
 # (CONTRACT §7.7), through the public ``ts.analysis.register`` door.
 _register(
     fixed_points,
+    system_types=(_ContinuousSystem, _DiscreteMap),
+    families=("ode", "map"),
+    autonomous=True,
     subjects=("system",),
     area="fixedpoints",
     returns=FixedPointSet,
@@ -65,6 +71,9 @@ _register(
 )
 _register(
     periodic_orbits,
+    system_types=(_ContinuousSystem, _DiscreteMap),
+    families=("ode", "map"),
+    autonomous=True,
     subjects=("system",),
     area="fixedpoints",
     returns=OrbitSet,

@@ -3,36 +3,31 @@ Build-time figure rendering for the per-system documentation pages.
 
 Strategy
 --------
-- **ODE** figures integrate with the **shipped Rust engine**, pinned to
-  ``integrate(backend="interp")``.  The interpreter is bit-for-bit identical to
-  the library's default ``"jit"`` backend, and pinning it keeps the cached figure
-  goldens stable independently of which evaluator is the default, for every
-  non-stiff, non-discontinuous system — so the docs picture is rendered by the
-  code that ships, not an out-of-band SciPy reimplementation.  The handful of
-  **stiff** systems (those declaring a ``_default_method``, e.g. ``"bdf"``) and
-  **discontinuous** systems (a ``sign``/``abs`` right-hand side, flagged with a
-  ``"method"`` override in :data:`FIG_OVERRIDES`) fall back to the local
-  ``scipy.solve_ivp`` path over the SymEngine-lambdified numeric RHS
-  (``_rhs_numeric``) — the implicit/event handling the explicit engine kernels
-  used for figures do not cover.
-- **DDE** figures use the real ``integrate`` (the Rust engine; only 5 systems).
+- **ODE** figures normally run the shipped Rust engine with ``backend="interp"``.
+  Explicit ``engine_method`` settings also reach native adaptive or implicit
+  kernels, including BDF for Oregonator. Remaining stiff/discontinuous recipes
+  may use SciPy ``solve_ivp`` over the same symbolic model, with a bounded RHS
+  evaluation budget. The chosen plotting recipe is separate from the numerical
+  diagnostic measurement protocol.
+- **DDE** figures use the shipped method-of-steps integrator (six built-ins).
 - **Map** figures iterate via the family API (the Rust engine).
 
-A content-addressed cache under ``.cache/docs-figures`` keyed by
-``sha256(class source ‖ this module's source)`` means only new or changed
-systems ever re-render; CI persists the cache directory between builds.
-Per-system failures soft-fail (the page ships without a figure).
+A content-addressed cache under ``.cache/docs-figures`` tracks inherited model
+equations, parameters, Python/native numerical sources, renderer semantics and
+plot recipes. Comments, docstrings and release stamps do not invalidate footage.
+CI persists this cache; a failed illustration exposes a reason on its page.
 """
 
 from __future__ import annotations
 
+import ast
 import functools
 import hashlib
-import inspect
 import pathlib
 import shutil
 import warnings
 
+import diagnostics
 import numpy as np
 import plot_dt as _plot_dt  # the ONE sagitta-dt selector both renderers call
 
@@ -273,14 +268,93 @@ RENDERER_VERSION = "12"  # bump manually when rendering output materially change
 RENDER_FAILURES: dict[str, str] = {}
 
 
+class _RenderSemantics(ast.NodeTransformer):
+    """Ignore prose and package version stamps while retaining every drawing hook."""
+
+    def visit_Expr(self, node):
+        if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+            return None
+        return self.generic_visit(node)
+
+    def visit_Assign(self, node):
+        if any(
+            isinstance(target, ast.Name) and target.id == "__version__" for target in node.targets
+        ):
+            return None
+        return self.generic_visit(node)
+
+
+@functools.lru_cache(maxsize=8)
+def _render_sources_digest(signature: tuple) -> str:
+    """Hash stable logical paths and content; filesystem stamps only memoize reads."""
+    digest = hashlib.sha256()
+    for label, filename, _mtime, _size in signature:
+        digest.update(label.encode())
+        source = pathlib.Path(filename).read_text()
+        if filename.endswith(".py"):
+            tree = _RenderSemantics().visit(ast.parse(source))
+            digest.update(repr(diagnostics._canonical_ast(tree)).encode())
+        else:
+            digest.update(source.replace("\r\n", "\n").encode())
+    return digest.hexdigest()
+
+
+def _render_source_signature(*, whole_library: bool = False) -> tuple:
+    """Read live source stamps, keeping absolute installation paths out of the hash."""
+    import tsdynamics
+
+    package = pathlib.Path(tsdynamics.__file__).parent
+    sources = [
+        ("package/" + path.relative_to(package).as_posix(), path)
+        for path in (package if whole_library else package / "viz").rglob("*.py")
+    ]
+    tooling = pathlib.Path(__file__).parent
+    sources += [
+        ("tooling/" + name, tooling / name)
+        for name in ("figures.py", "plot_dt.py", "threejs_viewer.py", "gallery.py")
+    ]
+    if whole_library:
+        crates = ROOT / "crates"
+        for crate in crates.iterdir():
+            if crate.is_dir() and crate.name != "target":
+                files = list((crate / "src").rglob("*.rs"))
+                files += [
+                    path for path in (crate / "Cargo.toml", crate / "build.rs") if path.exists()
+                ]
+                sources += [
+                    ("native/" + path.relative_to(crates).as_posix(), path) for path in files
+                ]
+        sources += [("native/" + name, crates / name) for name in ("Cargo.toml", "Cargo.lock")]
+    return tuple(
+        (label, str(path), path.stat().st_mtime_ns, path.stat().st_size)
+        for label, path in sorted(sources)
+    )
+
+
+def _model_and_render_fingerprint(entry) -> str:
+    """Track inherited equations, numerical kernels, rendering and recipe helpers.
+
+    Reuse the frozen diagnostic source fingerprint without computing numerical
+    cards. Lazy loading avoids a dependency from the numerical protocol back to
+    this rendering module. Logical labels keep cache keys portable across a
+    source checkout and a wheel installation.
+    """
+    return diagnostics.fingerprint(entry) + _render_sources_digest(_render_source_signature())
+
+
+def _library_render_fingerprint() -> str:
+    """Cover gallery snippets whose model dependencies are known only on execution."""
+    return _render_sources_digest(_render_source_signature(whole_library=True))
+
+
 def cache_key(entry) -> str:
-    """Content hash: class source + this system's overrides + renderer version.
+    """Hash model/numerical/render semantics plus this system's plotting recipe.
 
     Incorporates the editorial ``viewer`` directive and the per-map
     :data:`MAP_OVERRIDES` so a curated IC / projection / bifurcation change
     re-renders the cached figure.
     """
-    cls_src = inspect.getsource(entry.cls)
+    cls_src = _model_and_render_fingerprint(entry)
     opts = repr(sorted(FIG_OVERRIDES.get(entry.name, {}).items()))
     mcfg = repr(sorted(MAP_OVERRIDES.get(entry.name, {}).items()))
     vcfg = repr(sorted(_viewer_cfg(entry).items()))
@@ -954,24 +1028,27 @@ def render(entry) -> pathlib.Path | None:
         shutil.copy(cached, out)
         return out
 
-    plt = _style()
-    try:
-        if entry.family == "ode":
-            fig = _render_ode(entry, plt, opts)
-        elif entry.family == "dde":
-            fig = _render_dde(entry, plt, opts)
-        elif entry.family == "sde":
-            fig = _render_sde(entry, plt, opts)
-        else:
-            fig = _render_map(entry, plt, opts)
-        fig.savefig(cached, dpi=150, bbox_inches="tight")
-        plt.close(fig)
-    except Exception as exc:  # noqa: BLE001 — retain the model page, disclose the failure
-        RENDER_FAILURES[entry.name] = (
-            f"The illustration could not be rendered ({type(exc).__name__})."
-        )
-        plt.close("all")
-        return None
+    import matplotlib
+
+    with matplotlib.rc_context():
+        plt = _style()
+        try:
+            if entry.family == "ode":
+                fig = _render_ode(entry, plt, opts)
+            elif entry.family == "dde":
+                fig = _render_dde(entry, plt, opts)
+            elif entry.family == "sde":
+                fig = _render_sde(entry, plt, opts)
+            else:
+                fig = _render_map(entry, plt, opts)
+            fig.savefig(cached, dpi=150, bbox_inches="tight")
+            plt.close(fig)
+        except Exception as exc:  # noqa: BLE001 — retain model page, disclose failure
+            RENDER_FAILURES[entry.name] = (
+                f"The illustration could not be rendered ({type(exc).__name__})."
+            )
+            plt.close("all")
+            return None
 
     shutil.copy(cached, out)
     return out

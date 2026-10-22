@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+from test_viz_plotly_anim import plotly_clock_probe as plotly_clock_probe
 
 from tsdynamics.viz.render.mpl._core import _image_extent, _make_discrete_cmap_norm, _preset_for
 from tsdynamics.viz.spec import Animation, Colorbar, Layer, PlotKind, PlotSpec
@@ -38,41 +39,53 @@ def _line3d_animated(anim: Animation) -> PlotSpec:
     return spec
 
 
-def test_plotly_html_threads_loop_and_pingpong_tokens() -> None:
-    """The real-time JS must carry the resolved ``loop``/``pingpong`` flags.
+def _exported_clock(html: str) -> str:
+    start = html.index("(function() {\n  var gd = document.getElementById(")
+    return html[start:].split("\n})();", 1)[0] + "\n})();"
 
-    Pre-fix the loop schedule was hard-coded forward-only and always restarting,
-    so neither directive reached the generated script — both ``__LOOP__`` and
-    ``__PINGPONG__`` tokens were absent.  Post-fix they are substituted from the
-    :class:`~tsdynamics.viz.spec.Animation`.
-    """
+
+def test_plotly_html_threads_loop_and_pingpong_tokens(plotly_clock_probe) -> None:
+    """The exported driver reverses once and stops when looping is disabled."""
     pytest.importorskip("plotly")
     from tsdynamics.viz.render.plotly._anim import animated_html
 
     html = animated_html(
-        _line3d_animated(Animation(pingpong=True, loop=False)), html=True, full_html=False
+        _line3d_animated(Animation(pingpong=True, loop=False, n_frames=4, fps=4)),
+        html=True,
+        full_html=False,
     )
     assert isinstance(html, str)
-    # The (verified-honored) directives reach the script as real booleans, not as
-    # the unsubstituted placeholder tokens.
-    assert "__PINGPONG__" not in html and "__LOOP__" not in html
-    # pingpong=True, loop=False → the substituted constants appear.
-    assert "PINGPONG = true" in html
-    assert "LOOP = false" in html
-    # And the reverse-sweep machinery the pingpong directive needs is present.
-    assert "pushRangeRev" in html
-    assert "atForwardEnd" in html
+    result = plotly_clock_probe(
+        """
+        const v=mount({lengths:[64]}), values=[];
+        for(const t of [0,500,1000,1250,1500,2500]) {
+          await v.frame(t);values.push(v.heads()[0]);
+        }
+        console.log(JSON.stringify([values,v.play.attributes['aria-label']]));
+        """,
+        clock=_exported_clock(html),
+    )
+    assert result == [[0, 32, 63, 32, 0, 0], "Play animation"]
 
 
-def test_plotly_html_defaults_loop_true_pingpong_false() -> None:
-    """A default Animation (loop=True, pingpong=False) substitutes the right constants."""
+def test_plotly_html_defaults_loop_true_pingpong_false(plotly_clock_probe) -> None:
+    """The exported default playback repeats forwards rather than reversing or stopping."""
     pytest.importorskip("plotly")
     from tsdynamics.viz.render.plotly._anim import animated_html
 
-    html = animated_html(_line3d_animated(Animation()), html=True, full_html=False)
+    html = animated_html(_line3d_animated(Animation(n_frames=4, fps=4)), html=True, full_html=False)
     assert isinstance(html, str)
-    assert "LOOP = true" in html
-    assert "PINGPONG = false" in html
+    result = plotly_clock_probe(
+        """
+        const v=mount({lengths:[64]}), values=[];
+        for(const t of [0,500,1000,1500,2000,2500]) {
+          await v.frame(t);values.push(v.heads()[0]);
+        }
+        console.log(JSON.stringify([values,v.play.attributes['aria-label']]));
+        """,
+        clock=_exported_clock(html),
+    )
+    assert result == [[0, 32, 63, 0, 32, 63], "Pause animation"]
 
 
 # ---------------------------------------------------------------------------

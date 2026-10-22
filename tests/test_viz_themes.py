@@ -65,6 +65,38 @@ def test_register_takes_keywords_and_returns_the_built_theme():
     assert ts.viz.themes.get("lab") is theme
 
 
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"dpi": 0},
+        {"dpi": float("inf")},
+        {"line_width": float("nan")},
+        {"font_size": -1},
+        {"figsize": (0, 3)},
+        {"figsize": (3,)},
+        {"grid_alpha": 2},
+        {"autostyle": "false"},
+        {"grid": "no"},
+        {"layout_engine": "typo"},
+    ],
+)
+def test_invalid_theme_settings_are_refused_before_the_registry_changes(fields):
+    names = ts.viz.themes.names()
+    with pytest.raises(InvalidParameterError, match="theme\\."):
+        ts.viz.themes.register("invalid", **fields)
+    assert ts.viz.themes.names() == names
+
+
+def test_saved_theme_validation_preserves_boolean_and_size_meaning():
+    from tsdynamics.viz.style import Theme
+
+    with pytest.raises(InvalidParameterError, match="grid"):
+        Theme.from_dict({"grid": "false"})
+    with pytest.raises(InvalidParameterError, match="figsize"):
+        Theme.from_dict({"figsize": [3, 4, 5]})
+    assert Theme(palette="red").palette == ("red",)
+
+
 def test_themes_lists_what_exists():
     """``names()`` enumerates the built-ins, and a new one joins the list."""
     builtins = ts.viz.themes.names()
@@ -72,6 +104,24 @@ def test_themes_lists_what_exists():
     ts.viz.themes.register("lab", **HOUSE)
     assert ts.viz.themes.names() == ["dark", "default", "lab", "minimal", "publication"]
     assert set(ts.viz.themes.find()) == set(ts.viz.themes.names())
+
+
+@pytest.mark.parametrize("theme_name", ["default", "minimal", "dark", "publication"])
+def test_builtin_svg_text_keeps_a_portable_generic_font_fallback(theme_name):
+    import io
+    import re
+
+    import matplotlib as mpl
+
+    spec = ts.viz.draw({"x": [0, 1], "y": [1, 2]}, "line").theme(theme_name)
+    spec.relabel(title="Portable title", x="Time", y="State")
+    output = io.StringIO()
+    with mpl.rc_context({"svg.fonttype": "none"}):
+        spec.render("matplotlib").savefig(output, format="svg")
+    generic = ts.viz.themes.get(theme_name).font_family
+    text_styles = re.findall(r'<text style="([^"]+)"', output.getvalue())
+    assert text_styles
+    assert all(re.search(rf"font-family:[^;]*\b{generic}(?:;|$)", style) for style in text_styles)
 
 
 def test_register_derives_from_a_built_in():

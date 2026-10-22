@@ -223,6 +223,7 @@ def test_exempt_pages_still_fail(page: str) -> None:
 EXPECTED_DOC_EXCLUSIONS: frozenset[str] = frozenset(
     {
         # tooling / non-page assets
+        "overrides/",  # Jinja source belongs to the theme, never a public page
         "_tooling/",
         "_static/",
         "css/",
@@ -274,7 +275,7 @@ def test_no_blanket_tree_exclusions_over_content() -> None:
     guard exists to prevent: it silently swallows every page added under it
     later.  Only the non-page asset directories may be excluded that way.
     """
-    asset_dirs = {"_tooling/", "_static/", "css/"}
+    asset_dirs = {"_tooling/", "_static/", "css/", "overrides/"}
     tree_drops = {e for e in _mkdocs_exclusions() if e.endswith("/")} - asset_dirs
     assert not tree_drops, (
         "these exclude whole content trees; list the individual pages instead "

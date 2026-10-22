@@ -1,19 +1,20 @@
 r"""
 Chaos indicators — stream **A-CHAOS**.
 
-Three complementary, literature-validated answers to "is this orbit chaotic?",
-each reproducing the discriminator from its original paper:
+Three complementary finite-data diagnostics, with different assumptions and
+different meanings:
 
 - :func:`gali` — the Generalized Alignment Index GALI\ :sub:`k`
   (Skokos, Bountis & Antonopoulos 2007): the volume spanned by ``k`` unit
-  deviation vectors.  Exponential decay marks chaos and measures the
-  Lyapunov-exponent gaps; a constant/power-law tail marks order.
+  deviation vectors. Alignment decay measures Lyapunov-exponent gaps; it also
+  occurs on regular attracting cycles, so collapse alone does not prove chaos.
 - :func:`zero_one_test` — the 0--1 test for chaos (Gottwald & Melbourne 2004,
-  2009): a scalar :math:`K \in [0, 1]` read off a single observable, ``~0`` for
-  regular and ``~1`` for chaotic dynamics.
+  2009): a correlation statistic :math:`K \in [-1, 1]` read off a single
+  observable, ideally near zero for regular and near one for chaotic dynamics.
+  Sampling, noise and finite duration can compromise that distinction.
 - :func:`expansion_entropy` — Hunt & Ott's (2015) expansion entropy: the
-  exponential growth rate of the in-region tangent-space volume, exact
-  (``ln 2``) for a uniformly expanding map.
+  exponential growth rate of the surviving, expanding tangent volume in a
+  chosen region; the result is a finite-time Monte Carlo estimate of that rate.
 
 :func:`gali` and :func:`expansion_entropy` evolve tangent dynamics, so they take
 a live :class:`~tsdynamics.families.DiscreteMap` or
@@ -27,6 +28,9 @@ are discoverable by name alongside out-of-tree analysis plugins.
 """
 
 from __future__ import annotations
+
+from tsdynamics.families import ContinuousSystem as _ContinuousSystem
+from tsdynamics.families import DiscreteMap as _DiscreteMap
 
 from .._discovery import register as _register
 from .expansion import ExpansionEntropyResult, expansion_entropy
@@ -47,6 +51,9 @@ __all__ = [
 # (CONTRACT §7.7), through the public ``ts.analysis.register`` door.
 _register(
     gali,
+    system_types=(_ContinuousSystem, _DiscreteMap),
+    families=("ode", "map"),
+    min_dim=2,
     subjects=("system",),
     area="chaos",
     returns=GALIResult,
@@ -56,6 +63,7 @@ _register(
 )
 _register(
     zero_one_test,
+    families=("ode", "map", "dde", "sde"),
     # A SYSTEM **or** measured data: its own summary line says so, it works on a
     # bare ndarray, and it was registered system-only — so ``find(my_array)``, the
     # library's best discovery route, hid the one analysis that answers the
@@ -69,6 +77,8 @@ _register(
 )
 _register(
     expansion_entropy,
+    system_types=(_ContinuousSystem, _DiscreteMap),
+    families=("ode", "map"),
     subjects=("system",),
     area="chaos",
     returns=ExpansionEntropyResult,

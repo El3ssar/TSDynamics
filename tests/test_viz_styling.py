@@ -203,6 +203,145 @@ def test_normalize_style_rejects_bad_value(bad):
         normalize_style(bad)
 
 
+@pytest.mark.parametrize(
+    "bad", [{"linewidth": np.nan}, {"markersize": np.inf}, {"filled": "false"}, {"fill": 0}]
+)
+def test_style_rejects_nonfinite_sizes_and_nonboolean_switches(bad):
+    with pytest.raises(ValueError):
+        normalize_style(bad)
+
+
+@pytest.mark.parametrize("spatial", [False, True])
+@pytest.mark.parametrize("primitive", ["line", "points"])
+def test_plotly_scalar_colours_respect_hidden_and_styled_colorbars(spatial, primitive):
+    import tsdynamics as ts
+
+    channels = {"x": np.arange(4.0), "y": np.arange(4.0), "c": np.arange(4.0)}
+    if spatial:
+        channels["z"] = np.arange(4.0)
+        primitive += "3d"
+    spec = ts.viz.draw(channels, primitive, colorbar={"label": "speed", "label_size": 14})
+    visible = spec.render("plotly")
+    assert visible.data[0].marker.colorbar.title.font.size == 14
+    spec.tweak(colorbar=False)
+    assert spec.render("plotly").data[0].marker.showscale is False
+
+
+def test_plotly_lines_draw_requested_markers_and_rgb_colours_in_stills_and_movies():
+    import tsdynamics as ts
+
+    spec = ts.viz.draw({"x": [0, 1, 2], "y": [0, 2, 1]}, "line").style(
+        color=(1, 0, 0), marker="x", markersize=8, filled=False
+    )
+    static = spec.render("plotly").data[0]
+    assert static.mode == "lines+markers"
+    assert static.marker.symbol == "x-open" and static.marker.size == 8
+    assert static.line.color == "rgb(255,0,0)"
+    animated = spec.animate(n_frames=3).head(color=(0, 0, 1)).render("plotly")
+    assert animated.frames[-1].data[-1].marker.color == "rgb(0,0,255)"
+
+
+def test_plotly_image_alpha_and_three_dimensional_axis_settings_are_honored():
+    import tsdynamics as ts
+
+    image = ts.viz.draw({"z": [[0, 1], [1, 0]]}, "image", alpha=0.2)
+    assert image.render("plotly").data[0].opacity == 0.2
+    space = ts.viz.draw({"x": [1, 10, 100], "y": [1, 2, 3], "z": [1, 2, 3]}, "line3d")
+    space.rescale(x="log").limits(x=(1, 100)).ticks(x=[1, 10, 100])
+    space.gridlines(True, color="#ff0000", alpha=0.25)
+    axis = space.render("plotly").layout.scene.xaxis
+    assert axis.type == "log" and list(axis.range) == [0, 2]
+    assert list(axis.tickvals) == [1, 10, 100]
+    assert axis.showgrid is True and axis.gridcolor == "rgba(255, 0, 0, 0.25)"
+
+
+def test_plotly_three_dimensional_colours_translate_qualitative_colormaps():
+    import tsdynamics as ts
+
+    spec = ts.viz.draw({"x": [0, 1], "y": [0, 1], "z": [0, 1], "c": [0, 1]}, "line3d", cmap="tab20")
+    assert len(spec.render("plotly").data[0].marker.colorscale) == 32
+
+
+@pytest.mark.parametrize("spatial", [False, True])
+def test_plotly_symlog_axes_warn_and_fall_back_without_changing_the_scale(tmp_path, spatial):
+    import tsdynamics as ts
+
+    data = {"x": [-1, 0, 1], "y": [1, 2, 3]}
+    if spatial:
+        data["z"] = [1, 2, 3]
+    spec = ts.viz.draw(data, "line3d" if spatial else "line").rescale(x="symlog")
+    with pytest.warns(VisualizationDegraded, match="symlog"):
+        figure = spec.render("plotly")
+    assert figure.axes[0].get_xscale() == "symlog"
+    with pytest.raises(InvalidParameterError, match="symlog"):
+        spec.save(tmp_path / "symlog.html", backend="plotly")
+    assert not (tmp_path / "symlog.html").exists()
+
+
+@pytest.mark.parametrize("scale", ["log", "symlog", "categorical"])
+def test_threejs_nonlinear_or_categorical_axes_are_never_silently_linear(tmp_path, scale):
+    import tsdynamics as ts
+
+    spec = ts.viz.draw({"x": [1, 2], "y": [1, 2]}, "line")
+    spec.x.scale = scale
+    if scale == "categorical":
+        spec.x.categories = ["first", "second"]
+    with pytest.warns(VisualizationDegraded, match=scale):
+        assert spec.render("threejs").axes
+    with pytest.raises(InvalidParameterError, match=scale):
+        spec.render("threejs", raw=True)
+    with pytest.raises(InvalidParameterError, match=scale):
+        spec.save(tmp_path / "nonlinear.html", backend="threejs")
+    assert not (tmp_path / "nonlinear.html").exists()
+
+
+def test_matplotlib_three_dimensional_fonts_and_axis_sizes_follow_the_theme():
+    import tsdynamics as ts
+
+    spec = ts.viz.draw({"x": [1, 2], "y": [1, 2], "z": [1, 2]}, "line3d")
+    spec.theme(spec.resolved_theme.merged(font_family="serif", font_size=13, title_size=17))
+    spec.relabel(x="state", title="Orbit")
+    spec.x.label_size = 15
+    figure = spec.render("matplotlib")
+    figure.canvas.draw()
+    axis = figure.axes[0]
+    assert axis.xaxis.label.get_fontfamily() == ["serif"]
+    assert axis.xaxis.label.get_fontsize() == 15
+    assert axis.title.get_fontfamily() == ["serif"] and axis.title.get_fontsize() == 17
+
+
+def test_matplotlib_three_dimensional_grid_visibility_and_opacity_follow_the_spec():
+    import tsdynamics as ts
+
+    spec = ts.viz.draw({"x": [1, 2], "y": [1, 2], "z": [1, 2]}, "line3d")
+    off = spec.gridlines(False).render("matplotlib").axes[0]
+    assert off._draw_grid is False
+    on = spec.gridlines(True, color="#ff0000", alpha=0.25).render("matplotlib").axes[0]
+    on.figure.canvas.draw()
+    assert on._draw_grid is True
+    assert on.xaxis._axinfo["grid"]["color"] == (1.0, 0.0, 0.0, 0.25)
+
+
+@pytest.mark.parametrize("primitive", ["bars", "histogram"])
+def test_matplotlib_bar_like_marks_preserve_explicit_draw_order(primitive):
+    import tsdynamics as ts
+
+    spec = ts.viz.draw({"x": [0, 1], "y": [1, 2]}, primitive, zorder=8)
+    assert all(patch.get_zorder() == 8 for patch in spec.render("matplotlib").axes[0].patches)
+
+
+def test_matplotlib_coloured_lines_respect_zero_width_and_dash_style():
+    import tsdynamics as ts
+
+    base = {"x": [0, 1, 2], "y": [0, 1, 2], "c": [0, 1, 2]}
+    zero = ts.viz.draw(base, "line", linewidth=0).render("matplotlib").axes[0].collections[0]
+    assert zero.get_linewidths()[0] == 0
+    dashed = (
+        ts.viz.draw(base, "line", linestyle="dashed").render("matplotlib").axes[0].collections[0]
+    )
+    assert dashed.get_linestyle()[0][1] is not None
+
+
 def test_normalize_style_drops_unknown_key_with_one_warning():
     """An unknown key is dropped, emitting exactly ONE ``VisualizationDegraded``."""
     with pytest.warns(VisualizationDegraded) as record:
@@ -513,7 +652,7 @@ def test_plotly_honors_style_and_theme():
 
 
 def test_threejs_material_and_theme_metadata():
-    """threejs serializes per-layer material (color/linewidth/alpha) + metadata.theme."""
+    """threejs serializes supported material fields and warns about wider strokes."""
     spec = _styled_themed_spec()
     # threejs declines linestyle / theme.font / theme.grid for this spec → expect
     # exactly one consolidated VisualizationDegraded naming those, so wrap render.
@@ -523,7 +662,7 @@ def test_threejs_material_and_theme_metadata():
     geom = payload["geometries"][0]
     material = geom["material"]
     assert material["color"] == "#ff0000"
-    assert material["linewidth"] == pytest.approx(3.0)
+    assert "linewidth" not in material
     assert material["alpha"] == pytest.approx(0.5)
 
     theme_block = payload["metadata"]["theme"]
@@ -632,14 +771,14 @@ def test_clean_spec_emits_no_degradation_warning_mpl():
 
 
 def test_clean_spec_emits_no_degradation_warning_threejs():
-    """A threejs spec using only honored keys (color/linewidth/alpha) emits none."""
+    """A threejs spec using only honored keys (color/alpha) emits none."""
     spec = PlotSpec(
         kind=PlotKind.PHASE_PORTRAIT_2D,
         layers=[
             Layer(
                 kind=PlotKind.LINE,
                 data={"x": [0.0, 1.0], "y": [0.0, 1.0]},
-                style={"color": "#abcdef", "linewidth": 2.0, "alpha": 0.8},
+                style={"color": "#abcdef", "alpha": 0.8},
             )
         ],
     )

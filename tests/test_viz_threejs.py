@@ -17,8 +17,8 @@ import subprocess
 import numpy as np
 import pytest
 
-from tsdynamics.viz.export import SCHEMA_VERSION
 from tsdynamics.viz.render.caps import RenderResult, VisualizationDegraded
+from tsdynamics.viz.render.threejs._lower import _GEOMETRY_SCHEMA_VERSION as SCHEMA_VERSION
 from tsdynamics.viz.spec import Animation, Axis, Layer, Layout, PlotKind, PlotSpec
 
 
@@ -360,10 +360,13 @@ def test_animated_spec_adds_animation_block() -> None:
     expected_keys = {
         "fps",
         "duration",
+        "reverse_duration",
         "n_frames",
         "loop",
         "pingpong",
         "trail_length_samples",
+        "backdrop",
+        "backdrop_alpha",
         "head",
         "head_size",
         "head_color",
@@ -409,15 +412,15 @@ def test_trail_length_resolves_to_samples() -> None:
     assert timed["metadata"]["animation"]["trail_length_samples"] == 20
 
 
-def test_head_color_rgb_surfaces_as_triple() -> None:
-    """An RGB ``head_color`` surfaces as an [r, g, b] triple (a named color → null)."""
+def test_head_color_preserves_rgb_and_css_forms() -> None:
+    """Every colour accepted by the public head tweak reaches the loader."""
     from tsdynamics.viz.render.threejs._lower import lower_spec
 
     rgb = lower_spec(_animated_line3d_spec(64, Animation(head_color=(1.0, 0.0, 0.0))))
     assert rgb["metadata"]["animation"]["head_color"] == [1.0, 0.0, 0.0]
 
     named = lower_spec(_animated_line3d_spec(64, Animation(head_color="red")))
-    assert named["metadata"]["animation"]["head_color"] is None
+    assert named["metadata"]["animation"]["head_color"] == "red"
 
 
 def test_animation_block_round_trips_through_json() -> None:
@@ -458,37 +461,23 @@ def test_surface_only_animation_warns_and_emits_no_block() -> None:
 
 
 def test_points_only_animation_emits_a_block_the_loader_can_play() -> None:
-    """An animated SCATTER/MARKERS-only spec DOES animate — as a trailing swarm.
-
-    Defect found while capping (v6): the exporter refused to emit an animation
-    block for a points-only spec, on the premise that the loader's reveal needs a
-    line index buffer.  That premise was false — the reference loader has carried
-    ``buildPointsComet`` (a ``setDrawRange`` swarm in vertex units) since the
-    animation stream landed, and ``test_loader_js_drives_setdrawrange_reveal``
-    below asserts it.  So the exporter was silently dropping an animation the
-    renderer could play.  Only a ``surface``-only spec has nothing to sweep.
-    """
-    import warnings
-
+    """An orbit point cloud reveals; annotation glyphs keep their static role."""
     from tsdynamics.viz.render.threejs._lower import lower_spec
 
-    for mark in (PlotKind.SCATTER, PlotKind.MARKERS):
-        n = 32
-        t = np.linspace(0.0, 1.0, n)
-        spec = PlotSpec(
-            kind=PlotKind.PHASE_PORTRAIT_3D,
-            layers=[Layer(kind=mark, data={"x": np.sin(t), "y": np.cos(t), "z": t})],
-            x=Axis(label="x"),
-            y=Axis(label="y"),
-            z=Axis(label="z"),
-            ndim=3,
-            animation=Animation(),
-        )
-        with warnings.catch_warnings():
-            warnings.simplefilter("error", VisualizationDegraded)
-            payload = lower_spec(spec)
-        assert payload["metadata"]["animation"]["n_samples"] == n
-        assert payload["geometries"][0]["type"] == "points"
+    n = 32
+    t = np.linspace(0.0, 1.0, n)
+    spec = PlotSpec(
+        kind=PlotKind.PHASE_PORTRAIT_3D,
+        layers=[Layer(kind=PlotKind.SCATTER, data={"x": np.sin(t), "y": np.cos(t), "z": t})],
+        x=Axis(label="x"),
+        y=Axis(label="y"),
+        z=Axis(label="z"),
+        ndim=3,
+        animation=Animation(),
+    )
+    payload = lower_spec(spec)
+    assert payload["metadata"]["animation"]["n_samples"] == n
+    assert payload["geometries"][0]["type"] == "points"
 
 
 def test_static_points_spec_does_not_warn() -> None:
@@ -534,10 +523,8 @@ def test_loader_js_drives_setdrawrange_reveal() -> None:
     assert "buildPointsComet" in src
     assert 'geom.type === "line"' in src
     assert "function seek(" in src
-    # LINE reveal: a fixed-length windowed THREE.Line whose positions AND per-vertex
-    # colours are rewritten each seek() — a glowing teal trail fading tail→head — rather
-    # than a flat index-unit draw-range slice.  The per-vertex colours are the tell.
-    assert "vertexColors: true" in src
+    # Lines and point clouds reveal the same geometry/material used in a still.
+    assert "const trail = buildObject(geom, index, palette)" in src
     # POINTS reveal: an unindexed Points geometry, so setDrawRange counts VERTICES
     # directly — setDrawRange(lo, …), never a 2*-index window (that mixup would draw a
     # wrong-length swarm).
@@ -1603,50 +1590,148 @@ def test_a_loader_url_cannot_escape_its_javascript_string_literal() -> None:
 # The comet window (finding #11)
 # --------------------------------------------------------------------------- #
 
-_LINE_COMET_LOWER = re.compile(r"const from = Math\.max\(0, hv - win \+ 1\);")
-_POINTS_COMET_LOWER = re.compile(
-    r"const lo = trailVertices == null \? 0 : Math\.max\(0, hv - trailVertices \+ 1\);"
-)
 
-
-def test_both_comet_types_draw_the_window_they_were_asked_for() -> None:
-    """A trail of N samples is N samples, line or points.
-
-    ``[lo, hv]`` is an INCLUSIVE vertex range, so its lower bound must be
-    ``hv - N + 1``.  The points comet subtracted the full count and then counted
-    inclusively, drawing ``N + 1``; the line comet next to it has always been
-    right.  Structural, so it cannot drift silently: if either line is reshaped
-    the regex fails and this test names it.
-    """
+@pytest.fixture(scope="module")
+def comet_geometry_probe():
+    """Execute the shipped geometry builders with a small THREE resource model."""
     from tsdynamics.viz.render.threejs import loader_source
 
-    src = loader_source()
-    assert _LINE_COMET_LOWER.search(src), "the line comet's window formula moved"
-    assert _POINTS_COMET_LOWER.search(src), (
-        "the points comet's window lower bound is not `hv - trailVertices + 1`; "
-        "an inclusive [lo, hv] range built from `hv - trailVertices` draws one "
-        "sample too many"
-    )
-
-
-def test_the_two_comet_window_formulas_agree_when_run() -> None:
-    """Run both formulas in node and compare the counts they produce."""
     node = shutil.which("node")
     if node is None:  # pragma: no cover - node is present in CI
         pytest.skip("node is not installed")
-    script = """
-    const line = (hv, n) => { const from = Math.max(0, hv - n + 1); return hv - from + 1; };
-    const pts  = (hv, n) => { const lo = Math.max(0, hv - n + 1); return Math.max(0, hv - lo + 1); };
-    const bad = [];
-    for (const hv of [0, 1, 7, 700, 900]) for (const n of [1, 2, 60, 600]) {
-      if (line(hv, n) !== pts(hv, n) || pts(hv, n) !== Math.min(n, hv + 1)) bad.push([hv, n, pts(hv, n)]);
+    source = re.sub(r"^import .*;$", "", loader_source(), flags=re.MULTILINE)
+    source = source.replace("export function ", "function ")
+    harness = r"""
+    class Color {
+      constructor(r, g, b) {
+        if (r instanceof Color) { this.setRGB(r.r, r.g, r.b); return; }
+        if (g != null) { this.setRGB(r, g, b); return; }
+        if (typeof r === 'string') {
+          r = ({red: 0xff0000, blue: 0x0000ff, white: 0xffffff})[r] ?? parseInt(r.slice(1),16);
+        }
+        this.setRGB(((r >> 16) & 255)/255, ((r >> 8) & 255)/255, (r & 255)/255);
+      }
+      setRGB(r,g,b) { Object.assign(this, {r,g,b}); return this; }
     }
-    console.log(JSON.stringify(bad));
+    class Attribute {
+      constructor(array, size) { this.array=array; this.itemSize=size; this.count=array.length/size; }
+      getX(i) { return this.array[i*this.itemSize]; }
+      getY(i) { return this.array[i*this.itemSize+1]; }
+      getZ(i) { return this.array[i*this.itemSize+2]; }
+      setXYZ(i,x,y,z) { this.array.set([x,y,z],i*this.itemSize); }
+    }
+    class Geometry {
+      constructor() { this.attributes={}; this.drawRange={start:0,count:Infinity}; }
+      setAttribute(name,value) { this.attributes[name]=value; }
+      getAttribute(name) { return this.attributes[name]; }
+      setIndex(value) { this.index=value; }
+      setDrawRange(start,count) { this.drawRange={start,count}; }
+    }
+    class Material {
+      constructor(values) {
+        Object.assign(this,values); this.color=new Color(values.color ?? 0xffffff);
+        this.opacity=values.opacity ?? 1;
+      }
+    }
+    class Object3D {
+      constructor(geometry,material) {
+        Object.assign(this,{geometry,material}); this.children=[]; this.renderOrder=0;
+      }
+      add(child) { this.children.push(child); }
+    }
+    const THREE = {Color, BufferGeometry:Geometry, BufferAttribute:Attribute,
+      Group:Object3D, Line:Object3D, LineSegments:Object3D, Points:Object3D,
+      LineBasicMaterial:Material, PointsMaterial:Material, CanvasTexture:class {}};
+    const document = {createElement() { return {getContext() { return {
+      createRadialGradient() { return {addColorStop() {}}; }, fillRect() {}}; }}; }};
+    const builders = new Function('THREE','document', SOURCE +
+      ';return {line:buildLineComet,points:buildPointsComet};')(THREE,document);
+    function geom(type,n=900,colour=false) {
+      const positions=[]; for(let i=0;i<n;i++) positions.push(i, i%3, 2*i);
+      return {type, positions, indices:[], material:{color:'red',alpha:0.4,zorder:7,markersize:3},
+        ...(colour ? {c:Array.from({length:n},(_,i)=>i)} : {})};
+    }
+    function summary(comet) {
+      return comet.group.children.map(child => ({
+        range:child.geometry.drawRange, opacity:child.material.opacity,
+        color:child.material.color, size:child.material.size, order:child.renderOrder,
+        vertexColors:child.material.vertexColors,
+        positions:Array.from(child.geometry.getAttribute('position').array),
+        colors:Array.from(child.geometry.getAttribute('color')?.array || []),
+      }));
+    }
     """
-    out = subprocess.run(  # noqa: S603
-        [node, "-e", script], capture_output=True, text=True, check=True
+
+    def run(scenario):
+        script = "const SOURCE=" + json.dumps(source) + ";\n" + harness + scenario
+        result = subprocess.run(  # noqa: S603
+            [node, "-"], input=script, capture_output=True, text=True, timeout=10, check=True
+        )
+        return json.loads(result.stdout)
+
+    return run
+
+
+@pytest.mark.parametrize("kind", ["line", "points"])
+def test_shipped_comets_preserve_colour_alpha_and_a_truly_persistent_path(
+    comet_geometry_probe, kind
+):
+    values = comet_geometry_probe(
+        """
+      const comet=builders["""
+        + json.dumps(kind)
+        + """](geom("""
+        + json.dumps(kind)
+        + """),
+        {head:true,head_size:0,backdrop:false,trail_length_samples:null},[],0);
+      comet.seek(899,null); const end=summary(comet);
+      comet.seek(0,null); const restart=summary(comet);
+      console.log(JSON.stringify([end,restart]));
+    """
     )
-    assert json.loads(out.stdout) == []
+    end, restart = values
+    assert len(end) == 2  # trail + head; backdrop=False creates no hidden full path
+    assert end[0]["range"] == {"start": 0, "count": 900}
+    assert end[0]["color"] == {"r": 1, "g": 0, "b": 0}
+    assert end[0]["opacity"] == 0.4 and end[0]["order"] == 7
+    assert end[1]["color"] == end[0]["color"] and end[1]["size"] == 0
+    assert end[1]["positions"] == [899, 2, 1798]
+    assert restart[0]["range"] == {"start": 0, "count": 1}
+    assert restart[1]["positions"] == [0, 0, 0]
+
+
+@pytest.mark.parametrize("kind", ["line", "points"])
+def test_shipped_comets_keep_scalar_colours_and_requested_backdrop(comet_geometry_probe, kind):
+    values = comet_geometry_probe(
+        """
+      const comet=builders["""
+        + json.dumps(kind)
+        + """](geom("""
+        + json.dumps(kind)
+        + """,5,true),
+        {head:true,head_size:6,backdrop:true,backdrop_alpha:0.25,trail_length_samples:2},[],0);
+      comet.seek(4,2); console.log(JSON.stringify(summary(comet)));
+    """
+    )
+    backdrop, trail, head = values
+    assert backdrop["opacity"] == pytest.approx(0.1)
+    assert trail["range"] == {"start": 3, "count": 2}
+    assert trail["vertexColors"] is True and trail["colors"] == backdrop["colors"]
+    assert list(head["color"].values()) == pytest.approx(trail["colors"][-3:])
+
+
+@pytest.mark.parametrize("head_color", ["blue", [0, 0, 1]])
+def test_shipped_comets_honor_named_and_rgb_head_colour(comet_geometry_probe, head_color):
+    children = comet_geometry_probe(
+        """
+      const comet=builders.line(geom('line',2), {head:true,head_color:"""
+        + json.dumps(head_color)
+        + """,backdrop:false},[],0);
+      comet.seek(1,null); console.log(JSON.stringify(summary(comet)));
+    """
+    )
+    assert children[0]["range"] == {"start": 0, "count": 2}
+    assert children[1]["color"] == {"r": 0, "g": 0, "b": 1}
 
 
 @pytest.fixture(scope="module")
@@ -1661,7 +1746,8 @@ def comet_clock_probe():
     start = source.index("function installAnimation(")
     clock = source[start : source.index("\n/**", start)]
     harness = r"""
-    function mount({n = 101, duration = 10, loop = false, reduced = false} = {}) {
+    function mount({n = 101, duration = 10, loop = false, reduced = false,
+                    pingpong = false, reverseDuration = null, short = null} = {}) {
       class Element {
         constructor() { this.children = []; this.style = {}; this.attributes = {}; }
         setAttribute(name, value) { this.attributes[name] = value; }
@@ -1672,7 +1758,7 @@ def comet_clock_probe():
         }
       }
       const frames = new Map(), docListeners = new Set(), motionListeners = new Set();
-      let nextFrame = 0, head = -1;
+      let nextFrame = 0, head = -1, shortHead = -1;
       const document = {
         hidden: false, createElement: () => new Element(),
         addEventListener: (name, fn) => docListeners.add(fn),
@@ -1690,12 +1776,15 @@ def comet_clock_probe():
       )(document, {matchMedia: () => motion}, requestFrame,
         id => frames.delete(id), () => ({position: "static"}), {info() {}});
       const container = new Element(), visibility = {visible: true};
-      const handle = install(container, [{nVerts: n, group: {}, seek(i) { head = i; }}],
-        {n_samples: n, duration, loop}, visibility);
+      const comets = [{nVerts: n, group: {}, seek(i) { head = i; }}];
+      if (short != null) comets.push({nVerts: short, group: {}, seek(i) { shortHead = i; }});
+      const handle = install(container, comets, {n_samples: n, duration, loop, pingpong,
+        ...(reverseDuration == null ? {} : {reverse_duration:reverseDuration})}, visibility);
       const [play, restart, readout] = container.children[0].children;
       return {
         handle, container, play, restart, readout,
         head: () => head,
+        shortHead: () => shortHead,
         frame(timestamp) {
           const pending = [...frames.values()]; frames.clear();
           for (const fn of pending) fn(timestamp);
@@ -1741,6 +1830,144 @@ def test_comet_duration_uses_elapsed_time_at_every_refresh_rate(comet_clock_prob
         assert end == held == n - 1
         assert readout == "100%"
         assert action == "Play animation"
+
+
+def test_short_comet_uses_the_whole_master_timeline(comet_clock_probe) -> None:
+    values = comet_clock_probe("""
+      const view=mount({n:101,short:11}), values=[];
+      view.frame(0); view.frame(5000); values.push([view.head(),view.shortHead()]);
+      view.frame(10000); values.push([view.head(),view.shortHead()]);
+      view.handle.stop(); console.log(JSON.stringify(values));
+    """)
+    assert values == [[50, 5], [100, 10]]
+
+
+def test_comet_pingpong_returns_to_the_start_before_stopping(comet_clock_probe) -> None:
+    values = comet_clock_probe("""
+      const view=mount({pingpong:true}), values=[];
+      for(const time of [0,5000,10000,15000,20000,30000]) {
+        view.frame(time); values.push(view.head());
+      }
+      values.push(view.play.attributes['aria-label']);
+      view.handle.stop(); console.log(JSON.stringify(values));
+    """)
+    assert values == [0, 50, 100, 50, 0, 0, "Play animation"]
+
+
+def test_threejs_pingpong_uses_the_exported_reverse_frame_duration(comet_clock_probe) -> None:
+    result = comet_clock_probe("""
+      const v=mount({duration:1,pingpong:true,reverseDuration:0.5}), values=[];
+      for(const t of [0,500,1000,1250,1500]) {v.frame(t);values.push(v.head());}
+      values.push(v.play.attributes['aria-label']);v.handle.stop();
+      console.log(JSON.stringify(values));
+    """)
+    assert result == [0, 50, 100, 50, 0, "Play animation"]
+
+
+def test_threejs_marker_annotations_stay_static_in_a_curve_animation():
+    import tsdynamics as ts
+
+    curve = ts.viz.draw({"x": [0, 1, 2], "y": [0, 1, 0]}, "line")
+    markers = ts.viz.draw({"x": np.arange(10), "y": np.ones(10)}, "markers")
+    spec = (curve + markers).animate(n_frames=3).trail(None)
+    payload = spec.render("threejs", raw=True)
+    assert payload["metadata"]["animation"]["n_samples"] == 3
+    assert payload["geometries"][1]["reveal"] is False
+
+
+def test_nested_threejs_drawing_falls_back_with_every_panel_present():
+    import tsdynamics as ts
+
+    panels = [ts.viz.draw({"x": [0, 1], "y": [0, i]}, "line") for i in (1, 2, 3)]
+    composite = (panels[0] | panels[1]) / panels[2]
+    with pytest.warns(VisualizationDegraded, match="falling back"):
+        figure = composite.render("threejs")
+    assert len(figure.axes) == 3
+    assert all(len(ax.lines) == 1 for ax in figure.axes)
+
+
+@pytest.mark.parametrize("mode", ["raw", "page", "lower"])
+def test_nested_threejs_export_refuses_instead_of_writing_a_partial_figure(tmp_path, mode):
+    import tsdynamics as ts
+    from tsdynamics.errors import InvalidParameterError
+    from tsdynamics.viz.render.threejs._lower import lower_spec
+
+    panels = [ts.viz.draw({"x": [0, 1], "y": [0, i]}, "line") for i in (1, 2, 3)]
+    composite = (panels[0] | panels[1]) / panels[2]
+    path = tmp_path / "nested.html"
+    with pytest.raises(InvalidParameterError, match="nested"):
+        if mode == "raw":
+            composite.render("threejs", raw=True)
+        elif mode == "page":
+            composite.save(path, backend="threejs")
+        else:
+            lower_spec(composite)
+    assert not path.exists()
+
+
+@pytest.mark.parametrize("mode, axis", [("row", "x"), ("stack", "y")])
+@pytest.mark.parametrize("scales", [(100, 1), (1, 100)])
+def test_threejs_panels_with_unequal_extents_do_not_overlap(mode, axis, scales):
+    import tsdynamics as ts
+
+    panels = [ts.viz.draw({"x": [-s, s], "y": [-s, s]}, "line") for s in scales]
+    payload = ts.plot(*panels, layout=mode).render("threejs", raw=True)
+    first, second = payload["panels"]
+    index = 0 if axis == "x" else 1
+    placed = [
+        np.array(panel["metadata"]["bounds"][axis]) + panel["offset"][index]
+        for panel in (first, second)
+    ]
+    if mode == "row":
+        assert placed[0][1] < placed[1][0]
+    else:
+        assert placed[1][1] < placed[0][0]
+
+
+def test_rgb_style_colours_reach_threejs_as_rgb_instead_of_python_tuple_text():
+    import tsdynamics as ts
+
+    spec = ts.viz.draw({"x": [0, 1], "y": [0, 1]}, "line", color=(1.0, 0.0, 0.0))
+    assert spec.render("threejs", raw=True)["geometries"][0]["material"]["color"] == [1, 0, 0]
+
+
+@pytest.mark.parametrize("primitive", ["image", "bars", "quiver"])
+def test_threejs_never_silently_drops_an_unsupported_layer(tmp_path, primitive):
+    import tsdynamics as ts
+    from tsdynamics.errors import InvalidParameterError
+    from tsdynamics.viz.render.threejs._lower import lower_spec
+
+    channels = {"x": [0, 1], "y": [0, 1]}
+    if primitive == "image":
+        channels["z"] = np.array([[0, 1], [1, 0]])
+    elif primitive == "quiver":
+        channels.update(u=[1, 1], v=[0, 0])
+    unsupported = ts.viz.draw(channels, primitive)
+    curve = ts.viz.draw({"x": [0, 1], "y": [1, 0]}, "line")
+    mixed = curve + unsupported
+    with pytest.warns(VisualizationDegraded, match="falling back"):
+        figure = mixed.render("threejs")
+    axes = figure.axes[0]
+    assert len(axes.lines) == 1
+    assert axes.collections or axes.images or axes.patches
+    with pytest.raises(InvalidParameterError, match="cannot export"):
+        mixed.render("threejs", raw=True)
+    path = tmp_path / "complete.html"
+    with pytest.raises(InvalidParameterError, match="cannot export"):
+        mixed.save(path, backend="threejs")
+    assert not path.exists()
+    with pytest.raises(InvalidParameterError, match="omit part of the figure"):
+        lower_spec(mixed)
+
+
+def test_threejs_wider_line_requests_warn_instead_of_claiming_support():
+    import tsdynamics as ts
+
+    spec = ts.viz.draw({"x": [0, 1], "y": [0, 1]}, "line", linewidth=5)
+    assert "threejs" not in ts.viz.styles.get("linewidth").honored_by
+    with pytest.warns(VisualizationDegraded, match="one device pixel"):
+        payload = spec.render("threejs", raw=True)
+    assert "linewidth" not in payload["geometries"][0]["material"]
 
 
 def test_comet_resumes_without_counting_hidden_or_paused_time(comet_clock_probe) -> None:

@@ -1,4 +1,5 @@
 ---
+title: The road to chaos
 description: The road to chaos — sweep the logistic map's growth rate to see the period-doubling cascade land on the textbook onsets r1 = 3 and r2 = 1 + sqrt 6, quantify it with periods() / bifurcation_points(), confirm chaos with the Lyapunov exponent, then repeat the whole route for a flow via a Poincaré section.
 ---
 
@@ -32,8 +33,10 @@ log.variables     # ('x',)
 ```
 
 An [orbit diagram](../analysis/orbit-diagrams.md) records, at each value of $r$,
-the set of states the orbit visits once transients have died away. One dot means
-a stable fixed point; two, a period-2 cycle; a filled stripe, chaos.
+the set of states a sampled orbit visits after a chosen transient. One level
+suggests a fixed point; two alternating levels suggest a period-2 cycle; a
+filled band calls for closer analysis. Finite transients and finite resolution
+can blur those distinctions.
 [`orbit_diagram`](../analysis/orbit-diagrams.md) sweeps the parameter for you:
 
 <div class="ts-ref" markdown>
@@ -78,9 +81,10 @@ The diagram is a *route*. Walk it left to right:
 - **beyond $r_\infty$**: mostly chaotic bands, punctured by **periodic windows** —
   most visibly a period-3 window near $r \approx 3.83$.
 
-Those onset values are not eyeballed off the plot — the library computes them.
-`OrbitDiagram.periods()` counts distinct branches at each $r$ (that count *is* the
-period), and `bifurcation_points()` reports where the count changes:
+`OrbitDiagram.periods()` estimates the number of repeating levels at each $r$
+from the recorded samples and clustering tolerance. `bifurcation_points()`
+reports changes in that estimated count. These are numerical locators on the
+parameter grid, rather than exact bifurcation solvers:
 
 ```python
 od = ts.analysis.orbit_diagram(
@@ -99,11 +103,24 @@ periods themselves are exactly the doubling ladder:
 ```python
 od2 = ts.analysis.orbit_diagram(ts.systems.Logistic(), "r",
                        np.array([2.8, 3.2, 3.5, 3.55, 3.9]), points_per_value=64, transient=2000)
-od2.periods()          # array([1, 2, 4, 8, 0])   — 0 = aperiodic (chaotic)
+od2.periods()          # array([1, 2, 4, 8, 0])   — 0 = no period resolved
 ```
 
-Period 1, 2, 4, 8, then `0` — the sentinel for a chaotic (aperiodic) orbit. The
-cascade, quantified.
+Period 1, 2, 4, 8, then `0`: no short period was resolved in the finite sample.
+That sentinel alone is not a chaos verdict; inspect the record and use the
+Lyapunov calculation below as an independent check.
+
+```python
+sample = ts.systems.Logistic(r=3.55).run(steps=120, transient=1000, ic=[0.2])
+ts.plot(sample, components="x", marker="o", markersize=2)
+```
+
+<figure class="tsd-showcase" markdown="1">
+
+![Four logistic-map records show a fixed level, period two, period eight and a record with no short resolved period](../assets/figures/tutorials/logistic-windows.svg){ loading=lazy }
+
+<figcaption><span class="tsd-caption-label">Read the orbit behind the diagram</span><br>Repeat the sample call at r=2.8, 3.2, 3.55 and 3.9. Each panel shows 120 recorded steps after a 1,000-step transient. A branch count becomes easier to interpret when you can see its time ordering.</figcaption>
+</figure>
 
 !!! note "The period-3 window"
     That wide band near $r \approx 3.83$ is the **period-3 window**, born at the

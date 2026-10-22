@@ -299,7 +299,7 @@ def _assert_plotly_honors(key: str, value: object) -> None:
 def _assert_threejs_honors(key: str, value: object) -> None:
     """Lower on threejs and assert the material reflects ``style[key] = value``.
 
-    threejs honors color / linewidth / markersize / alpha / zorder.  The loader
+    threejs honors color / markersize / alpha / zorder.  The loader
     consumes each (verified against ``docs/_static/tsdyn-threejs-loader.js`` reads
     in :func:`test_threejs_loader_reads_every_honored_material_field`).
     """
@@ -311,9 +311,6 @@ def _assert_threejs_honors(key: str, value: object) -> None:
 
     if key == "color":
         assert material["color"] == "#ff0000"
-    elif key == "linewidth":
-        # threejs: passed faithfully (mainstream WebGL clamps to 1px — still honored).
-        assert material["linewidth"] == pytest.approx(float(value))  # type: ignore[arg-type]
     elif key == "markersize":
         assert material["markersize"] == pytest.approx(float(value))  # type: ignore[arg-type]
     elif key == "alpha":
@@ -485,7 +482,7 @@ def _loader_source() -> str:
     return loader.read_text(encoding="utf-8")
 
 
-@pytest.mark.parametrize("field", ["color", "linewidth", "markersize", "alpha", "zorder"])
+@pytest.mark.parametrize("field", ["color", "markersize", "alpha", "zorder"])
 def test_threejs_loader_reads_every_honored_material_field(field: str) -> None:
     """Every honored threejs material field the exporter emits is read by the loader.
 

@@ -1,4 +1,5 @@
 ---
+title: Plot gallery
 description: Every plot TSDynamics can draw, generated from the plot-transform registry — each transform, each primitive it declares, the figure it makes, and the one line of code that made it.
 ---
 
@@ -8,15 +9,15 @@ description: Every plot TSDynamics can draw, generated from the plot-transform r
 
 This page is the answer to *"what plots can this library actually draw?"* — and
 it is **generated from the registry at build time**, not written by hand. Every
-figure below was produced by the code printed beside it, on this machine, during
-this documentation build.
+figure below comes from the code printed beside it. Unchanged figures are reused
+from a content-addressed build cache.
 
 That matters more than it sounds. A hand-written gallery drifts: a transform is
 renamed, an option changes, a picture stays. Here the page is built by walking
 `registry.plot_transforms`, and each snippet string is *executed* to make the
 figure it is shown next to. A transform that stopped drawing would fail the docs
-build; a transform added tomorrow appears here tomorrow with no edit to this
-page.
+build. A newly registered transform with an `example=` factory can appear without
+a handwritten gallery entry.
 
 ## How to read it
 
@@ -84,11 +85,10 @@ And `ts.viz.compatibility()` prints the same matrix this page draws.
 
 ## Adding a plot
 
-A new transform is **one registration and nothing else** — no renderer edit, no
-`PlotKind` edit, no `compose` edit, no test edit:
-
-**Four declarations and a function that returns a mapping.** Nothing else in
-the library is edited:
+A transform is a registered function returning a channel mapping. The decorator
+can infer its name and compatible drawing choices from that mapping. Explicit
+declarations make a diagnostic's coordinate meaning and supported primitives
+clearer:
 
 ```python
 # skip-doctest — a template: `measure` is yours, and registering a placeholder
@@ -119,4 +119,6 @@ generator prints any uncurated transform at the end of a run, so a new one is
 visible the moment it lands.
 
 Out of tree, declare the same function against the `tsdynamics.plot_transforms`
-entry-point group and it joins the registry — and this page — on import.
+entry-point group so it can join the registry when discovered. Include an
+`example=` factory for tools that generate a gallery or check every supported
+primitive. See [writing a transform](plotting.md#writing-a-transform).

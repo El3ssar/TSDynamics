@@ -30,12 +30,13 @@ from typing import Any, ClassVar, cast
 
 import numpy as np
 
-from tsdynamics.errors import ConvergenceError, InvalidInputError, remedy
+from tsdynamics.errors import ConvergenceError, InvalidInputError, InvalidParameterError, remedy
 from tsdynamics.families import ContinuousSystem, DiscreteMap
 
-from .._common import reject_data, reject_system
+from .._common import reject_data, reject_system, sampling_interval
 from .._result import AnalysisResult, CollectionResult, ScalarResult, _ArrayBacked, _build_meta
 from .._result_json import _sig, _state
+from .._tangent import flow_has_explicit_time
 from . import _common as _c
 from .fixed import _build_seeds, _eigenvalue_plane_spec, _stabilising_matrices
 
@@ -497,7 +498,9 @@ def periodic_orbits(
     Parameters
     ----------
     system : DiscreteMap or ContinuousSystem
-        The map, or the flow whose limit cycle to shoot for.
+        The map, or the autonomous flow whose limit cycle to shoot for.
+        Explicitly forced flows require an autonomous extension including the
+        forcing phase; an endpoint return alone does not establish a cycle.
     period : int or float
         A **map**: the period ``p``, a count of ITERATIONS (``p=1`` returns the
         fixed points as one-point orbits) — required, since a map's orbits are the
@@ -815,6 +818,14 @@ def _flow_periodic_orbits(
                 lead="Use the map routine (plural), with the period you want:",
             )
         )
+    if flow_has_explicit_time(system):
+        raise InvalidInputError(
+            "periodic_orbits uses autonomous-flow shooting, but this right-hand "
+            "side depends explicitly on time. Returning to the initial state at "
+            "one forcing phase does not establish a periodic orbit. Include the "
+            "forcing phase in an autonomous extension, or construct a "
+            "stroboscopic map at the known forcing period and find its cycles."
+        )
     dim = int(system.dim)  # type: ignore[arg-type]  # dim resolved at construction
     rhs, jac = _c.flow_fns(system)
     rng = np.random.default_rng(seed)
@@ -1050,7 +1061,8 @@ def estimate_period(
     dt : float, optional
         Sampling step.  For a bare array it sets the time unit (default ``1.0`` →
         period in samples).  For a Trajectory the step is read from its time grid;
-        passing ``dt`` overrides that grid.
+        passing ``dt`` explicitly interprets the rows at that spacing. An
+        irregular time grid is refused rather than averaged into a false step.
     components : int or str, optional
         Which **column** of a multi-component input to read, by index or by
         name (default: the highest-variance one).  It selects a channel, never
@@ -1091,6 +1103,8 @@ def estimate_period(
     and Control*. Holden-Day (autocorrelation method).
     """
     y, step = _coerce_signal(data, dt, components)
+    if not np.isfinite(step) or step <= 0.0:
+        raise InvalidParameterError("estimate_period: dt must be finite and positive.")
     if y.size < 8:
         raise ValueError("estimate_period needs at least 8 samples.")
     # Finiteness FIRST, before anything reads the shape of the curve.  A series
@@ -1102,10 +1116,10 @@ def estimate_period(
     # every sibling estimator uses.
     if not np.all(np.isfinite(y)):
         raise ValueError("estimate_period: series contains non-finite values (nan/inf).")
+    if np.ptp(y) == 0.0:
+        raise ValueError("estimate_period: signal is constant (no period).")
     if detrend:
         y = y - y.mean()
-    if np.allclose(y, 0.0):
-        raise ValueError("estimate_period: signal is constant (no period).")
 
     method = method.lower()
     if method == "autocorrelation":
@@ -1245,9 +1259,9 @@ def _coerce_signal(
     """
     reject_system(data, analysis="estimate_period")
     if hasattr(data, "t") and hasattr(data, "y"):  # Trajectory (duck-typed)
-        t = np.asarray(data.t, dtype=float)
         y = _column(data, np.asarray(data.y, dtype=float), components)
-        step = dt if dt is not None else float(np.mean(np.diff(t))) if t.size > 1 else 1.0
+        measured = sampling_interval(data, analysis="estimate_period") if dt is None else None
+        step = float(dt) if dt is not None else 1.0 if measured is None else measured
         return np.ravel(y), step
     arr = _column(data, np.asarray(data, dtype=float), components)
     return np.ravel(arr), (1.0 if dt is None else float(dt))

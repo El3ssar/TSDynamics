@@ -21,6 +21,8 @@ import inspect
 import json
 import os
 import pathlib
+import subprocess
+import sys
 import warnings
 from typing import Any
 
@@ -64,7 +66,12 @@ CACHE_DIR = ROOT / ".cache" / "docs-props"
 
 #: Bump when the computed-quantity logic or card shaping materially changes
 #: (cache buster — invalidates every on-disk props payload).
-PROPS_VERSION = "3"
+PROPS_VERSION = "4"
+
+# A new model must not turn an ordinary docs build into an unbounded analysis
+# job. Existing provenance snapshots bypass this worker; fresh results are cached.
+NEW_MODEL_TIMEOUT = 30.0
+WORKER_PATH = pathlib.Path(__file__).with_name("diagnostics_worker.py")
 
 #: The ∇·f trace is *collapsed* to a compact summary (rather than printed in
 #: full) when the system is a method-of-lines field, its effective state
@@ -96,8 +103,11 @@ def cache_key(entry) -> str:
     recorded = diagnostics.load_records().get(entry.name, {})
     evidence = json.dumps(recorded, sort_keys=True)
     reference = json.dumps(diagnostics.reference(entry), sort_keys=True)
+    identity = f"{entry.cls.__module__}:{entry.cls.__qualname__}"
     blob = (
         cls_src
+        + identity
+        + WORKER_PATH.read_text()
         + params
         + PROPS_VERSION
         + flag
@@ -136,9 +146,96 @@ def _known_lyapunov(entry) -> dict[str, Any] | None:
 
 def _compute_lyapunov(entry) -> dict[str, Any]:
     """Read the current, reproducible finite-time measurement for this system."""
-    diagnostics = _diagnostics_module()
+    return _compute_diagnostics(entry)["lyapunov_spectrum"]
 
-    return diagnostics.compute_diagnostics(entry)["lyapunov_spectrum"]
+
+def _compute_diagnostics(entry) -> dict[str, Any]:
+    """Reuse provenance snapshots, or measure the exact importable model once."""
+    diagnostics = _diagnostics_module()
+    saved = diagnostics.load_records().get(entry.name)
+
+    def absent(reason):
+        return {
+            "name": entry.name,
+            "family": entry.family,
+            "reference": diagnostics.reference(entry),
+            **{
+                key: diagnostics.unavailable(reason)
+                for key in ("lyapunov_spectrum", "kaplan_yorke", "equilibria")
+            },
+        }
+
+    module = entry.cls.__module__
+    qualname = entry.cls.__qualname__
+    try:
+        source_file = inspect.getsourcefile(entry.cls)
+    except (TypeError, OSError):
+        source_file = None
+    if (
+        module == "__main__"
+        or "<locals>" in qualname
+        or not source_file
+        or not pathlib.Path(source_file).is_file()
+    ):
+        return absent(
+            "This class exists only in the current session. Put it in an importable "
+            "module to compute reproducible diagnostics in the bounded worker."
+        )
+    fingerprint = diagnostics.fingerprint(entry)
+    if saved is not None and saved.get("fingerprint") == fingerprint:
+        return diagnostics.compute_diagnostics(entry)
+    if os.environ.get("TSD_DOCS_PROPS", "1") == "0":
+        return diagnostics.compute_diagnostics(entry)
+    request = {
+        "module": module,
+        "qualname": qualname,
+        "source_file": str(pathlib.Path(source_file).resolve()),
+        "family": entry.family,
+        "fingerprint": fingerprint,
+    }
+    environment = dict(os.environ)
+    environment["PYTHONPATH"] = os.pathsep.join(
+        str(pathlib.Path(path or os.getcwd()).resolve()) for path in sys.path
+    )
+    try:
+        result = subprocess.run(
+            [sys.executable, str(WORKER_PATH)],
+            input=json.dumps(request),
+            capture_output=True,
+            text=True,
+            cwd=ROOT,
+            env=environment,
+            timeout=NEW_MODEL_TIMEOUT,
+        )
+        record = diagnostics._last_record(result.stdout)
+        if result.returncode or record is None:
+            message = result.stderr.strip().splitlines()
+            reason = "The numerical worker could not measure the requested model: " + (
+                message[-1] if message else "no completed diagnostic record."
+            )
+            if record is None:
+                return absent(reason)
+            record["lyapunov_spectrum"] = diagnostics.unavailable(reason)
+            record["kaplan_yorke"] = diagnostics.unavailable(reason)
+    except subprocess.TimeoutExpired as exc:
+        reason = f"The new-model computation budget of {NEW_MODEL_TIMEOUT:g}s was exceeded."
+        record = diagnostics._last_record(exc.stdout)
+        if record is None:
+            return absent(reason)
+        record["lyapunov_spectrum"] = diagnostics.unavailable(reason)
+        record["kaplan_yorke"] = diagnostics.unavailable(reason)
+    if (
+        record.get("name") != entry.name
+        or record.get("family") != entry.family
+        or record.get("fingerprint") != fingerprint
+    ):
+        return absent("The numerical worker returned an unverified model identity.")
+    record.setdefault("provenance", {})["model_identity"] = {
+        "module": module,
+        "class": qualname,
+        "worker_budget_seconds": NEW_MODEL_TIMEOUT,
+    }
+    return record
 
 
 def _lyapunov_card(entry) -> dict[str, Any]:
@@ -388,9 +485,7 @@ def _has_nonsmooth_derivative(div) -> bool:
 # --------------------------------------------------------------------------- #
 def _equilibria_card(entry) -> dict[str, Any]:
     """Read the found roots and their actual linear stability masks."""
-    diagnostics = _diagnostics_module()
-
-    return diagnostics.compute_diagnostics(entry)["equilibria"]
+    return _compute_diagnostics(entry)["equilibria"]
 
 
 # --------------------------------------------------------------------------- #
@@ -407,9 +502,7 @@ def compute_properties(entry) -> dict[str, Any]:
     if cached is not None:
         return cached
 
-    diagnostics = _diagnostics_module()
-
-    props = dict(diagnostics.compute_diagnostics(entry))
+    props = dict(_compute_diagnostics(entry))
     props["divergence"] = _divergence_card(entry)
     if entry.family == "dde":
         props["divergence"]["note"] = (
@@ -424,10 +517,10 @@ def compute_properties(entry) -> dict[str, Any]:
 
 
 def _load_cache(entry) -> dict[str, Any] | None:
-    path = _cache_path(entry)
-    if not path.exists():
-        return None
     try:
+        path = _cache_path(entry)
+        if not path.exists():
+            return None
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception:  # noqa: BLE001 — corrupt cache → recompute
         return None

@@ -154,6 +154,22 @@ def _require_flow(system: Any, what: str) -> ContinuousSystem:
     return system  # type: ignore[no-any-return]
 
 
+def _field_integration_options(
+    system: Any, solver: str | None, options: dict[str, Any]
+) -> dict[str, Any]:
+    """Translate the public solver spelling and honor the model's default kernel."""
+    result = dict(options)
+    if solver is not None and "method" in result:
+        raise InvalidParameterError(
+            "solver= and legacy method= both select the integration kernel; pass only solver=."
+        )
+    if solver is not None:
+        result["method"] = solver
+    else:
+        result.setdefault("method", system._default_method)
+    return result
+
+
 def resolve_plane(
     system: Any, plane: Sequence[int | str] = (0, 1)
 ) -> tuple[int, int, tuple[str, str]]:
@@ -240,9 +256,10 @@ def resolve_plane(
 def _base_state(system: Any, at: Any | None) -> np.ndarray:
     """Return the state the off-plane coordinates are frozen at.
 
-    ``at=None`` uses the system's declared ``default_ic`` when it has one and
-    the origin otherwise — **never** a random draw, because a plot whose picture
-    changes between two identical calls is not a plot of anything.
+    ``at=None`` uses the system's configured ``ic``, then its resolved declared
+    default, then the origin. Resolving the default through the family helper
+    preserves instance-sized defaults on variable-dimensional systems. This
+    never draws a random state or advances the caller's live cursor.
     """
     dim = int(getattr(system, "dim", 2))
     if at is not None:
@@ -253,7 +270,10 @@ def _base_state(system: Any, at: Any | None) -> np.ndarray:
                 f"{dim} entries, got {arr.size}."
             )
         return arr
-    declared = getattr(type(system), "_default_ic", None)
+    configured = getattr(system, "ic", None)
+    if configured is not None:
+        return np.asarray(configured, dtype=float).reshape(dim).copy()
+    declared = system._resolved_default_ic()
     if declared is None:
         return np.zeros(dim, dtype=float)
     return np.asarray(declared, dtype=float).reshape(dim)
@@ -1237,24 +1257,25 @@ def ftle_field(
     grid: int | tuple[int, int] = 101,
     final_time: float = 1.0,
     backward: bool = False,
+    solver: str | None = None,
     **integrate_kwargs: Any,
 ) -> ScalarField:
     r"""Compute the finite-time Lyapunov exponent field over a 2-D slice.
 
     For each lattice point :math:`x_0` the flow map :math:`\phi_T` is evaluated
-    by integrating the **full** system for a time :math:`T`; the in-plane
-    deformation gradient :math:`F = \partial\phi_T/\partial x_0` is taken by
+    by integrating the **full** system for a time :math:`T`; the
+    deformation gradient :math:`F = \partial\phi_T/\partial x_0` with respect to
+    the two initial slice coordinates is taken by
     finite differences on the lattice (:func:`numpy.gradient`), the right
     Cauchy-Green tensor is :math:`C = F^\top F`, and
 
     .. math::  \sigma(x_0) = \frac{1}{|T|}\,\log\sqrt{\lambda_{\max}(C)} .
 
-    **Ridges of** :math:`\sigma` **are the Lagrangian coherent structures** — the
-    material curves that organise transport.  Forward time reveals *repelling*
-    structures (the stable manifolds); ``backward=True`` integrates backwards and
-    reveals *attracting* ones.  For a system with two attractors the forward
-    ridge sits on the basin boundary, which is the cheapest available check that
-    the field is right.
+    Ridges can indicate strongly separating trajectories and candidate transport
+    barriers. Identifying a material Lagrangian coherent structure requires
+    additional conditions; a ridge alone is not a certificate. Forward-time
+    stretching can highlight repelling structures; ``backward=True`` measures
+    backward-time stretching and can highlight attracting ones.
 
     One ensemble call does the whole lattice: 10,201 initial conditions to
     ``T = 1`` takes a few milliseconds on the compiled engine.
@@ -1289,8 +1310,12 @@ def ftle_field(
         is recorded in ``meta``.
     backward : bool, optional
         Integrate backwards in time (attracting structures).  Default ``False``.
+    solver : str, optional
+        Integration kernel, as at ``system.run(solver=...)``. Defaults to the
+        model's declared solver. Legacy ``method=`` remains accepted; passing
+        both spellings raises.
     **integrate_kwargs
-        Forwarded to :func:`tsdynamics._engine.run.ensemble` (``method``,
+        Forwarded to :func:`tsdynamics._engine.run.ensemble` (
         ``rtol``, ``dt``, ``backend``, ...).
 
     Returns
@@ -1303,14 +1328,16 @@ def ftle_field(
     Notes
     -----
     On a slice of a higher-dimensional flow the initial conditions lie in the
-    slice but the trajectories leave it; the deformation gradient taken here is
-    the in-plane block of the full one, i.e. the stretching *of the slice*
-    measured in the plane it was drawn on.  That is the standard 2-D FTLE
-    section and it is what the ridges of a 3-D flow's section mean.
+    slice but the trajectories may leave it. The deformation gradient has
+    ``system.dim`` rows and two columns: perturbations start in the selected
+    plane, and their lengths are measured in the full final state space. It is
+    the maximum stretching over those initial directions, not over omitted
+    initial directions. The displayed coordinates remain the initial slice.
     """
     from tsdynamics._engine import run as _run
 
     _require_flow(system, "ftle_field")
+    integrate_kwargs = _field_integration_options(system, solver, integrate_kwargs)
     xlim, ylim, grid = window_from_region(region, plane, system, xlim, ylim, grid)
     i, j, labels = resolve_plane(system, plane)
     base = _base_state(system, at)
@@ -1330,18 +1357,18 @@ def ftle_field(
         final = _run.ensemble(system, ics, final_time=t0 + horizon, **integrate_kwargs)
     final = np.asarray(final, dtype=float)
 
-    fx = final[:, i].reshape(ys.size, xs.size)
-    fy = final[:, j].reshape(ys.size, xs.size)
-    # np.gradient returns d/d(row) then d/d(col); rows are y, columns are x.
-    dfx_dy, dfx_dx = np.gradient(fx, ys, xs)
-    dfy_dy, dfy_dx = np.gradient(fy, ys, xs)
-
-    # C = F^T F for the 2x2 F = [[dfx_dx, dfx_dy], [dfy_dx, dfy_dy]], then the
-    # larger eigenvalue in closed form (the analytic root is exact and avoids a
-    # per-cell eigensolve over ~10^4 cells).
-    c11 = dfx_dx**2 + dfy_dx**2
-    c22 = dfx_dy**2 + dfy_dy**2
-    c12 = dfx_dx * dfx_dy + dfy_dx * dfy_dy
+    # F has one row per final state coordinate and two initial perturbation
+    # directions. Projecting the final state onto the displayed plane would
+    # silently discard growth out of the plane (e.g. z'=x on an xy slice).
+    shape = (ys.size, xs.size)
+    c11, c22, c12 = (np.zeros(shape) for _ in range(3))
+    for component in range(final.shape[1]):
+        field = final[:, component].reshape(shape)
+        # np.gradient returns d/d(row) then d/d(col): rows are y, columns x.
+        df_dy, df_dx = np.gradient(field, ys, xs)
+        c11 += df_dx**2
+        c22 += df_dy**2
+        c12 += df_dx * df_dy
     half = 0.5 * (c11 + c22)
     radius = np.sqrt(np.maximum((0.5 * (c11 - c22)) ** 2 + c12**2, 0.0))
     lam_max = half + radius
@@ -1355,6 +1382,8 @@ def ftle_field(
         grid=(int(xs.size), int(ys.size)),
         ftle_time=float(final_time),
         backward=bool(backward),
+        deformation_output="full_state",
+        solver=integrate_kwargs["method"],
     )
     return ScalarField(xs, ys, sigma, "FTLE", labels, meta)
 
@@ -1428,7 +1457,7 @@ def _march_first_time(
     system: Any,
     ics: np.ndarray,
     *,
-    predicate: Callable[[np.ndarray], np.ndarray],
+    predicate: Callable[[np.ndarray, float], np.ndarray],
     final_time: float,
     chunks: int,
     integrate_kwargs: dict[str, Any],
@@ -1460,24 +1489,27 @@ def _march_first_time(
     """
     from tsdynamics._engine import run as _run
 
+    options = dict(integrate_kwargs)
+    initial_time = float(options.pop("t0", 0.0))
     n = ics.shape[0]
     out = np.full(n, np.nan, dtype=float)
     state = np.array(ics, dtype=float, copy=True)
     step = float(final_time) / max(int(chunks), 1)
-    done = np.asarray(predicate(state), dtype=bool)
+    done = np.asarray(predicate(state, initial_time), dtype=bool)
     out[done] = 0.0
     for k in range(int(chunks)):
         live = np.flatnonzero(~done)
         if live.size == 0:
             break
-        t0 = k * step
+        elapsed = k * step
+        t0 = initial_time + elapsed
         advanced = np.asarray(
-            _run.ensemble(system, state[live], t0=t0, final_time=t0 + step, **integrate_kwargs),
+            _run.ensemble(system, state[live], t0=t0, final_time=t0 + step, **options),
             dtype=float,
         )
         state[live] = advanced
-        hit = np.asarray(predicate(advanced), dtype=bool)
-        out[live[hit]] = t0 + step
+        hit = np.asarray(predicate(advanced, t0 + step), dtype=bool)
+        out[live[hit]] = elapsed + step
         done[live] = hit | ~np.isfinite(advanced).all(axis=1)
     return out
 
@@ -1494,6 +1526,7 @@ def escape_time_field(
     final_time: float = 20.0,
     chunks: int = 40,
     escape: Callable[[np.ndarray], np.ndarray] | float | None = None,
+    solver: str | None = None,
     **integrate_kwargs: Any,
 ) -> ScalarField:
     """Compute the escape-time field: how long each start takes to leave a region.
@@ -1538,6 +1571,9 @@ def escape_time_field(
         **in-plane** distance from the window centre exceeds it.  ``None``
         (default) is *left the drawn window*, in-plane — the picture the window
         is already showing.
+    solver : str, optional
+        Integration kernel; defaults to the model's declared solver. The legacy
+        ``method=`` spelling remains accepted, but cannot be combined with it.
     **integrate_kwargs
         Forwarded to :func:`tsdynamics._engine.run.ensemble`.
 
@@ -1546,6 +1582,7 @@ def escape_time_field(
     ScalarField
     """
     _require_flow(system, "escape_time_field")
+    integrate_kwargs = _field_integration_options(system, solver, integrate_kwargs)
     xlim, ylim, grid = window_from_region(region, plane, system, xlim, ylim, grid)
     i, j, labels = resolve_plane(system, plane)
     base = _base_state(system, at)
@@ -1557,7 +1594,7 @@ def escape_time_field(
     times = _march_first_time(
         system,
         ics,
-        predicate=predicate,
+        predicate=lambda states, time: predicate(states),
         final_time=float(final_time),
         chunks=int(chunks),
         integrate_kwargs=integrate_kwargs,
@@ -1569,6 +1606,8 @@ def escape_time_field(
         final_time=float(final_time),
         time_resolution=float(final_time) / max(int(chunks), 1),
         escape=described,
+        solver=integrate_kwargs["method"],
+        t0=float(integrate_kwargs.get("t0", 0.0)),
     )
     return ScalarField(xs, ys, times.reshape(ys.size, xs.size), "escape time", labels, meta)
 
@@ -1616,6 +1655,7 @@ def transient_time_field(
     chunks: int = 40,
     tol: float | None = None,
     settled: Callable[[np.ndarray], np.ndarray] | None = None,
+    solver: str | None = None,
     **integrate_kwargs: Any,
 ) -> ScalarField:
     """Compute the transient-time field: how long each start takes to settle.
@@ -1659,6 +1699,9 @@ def transient_time_field(
         An explicit arrival test taking the ``(n, dim)`` states and returning an
         ``(n,)`` boolean — a ball around a known attractor, a section crossing, a
         sign condition.  Overrides ``tol``.
+    solver : str, optional
+        Integration kernel; defaults to the model's declared solver. The legacy
+        ``method=`` spelling remains accepted, but cannot be combined with it.
     **integrate_kwargs
         Forwarded to :func:`tsdynamics._engine.run.ensemble`.
 
@@ -1667,6 +1710,7 @@ def transient_time_field(
     ScalarField
     """
     _require_flow(system, "transient_time_field")
+    integrate_kwargs = _field_integration_options(system, solver, integrate_kwargs)
     xlim, ylim, grid = window_from_region(region, plane, system, xlim, ylim, grid)
     i, j, labels = resolve_plane(system, plane)
     base = _base_state(system, at)
@@ -1675,7 +1719,11 @@ def transient_time_field(
     ics = _slice_ics(base, i, j, xs, ys)
 
     if settled is not None:
-        predicate = settled
+        arrival_test = settled
+
+        def predicate(states: np.ndarray, time: float) -> np.ndarray:
+            return arrival_test(states)
+
         described = "caller-supplied arrival test"
     else:
         speed_of = _batched_speed(system)
@@ -1686,7 +1734,7 @@ def transient_time_field(
             # one of order 1e3.  So the default is read off the field itself — a
             # percent of the median speed over the lattice being drawn — and, like
             # the window, it is *recorded* rather than silently applied.
-            sampled = speed_of(ics)
+            sampled = speed_of(ics, float(integrate_kwargs.get("t0", 0.0)))
             finite = sampled[np.isfinite(sampled)]
             threshold = 0.01 * float(np.median(finite)) if finite.size else 1e-3
             described = f"speed |f(u)| < {threshold:g} (1% of the median lattice speed)"
@@ -1694,8 +1742,8 @@ def transient_time_field(
             threshold = float(tol)
             described = f"speed |f(u)| < {threshold:g}"
 
-        def by_speed(states: np.ndarray) -> np.ndarray:
-            return np.asarray(speed_of(states) < threshold, dtype=bool)
+        def by_speed(states: np.ndarray, time: float) -> np.ndarray:
+            return np.asarray(speed_of(states, time) < threshold, dtype=bool)
 
         predicate = by_speed
 
@@ -1715,6 +1763,8 @@ def transient_time_field(
         final_time=float(final_time),
         time_resolution=float(final_time) / max(int(chunks), 1),
         settled=described,
+        solver=integrate_kwargs["method"],
+        t0=float(integrate_kwargs.get("t0", 0.0)),
     )
     return ScalarField(xs, ys, times.reshape(ys.size, xs.size), "transient time", labels, meta)
 
@@ -1754,8 +1804,8 @@ def _warn_if_nothing_arrived(times: np.ndarray, described: str) -> None:
     )
 
 
-def _batched_speed(system: Any) -> Callable[[np.ndarray], np.ndarray]:
-    r"""Return ``speed(states) -> |f|`` evaluated over a **whole batch** at once.
+def _batched_speed(system: Any) -> Callable[[np.ndarray, float], np.ndarray]:
+    r"""Return ``speed(states, time) -> |f|`` over a **whole batch** at once.
 
     The arrival test runs once per lattice point per chunk — on a 101x101 field
     over 40 chunks that is 400,000 evaluations, and calling the per-point
@@ -1770,11 +1820,11 @@ def _batched_speed(system: Any) -> Callable[[np.ndarray], np.ndarray]:
     """
     per_row = system._rhs_numeric()
 
-    def by_row(states: np.ndarray) -> np.ndarray:
+    def by_row(states: np.ndarray, time: float = 0.0) -> np.ndarray:
         rows = np.atleast_2d(np.asarray(states, dtype=float))
         return np.array(
             [
-                float(np.linalg.norm(per_row(row, 0.0))) if np.isfinite(row).all() else np.inf
+                float(np.linalg.norm(per_row(row, time))) if np.isfinite(row).all() else np.inf
                 for row in rows
             ]
         )
@@ -1785,16 +1835,16 @@ def _batched_speed(system: Any) -> Callable[[np.ndarray], np.ndarray]:
     except Exception:  # noqa: BLE001 - a non-standard kernel keeps the slow path
         return by_row
 
-    def batched(states: np.ndarray) -> np.ndarray:
+    def batched(states: np.ndarray, time: float = 0.0) -> np.ndarray:
         rows = np.atleast_2d(np.asarray(states, dtype=float))
         n = rows.shape[0]
-        parts = [rows, np.zeros((n, 1))]
+        parts = [rows, np.full((n, 1), time)]
         if values.size:
             parts.append(np.tile(values, (n, 1)))
         try:
             out = np.asarray(fn(np.column_stack(parts)), dtype=float).reshape(n, -1)
         except Exception:  # noqa: BLE001 - defensive; the per-row path is exact too
-            return by_row(rows)
+            return by_row(rows, time)
         speed = np.linalg.norm(out, axis=1)
         # A diverged row has no meaningful speed: call it "not settled" rather
         # than let a NaN comparison decide it by accident.

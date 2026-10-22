@@ -1,345 +1,155 @@
 ---
-description: Compose one or more plots into a figure with ts.viz.plot — overlaying compatible panels onto shared axes, tiling them into a stack / row / grid of COMPOSITE panels, and recursing spec-in-spec because the input and output are the same Plot.
+title: Composition
+description: Overlay with +, arrange with | and /, and build nested figures from reusable Plot objects.
 ---
 
-<span class="ts-kicker">Visualization</span>
+<span class="ts-kicker">Visualization · Composition</span>
 
-# Composition
+# One plot becomes a figure
 
-A single subject describes **one panel**. Real figures — a
-before/after pair, a small-multiples grid of attractors, two state variables
-stacked over a shared time axis — are *arrangements* of panels. `ts.viz.plot`
-is the figure-level front door that does the arranging.
+<div class="tsd-page-intro" markdown="1">
 
-Its defining property is that it is **closed over `Plot`**: it takes
-plottables (a [`Trajectory`](../reference/top-level.md), a system, an analysis
-result) or already-built specs, and it *returns a `Plot`*. Because the input
-type and the output type are the same, a `plot(...)` result feeds straight back
-into `plot(...)` — you build each panel with one flat call, then arrange the
-panels with another. The result renders itself: `.plot()`, `.save(path)`,
-`.render(backend=)`, and a notebook display hook, exactly like a single-panel
-spec.
+Make each view once. Add compatible views on one set of axes, put different
+questions in neighbouring panels, and use parentheses when one panel should
+span a whole row. A composed figure is still a `Plot`.
 
-<figure markdown>
-![Two Rossler orbits overlaid on one set of x-y axes: a small teal limit cycle at c=2.3 and a wide indigo chaotic band at c=5.7, distinguished by an auto-generated legend](../assets/figures/viz/compose-overlay.svg){ loading=lazy }
-<figcaption>An <strong>overlay</strong>: two Rossler orbits — the small teal limit cycle at <code>c = 2.3</code> and the wide indigo chaotic band at <code>c = 5.7</code> — merged onto <em>one</em> set of <code>(x, y)</code> axes with <code>layout="overlay"</code>. The legend is auto-disambiguated by source, since both panels came from a system named "Rossler".</figcaption>
+</div>
+
+## Three operators, three arrangements
+
+| Expression | Picture | Use it when |
+|---|---|---|
+| `a + b` | One panel, shared axes | Both views mean the same coordinates and units |
+| `a \| b` | Two panels, side by side | You want a direct comparison |
+| `a / b` | Two panels, one above the other | A common horizontal axis helps you read them |
+
+Here are two runs of the same model at different parameter values. We keep the
+same initial condition and sampling grid so the comparison is explicit.
+
+<!-- tsd-example: compose-operators -->
+```python
+import tsdynamics as ts
+
+model = ts.systems.Lorenz(ic=[1, 1, 1])
+first = model.run(final_time=25, dt=0.02)
+second = model.with_params(rho=24).run(final_time=25, dt=0.02)
+a = ts.plot(first, "time_series", components="x", title="rho = 28", color="#11857A")
+b = ts.plot(second, "time_series", components="x", title="rho = 24", color="#574FCF")
+
+overlay = a + b
+beside = a | b
+above = a / b
+figure = (overlay | beside) / above
+figure.theme("publication").font(family="sans-serif").size(10, 7)
+```
+
+<figure class="tsd-showcase" markdown="1">
+![The same two Lorenz time series are compared on shared axes, in neighbouring panels, and in a vertically stacked pair](../assets/figures/viz/compose-operators.svg){ loading=lazy }
+<figcaption>Upper left: <code>a + b</code>. Upper right:
+<code>a | b</code>. Below: <code>a / b</code>. The combined showcase itself uses
+the same operators; each panel keeps the original data.</figcaption>
 </figure>
 
-## The one verb
+The named spellings are equivalent: `ts.plot(a, b)` overlays,
+`ts.plot(a, b, layout="row")` makes a row, and
+`ts.plot(a, b, layout="stack")` makes a stack. Operators produce a new outer
+plot; fluent tweaks mutate the plot they are called on. Composite panels retain
+the original child objects, so a later change to `a` also changes its uses in a
+composite. Build a fresh view when two copies need independent styling.
 
+## Give each question its own axes
+
+A state-space portrait and a power spectrum describe different quantities.
+They belong in separate panels. In this layout the time series spans the width
+below them:
+
+<!-- tsd-example: compose-nested -->
 ```python
 import tsdynamics as ts
 
-# skip-doctest — the signature, not a runnable call (`things` is your inputs)
-ts.plot(*things, layout="overlay", animate=False, **build_kw)  # -> Plot
+trajectory = ts.systems.Lorenz(ic=[1, 1, 1]).run(final_time=40, dt=0.01)
+portrait = ts.plot(trajectory, components=["x", "z"], title="State space", color="#11857A")
+spectrum = ts.plot(trajectory, "psd", components="x", title="Frequency content", color="#574FCF")
+trace = ts.plot(trajectory, "time_series", components="x", title="x over time", color="#11857A")
+
+figure = (portrait | spectrum) / trace
+figure.theme("publication").font(family="sans-serif").size(10, 7)
 ```
 
-- **`*things`** — any mix of plottables and already-built `Plot` objects.
-  A single list/tuple argument is unwrapped, so `plot([a, b])` and `plot(a, b)`
-  are the same.
-- **`layout`** — `"overlay"` (default) draws everything on one set of axes;
-  `"stack"` / `"row"` / `"grid"` give each thing its own panel in a
-  [`COMPOSITE`](#composite-tiling-panels-into-a-figure) figure.
-- **`build_kw`** — `components=`, `kind=`, and the per-kind options are forwarded
-  to each subject as it is drawn, so `plot(a, b, components="x")`
-  composes the *same view* of each. `build_kw` **cannot** be combined with an
-  already-built `Plot` argument (you passed the build options when you first
-  built it) — mixing the two raises `InvalidParameterError`.
-- **`animate`** — animate the whole figure (see
-  [Animating a figure](#animating-a-figure)).
-
----
-
-## Overlay: many drawables, one set of axes
-
-`layout="overlay"` (the default) merges compatible single-panel specs onto **one**
-panel. It is the right layout when the drawables share a coordinate frame — two
-orbits in the same phase plane, several state variables over the same time axis,
-a trajectory and a coarser-`dt` rerun of it.
-
-The overlay figure above is one call:
-
-```python
-import tsdynamics as ts
-
-r_cycle = ts.systems.Rossler().with_params(c=2.3)   # a small limit cycle
-r_chaos = ts.systems.Rossler().with_params(c=5.7)   # the classic chaotic band
-ic = [0.1, 0.0, 0.0]
-
-t_cycle = r_cycle.run(final_time=200.0, dt=0.05, ic=ic)
-t_chaos = r_chaos.run(final_time=200.0, dt=0.05, ic=ic)
-
-fig = ts.plot(t_cycle, t_chaos, components=["x", "y"])
-fig.recolor("#11857A", "#574FCF").save("compose-overlay.svg")
-```
-
-```pycon
->>> fig.kind
-<PlotKind.PHASE_PORTRAIT_2D: 'phase_portrait_2d'>
->>> len(fig.layers)              # both orbits are layers on one panel
-2
->>> [layer.label for layer in fig.layers]
-['Rossler (1)', 'Rossler (2)']
->>> fig.meta["composed"]         # the source tags, in order
-['Rossler (1)', 'Rossler (2)']
-```
-
-Both sources carry the title "Rossler", so the overlay makes the legend
-unambiguous by tagging each `Rossler (1)` / `Rossler (2)` and prefixing every
-layer label with its source. When the sources have **distinct** titles the tags
-are those titles verbatim (no counter). Give a source a clearer name by
-relabelling its spec's `title` before you compose, or pin it inline:
-
-```python
-a = ts.plot(t_cycle, components=["x", "y"]).relabel(title="limit cycle")
-b = ts.plot(t_chaos, components=["x", "y"]).relabel(title="chaos")
-ts.plot(a, b)   # legend entries: "limit cycle" / "chaos"
-```
-
-### What can be overlaid
-
-Only kinds that genuinely share axes may overlay: `TIME_SERIES`,
-`PHASE_PORTRAIT_2D`, and `PHASE_PORTRAIT_3D`. Every input must be the **same**
-one of those. Mixing kinds — a time series and a 2-D portrait, or a 2-D and a
-3-D portrait — cannot share one set of axes and raises, pointing you at a
-panelled layout instead:
-
-```pycon
->>> lor = ts.systems.Lorenz()
->>> ts_spec = ts.plot(lor, components="x", final_time=40.0, dt=0.01, ic=[1.0, 1.0, 1.0])
->>> ph_spec = ts.plot(lor, components=["x", "y"], final_time=40.0, dt=0.01, ic=[1.0, 1.0, 1.0])
->>> ts.plot(ts_spec, ph_spec)
-Traceback (most recent call last):
-    ...
-tsdynamics.errors.InvalidParameterError: cannot overlay specs of kinds
-['phase_portrait_2d', 'time_series'] on one set of axes; use layout='stack'
-(or 'row' / 'grid') to give each its own panel.
-```
-
-Image / section / composite kinds (a recurrence plot, a spacetime image, a basin
-image) each need their own axes and colorbar — they are **never** overlaid;
-arrange them into panels.
-
-!!! note "A single input passes through"
-    `plot(one_thing)` with one argument returns that thing's spec unchanged
-    (there is nothing to arrange). This is what lets `ts.viz.plot` double as a
-    convenience wrapper — `ts.plot(system).save("x.png")`.
-
----
-
-## Composite: tiling panels into a figure
-
-`layout="stack"` / `"row"` / `"grid"` build a `PlotKind.COMPOSITE` spec: each
-thing keeps its own axes and becomes one **panel**, and a
-[`Layout`](../reference/top-level.md) records how to tile them. Every renderer
-that draws composites (matplotlib and plotly) maps the `Layout.mode` to its own
-subplot grid.
-
-<figure markdown>
-![A 2x2 grid of four classic attractors — Lorenz, Rossler, Halvorsen and Thomas — each in its own panel and brand colour](../assets/figures/viz/compose-grid.svg){ loading=lazy }
-<figcaption>A <strong>grid</strong> composite: four classic attractors, each its own panel, tiled 2×2 with <code>layout="grid"</code>. Small multiples like this are the natural way to compare systems side by side — the panels do not share axes, so each attractor keeps its own scale.</figcaption>
+<figure class="tsd-showcase" markdown="1">
+![A state-space portrait and power spectrum occupy the upper row, while a full-width Lorenz time series occupies the lower row](../assets/figures/viz/compose-nested.svg){ loading=lazy }
+<figcaption>Read the parentheses as blocks: first make a row, then put that row
+above the timeline. The lower panel spans the entire figure.</figcaption>
 </figure>
 
-```python
-import tsdynamics as ts
+Python gives `/` higher precedence than `|`. Write the parentheses explicitly:
+`(a | b) / c` is a row above `c`; `a | (b / c)` is `a` beside a column.
+A child with the same arrangement is absorbed: `(a | b) | c` is one row of three.
+A child with a different arrangement remains a nested block.
 
-lor, ros, hal, tho = ts.systems.Lorenz(), ts.systems.Rossler(), ts.systems.Halvorsen(), ts.systems.Thomas()
-
-grid = ts.plot(
-    ts.plot(lor, components=[0, 2], final_time=100.0, dt=0.01, ic=[1.0, 1.0, 1.0]),
-    ts.plot(ros, components=[0, 1], final_time=200.0, dt=0.05, ic=[0.1, 0.0, 0.0]),
-    ts.plot(hal, components=[0, 1], final_time=100.0, dt=0.01, ic=[-5.0, 0.0, 0.0]),
-    ts.plot(tho, components=[0, 1], final_time=300.0, dt=0.05, ic=[1.1, 1.1, -0.01]),
-    layout="grid",
-)
-grid.save("compose-grid.svg")
-```
-
-```pycon
->>> grid.kind
-<PlotKind.COMPOSITE: 'composite'>
->>> grid.is_composite
-True
->>> len(grid.panels)
-4
->>> grid.layout.mode
-'grid'
->>> [p.title for p in grid.panels]
-['Lorenz', 'Rossler', 'Halvorsen', 'Thomas']
-```
-
-Two of these systems (`Halvorsen`, `Thomas`) declare no named `variables`, so
-their components are selected by **index** (`[0, 1]`); `Lorenz` and `Rossler`
-would also accept `["x", "y"]`. Selecting by index always works — see
-[Plotting — the front door](plotting.md).
-
-### The three arrangements
-
-| `layout` | `Layout.mode` | Shape |
-| --- | --- | --- |
-| `"stack"` | `stack` | one column of stacked panels |
-| `"row"` | `row` | one row of side-by-side panels |
-| `"grid"` | `grid` | a 2-D grid, near-square unless you set `rows` / `cols` |
-
-`"stack"` has one convenience default: when **every** panel is a `TIME_SERIES`
-that names the same x axis (the canonical "`x(t)` above `y(t)` over one shared
-time axis" case), the panels auto-share their x axis.
+## A regular grid, when you need one
 
 ```python
-lz = ts.systems.Lorenz()
-px = ts.plot(lz, components="x", final_time=40.0, dt=0.01, ic=[1.0, 1.0, 1.0])
-py = ts.plot(lz, components="y", final_time=40.0, dt=0.01, ic=[1.0, 1.0, 1.0])
-
-stack = ts.plot(px, py, layout="stack")
+x_view = ts.plot(trajectory, "time_series", components="x", title="x")
+y_view = ts.plot(trajectory, "time_series", components="y", title="y")
+z_view = ts.plot(trajectory, "time_series", components="z", title="z")
+figure = ts.plot(x_view, y_view, z_view, layout="grid", cols=2)
+figure.theme("publication").font(family="sans-serif").size(9, 6)
 ```
 
-```pycon
->>> stack.layout.mode, stack.layout.share_x
-('stack', True)
-```
+`rows=` or `cols=` sets one grid dimension; set both to choose an exact capacity.
+A stack of time series with the same time axis shares its horizontal axis by
+default. For other compatible panels, request `share_x=True` or `share_y=True`
+at composition time. Share axes only when their coordinates and units match.
+Use `share_color=True` for comparable scalar fields that need one colour scale.
 
-Any other arrangement — a `row`, a `grid`, or a stack of mixed kinds — keeps
-independent axes. To force axis sharing, or to fix an explicit grid shape, build
-the `Layout` by hand and attach it:
+## Work on the whole figure, then a panel
 
 ```python
-from tsdynamics.viz.spec import Layout
-
-grid.layout = Layout(mode="grid", rows=2, cols=2, share_x=True, share_y=True)
+figure = (portrait | spectrum) / trace
+figure.theme("publication").font(family="sans-serif").size(10, 7)
+figure.relabel(title="Lorenz: geometry, frequency and time")
+figure[0][0].recolor("#11857A")
+figure[0][1].recolor("#574FCF")
+figure[1].relabel(x="Time", y="x")
 ```
 
----
+The outer figure has two children: an upper row and a lower trace.
+`figure[0][1]` therefore selects the spectrum inside the upper row.
+Axis tweaks such as `.limits(...)` and `.gridlines(...)` on a composite recurse
+through its panels. The outer title, size and background belong to the figure.
+See [styling](styling.md) for theme inheritance and panel overrides.
 
-## Recursion: spec in, spec out
+## Overlay coordinates that mean the same thing
 
-Because a composite *is* a `Plot`, you can compose composites — and the rule is
-the one the parentheses suggest:
-
-> **A child composite of the *same* arrangement is absorbed; a child of a
-> *different* arrangement becomes a block.**
-
-So a stack of stacks is one taller stack, while a stack placed in a **row**
-stays a column occupying one cell of that row. That is what makes
-`(plot(a) | plot(b)) / plot(c)` draw a row of two with `c` spanning the width
-below, instead of three stacked rows. Build the pieces bottom-up and combine:
+An overlay is checked by its **coordinate frame**, including dimensionality and
+axis names. Two `(x, y)` orbits can share axes; an `(x, z)` orbit and a power
+spectrum cannot. This also allows compatible layers of different kinds—such as
+an orbit and a vector field in the same phase plane—to appear together.
 
 ```python
-import tsdynamics as ts
-
-lz = ts.systems.Lorenz()
-ic = [1.0, 1.0, 1.0]
-
-# Panel 1: x(t) and y(t) stacked on a shared time axis.
-px = ts.plot(lz, components="x", final_time=40.0, dt=0.01, ic=ic)
-py = ts.plot(lz, components="y", final_time=40.0, dt=0.01, ic=ic)
-timeline = ts.plot(px, py, layout="stack")
-
-# Panel 2: the phase portrait.
-portrait = ts.plot(lz, components=["x", "z"], final_time=40.0, dt=0.01, ic=ic)
-
-# Combine — the stack stays a column, beside the portrait.
-figure = ts.plot(timeline, portrait, layout="row")
+model = ts.systems.VanDerPol()
+trajectory = model.run(final_time=30, dt=0.02, ic=[2.5, 0])
+figure = ts.plot(model, trajectory, "flow_speed", "nullclines")
 ```
 
-```pycon
->>> figure.kind, figure.layout.mode
-(<PlotKind.COMPOSITE: 'composite'>, 'row')
->>> len(figure.panels)          # the timeline (one block) + the portrait
-2
->>> figure.panels[0].layout.mode     # ...and the block is still a stack
-'stack'
-```
+The equation-based transforms consume the model, while the trajectory adds its
+orbit. Fields are drawn behind trajectories and overlays. If the frames do not
+match, use `|` or `/` to give each view its own axes.
 
-Pass that same stack into another **stack** and it is absorbed instead, because
-a column inside a column is just a longer column:
-
-```pycon
->>> len(ts.plot(timeline, portrait, layout="stack").panels)
-3
-```
-
-That one rule — *same arrangement absorbs, different arrangement nests* — is what
-makes `|` and `/` compose the way the brackets read.
-
----
-
-## Animating a figure
-
-`animate=` (or the chainable `.animate()` on the result) turns the whole figure
-into a movie. A **composite** plays every panel in **lockstep on one master
-clock**: the composite carries the master `Animation`, and each panel that is not
-already animated gets the same timeline — with its own per-kind head default (a
-head marker on portraits and spacetime, off on a plain time series).
+## Animate the figure you already made
 
 ```python
-import tsdynamics as ts
-
-lor, ros = ts.systems.Lorenz(), ts.systems.Rossler()
-comp = ts.plot(
-    ts.plot(lor, components=[0, 2], final_time=30.0, dt=0.01, ic=[1.0, 1.0, 1.0]),
-    ts.plot(ros, components=[0, 1], final_time=60.0, dt=0.05, ic=[0.1, 0.0, 0.0]),
-    layout="row",
-    animate=True,
-)
-comp.animate(fps=30, n_frames=120).save("two-attractors.mp4")
+movie = (portrait | trace).animate(duration=6, fps=24)
 ```
 
-```pycon
->>> comp.is_animated
-True
->>> [p.animation is not None for p in comp.panels]   # every panel plays in lockstep
-[True, True]
-```
+Both panels play on one master timeline. When they come from the same
+trajectory, they show the same orbit at the same instant. Different-length
+inputs are synchronized by relative progress; that is a comparison of playback,
+not proof that their physical times coincide. The [animation guide](animation.md)
+builds and exports this linked view.
 
-An animated composite is a matplotlib job (its `FuncAnimation` drives every panel
-on the shared clock); the plotly backend declines an animated composite and
-dispatch falls back to matplotlib. See [Animation](animation.md) for the full
-comet / trail / head / camera vocabulary and the export formats.
-
----
-
-## Themes across a composite
-
-A composite resolves its theme **per panel**, in this order:
-
-```
-panel.theme  →  composite.theme  →  the active global default
-```
-
-So to give every panel one look, set the theme on the composite result; to make
-one panel different, set its theme *before* you pass it in.
-
-```python
-grid.theme("dark")                       # every panel goes dark
-grid.panels[0].theme("publication")      # …except the first
-```
-
-An overlay is a single panel, so it just uses `spec.theme or the global default`.
-See [Styling & themes](styling.md) for the full theme system.
-
----
-
-## Pitfalls
-
-| Situation | What happens |
-| --- | --- |
-| Overlaying incompatible kinds (image + portrait, 2-D + 3-D) | Raises `InvalidParameterError` — use `layout="stack"` / `"row"` / `"grid"`. |
-| `build_kw` (`components=`, `kind=`) with an already-built `Plot` | Raises `InvalidParameterError` — pass build options when you first build the spec. |
-| Passing a plain array / a non-plottable | Raises `InvalidInputError` — wrap it in a `Trajectory` or build a `Plot`. |
-| Two sources with the same title | Legend tags are auto-disambiguated (`Name (1)` / `Name (2)`); relabel a spec's `title` for clearer entries. |
-| Wanting a nested sub-figure | Supported — put a composite of the *other* arrangement inside (`(a \| b) / c`). A child of the **same** arrangement is absorbed. |
-| A nested figure on an interactive backend | Plotly declines it and matplotlib draws it, with one `VisualizationDegraded` — its subplot grid is flat, and it used to drop panels silently. |
-| A random-IC system in a snippet | Always pass an explicit `ic=` (see [the front door](plotting.md)) so the panel is deterministic. |
-
----
-
-## See also
-
-- [Transforms & primitives](plotting.md) — the single-panel views
-  each panel is built from.
-- [Styling & themes](styling.md) — the fluent tweaks (`recolor` / `theme` / …)
-  that also chain on a composite result.
-- [Animation](animation.md) — the orthogonal animation modifier, including the
-  lockstep composite movie.
-- [Backends & export](backends.md) — how the returned spec renders and saves
-  itself, and how composites tile natively in matplotlib and plotly.
+Matplotlib supports nested figures and composite movies. Plotly supports flat
+static composites; nested layouts and animated composites fall back to
+Matplotlib with a capability warning. Choose a still or MP4 when preserving a
+complex layout matters more than browser interactivity.

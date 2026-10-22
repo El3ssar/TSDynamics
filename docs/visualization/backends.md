@@ -1,4 +1,5 @@
 ---
+title: Backends and export
 description: The four rendering backends — matplotlib (the universal default), plotly (interactive HTML), three.js (a BufferGeometry web payload with a live orbitable viewer) and json (lossless serialization) — plus backend selection, capability negotiation, the VisualizationDegraded warning, and saving / rendering / exporting a Plot by file extension.
 ---
 
@@ -13,8 +14,9 @@ turns that description into a concrete artifact: a matplotlib figure, an
 interactive plotly page, a three.js web payload, or a serialized JSON document.
 
 The same spec drives all four. Because the spec is the single source of truth,
-every fluent tweak — `rescale(x="log")`, `theme("dark")`, `.recolor(...)` —
-renders identically on whichever backend draws it. You pick the backend by name,
+supported fluent tweaks — `rescale(x="log")`, `theme("dark")`, `.recolor(...)` —
+travel with it. Renderers have different capabilities and output; unsupported
+features are reported by a capability warning. You pick the backend by name,
 or let the file extension pick it for you.
 
 ```python
@@ -73,8 +75,8 @@ spec.save("lorenz.pdf")             # a vector figure for a paper
 ### plotly — interactive, web-native
 
 plotly produces an **interactive** figure — pan, zoom, hover, and orbit a 3-D
-attractor with the mouse. It draws the 2-D and 3-D kinds and tiles composites
-natively (a `make_subplots` grid, each panel on its own `xy` / `scene` cell), and
+attractor with the mouse. It draws the 2-D and 3-D kinds and tiles flat static
+composites (a `make_subplots` grid, each panel on its own `xy` / `scene` cell), and
 it serializes to a **self-contained HTML page** with `.save("*.html")` — the
 zero-extra-dependency way to ship a live figure into docs, a dashboard, or a
 paper-as-web-page.
@@ -84,9 +86,9 @@ fig = spec.render("plotly")         # a plotly.graph_objs.Figure
 spec.save("lorenz.html")            # one self-contained interactive page
 ```
 
-plotly declines only the deferred *animation kinds* and — for animation — an
-animated **composite** and the animated **spatial-field movie** (both are
-matplotlib's job); those fall back automatically. Its animated-HTML export is a
+Plotly declines nested composites, deferred *animation kinds*, animated
+composites and spatial-field movies; these fall back to Matplotlib. Its
+supported single-panel animated-HTML export is a
 real-time comet you can rotate while it plays — see [Animation](animation.md).
 
 ### json — lossless serialization
@@ -97,6 +99,12 @@ theme, and `meta` field, with NumPy arrays as nested lists. It round-trips
 exactly, so a spec computed on one machine can be cached, shipped to a web
 frontend, or replayed **without re-running the analysis** and without a plotting
 library installed.
+
+The current plot envelope uses schema 4 and standards-compliant JSON. Non-finite
+numbers (`NaN` and positive or negative infinity) appear as `null`, with their
+paths recorded in an envelope sidecar so loading restores them losslessly.
+Ordinary `null` values and literal metadata keep their original meaning. The
+separate three.js geometry payload uses schema 3.
 
 The loader accepts supported older envelopes and legacy unversioned plot
 mappings. It rejects malformed version stamps and future schema versions with
@@ -677,8 +685,8 @@ loader still renders, auto-rotating) and emits a `VisualizationDegraded` warning
 
 ### Composite payloads
 
-A composite spec has no top-level geometry — its content is in the panels. The
-threejs exporter detects a composite, lowers each panel recursively, and emits a
+A flat static composite has no top-level geometry — its content is in the panels. The
+threejs exporter lowers each panel and emits a
 `"panels"` list (each with its own `geometries` + `metadata`, a `grid` cell, and
 a layout `offset` for dropping every panel into one shared scene) plus a
 top-level `layout` block. `geometries` is then always empty at the top level.
@@ -686,6 +694,10 @@ top-level `layout` block. `geometries` is then always empty at the top level.
 The reference loader mounts each panel in its own group at the panel's `offset`,
 with its own axes frame built from its own local bounds, so a composite `.html`
 draws every panel in one orbitable scene.
+
+Nested and animated composites use Matplotlib. A three.js render request for
+those layouts warns and falls back; an explicit three.js payload or HTML export
+refuses the unsupported layout before writing a misleading artifact.
 
 !!! note "A composite renders in *one* 3-D scene, not in tiled subplots"
 
@@ -759,14 +771,16 @@ It is written for real embedding contexts, not just a full-page demo:
 
 ### In the system catalogue
 
-Every **3-D ODE** system page in the [catalogue](../systems/index.md) embeds
-exactly this pipeline: at docs-build time an animated `PHASE_PORTRAIT_3D` payload
-of the attractor is exported, inlined into a small self-contained HTML document
-(the import map + the inlined payload + this reference loader), and dropped onto
-the page in an `<iframe>` — so the headline figure on a chaotic-attractor page is
-the **live, orbitable comet** rather than a static PNG. Maps, DDEs, spatial-field
-and stiff / discontinuous systems keep their static figure, and any page degrades
-to the PNG when WebGL or the CDN is unavailable. The emitter is
+Non-field system pages in the [catalogue](../systems/index.md) use this pipeline
+for an animated, labelled view: a state projection for flows, a delay embedding
+for DDEs, a seeded time trace for noisy paths, or discrete points appearing in
+iteration order for maps. Larger states default to a clearly labelled projection;
+selected stiff and signal models use a readable time trace. The caption explains
+whether playback follows sample order or arc length: constant playback speed in
+space is not physical velocity. Spatial models use actual field movies.
+
+The payload is inlined into an HTML document with the shared reference loader.
+Any WebGL or CDN failure falls back to the static PNG. The emitter is
 `docs/_tooling/threejs_viewer.py`.
 
 ### Live demo

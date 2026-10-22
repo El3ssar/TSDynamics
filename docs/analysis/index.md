@@ -63,6 +63,16 @@ at all for the complete list. It returns the analysis *functions*, so
 grouped table. `help(ts.analysis)` prints that same table, grouped by **what you
 are holding**.
 
+For a concrete system, discovery checks the registered family restrictions,
+minimum state dimension and any autonomous-equation requirement. For example,
+it excludes deterministic tangent estimators from SDEs, GALI from scalar models,
+and equilibrium searches from explicitly forced equations. Class queries know
+the family but cannot check parameter-dependent forcing; use an instance for
+that. Plugins can declare these restrictions with `register(families=...,
+min_dim=..., autonomous=...)`; omitting them preserves existing plugin behavior.
+Equation-based plugins can additionally declare `system_types=(...)` when a
+family name alone is insufficient to guarantee access to the required equations.
+
 Guess a name that used to exist and the error is the migration guide:
 
 ```
@@ -70,7 +80,7 @@ Guess a name that used to exist and the error is the migration guide:
 AttributeError: 'Lorenz' object has no attribute 'lyapunov_spectrum': analyses are
 free functions in v6, and the subject is the first argument.
     ts.analysis.lyapunov_spectrum(system)
-    ts.analysis.find(system)   # all 21 that take a flow
+    ts.analysis.find(system)   # all 20 that take a Lorenz flow
 ```
 
 ## The toolkit, by capability

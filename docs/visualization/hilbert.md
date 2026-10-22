@@ -1,4 +1,5 @@
 ---
+title: Hilbert curves
 description: Lay a long 1-D record on a space-filling curve — the four hilbert* plot transforms, the optional hilbertplot extra, the pixel-to-sample map, and the locality trade-off measured rather than asserted.
 ---
 

@@ -11,6 +11,9 @@ bare-dict payload) and :mod:`tsdynamics.viz.render.json` (the ``json`` backend's
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
+from copy import deepcopy
 
 import numpy as np
 import pytest
@@ -144,6 +147,116 @@ def test_envelope_dict_round_trips() -> None:
     envelope = to_dict_envelope(spec)
     assert envelope["schema_version"] == SCHEMA_VERSION
     _assert_specs_equal(spec, from_dict_envelope(envelope))
+
+
+def _gapped_spec() -> PlotSpec:
+    spec = _time_series_spec()
+    spec.layers[0].data["y"] = np.array([1.0, np.nan, np.inf, -np.inf, 2.0])
+    spec.layers[0].data["x"] = np.arange(5.0)
+    spec.meta = {
+        "literal": {"path": ["layers", 0], "value": "nan"},
+        "nonfinite": [{"path": ["literal"], "value": "+inf"}],
+        "null": None,
+        "nested": [np.nan, {"limit": np.inf}],
+    }
+    return spec
+
+
+def test_nonfinite_line_gaps_round_trip_as_strict_json_without_metadata_collisions(tmp_path):
+    spec = _gapped_spec()
+    text = spec.to_json()
+
+    def reject_constant(word):
+        raise AssertionError(f"nonstandard JSON constant {word}")
+
+    envelope = json.loads(text, parse_constant=reject_constant)
+    assert envelope["spec"]["layers"][0]["data"]["y"] == [1.0, None, None, None, 2.0]
+    assert len(envelope["nonfinite"]) == 5
+    for restored in (
+        from_json(text),
+        from_dict_envelope(envelope),
+        PlotSpec.from_dict(envelope),
+    ):
+        np.testing.assert_equal(restored.layers[0].data["y"], spec.layers[0].data["y"])
+        assert restored.meta["literal"] == spec.meta["literal"]
+        assert restored.meta["nonfinite"] == spec.meta["nonfinite"]
+        assert restored.meta["null"] is None
+        assert np.isnan(restored.meta["nested"][0])
+        assert restored.meta["nested"][1]["limit"] == np.inf
+    before = deepcopy(envelope)
+    from_dict_envelope(envelope)
+    assert envelope == before  # loading never edits a caller's cached envelope
+    out = tmp_path / "gapped.json"
+    spec.save(out)
+    assert json.loads(out.read_text(), parse_constant=reject_constant) == envelope
+    assert json.loads(spec.render("json", raw=True), parse_constant=reject_constant) == envelope
+
+
+def test_nonfinite_export_is_accepted_by_a_real_javascript_json_parser():
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is needed to exercise the browser JSON parser")
+    completed = subprocess.run(
+        [
+            node,
+            "-e",
+            "let s=''; process.stdin.on('data',c=>s+=c); process.stdin.on('end',()=>{"
+            "const p=JSON.parse(s); console.log(JSON.stringify({version:p.schema_version,"
+            "gap:p.spec.layers[0].data.y[1],count:p.nonfinite.length}));});",
+        ],
+        input=to_json(_gapped_spec()),
+        text=True,
+        capture_output=True,
+        timeout=10,
+        check=True,
+    )
+    assert json.loads(completed.stdout) == {"version": 4, "gap": None, "count": 5}
+
+
+@pytest.mark.parametrize(
+    "records, message",
+    [
+        ({}, "must be a list"),
+        ([{"path": [], "value": "nan"}], "nonempty path"),
+        ([{"path": ["meta", "null"], "value": "NaN"}], "value nan"),
+        ([{"path": ["meta", "null"], "value": "nan", "extra": 1}], "exactly"),
+        ([{"path": ["layers", True], "value": "nan"}], "nonempty path"),
+        ([{"path": ["layers", -1], "value": "nan"}], "existing value"),
+        ([{"path": ["missing"], "value": "nan"}], "existing value"),
+        ([{"path": ["title"], "value": "nan"}], "null placeholders"),
+        (
+            [{"path": ["meta", "null"], "value": "nan"}] * 2,
+            "duplicate path",
+        ),
+    ],
+)
+def test_malformed_nonfinite_sidecars_are_refused(records, message):
+    envelope = to_dict_envelope(_gapped_spec())
+    envelope["nonfinite"] = records
+    with pytest.raises(ValueError, match=message):
+        from_dict_envelope(envelope)
+
+
+def test_nonfinite_sidecar_requires_schema_four():
+    envelope = to_dict_envelope(_gapped_spec())
+    envelope["schema_version"] = 3
+    with pytest.raises(ValueError, match="requires schema_version 4"):
+        from_dict_envelope(envelope)
+
+
+def test_legacy_nonstandard_nonfinite_documents_load_but_schema_four_requires_standard_json():
+    spec = _gapped_spec()
+    for version in (None, 1, 2, 3):
+        payload = (
+            spec.to_dict()
+            if version is None
+            else {"schema_version": version, "spec": spec.to_dict()}
+        )
+        restored = from_json(json.dumps(payload))
+        np.testing.assert_equal(restored.layers[0].data["y"], spec.layers[0].data["y"])
+    text = json.dumps({"schema_version": 4, "spec": spec.to_dict()})
+    with pytest.raises(ValueError, match="requires standard JSON"):
+        from_json(text)
 
 
 def test_old_dict_without_version_loads() -> None:

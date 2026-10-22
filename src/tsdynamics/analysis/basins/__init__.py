@@ -67,6 +67,7 @@ __all__ = [
 # site (CONTRACT §7.7), through the public ``ts.analysis.register`` door.
 _register(
     attractors,
+    families=("ode", "map"),
     subjects=("system",),
     area="basins",
     returns=AttractorSet,
@@ -76,6 +77,7 @@ _register(
 )
 _register(
     basins,
+    families=("ode", "map"),
     subjects=("system",),
     area="basins",
     returns=BasinsResult,
@@ -85,6 +87,7 @@ _register(
 )
 _register(
     basin_fractions,
+    families=("ode", "map"),
     subjects=("system",),
     area="basins",
     returns=BasinFractions,
@@ -94,6 +97,7 @@ _register(
 )
 _register(
     continuation,
+    families=("ode", "map"),
     subjects=("system",),
     area="basins",
     returns=ContinuationResult,

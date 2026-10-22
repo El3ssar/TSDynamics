@@ -33,7 +33,9 @@ Importable standalone::
 
 from __future__ import annotations
 
+import inspect
 import json
+import re
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
@@ -349,7 +351,9 @@ def _merge_record(entry: Any, ed: dict[str, Any]) -> SystemRecord:
     # both spellings), so take it from the record rather than the class.
     field_labels = _as_str_tuple(getattr(entry, "field_labels", None))
 
-    param_roles = ed.get("param_roles") if isinstance(ed.get("param_roles"), dict) else {}
+    param_roles = _parameter_descriptions(cls)
+    if isinstance(ed.get("param_roles"), dict):
+        param_roles.update(ed["param_roles"])
     projection = ed.get("projection")
     projection = tuple(projection) if isinstance(projection, (list, tuple)) else None
     projection2 = ed.get("projection2")
@@ -385,6 +389,37 @@ def _merge_record(entry: Any, ed: dict[str, Any]) -> SystemRecord:
         viewer=viewer,
         behavior=behavior,
     )
+
+
+def _parameter_descriptions(cls: type) -> dict[str, str]:
+    """Read NumPy-style parameter descriptions without requiring a docs parser.
+
+    A future system's class documentation should reach its generated parameter
+    table automatically. Curated editorial descriptions may still override it.
+    """
+    doc = inspect.getdoc(cls) or ""
+    section = re.search(r"^Parameters\s*\n-+\s*\n(.*?)(?=^\S[^\n]*\n-+\s*$|\Z)", doc, re.M | re.S)
+    if section is None:
+        return {}
+    result = {}
+    names = []
+    description = []
+
+    def store():
+        if description:
+            for name in names:
+                result[name] = " ".join(description)
+
+    for line in section.group(1).splitlines():
+        declaration = re.match(r"^([\w, ]+)\s*:\s*\S", line)
+        if declaration:
+            store()
+            names = [name.strip() for name in declaration.group(1).split(",")]
+            description = []
+        elif line[:1].isspace() and line.strip():
+            description.append(line.strip())
+    store()
+    return result
 
 
 @lru_cache(maxsize=1)

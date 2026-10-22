@@ -4,7 +4,6 @@
    Material is configured with `primary: custom` / `accent: custom`,
    so we drive its CSS variables directly below.
    ============================================================ */
-@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap');
 
 /* ---- light scheme ---- */
 [data-md-color-scheme="default"]{
@@ -47,13 +46,7 @@
   letter-spacing:-0.015em; font-weight:600;
 }
 
-/* ---- code blocks: brand dark surface + syntax theme, both schemes ---- */
-.md-typeset pre > code, .md-typeset .highlight{ background:#0B0F14; color:#C5D0D7; }
-.md-typeset .highlight .k, .md-typeset .highlight .kn, .md-typeset .highlight .kd{ color:#5FD3C0; }
-.md-typeset .highlight .nf, .md-typeset .highlight .nc{ color:#8C85F2; }
-.md-typeset .highlight .mi, .md-typeset .highlight .mf{ color:#9AD0E6; }
-.md-typeset .highlight .s, .md-typeset .highlight .s1, .md-typeset .highlight .s2{ color:#C9A26B; }
-.md-typeset .highlight .c, .md-typeset .highlight .c1, .md-typeset .highlight .cm{ color:#5C6E6B; font-style:normal; }
+/* Code colours live in code-github-dark.css; spacing in docs-design.css. */
 
 /* ---- admonitions / tags accented with brand teal ---- */
 .md-typeset .admonition.note, .md-typeset details.note{ border-color:#11857A; }

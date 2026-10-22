@@ -157,19 +157,20 @@ class WindowedRQA(AnalysisResult):
             raise ValueError(f"unknown RQA measure {name!r}; choose from {_MEASURES}.")
         return np.array([getattr(r, name) for r in self.results], dtype=float)
 
-    def __plot_spec__(self, kind: str | None = None) -> Any:
+    def __plot_spec__(self, kind: str | None = None, *, measure: str = "determinism") -> Any:
         r"""Describe the windowed RQA as a :class:`PlotSpec`.
 
-        Builds a ``DIAGNOSTIC_CURVE`` carrying a ``LINE`` of the **determinism**
-        measure against the window-centre index — the canonical sliding-RQA view
-        for spotting dynamical regime transitions (a drop in determinism flags a
-        shift away from deterministic/periodic behaviour).  Read any other measure
-        off :meth:`measure`.  The :mod:`tsdynamics.viz.spec` import is lazy.
+        Builds a ``DIAGNOSTIC_CURVE`` carrying the selected measure against the
+        window-centre index. Determinism is the default; for example,
+        ``result.plot(measure="laminarity")`` follows laminar episodes instead.
+        The :mod:`tsdynamics.viz.spec` import is lazy.
 
         Parameters
         ----------
         kind : str, optional
             Override the semantic kind.  ``None`` uses ``DIAGNOSTIC_CURVE``.
+        measure : str, default "determinism"
+            One of :attr:`measures`, with the same names as :meth:`measure`.
 
         Returns
         -------
@@ -178,14 +179,18 @@ class WindowedRQA(AnalysisResult):
         from .. import _plotbuilder as pb
 
         centers = np.asarray(self.centers, dtype=float)
-        det = np.asarray(self.measure("determinism"), dtype=float)
+        values = self.measure(measure)
+        label = next(
+            (short for short, long in RQAResult._PRINTED_ABBREVIATIONS.items() if long == measure),
+            measure,
+        )
         return pb.spec(
             kind,
             "diagnostic_curve",
-            layers=[pb.line(centers, det, label="DET")],
+            layers=[pb.line(centers, values, label=label)],
             xlabel="window centre",
-            ylabel="determinism",
-            title="Windowed RQA (determinism)",
+            ylabel=measure.replace("_", " "),
+            title=f"Windowed RQA ({measure.replace('_', ' ')})",
         )
 
     def __getattr__(self, name: str) -> np.ndarray:

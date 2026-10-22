@@ -46,6 +46,7 @@ from ._common import (
     _recurrence_grid,
     _representative,
     coerce_region,
+    positive_seed_count,
     reject_unknown_fsm,
 )
 
@@ -1235,14 +1236,13 @@ def _march_supported(system: Any, backend: str) -> bool:
     """Whether the Rust basin-march kernel can drive ``system`` on ``backend``.
 
     Supported only for an ODE flow or a discrete map (the kernel has no
-    DDE/SDE path — those reach here as ``False`` and keep the Python loop) on a
-    compiled-engine backend (``interp`` / ``jit``).  ``reference`` (the wheel-free
-    oracle) and any non-finite-state family fall back, mirroring the Poincaré
-    engine-march carve-outs.
+    DDE/SDE path) on a compiled-engine backend (``interp`` / ``jit``).
+    ``reference`` and custom steppers without a lowerable tape use the Python
+    oracle. Public entry points refuse DDE/SDE inputs before reaching this seam.
     """
     if backend not in ("interp", "jit"):
         return False
-    if _looks_unsupported(system):  # DDE / SDE — no finite-dimensional point
+    if _looks_unsupported(system):  # DDE history / stochastic-attractor methods differ
         return False
     # A flow or a map: both have a Rust kernel.  Anything else (a wrapped/custom
     # stepper with no lowerable tape) is caught when lowering fails below.
@@ -1268,10 +1268,10 @@ def classify_seeds(
     The per-cell-check numerics are byte-for-byte the released ``system.step()``, so
     the returned labels are **bit-identical** to the pure-Python loop.
 
-    Anything unsupported (the ``reference`` backend, a non-lowering ``_step``, a
-    DDE/SDE) transparently falls back to the per-seed Python ``map_ic`` loop — the
-    same algorithm, the same result — so this never changes an answer, only the
-    speed of the supported path.
+    A ``reference`` backend or non-lowering ``_step`` falls back to the per-seed
+    Python ``map_ic`` loop with the same algorithm. The public entry points
+    reject DDE/SDE inputs before constructing this deterministic recurrence
+    machine.
 
     Parameters
     ----------
@@ -1418,7 +1418,8 @@ def attractors(
     ----------
     system : System
         A discrete map or continuous flow.  Delay and stochastic systems are not
-        supported (their state is not a finite-dimensional point).
+        supported: a DDE requires a history and an SDE requires a stochastic
+        attractor notion beyond this deterministic recurrence algorithm.
     region : Box, Ball, or Grid
         Where to sample initial conditions and the box the recurrence cells cover.
     resolution : int or tuple of int, default 100
@@ -1426,7 +1427,7 @@ def attractors(
         its own ``counts``).  Too coarse merges distinct attractors; too fine
         stops a chaotic trajectory from recurring — tune it to the attractor scale.
     n_seeds : int, default 1000
-        Number of random initial conditions to classify.
+        Positive integer number of random initial conditions to classify.
     seed : int, optional
         Seed for the initial-condition sampler (reproducible).
     dt : float, default 1.0
@@ -1449,8 +1450,8 @@ def attractors(
     Raises
     ------
     TypeError
-        If ``system`` is a delay or stochastic system (their state is not a
-        finite-dimensional point the cell tessellation can bin).
+        If ``system`` is a delay or stochastic system, unsupported by this
+        deterministic point-state recurrence algorithm.
 
     Warns
     -----
@@ -1485,7 +1486,7 @@ def attractors(
     Python→FFI round-trip — so it is fast *without* parallelism.  The per-cell-check
     numerics are byte-for-byte the released ``system.step()``, so the result is
     bit-identical to the pure-Python loop, which stays the fallback (and the oracle)
-    for ``reference``, a non-lowering ``_step``, and DDE/SDE systems.
+    for ``reference`` and a non-lowering ``_step``. DDE/SDE inputs are refused.
 
     Why thread-parallelism is a *net loss* here, and why the kernel is therefore
     serial (measured, so the next reader does not re-derive it).  The shared
@@ -1509,6 +1510,7 @@ def attractors(
     attraction", *Chaos* **32**, 023104 (2022).
     """
     _reject_unsupported(system, "attractors")
+    n_seeds = positive_seed_count(n_seeds)
     reject_unknown_fsm(fsm, analysis="attractors")
     region = coerce_region(region, analysis="attractors", system=system, want_grid=False)
 
@@ -1597,7 +1599,7 @@ def resolve_merge_tol(cellgrid: _CellGrid, merge_tol: float | None) -> float:
 
 
 def _looks_unsupported(system: Any) -> bool:
-    """Return True for delay / stochastic systems (no finite-dimensional state)."""
+    """Identify history-dependent or stochastic inputs to a deterministic algorithm."""
     return hasattr(system, "_drift") or hasattr(system, "history") or hasattr(system, "_delays")
 
 

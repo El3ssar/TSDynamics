@@ -33,9 +33,54 @@ To distribute models in your own package, use the complete
    (`systems/__init__.py` flat-re-exports it automatically as
    `ts.systems.MyAttractor`.) A
    registry consistency test fails loudly if you forget this step.
-3. **That's it.** The registry sweeps it into the bulk tests, and the docs build
-   generates its page — equations, parameter table, `reference`, and a cached
-   phase portrait — on the next build.
+3. **Build the documentation.** The same template generates the new page and
+   catalogue entry: equations, parameter descriptions, a runnable example,
+   static and animated views, numerical diagnostics and the literature reference.
+   There is no page to copy or navigation entry to maintain.
+
+## What the generated page includes
+
+The generator reads the class itself. Ordinary flows get an orbit or time trace;
+maps reveal successive iterates as points. Declared spatial fields get a movie
+of the evolving profile or heatmap. Higher-dimensional orbits identify the
+coordinates in the displayed projection. The same page layout applies to every
+system.
+
+For meaningful parameter descriptions, put a NumPy-style `Parameters` section
+in the class docstring:
+
+```python
+# skip-doctest — class docstring example
+class MyAttractor(ts.ContinuousSystem):
+    """Three-variable nonlinear oscillator.
+
+    Parameters
+    ----------
+    a : float
+        Coupling strength between the first two coordinates.
+    """
+```
+
+Lyapunov spectra, Kaplan–Yorke estimates and equilibrium searches are computed
+under recorded conditions, then cached with their numerical source fingerprint.
+An importable new model is measured automatically in a bounded worker. A timeout,
+unsupported family or insufficient spectrum produces an explicit explanation;
+the page never substitutes a literature value or an unrelated built-in model.
+These are finite-time numerical results, with the method and scope shown beside
+them. Curated illustration settings can improve a difficult model's view, but
+are optional.
+
+Use `uv run mkdocs serve` to inspect the page. For a fast layout preview,
+`TSD_DOCS_FIGURES=0 TSD_DOCS_PROPS=0 uv run mkdocs build --strict` skips new
+illustrations and measurements while retaining matching cached results. To
+refresh the versioned diagnostic dataset explicitly, run:
+
+```bash
+uv run python docs/_tooling/diagnostics.py --refresh --workers 2
+```
+
+That command is a maintainer refresh tool; adding a system does not require
+hand-wiring a diagnostic record or a documentation page.
 
 ## The family contracts
 
@@ -181,9 +226,10 @@ exps = ts.analysis.lyapunov_spectrum(MyAttractor(ic=[1.0, 0.0, 0.0]))   # compos
 
 A user-defined class registers as **non-builtin**
 (`registry.get("MyAttractor").is_builtin` is `False`), so it stays out of the
-built-in-only sweeps — but the whole [analysis toolkit](../analysis/index.md),
-the [derived wrappers](../references/index.md), and plotting all work on it
-exactly as on a catalogue system.
+built-in-only sweeps. Analyses and [derived wrappers](../references/index.md)
+accept it according to the same family and capability requirements as a
+catalogue system; `ts.analysis.find(model)` lists the available analyses.
+Plotting uses the same trajectory interface.
 
 ## Publishing a system plugin
 
@@ -222,10 +268,10 @@ class MyAttractor(ts.ContinuousSystem):
     params = {"a": 0.2, "b": 0.2, "c": 5.7}
     dim = 3
     variables = ("x", "y", "z")                  # named traj["x"] + labelled figures
-    reference = "Rössler (1976), Phys. Lett. A 57, 397-398"   # shown in the docs
-    doi = "10.1016/0375-9601(76)90101-8"         # bare DOI for the reference
-    default_ic = (1.0, 0.0, 0.0)                 # only if random ICs miss the basin
-    known_lyapunov = {                           # opt in to the known-value tests
+    _reference = "Rössler (1976), Phys. Lett. A 57, 397-398"   # shown in the docs
+    _doi = "10.1016/0375-9601(76)90101-8"         # bare DOI for the reference
+    _default_ic = (1.0, 0.0, 0.0)                 # only if random ICs miss the basin
+    _known_lyapunov = {                           # opt in to the known-value tests
         "spectrum": (0.0714, 0.0, -5.39),
         "atol": (0.06, 0.06, 1.5),
         "kwargs": {"dt": 0.1, "transient": 100.0, "final_time": 500.0},
@@ -236,13 +282,13 @@ class MyAttractor(ts.ContinuousSystem):
 | ClassVar | What it does |
 | -------- | ------------ |
 | `variables` | Named component access (`traj["x"]`) and labelled axes on the auto-figure |
-| `reference` | Literature citation, surfaced on the docs page and via `registry.get(...).reference` |
-| `doi` | Bare DOI for the primary reference (used by the [bibliography](citation.md#citing-the-systems)) |
-| `default_ic` | Fallback IC when a random `U[0,1)^dim` start escapes the basin |
-| `known_lyapunov` | Enrolls the system in `test_known_values.py` — literature spectra checked continuously |
+| `_reference` | Literature citation, surfaced on the docs page and via `registry.get(...).reference` |
+| `_doi` | Bare DOI for the primary reference (used by the [bibliography](citation.md#citing-the-systems)) |
+| `_default_ic` | Fallback IC when a random `U[0,1)^dim` start escapes the basin |
+| `_known_lyapunov` | Enrolls the system in `test_known_values.py` — literature spectra checked continuously |
 | `_structural_params` | For variable-dimension systems (see below) |
 | `_default_method` | `"bdf"` for a system known to be stiff, so `run` defaults to the implicit kernel |
-| `_field_shape` / `field_labels` | For a spatially-extended (PDE) system whose state is a flattened field |
+| `_field_shape` / `_field_labels` | For a spatially-extended (PDE) system whose state is a flattened field |
 
 ### Variable-dimension systems
 

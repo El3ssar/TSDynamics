@@ -247,6 +247,87 @@ class TestPlotlyDeclinesWhatItCannotNest:
         assert len(figure.data) == 3
 
 
+class TestAnimationKeepsTheLayoutAndSharedTimeline:
+    def test_explicit_figure_tweaks_override_stamped_panel_defaults_without_mutation(self):
+        from tsdynamics.viz.render.mpl._anim import _animation_tree
+
+        a = _panel().animate().head(False)
+        b = _panel(2).animate().head(True)
+        expr = (a | b).animate(n_frames=3).trail(("steps", 4), backdrop=False).clock()
+        before = [panel.to_dict() for panel in expr.panels]
+        # The composite's trail/clock reach both; each panel retains its own head.
+        resolved = _animation_tree(expr, expr.animation)
+        assert [panel.animation.head for panel in resolved.panels] == [False, True]
+        assert all(panel.animation.trail_length == 4 for panel in resolved.panels)
+        assert all(
+            panel.animation.clock and not panel.animation.backdrop for panel in resolved.panels
+        )
+        assert [panel.to_dict() for panel in expr.panels] == before
+        # A global head override and its intent survive saving/reloading the spec.
+        reloaded = viz.load(expr.head(False).to_json())
+        resolved = _animation_tree(reloaded, reloaded.animation)
+        assert all(not panel.animation.head for panel in resolved.panels)
+
+    def test_clock_uses_playback_index_and_time_not_a_monotonic_state_coordinate(self):
+        panel = viz.draw({"x": np.linspace(100, 200, 5), "y": np.arange(5)}, "line")
+        panel.meta.update(dt=0.5, t0=10.0)
+        movie = panel.animate(n_frames=3).clock("{{t}}: {i:d}, {t:.1f}").render()
+        movie._draw_was_started = True
+        movie._func(2)
+        assert "{t}: 2, 12.0" in [text.get_text() for text in movie._fig.axes[0].texts]
+        movie._func(0)
+        assert "{t}: 0, 10.0" in [text.get_text() for text in movie._fig.axes[0].texts]
+
+    def test_nested_movie_places_and_animates_every_leaf(self, tmp_path):
+        from PIL import Image
+
+        expr = ((_panel(1) | _panel(2)) / _panel(3)).animate(n_frames=3, fps=3)
+        expr.size(4, 3, dpi=60)
+        movie = expr.render(backend="matplotlib")
+        movie._draw_was_started = True
+        assert len(movie._fig.axes) == 3
+        movie._func(2)
+        assert all(len(ax.lines[0].get_xdata()) == len(_T) for ax in movie._fig.axes)
+        a, b, bottom = [ax.get_position() for ax in movie._fig.axes]
+        assert a.x1 < b.x0
+        assert bottom.width > 1.5 * a.width
+        assert bottom.y1 < a.y0
+        path = tmp_path / "nested.gif"
+        movie.save(path, writer="pillow")
+        with Image.open(path) as image:
+            assert image.n_frames == 3
+
+    def test_short_panel_reaches_its_endpoint_with_the_long_panel(self):
+        def panel(n):
+            return viz.draw({"x": np.arange(n), "y": np.arange(n)}, "line")
+
+        movie = (panel(11) | panel(3)).animate(n_frames=11).render(backend="matplotlib")
+        movie._draw_was_started = True
+        movie._func(5)
+        assert [len(ax.lines[0].get_xdata()) for ax in movie._fig.axes] == [6, 2]
+        movie._func(10)
+        assert [len(ax.lines[0].get_xdata()) for ax in movie._fig.axes] == [11, 3]
+
+
+@pytest.mark.parametrize("backend", ["matplotlib", "plotly"])
+@pytest.mark.parametrize("shape", [{"rows": 1}, {"cols": 1}])
+def test_partial_grid_shape_is_honored_by_each_renderer(backend, shape):
+    if backend == "plotly":
+        pytest.importorskip("plotly")
+    fig = viz.grid(_panel(), _panel(2), _panel(3), **shape).render(backend=backend)
+    if backend == "matplotlib":
+        boxes = [ax.get_position() for ax in fig.axes]
+        coordinates = [box.y0 if "rows" in shape else box.x0 for box in boxes]
+    else:
+        coordinates = [
+            tuple(getattr(fig.layout, "yaxis" + str(i or "")).domain)
+            if "rows" in shape
+            else tuple(getattr(fig.layout, "xaxis" + str(i or "")).domain)
+            for i in (0, 2, 3)
+        ]
+    assert coordinates[0] == coordinates[1] == coordinates[2]
+
+
 # ---------------------------------------------------------------------------
 # the animation vocabulary: a wrong word is refused, never silently ignored
 # ---------------------------------------------------------------------------
@@ -335,3 +416,14 @@ class TestAWrongAnimationWordIsRefused:
 
         with pytest.raises(InvalidParameterError, match="tail unit"):
             Animation.from_dict({**Animation().to_dict(), "trail_kind": "whatever"})
+
+    @pytest.mark.parametrize("fmt", ["{t:banana}", "{t:{missing}}", "{i!banana}", 123])
+    def test_clock_format_errors_are_reported_before_rendering(self, fmt):
+        from tsdynamics.viz.spec import Animation
+
+        with pytest.raises(InvalidParameterError, match="clock format"):
+            Animation(clock=True, clock_format=fmt)
+
+    def test_fractional_frame_counts_are_not_silently_truncated(self):
+        with pytest.raises(InvalidParameterError, match="whole number"):
+            _panel().animate(n_frames=2.5)

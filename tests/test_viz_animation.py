@@ -132,11 +132,48 @@ def test_frame_count_from_duration():
     assert Animation(duration=4.0, fps=25).frame_count(10_000) == 100
 
 
+@pytest.mark.parametrize("n_frames, expected_ms", [(None, 1000), (6, 1500)])
+def test_short_curve_gif_honors_duration_and_explicit_frame_count(tmp_path, n_frames, expected_ms):
+    from PIL import Image
+
+    spec = viz.draw({"x": [0, 1, 2], "y": [0, 1, 0]}, "line")
+    spec.animate(duration=1, fps=4, n_frames=n_frames).head(False)
+    path = tmp_path / "short.gif"
+    spec.save(path)
+    with Image.open(path) as image:
+        duration_ms = 0
+        for i in range(image.n_frames):
+            image.seek(i)
+            duration_ms += image.info["duration"]
+    assert duration_ms == expected_ms
+    assert spec.animation.playback_seconds(3) * 1000 == expected_ms
+
+
 def test_pingpong_mirrors_the_schedule():
     a = Animation(n_frames=5, pingpong=True)
     heads = a.head_indices(100)
     assert heads == heads[: len(heads) // 2 + 1] + heads[len(heads) // 2 + 1 :]
     assert len(heads) == 8  # 5 forward + 3 mirrored
+
+
+@pytest.mark.parametrize("count", [2, 4])
+def test_pingpong_export_duration_adds_only_nonendpoint_reverse_frames(tmp_path, count):
+    from PIL import Image
+
+    spec = viz.draw({"x": list(range(10)), "y": [0, 1] * 5}, "line")
+    spec.animate(n_frames=count, fps=4, pingpong=True).trail(None).head(False)
+    path = tmp_path / "pingpong.gif"
+    spec.save(path)
+    with Image.open(path) as image:
+        actual = 0
+        for frame in range(image.n_frames):
+            image.seek(frame)
+            actual += image.info["duration"]
+    forward = count / 4
+    reverse = max(count - 2, 0) / 4
+    assert actual == (forward + reverse) * 1000
+    assert spec.animation.playback_seconds(10) == forward
+    assert spec.animation._reverse_seconds(10) == reverse
 
 
 def test_tail_samples_units():
@@ -198,6 +235,117 @@ def test_animation_all_fields_round_trip():
         clock_format="{t:.3f}",
     )
     assert Animation.from_dict(a.to_dict()).to_dict() == a.to_dict()
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"n_frames": 2.5},
+        {"loop": "false"},
+        {"head": 0},
+        {"fps": "30"},
+        {"clock": "no"},
+    ],
+)
+def test_saved_animation_rejects_the_same_invalid_values_as_direct_construction(changes):
+    from tsdynamics.errors import InvalidParameterError
+
+    with pytest.raises(InvalidParameterError):
+        Animation(**changes)
+    with pytest.raises(InvalidParameterError):
+        Animation.from_dict(changes)
+
+
+@pytest.mark.parametrize("changes", [{"fps": 1j}, {"head_symbol": []}, {"mode": ["reveal"]}])
+def test_animation_invalid_types_name_the_knob_instead_of_leaking_python_errors(changes):
+    from tsdynamics.errors import InvalidParameterError
+
+    with pytest.raises(InvalidParameterError):
+        Animation(**changes)
+
+
+@pytest.mark.parametrize("three_d", [False, True])
+@pytest.mark.parametrize("fade", [False, True])
+def test_animated_points_keep_point_geometry_size_and_scalar_colour(three_d, fade):
+    import numpy as np
+    from matplotlib.collections import PathCollection
+
+    data = {"x": np.arange(5), "y": np.arange(5) ** 2, "c": np.arange(5)}
+    data["size"] = np.arange(1, 6) * 10
+    if three_d:
+        data["z"] = np.arange(5) * 2
+    spec = (
+        viz.draw(data, "points3d" if three_d else "points")
+        .animate(n_frames=5)
+        .trail(("steps", 2), fade=fade, backdrop=False)
+        .head(False)
+    )
+    movie = spec.render("matplotlib")
+    ax = movie._fig.axes[0]
+    movie._fig.canvas.draw()
+    points = ax.collections[0]
+    assert isinstance(points, PathCollection)
+    assert points.norm.vmin == 0 and points.norm.vmax == 4
+    for frame in (4, 0, 2):
+        movie._func(frame)
+        movie._fig.canvas.draw()
+        start = max(0, frame - 2)
+        coords = points._offsets3d if three_d else points.get_offsets().T
+        np.testing.assert_array_equal(coords[0], data["x"][start : frame + 1])
+        sizes = points._sizes3d if three_d else points.get_sizes()
+        np.testing.assert_array_equal(sizes, data["size"][start : frame + 1])
+        if not fade:
+            np.testing.assert_array_equal(points.get_array(), data["c"][start : frame + 1])
+        assert points.norm.vmin == 0 and points.norm.vmax == 4
+    # A point trajectory must not acquire a line connecting its samples.
+    assert not any(len(line.get_xdata()) > 1 for line in ax.lines)
+
+
+def test_animation_keeps_line_style_static_annotations_and_legend():
+    import numpy as np
+    from matplotlib.colors import to_rgba
+
+    spec = viz.draw({"x": np.arange(5), "y": np.arange(5), "label": "orbit"}, "line").style(
+        color="red", alpha=0.4, linewidth=3, linestyle="dashed", marker="x", markersize=8
+    )
+    spec += viz.draw({"x": [2], "y": [2]}, "markers").style(color="black")
+    spec.animate(n_frames=5).trail(None).head(False).tweak(legend=True)
+    movie = spec.render("matplotlib")
+    ax = movie._fig.axes[0]
+    movie._fig.canvas.draw()
+    line = ax.lines[0]
+    assert (line.get_linewidth(), line.get_alpha(), line.get_linestyle()) == (3, 0.4, "--")
+    assert line.get_marker() == "x" and line.get_markersize() == 8
+    assert to_rgba(line.get_color()) == to_rgba("red")
+    assert "orbit" in [text.get_text() for text in ax.get_legend().get_texts()]
+    for frame in (4, 0, 2):
+        movie._func(frame)
+        movie._fig.canvas.draw()
+        np.testing.assert_array_equal(ax.collections[0].get_offsets(), [[2, 2]])
+
+
+def test_flat_overlay_animates_in_a_three_dimensional_plot():
+    import numpy as np
+
+    spatial = viz.draw({"x": np.arange(3), "y": np.arange(3), "z": np.arange(3)}, "line3d")
+    flat = viz.draw({"x": [0, 1, 2], "y": [1, 2, 3]}, "line")
+    movie = (spatial + flat).animate(n_frames=3).trail(None).head(False).render("matplotlib")
+    movie._fig.canvas.draw()
+    movie._func(2)
+    movie._fig.canvas.draw()
+    np.testing.assert_array_equal(movie._fig.axes[0].lines[2].get_data_3d()[2], [0, 0, 0])
+
+
+@pytest.mark.parametrize("primitive", ["points3d", "markers"])
+@pytest.mark.parametrize("backend", ["matplotlib", "plotly"])
+def test_hand_built_spatial_points_keep_their_third_coordinate(primitive, backend):
+    import numpy as np
+
+    spec = viz.draw({"x": [0, 1], "y": [1, 2], "z": [3, 4]}, primitive)
+    assert spec.is_three_d and spec.ndim == 3 and spec.z is not None
+    result = spec.render(backend)
+    coords = result.axes[0].collections[0]._offsets3d if backend == "matplotlib" else result.data[0]
+    np.testing.assert_array_equal(coords[2] if backend == "matplotlib" else coords.z, [3, 4])
 
 
 # ---------------------------------------------------------------------------

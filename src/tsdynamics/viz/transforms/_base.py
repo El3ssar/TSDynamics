@@ -126,13 +126,21 @@ def subject_kinds(subject: Any) -> frozenset[str]:
     Everything else falls into ``array``, which keeps the door as wide as it was:
     a pandas Series, a list of lists, anything ``as_trajectory`` can coerce.
     """
+    from tsdynamics.derived.ensemble import TrajectoryBatch
     from tsdynamics.families import SystemBase
 
     if isinstance(subject, SystemBase) or (
         hasattr(subject, "family") and hasattr(subject, "dim") and hasattr(subject, "run")
     ):
         family = getattr(subject, "family", None)
-        return frozenset({"system", "map" if family == "map" else "flow"})
+        return frozenset(
+            {"system", "map" if family == "map" else "flow"}
+            | {cls.__name__ for cls in type(subject).__mro__ if cls is not object}
+        )
+    if isinstance(subject, TrajectoryBatch):
+        # Its t/y properties describe a whole (members, T, dim) measurement,
+        # not one trajectory. Keep the aggregate's declared class identity.
+        return frozenset(cls.__name__ for cls in type(subject).__mro__ if cls is not object)
     if isinstance(subject, np.ndarray | list | tuple):
         return frozenset({"array"})
     if hasattr(subject, "y") and hasattr(subject, "t"):  # a Trajectory (or subclass)
@@ -1232,7 +1240,30 @@ class PlotTransform:
             *result* was offered ``vector_field``.  Declared subjects replace the
             guess.
         """
-        return bool(set(self.subjects) & subject_kinds(subject))
+        kinds = subject_kinds(subject)
+        if not set(self.subjects) & kinds:
+            return False
+        if "system" not in kinds or self.analysis is None:
+            return True
+
+        # Reuse the analysis author's explicit family/type/dimension/autonomy
+        # restrictions. The adapter's dotted reference must identify that exact
+        # registered callable: an unrelated external plugin with the same final
+        # function name must not inherit a built-in estimator's restrictions.
+        import sys
+
+        from tsdynamics import registry
+        from tsdynamics.analysis._discovery import supports_subject
+
+        module_name, _, name = self.analysis.rpartition(".")
+        try:
+            entry = registry.analyses.entry(name)
+        except KeyError:
+            return True
+        owner = sys.modules.get(module_name)
+        if owner is None or getattr(owner, name, None) is not entry.obj:
+            return True
+        return supports_subject(entry, subject)
 
     @property
     def available(self) -> bool:
@@ -1355,7 +1386,7 @@ def spec_of(geometry: Geometry, transform: PlotTransform, layers: list[Layer]) -
     """
     from tsdynamics.errors import InvalidParameterError
 
-    from ..spec import Axis, Colorbar, Legend, PlotKind, PlotSpec
+    from ..spec import Axis, Colorbar, Legend, PlotKind, PlotSpec, _layer_is_three_d
 
     kind = geometry.kind if geometry.kind is not None else transform.kind
     if kind is None:  # pragma: no cover - registration rejects this
@@ -1368,7 +1399,7 @@ def spec_of(geometry: Geometry, transform: PlotTransform, layers: list[Layer]) -
     labels = list(geometry.axis_labels) + [""] * 3
     limits = list(geometry.axis_limits) + [None] * 3
     scales = list(geometry.axis_scales) + [None] * 3
-    three_d = geometry.frame.ndim >= 3 or any(lyr.kind in _THREE_D_MARKS for lyr in layers)
+    three_d = geometry.frame.ndim >= 3 or any(_layer_is_three_d(lyr) for lyr in layers)
 
     present = transform.presentation
     labelled = sum(1 for lyr in layers if lyr.label)
@@ -1405,10 +1436,6 @@ def _axis(axis_cls: Any, label: str, limits: Any, scale: str | None) -> Any:
     if scale is None:
         return axis_cls(label=label, limits=limits)
     return axis_cls(label=label, limits=limits, scale=scale)
-
-
-#: Marks that force a 3-D axes (kept in step with ``spec._THREE_D_MARKS``).
-_THREE_D_MARKS: frozenset[str] = frozenset({"line3d", "surface3d"})
 
 
 def _has_color(layers: list[Layer], geometry: Geometry) -> bool:

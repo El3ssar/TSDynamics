@@ -165,8 +165,8 @@
   .ts-home .ts-section h2 { color: var(--ts-ink); font: 600 clamp(1.5rem, 3vw, 2rem)/1.2 var(--ts-display); margin: 0 0 0.7rem; }
   .ts-home .ts-section > p { color: var(--ts-ink-soft); max-width: 70ch; font-size: 0.9rem; line-height: 1.65; }
   .ts-workflow { display: grid; grid-template-columns: 1fr 1fr; gap: 1.6rem; align-items: center; margin-top: 1.5rem; }
-  .ts-workflow pre { margin: 0; border-radius: 10px; overflow: auto; background: #0B0F14; padding: 1.3rem; color: #E7ECF0; }
-  .md-typeset .ts-workflow pre code { padding: 0; background: transparent; font-size: 0.69rem; line-height: 1.8; }
+  .ts-workflow .highlight { margin: 0; min-width: 0; }
+  .ts-workflow pre { margin: 0; overflow: auto; }
   .ts-home figure { margin: 0; }
   .ts-home figure img { display: block; width: 100%; border: 1px solid var(--ts-rule); border-radius: 10px; background: #0B0F14; }
   .ts-home figcaption { color: var(--ts-ink-soft); font-size: 0.72rem; line-height: 1.6; margin-top: 0.65rem; }
@@ -203,7 +203,7 @@
   <section class="ts-hero ts-wrap">
     <div>
       <p class="ts-eyebrow">Dynamical systems &amp; chaos analysis in Python</p>
-      <h1 class="ts-wordmark"><span class="ts-wm-ts">TS</span><span class="ts-wm-dyn">Dynamics</span></h1>
+      <h1 id="tsdynamics" class="ts-wordmark"><span class="ts-wm-ts">TS</span><span class="ts-wm-dyn">Dynamics</span></h1>
       <p class="ts-tagline">
         Simulate a model. Explore its geometry. Measure its dynamics.
         Start with 177 built-in systems, or write the equations of your own.
@@ -286,7 +286,8 @@
     <p>The same workflow carries through the library: choose a model, run it,
     plot the trajectory, then ask a dynamical question.</p>
     <div class="ts-workflow">
-      <pre><code class="language-python">import tsdynamics as ts
+      {% filter tsd_highlight("python") %}
+import tsdynamics as ts
 
 model = ts.systems.Lorenz(ic=[1, 1, 1])
 trajectory = model.run(final_time=100, dt=0.01)
@@ -296,7 +297,8 @@ spectrum = ts.analysis.lyapunov_spectrum(
     model, final_time=500, dt=0.05
 )
 print(spectrum)
-print(spectrum.kaplan_yorke)</code></pre>
+print(spectrum.kaplan_yorke)
+      {% endfilter %}
       <figure>
         <img src="{{ 'assets/figures/analysis/integrate.svg' | url }}" alt="Lorenz phase portrait beside the three component time series" loading="lazy">
         <figcaption>One trajectory, two useful views: the geometry in state space

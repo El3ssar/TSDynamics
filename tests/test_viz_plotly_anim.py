@@ -22,6 +22,11 @@ or dropping the rAF/comet wiring — fails fast.
 
 from __future__ import annotations
 
+import json
+import shutil
+import subprocess
+
+import numpy as np
 import pytest
 
 import tsdynamics as ts
@@ -69,7 +74,8 @@ def test_realtime_js_normalises_axis_arrays_before_slicing(components):
     js = _html(components=components)
     assert "asArray" in js  # the up-front normalisation guard
     assert "bdata" in js  # the guard explicitly handles plotly's base64 typed-array spec
-    assert "Array.prototype.slice.call" in js  # plain-array per-frame slice (extendTraces-safe)
+    # The executable clock tests below also feed decoded typed arrays through
+    # actual updates, including heterogeneous curve lengths and scalar colours.
 
 
 # ---------------------------------------------------------------------------
@@ -134,3 +140,191 @@ def test_realtime_html_3d_and_2d_both_carry_the_fix(tmp_path):
         text = out.read_text()
         assert "_fullData" in text  # the fix shipped in the written artifact
         assert "requestAnimationFrame" in text and "Plotly.extendTraces" in text
+
+
+@pytest.fixture
+def plotly_clock_probe():
+    from tsdynamics.viz.render.plotly._anim import _REALTIME_JS
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    harness = r"""
+    function mount({lengths = [101], duration = 10, loop = false,
+                    pingpong = false, reverseDuration = null, reduced = false, delayed = false} = {}) {
+      class Element {
+        constructor() { this.children = []; this.style = {}; this.attributes = {}; }
+        appendChild(child) { this.children.push(child); }
+        setAttribute(k, v) { this.attributes[k] = v; }
+        contains(el) { return this === el || this.children.includes(el); }
+      }
+      const frames = new Map(), listeners = new Map(), pending = [];
+      let nextFrame = 0, calls = 0;
+      const gd = new Element(); gd.data = []; gd._fullData = []; gd.layout = {}; gd.isConnected = true;
+      const layers = lengths.map(n => {
+        const ctx = gd.data.length;
+        const values = Array.from({length:n}, (_, i) => i);
+        gd.data.push({x:{dtype:'f8',bdata:'encoded'}, y:{dtype:'f8',bdata:'encoded'},
+                      z:{dtype:'f8',bdata:'encoded'}});
+        gd._fullData[ctx] = {x:Float64Array.from(values), y:Float64Array.from(values),
+                            z:Float64Array.from(values),
+                            marker:{color:Float64Array.from(values)}};
+        gd.data.push({x:[0],y:[0],z:[0],marker:{color:[0]}});
+        gd.data.push({x:[0],y:[0],z:[0],marker:{color:0}});
+        return {ctx,comet:ctx+1,head:ctx+2,n,c:true,size:false};
+      });
+      function change(update, indices, append, maxPoints) {
+        calls++;
+        indices.forEach((index, offset) => Object.entries(update).forEach(([key, values]) => {
+          const path = key.split('.'), trace = gd.data[index];
+          const parent = path.length === 2 ? (trace[path[0]] ||= {}) : trace;
+          const prop = path[path.length-1];
+          const value = Array.isArray(values) ? values[offset] : values;
+          if (['x','y','z'].includes(key) && value.some(v => !Number.isFinite(v))) {
+            throw Error('undefined/nonfinite animation coordinate');
+          }
+          parent[prop] = append ? [...parent[prop], ...value].slice(-maxPoints) : value;
+        }));
+        return delayed ? new Promise(resolve => pending.push(resolve)) : Promise.resolve();
+      }
+      const Plotly = {extendTraces:(...a) => change(a[1],a[2],true,a[3]),
+                      restyle:(...a) => change(a[1],a[2],false)};
+      const document = {hidden:false, getElementById:() => gd, createElement:() => new Element()};
+      const window = {Plotly, matchMedia:() => ({matches:reduced}),
+        addEventListener:(k, fn) => listeners.set('window:'+k, fn),
+        removeEventListener:k => listeners.delete('window:'+k)};
+      gd.addEventListener = (k, fn) => listeners.set('gd:'+k, fn);
+      gd.removeEventListener = k => listeners.delete('gd:'+k);
+      gd.on = (k, fn) => listeners.set(k, fn); gd.removeListener = k => listeners.delete(k);
+      const requestFrame = fn => { frames.set(++nextFrame, fn); return nextFrame; };
+      let script = CLOCK.replace('__LAYERS__', JSON.stringify(layers)).replace('__WINDOW__','10')
+        .replace('__N__', String(Math.max(...lengths))).replace('__DURATION_MS__',String(duration*1000))
+        .replace('__LOOP__',String(loop))
+        .replace('__REVERSE_DURATION_MS__',String(pingpong ? (reverseDuration ?? duration)*1000 : 0))
+        .replace('__IS3D__','false').replace('__PERSISTENT__','false');
+      new Function('document','window','Plotly','requestAnimationFrame','cancelAnimationFrame',
+        'getComputedStyle',script)(document,window,Plotly,requestFrame,id => frames.delete(id),
+                                 () => ({position:'static'}));
+      const [play,restart,readout] = gd.children[0].children;
+      async function flush() { for(let i=0;i<4;i++) await Promise.resolve(); }
+      return {play,restart,readout,
+        heads:() => layers.map(m => gd.data[m.head].x[0]),
+        colors:() => layers.map(m => gd.data[m.head].marker.color), calls:() => calls,
+        resources:() => [frames.size,listeners.size],
+        hidden:value => { document.hidden=value; }, detached:() => { gd.isConnected=false; },
+        async settle() { while(pending.length) pending.shift()(); await flush(); },
+        async frame(now) {
+          const callbacks=[...frames.values()];frames.clear();
+          for (const fn of callbacks) fn(now);
+          await flush();
+        }
+      };
+    }
+    """
+
+    def run(scenario, *, clock=None):
+        script = (
+            "const CLOCK = "
+            + json.dumps(_REALTIME_JS if clock is None else clock)
+            + ";\n"
+            + harness
+        )
+        script += (
+            "\n(async () => {\n"
+            + scenario
+            + "\n})().catch(e => {console.error(e);process.exitCode=1});"
+        )
+        result = subprocess.run(
+            [node, "-"], input=script, text=True, capture_output=True, timeout=10, check=False
+        )
+        assert result.returncode == 0, result.stderr
+        return json.loads(result.stdout)
+
+    return run
+
+
+def test_html_playback_uses_elapsed_time_with_unequal_lengths_at_every_refresh_rate(
+    plotly_clock_probe,
+):
+    results = plotly_clock_probe("""
+      const results=[];
+      for (const hz of [30,60,120]) {
+        const view=mount({lengths:[101,11,1]});await view.frame(0);
+        for(let i=1;i<=5*hz;i++) await view.frame(i*1000/hz);
+        const half=view.heads();
+        for(let i=5*hz+1;i<=10*hz;i++) await view.frame(i*1000/hz);
+        results.push([half,view.heads(),view.colors(),view.play.attributes['aria-label']]);
+      }
+      console.log(JSON.stringify(results));
+    """)
+    assert results == [[[50, 5, 0], [100, 10, 0], [100, 10, 0], "Play animation"]] * 3
+
+
+def test_html_pingpong_uses_the_exported_reverse_frame_duration(plotly_clock_probe):
+    result = plotly_clock_probe("""
+      const v=mount({duration:1,pingpong:true,reverseDuration:0.5}), values=[];
+      for(const t of [0,500,1000,1250,1500]) {await v.frame(t);values.push(v.heads()[0]);}
+      console.log(JSON.stringify([values,v.play.attributes['aria-label']]));
+    """)
+    assert result == [[0, 50, 100, 50, 0], "Play animation"]
+
+
+def test_html_pause_hidden_view_restart_and_cleanup_are_deterministic(plotly_clock_probe):
+    result = plotly_clock_probe("""
+      const v=mount({reduced:true});await v.frame(0);await v.frame(5000);
+      const paused=v.heads();v.play.onclick();await v.frame(9000);await v.frame(14000);
+      const half=v.heads();v.hidden(true);await v.frame(90000);v.hidden(false);
+      await v.frame(100000);const resumed=v.heads();await v.frame(105000);
+      const end=v.heads();v.restart.onclick();await v.frame(110000);const restart=v.heads();
+      v.detached();await v.frame(110100);
+      console.log(JSON.stringify([paused,half,resumed,end,restart,v.resources()]));
+    """)
+    assert result == [[0], [50], [50], [100], [0], [0, 0]]
+
+
+def test_html_waits_for_slow_plotly_updates_instead_of_queueing_requests(plotly_clock_probe):
+    result = plotly_clock_probe("""
+      const v=mount({delayed:true});await v.frame(0);await v.frame(1000);
+      const first=v.calls();for(let i=2;i<=8;i++) await v.frame(i*1000);
+      const waiting=v.calls();await v.settle();await v.frame(9000);
+      console.log(JSON.stringify([first,waiting,v.calls(),v.heads()]));
+    """)
+    assert result == [2, 2, 4, [90]]
+
+
+def test_plotly_animation_preserves_styles_static_layers_and_axis_presentation():
+    line = ts.viz.draw(
+        {"x": np.arange(5), "y": np.arange(5)},
+        "line",
+        color="crimson",
+        alpha=0.4,
+        linewidth=7,
+        linestyle="dashed",
+    )
+    bars = ts.viz.draw({"x": np.array([1]), "y": np.array([2])}, "bars")
+    plot = (line + bars).animate(n_frames=5).trail(("steps", 2), backdrop=False).head(False)
+    plot.vline(2).ticks(x=[0, 2, 4]).limits(x=(0, 4))
+    fig = plot.render(backend="plotly")
+    assert any(trace.type == "bar" for trace in fig.data)
+    assert fig.frames[-1].data[0].line.dash == "dash"
+    assert fig.frames[-1].data[0].line.width == 7
+    assert fig.frames[-1].data[0].opacity == 0.4
+    assert fig.layout.xaxis.tickvals == (0, 2, 4)
+    assert fig.layout.xaxis.range == (0, 4)
+    assert len(fig.layout.shapes) == 1
+
+
+def test_animated_point_cloud_remains_unconnected_and_colored():
+    plot = (
+        ts.viz.draw(
+            {"x": np.arange(5), "y": np.arange(5), "c": np.arange(5)},
+            "points",
+        )
+        .animate(n_frames=3)
+        .head(False)
+    )
+    fig = plot.render(backend="plotly")
+    assert fig.frames[-1].data[0].mode == "markers"
+    assert list(fig.frames[-1].data[0].marker.color) == [0, 1, 2, 3, 4]
+    assert fig.frames[-1].data[0].marker.cmin == 0
+    assert fig.frames[-1].data[0].marker.cmax == 4

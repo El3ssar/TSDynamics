@@ -8,22 +8,23 @@ description: Takens delay embedding — reconstructing a system's state space fr
 
 Most of the analysis toolkit wants a *state-space cloud* — a point per instant
 in the system's phase space. But an experiment usually hands you a single scalar
-channel: a voltage, a concentration, a brightness. Takens' embedding theorem
-says that is enough. From one generic observable $x(t)$ of a deterministic
-system you can reconstruct a trajectory whose attractor is diffeomorphic to the
-true one — same topology, same invariants (correlation dimension, Lyapunov
-spectrum) — by stacking time-delayed copies of the single signal into a vector:
+channel: a voltage, a concentration, a brightness. Under suitable smoothness and
+genericity assumptions, delay embedding can reconstruct a state space from one
+observable $x(t)$ of a deterministic system. It stacks time-delayed copies of
+the signal into a vector:
 
 $$
 y_i = \big(x_i,\; x_{i+\tau},\; x_{i+2\tau},\; \dots,\; x_{i+(m-1)\tau}\big).
 $$
 
-Takens (1981) guarantees this delay-coordinate map is an embedding for a generic
-observable once $m > 2d$, where $d$ is the box-counting dimension of the original
-attractor. Two choices make the reconstruction good in practice — the delay
-$\tau$ and the dimension $m$ — and TSDynamics provides a principled heuristic for
-each. All three functions live under `tsdynamics.analysis.embedding` and are
-re-exported at the top level:
+Takens (1981) concerns generic smooth dynamics and observables on a compact
+manifold of dimension $d$, with $m \geq 2d+1$ coordinates. Extensions to fractal
+attractors use box-counting dimension under additional assumptions. These
+theorems motivate the method; they do not certify an arbitrary sensor, delay,
+or finite noisy recording, nor the accuracy of numerical invariants estimated
+from it. TSDynamics provides heuristics for the delay $\tau$ and dimension $m$,
+and diagnostic curves with which to assess them. The functions live under
+`tsdynamics.analysis.embedding` and are also available as `ts.analysis.<name>`:
 
 ```python
 import tsdynamics as ts
@@ -72,7 +73,7 @@ keep the original sampling order, an index-based Theiler window still removes
 temporally-correlated pairs:
 
 ```python
-ts.analysis.correlation_dimension(emb, theiler=tau)   # ≈ 1.74  (Rössler D2, from x alone)
+ts.analysis.correlation_dimension(emb, theiler=tau)   # finite-sample, selected-scale estimate
 ```
 
 `embed` also does **multivariate** embedding: pass a multi-component trajectory
@@ -119,9 +120,9 @@ estimators, unified behind `embedding_dimension`.
 distance to its nearest neighbour changes when one extra delay coordinate is
 added. The dimension-averaged ratio $E_1(d) = E(d+1)/E(d)$ rises to and then
 **saturates at 1**; the smallest $d$ past which it stops changing is the minimum
-embedding dimension. A second quantity $E_2(d)$ stays $\approx 1$ for *random*
-data, so Cao's method also separates determinism from noise — its advantage over
-a single threshold.
+embedding dimension under the chosen threshold. A second quantity $E_2(d)$ can
+help assess stochastic contamination; a near-unit curve alone does not prove
+that a finite recording is random or deterministic.
 
 **Kennel's false nearest neighbours** (Kennel, Brown & Abarbanel 1992) calls a
 neighbour *false* when adding a coordinate pushes it far apart — its proximity
@@ -135,7 +136,8 @@ m_cao.afn_e1            # the E1(d) saturation curve
 m_cao.plot()            # E1 / E2 vs d, with the chosen m marked
 
 m_fnn = ts.analysis.embedding_dimension(x, method="fnn", delay=tau, max_dim=8)
-int(m_fnn)              # 3      (Kennel FNN — matches Rössler's true dim)
+int(m_fnn)              # 3      (a reconstruction heuristic, not the attractor dimension)
+m_fnn.saturated        # whether the criterion was met before the search ceiling
 ```
 
 Both return an `EmbeddingDimension`: `int(result)` is the recommended $m$, and
@@ -143,7 +145,9 @@ the per-dimension diagnostic is carried so you can inspect the
 saturation/decay rather than trust a single number. The two estimators need not
 agree to the integer — Cao's saturation threshold and Kennel's tolerances are
 conservative in different directions — so on a marginal case take $m$ from the
-*shape* of the curve, and when in doubt embed one dimension higher.
+*shape* of the curve. If no tested dimension meets the threshold, the integer is
+the best candidate within the tested range and `.saturated` is `False`; extend
+the search and inspect the curve before using it as a resolved recommendation.
 
 !!! note "Set a Theiler window on densely sampled flows"
     Both dimension estimators find each point's nearest *spatial* neighbour, and
@@ -152,8 +156,9 @@ conservative in different directions — so on a marginal case take $m$ from the
     `theiler=w` (a few autocorrelation times) to exclude neighbours closer than
     $w$ samples in time. For the same reason, Cao's $E_1$/$E_2$ curves are
     unreliable at exactly $d = 1$ (the 1-D nearest-neighbour gap can be
-    arbitrarily small); the recommended $m$ is read off the plateau past $d=1$,
-    so this does not affect the result.
+    arbitrarily small). This can also bias the recommended $m$ if its threshold
+    is crossed there. Inspect the curves and check sensitivity to the delay,
+    temporal exclusion and available sample count.
 
 ## The full pipeline
 
@@ -165,13 +170,17 @@ x = ts.systems.Rossler().run(final_time=400.0, dt=0.05, ic=[1.0, 0.0, 0.0]).y[10
 tau = ts.analysis.optimal_delay(x, method="mi", max_delay=120)     # 25
 m = int(ts.analysis.embedding_dimension(x, method="fnn", delay=tau, max_dim=8))  # 3
 emb = ts.analysis.embed(x, dimension=m, delay=tau)
-ts.analysis.correlation_dimension(emb, theiler=tau)                # ≈ 1.71
+dimension = ts.analysis.correlation_dimension(emb, theiler=tau)
+dimension.plot()   # inspect the fitted scales and local slopes
 ```
 
 This is the standard route to a fractal dimension or a data-driven Lyapunov
 exponent when you have a recording but no equations —
 [`lyapunov_from_data`](lyapunov.md) does its own internal embedding for exactly
-this reason.
+this reason. A short Rössler record can return a slope near 1.7 over its selected
+scales, below its usual asymptotic dimension near 2. Agreement with a similarly
+short full-state estimate is a useful cross-check, not proof of convergence.
+Vary the record length, temporal exclusion and scaling window.
 
 ## See also
 

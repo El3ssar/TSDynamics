@@ -274,9 +274,10 @@ def register(
     subjects : sequence of str, optional
         **What this transform can be handed**, when the ``source`` default is
         wrong.  The vocabulary is ``flow`` / ``map`` / ``system`` /
-        ``trajectory`` / ``array`` plus any analysis-result **class name**
-        (matched against the whole MRO, so ``"ScalingResult"`` admits
-        ``DimensionResult``).  Omit it and it is derived from ``source``.
+        ``trajectory`` / ``array`` plus a system or analysis-result **class name**
+        (matched against the whole MRO, so ``"ContinuousSystem"`` admits its
+        subclasses and ``"ScalingResult"`` admits ``DimensionResult``).
+        Omit it and it is derived from ``source``.
 
         Declare it whenever the derived answer would over-promise: a field
         transform that needs a vector field says ``subjects=("flow",)``, and a

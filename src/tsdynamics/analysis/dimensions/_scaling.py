@@ -30,8 +30,8 @@ from the literature value (1.167 at 12 radii to 1.148 at 128, against
 the reported uncertainty anti-correlated with the true error.
 
 Both admissibility and the residual threshold are now set from windows spanning
-at least ``min_span`` in abscissa units (default: one decade, or the whole
-available range when that is shorter, whichever of the two rules binds harder).
+at least ``min_span`` in abscissa units (default: the smaller of one decade and
+half the available range).
 The span and the residual standard deviation are both properties of the *curve*,
 not of how densely it was sampled, so the selection converges as the grid is
 refined: the same Hénon sweep now returns 1.2027 / 1.2056 / 1.2077 / 1.2067 /
@@ -60,8 +60,8 @@ __all__ = ["ScalingFit", "fit_scaling_region", "local_slopes"]
 #: One decade of abscissa (the abscissa of every estimator here is a natural
 #: logarithm of a scale).  A dimension quoted from a log--log fit is
 #: conventionally read off at least one decade of scaling, so this is the
-#: absolute floor on the width of an admissible window — used unless the curve
-#: itself is shorter than a decade, in which case the whole curve is the floor.
+#: default target width, capped at half the available range so short curves can
+#: still exclude their finite-sample and saturation ends.
 _DECADE = float(np.log(10.0))
 
 #: Default minimum window width as a *fraction* of the available abscissa range.

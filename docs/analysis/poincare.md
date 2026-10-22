@@ -9,9 +9,10 @@ description: Poincaré surfaces of section — root-refined crossings of a named
 A continuous flow is hard to see: a 3-D attractor is a tangle, a higher-D one is
 invisible. Poincaré's device is to stop watching the whole trajectory and record
 only the moments it pierces a chosen surface. That reduces the flow by one
-dimension and turns it into a **discrete map** — periodic orbits become finite
-point sets, a strange attractor becomes fractal dust with visible structure, and
-the whole quantifier toolkit written for maps suddenly applies to the flow.
+dimension and yields a **discrete return map** when the section is transversal
+and returns are well defined. Periodic orbits give finite point sets and a
+strange attractor can reveal finer structure. `ts.analysis.find(view)` lists the
+analyses that support a discrete protocol view of a flow.
 
 ## The idea
 
@@ -23,7 +24,9 @@ the **Poincaré (first-return) map**. A period-$T$ orbit that crosses $\Sigma$
 once per period shows up as a single fixed point of that map; a quasi-periodic
 torus as a closed loop; a chaotic attractor as a structured cloud of one lower
 dimension than the flow. The section throws away the flow *between* crossings but
-keeps everything that matters for the topology of the attractor.
+exposes the dynamics of returns to that section; a poor or non-transversal
+section can miss relevant dynamics. A DDE section records instantaneous states
+and crossing times, not the complete history needed to specify its state.
 
 ## From a system: root-refined crossings
 

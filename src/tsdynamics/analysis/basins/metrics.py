@@ -150,8 +150,9 @@ class BasinEntropy(AnalysisResult):
     n_boundary_boxes : int
         Number of boxes containing more than one basin.
     fractal_boundary : bool
-        ``True`` when :math:`S_{bb} > \log 2`, the sufficient fractal-boundary
-        criterion of Daza et al. (2016).
+        ``True`` when :math:`S_{bb} > \log 2`, the fractal-boundary criterion of
+        Daza et al. (2016), evaluated at the supplied grid and box resolution.
+        This finite-grid flag is not a proof of asymptotic boundary geometry.
 
     Notes
     -----
@@ -194,13 +195,10 @@ class BasinEntropy(AnalysisResult):
         return f"Sb = {_sig(self.sb, 4)} · Sbb = {_sig(self.sbb, 4)}"
 
     def _interpretation(self) -> str | None:
-        r"""Report the sufficient fractal-boundary criterion, and only that.
-
-        Daza et al. (2016) prove :math:`S_{bb} > \ln 2` is *sufficient* for a
-        fractal boundary; it is not necessary, so failing it means "not
-        established by this test", never "smooth".
-        """
-        return "fractal boundary (Sbb > ln 2)" if self.fractal_boundary else None
+        """Report the measured criterion without certifying finite-grid geometry."""
+        if self.fractal_boundary:
+            return "fractal-boundary criterion met (Sbb > ln 2); check resolution convergence"
+        return None
 
     def _printed_names(self) -> dict[str, str]:
         """Map ``Sb`` / ``Sbb`` — what the repr typesets — to ``sb`` / ``sbb``."""
@@ -438,27 +436,26 @@ class UncertaintyExponent(AnalysisResult):
         if verdict:
             return "final-state sensitive (fractal boundary)"
         if self.contradicted_by_basin_entropy:
-            # One picture, two tests, opposite answers.  Daza's is sufficient,
-            # this one is a fit, so the fit is the one that has to give ground —
-            # and either way a reader must not be handed "smooth" alone.
+            # Neither finite-grid measurement can settle a disagreement by
+            # itself: coarse boxes can span multiple separate smooth boundaries.
             sbb = self.meta.get("basin_entropy_sbb") if self.meta else None
             number = f"Sbb = {_sig(float(sbb), 4)}" if sbb is not None else "Sbb"
             return (
                 f"DISPUTED — α ≈ 1 reads smooth, but basin_entropy on this same image "
-                f"has {number} > ln 2, which is SUFFICIENT for a fractal boundary; "
-                f"believe the sufficient test and refine the grid"
+                f"has {number} > ln 2; refine the grid and box scale before "
+                f"interpreting either finite-resolution diagnostic"
             )
         return "smooth boundary (α ≈ 1)"
 
     @property
     def contradicted_by_basin_entropy(self) -> bool:
-        r"""Whether :func:`basin_entropy` proves fractal where this fit reads smooth.
+        r"""Whether the finite-grid entropy criterion and fitted exponent disagree.
 
         Only one direction is a contradiction.  :math:`S_{bb} > \ln 2` is
         *sufficient* for a fractal boundary and not necessary (Daza et al.
         2016), so failing it says "not established", never "smooth" — but
-        *passing* it while :math:`\alpha \approx 1` is two answers to one
-        question about one image.
+        *passing* it while :math:`\alpha \approx 1` calls for resolution and
+        box-scale checks rather than treating either finite-grid result as proof.
         """
         if self.final_state_sensitive is not False or not self.meta:
             return False
@@ -637,8 +634,11 @@ def basin_entropy(
     entropy is :math:`S_i = -\sum_j p_{ij}\log p_{ij}`.  Then
     :math:`S_b = \langle S_i\rangle` over all boxes and
     :math:`S_{bb} = \langle S_i\rangle` over boundary boxes (more than one
-    colour).  :math:`S_{bb} > \log 2` is sufficient for a fractal boundary, since
-    a box straddling a smooth boundary holds at most two colours.
+    colour). Daza's :math:`S_{bb} > \log 2` criterion assumes a resolved boundary
+    partition. A sufficiently small box around a generic smooth boundary meets
+    two basins; coarse boxes spanning several distinct smooth boundaries can
+    contain more, so check grid and box-scale convergence before interpreting
+    the finite-grid threshold as evidence of fractality.
 
     Parameters
     ----------

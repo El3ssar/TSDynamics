@@ -401,9 +401,11 @@ def psd(
     backend, whatever the data.  It is a default and not a lock: the spec renders
     itself and the tweak runs afterwards, so::
 
-        ts.plot(traj, "psd").rescale(x="linear", y="linear").plot()
+        ts.plot(traj, "psd").rescale(x="linear", y="linear").show()
 
-    puts them back.
+    puts them back. Constant input has zero mean-removed power and uses linear
+    axes automatically, preserving the zero values rather than inventing a
+    positive floor.
 
     References
     ----------
@@ -438,7 +440,11 @@ def psd(
         channels={"x": np.asarray(freq, dtype=float), "y": np.asarray(power, dtype=float)},
         label="$S(f)$",
         axis_labels=("frequency $f$", "$S(f)$"),
-        axis_scales=("log", "log"),
+        # A mean-removed constant state has zero spectral power. It is a valid
+        # trajectory, but logarithms cannot represent that curve. Preserve the
+        # measured powers and show zero on linear axes rather than inventing a
+        # positive floor or rendering an empty logarithmic panel.
+        axis_scales=("linear", "linear") if np.ptp(values) == 0.0 else ("log", "log"),
         title=f"{title} power spectrum".strip(),
         meta={**meta, "psd_method": estimator, "sampling_rate": fs},
     )
@@ -1073,8 +1079,8 @@ def return_time(
     What correct looks like
     -----------------------
     A periodic orbit returns after exactly one period, every time: its
-    distribution is one spike and ``meta["mean_return_time"]`` is the period,
-    in **time units**.  Gate:
+    distribution concentrates at its period, within the input sample-grid
+    resolution, and ``meta["mean_return_time"]`` is in **time units**. Gate:
     ``tests/test_viz_truth.py::TestReturnTimesOfAPeriodicOrbitAreThePeriod``.
 
     Parameters
@@ -1084,8 +1090,9 @@ def return_time(
     components : int or str, optional
         Which component defines the observable.
     threshold : float, optional
-        The level :math:`c`.  ``None`` uses the series **mean**, which is the
-        choice that guarantees crossings exist.
+        The level :math:`c`. ``None`` uses the series **mean**. At least two
+        genuine crossings in the chosen direction must be observed; merely
+        touching the level and returning to the same side is not a crossing.
     direction : {"up", "down", "both"}, optional
         Which crossings start an excursion.
     n_bins : int, optional
@@ -1154,9 +1161,14 @@ def return_time(
 
 def _crossing_indices(values: np.ndarray, level: float, direction: str) -> np.ndarray:
     """Sample indices at which ``values`` crosses ``level`` in ``direction``."""
-    above = values > level
-    up = np.flatnonzero(~above[:-1] & above[1:]) + 1
-    down = np.flatnonzero(above[:-1] & ~above[1:]) + 1
+    nonzero = np.flatnonzero(values != level)
+    left, right = nonzero[:-1], nonzero[1:]
+    # Looking across exact-level samples distinguishes a genuine change of side
+    # from a touch-and-return. For a resolved zero plateau, record its first
+    # contact; an adjacent straddling pair retains the sampled right endpoint.
+    events = np.where(right - left > 1, left + 1, right)
+    up = events[(values[left] < level) & (values[right] > level)]
+    down = events[(values[left] > level) & (values[right] < level)]
     if direction == "up":
         return up
     if direction == "down":

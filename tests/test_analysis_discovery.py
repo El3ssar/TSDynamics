@@ -254,10 +254,10 @@ class TestFind:
         assert all(callable(f) for f in hits)
         assert {"attractors", "basin_fractions", "basins"} <= {f.__name__ for f in hits}
 
-    def test_a_flow_gets_20_and_a_map_gets_13(self):
-        """A map has no vector field, so the seven field analyses drop out."""
+    def test_a_flow_gets_20_and_a_map_gets_11(self):
+        """Maps omit vector-field, continuous section and extrema-return analyses."""
         assert len(ts.analysis.find(ts.systems.Lorenz())) == 20
-        assert len(ts.analysis.find(ts.systems.Henon())) == 13
+        assert len(ts.analysis.find(ts.systems.Henon())) == 11
         field = {
             "flow_field",
             "streamlines",
@@ -272,20 +272,17 @@ class TestFind:
 
     def test_a_class_answers_like_its_instance(self):
         assert len(ts.analysis.find(ts.systems.Lorenz)) == 20
-        assert len(ts.analysis.find(ts.systems.Henon)) == 13
+        assert len(ts.analysis.find(ts.systems.Henon)) == 11
 
-    def test_a_trajectory_gets_24_and_a_bare_array_the_same(self):
-        """24 since ``zero_one_test`` was registered for data as well as systems.
-
-        Its own summary line says it runs "on a system **or a measured
-        observable**", it works on a bare ndarray, and it was registered
-        system-only — so the library's best discovery route hid the one analysis
-        that answers the question a data-first user arrives with.
-        """
+    def test_data_discovery_includes_the_supported_orbit_overloads(self):
         traj = ts.systems.Lorenz().run(final_time=2.0, dt=0.05)
-        assert len(ts.analysis.find(traj)) == 24
-        assert len(ts.analysis.find(np.zeros((50, 3)))) == 24
-        assert "zero_one_test" in {f.__name__ for f in ts.analysis.find(np.zeros((50, 3)))}
+        trajectory_names = {f.__name__ for f in ts.analysis.find(traj)}
+        array_names = {f.__name__ for f in ts.analysis.find(np.zeros((50, 3)))}
+        assert len(trajectory_names) == 26
+        assert len(array_names) == 25
+        assert {"zero_one_test", "return_map", "poincare_section"} <= trajectory_names
+        assert {"zero_one_test", "return_map"} <= array_names
+        assert "poincare_section" not in array_names  # needs crossing times
 
     def test_a_result_gets_the_analyses_that_read_it(self):
         spectrum = ts.analysis.lyapunov_spectrum(ts.systems.Lorenz(), final_time=10.0)
@@ -296,7 +293,7 @@ class TestFind:
 
     def test_the_repr_is_the_grouped_table(self):
         out = repr(ts.analysis.find(ts.systems.Henon()))
-        assert out.startswith("13 analyses take a Henon")
+        assert out.startswith("11 analyses take a Henon")
         assert "You have a SYSTEM" in out
 
     def test_a_subject_that_is_neither_says_so(self):
@@ -424,6 +421,109 @@ class TestTheRegistrationDoor:
         with pytest.raises(TypeError) as err:
             ts.analysis.correlation_dimension(np.zeros((20, 2)), nonsense=1)
         assert "correlation_dimension" in str(err.value)
+
+
+class TestConcreteSystemSupport:
+    """Discovery describes callable capabilities rather than a broad flow label."""
+
+    @pytest.mark.parametrize(
+        "system, expected",
+        [
+            (
+                ts.systems.MackeyGlass(),
+                {
+                    "lyapunov_spectrum",
+                    "orbit_diagram",
+                    "poincare_section",
+                    "return_map",
+                    "zero_one_test",
+                },
+            ),
+            (ts.systems.OrnsteinUhlenbeck(), {"return_map", "zero_one_test"}),
+        ],
+    )
+    def test_delay_and_stochastic_flows_do_not_advertise_ode_estimators(self, system, expected):
+        assert {f.__name__ for f in ts.analysis.find(system)} == expected
+        assert {f.__name__ for f in ts.analysis.find(type(system))} == expected
+
+    def test_dimensional_restrictions_are_checked_without_an_integration(self, monkeypatch):
+        from tsdynamics.families import ContinuousSystem
+
+        def forbidden(*args, **kwargs):
+            raise AssertionError("discovery must not integrate")
+
+        monkeypatch.setattr(ContinuousSystem, "run", forbidden)
+        scalar = ts.systems.Logistic()
+        assert "gali" not in {f.__name__ for f in ts.analysis.find(scalar)}
+        assert "gali" in {f.__name__ for f in ts.analysis.find(ts.systems.Henon())}
+
+    def test_active_forcing_hides_autonomous_searches_but_disabled_forcing_does_not(self):
+        class Forced(ts.ContinuousSystem):
+            dim = 1
+            params = {"amplitude": 1.0}
+
+            @staticmethod
+            def _equations(y, t, amplitude):
+                from symengine import sin
+
+                return [-y(0) + amplitude * sin(t)]
+
+        active = {f.__name__ for f in ts.analysis.find(Forced())}
+        inactive = {f.__name__ for f in ts.analysis.find(Forced(amplitude=0.0))}
+        assert not {"fixed_points", "periodic_orbits", "gali", "ftle_field"} & active
+        assert {"fixed_points", "periodic_orbits"} <= inactive
+        # A class query cannot decide the eventual concrete parameter values.
+        assert {"fixed_points", "periodic_orbits"} <= {f.__name__ for f in ts.analysis.find(Forced)}
+
+    def test_a_derived_discrete_view_hides_equation_only_estimators(self):
+        system = ts.systems.Rossler().poincare(plane=(0, 0.0))
+        names = {f.__name__ for f in ts.analysis.find(system)}
+        assert {"orbit_diagram", "lyapunov_spectrum", "zero_one_test"} <= names
+        assert not {"gali", "expansion_entropy", "fixed_points", "periodic_orbits"} & names
+
+    def test_plugin_family_filter_is_opt_in_and_does_not_restrict_its_data_inputs(self):
+        @ts.analysis.register(subjects=("system",), area="chaos")
+        def _legacy_support_probe(subject):
+            """Legacy plugin without family restrictions."""
+
+        @ts.analysis.register(
+            subjects=("system", "array"),
+            area="chaos",
+            families=("ode",),
+            min_dim=2,
+            system_types=(ts.ContinuousSystem,),
+        )
+        def _explicit_support_probe(subject):
+            """Plugin with explicit ODE support."""
+
+        try:
+            stochastic = ts.analysis.find(ts.systems.OrnsteinUhlenbeck())
+            assert _legacy_support_probe in stochastic
+            assert _explicit_support_probe not in stochastic
+            assert _explicit_support_probe in ts.analysis.find(ts.systems.Lorenz())
+            assert _explicit_support_probe in ts.analysis.find(np.arange(20.0))
+            assert registry.analyses.entry("_explicit_support_probe").metadata["families"] == (
+                "ode",
+            )
+        finally:
+            for name in ("_legacy_support_probe", "_explicit_support_probe"):
+                registry.analyses._entries.pop(name, None)
+                ts.analysis.__dict__.pop(name, None)
+            ts.analysis._refresh_surface()
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            {"families": ()},
+            {"families": ("flow",)},
+            {"min_dim": 0},
+            {"system_types": ("ode",)},
+            {"autonomous": "false"},
+        ],
+    )
+    def test_invalid_support_metadata_is_rejected_at_registration(self, kwargs):
+        with pytest.raises(ts.errors.InvalidParameterError):
+            ts.analysis.register(subjects=("system",), area="chaos", **kwargs)
 
 
 class TestTheSharedMessageBuilder:

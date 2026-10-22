@@ -30,7 +30,7 @@ from typing import Any, ClassVar
 
 import numpy as np
 
-from tsdynamics.data import Box, sampler
+from tsdynamics.data import Ball, Box, sampler
 from tsdynamics.errors import InvalidInputError, InvalidParameterError, remedy
 from tsdynamics.families import ContinuousSystem, DiscreteMap
 
@@ -104,8 +104,9 @@ class ExpansionEntropyResult(ScalingResult):
     def applicable(self) -> bool:
         r"""Whether enough trajectories survived the region for the fit to mean anything.
 
-        ``False`` on a degenerate fit — fewer than two survivors, or a
-        ``stderr`` of exactly zero, which is what an empty survivor set produces.
+        ``False`` on a degenerate fit — fewer than two survivors or a
+        non-finite/negative standard error. An exact straight or flat growth
+        curve can legitimately have zero fit error with many survivors.
         Before v6 the "indistinguishable from zero" guard was written
         ``se > 0.0 and abs(h) < 2*se``, so ``0 ± 0`` fell straight through to the
         **most** confident branch and a run where nothing survived printed
@@ -116,7 +117,7 @@ class ExpansionEntropyResult(ScalingResult):
         bool
         """
         se = float(self.stderr)
-        return bool(self.n_survivors >= 2 and np.isfinite(se) and se > 0.0)
+        return bool(self.n_survivors >= 2 and np.isfinite(se) and se >= 0.0)
 
     @property
     def chaotic(self) -> bool | None:
@@ -130,9 +131,9 @@ class ExpansionEntropyResult(ScalingResult):
         bool or None
         """
         h, se = float(self.estimate), float(self.stderr)
-        if not self.applicable or not np.isfinite(h):
+        if not self.applicable or not self.trusted or not np.isfinite(h):
             return None
-        if abs(h) < 2.0 * se:
+        if abs(h) <= 2.0 * se:
             return None
         return bool(h > 0.0)
 
@@ -191,13 +192,13 @@ def expansion_entropy(
     ----------
     system : DiscreteMap or ContinuousSystem
         The system whose expansion to measure.
-    region : Box, (lo, hi), or None
+    region : Box, Ball, Grid, per-axis bounds, or None
         The restricting region :math:`S`.  ``None`` uses the (10%-expanded)
-        bounding box of a burn-in orbit.
+        bounding box of a burn-in orbit. A ball is sampled and tested as a ball;
+        a grid supplies its bounding box rather than discrete sampling sites.
     n_samples : int, default 1000
         Number of **initial conditions** sampled uniformly in the region — the
-        same quantity ``attractors`` / ``fixed_points`` spell ``n_seeds`` and
-        ``basin_fractions`` / ``continuation`` spell ``n``.
+        same quantity the basin and root-finding tools spell ``n_seeds``.
     n : int, optional
         Number of iterations (maps).  Default 15.  (Kept modest: the raw tangent
         product is not renormalised, so very long horizons overflow.)
@@ -293,11 +294,11 @@ def expansion_entropy(
             )
         t_end = 5.0 if final_time is None else float(final_time)
         step_dt = 0.1 if dt is None else float(dt)
-        if step_dt <= 0.0:
-            raise InvalidParameterError(f"dt must be positive; got {step_dt}.")
-        if t_end <= 0.0 or int(round(t_end / step_dt)) < 1:
+        if not np.isfinite(step_dt) or step_dt <= 0.0:
+            raise InvalidParameterError(f"dt must be finite and positive; got {step_dt}.")
+        if not np.isfinite(t_end) or t_end <= 0.0 or int(round(t_end / step_dt)) < 1:
             raise InvalidParameterError(
-                f"final_time must be positive and span at least one dt step; "
+                f"final_time must be positive, finite and span at least one dt step; "
                 f"got final_time={t_end}, dt={step_dt}."
             )
         times, log_growth, survivors = _expansion_flow(
@@ -387,7 +388,7 @@ def _expansion_volumes(mats: np.ndarray) -> np.ndarray:
 
 
 def _expansion_map(
-    system: Any, ics: np.ndarray, box: Box, n_steps: int
+    system: Any, ics: np.ndarray, box: Box | Ball, n_steps: int
 ) -> tuple[np.ndarray, np.ndarray, int]:
     """Accumulate ``G(DF^t)`` for a map; ``DF^t = J(x_{t-1})...J(x_0)`` per sample."""
     step, jac = map_fns(system)
@@ -397,7 +398,6 @@ def _expansion_map(
     mats = [eye.copy() for _ in range(n)]
     states = [np.asarray(ic, dtype=float).ravel() for ic in ics]
     alive = np.ones(n, dtype=bool)
-    lo, hi = box.lo, box.hi
 
     times = np.arange(0, n_steps + 1, dtype=float)
     ln_e = np.empty(n_steps + 1)
@@ -417,7 +417,7 @@ def _expansion_map(
         # ``lo <= x <= hi`` predicate as ``box.contains``).
         stepped = np.array([states[i] for i in live_idx]) if live_idx.size else np.empty((0, dim))
         inside = (
-            np.all((stepped >= lo) & (stepped <= hi), axis=1)
+            np.asarray(box.contains(stepped), dtype=bool)
             if live_idx.size
             else np.empty(0, dtype=bool)
         )
@@ -436,7 +436,7 @@ def _expansion_map(
 
 
 def _expansion_flow(
-    system: Any, ics: np.ndarray, box: Box, final_time: float, dt: float, n_internal: int
+    system: Any, ics: np.ndarray, box: Box | Ball, final_time: float, dt: float, n_internal: int
 ) -> tuple[np.ndarray, np.ndarray, int]:
     """Accumulate ``G(Phi(t))`` for a flow; ``Phi`` is the RK4 fundamental matrix per sample."""
     rhs, jac = flow_fns(system)
@@ -449,7 +449,6 @@ def _expansion_flow(
     mats = [np.eye(dim) for _ in range(n)]
     alive = np.ones(n, dtype=bool)
     t_local = np.zeros(n)
-    lo, hi = box.lo, box.hi
 
     times = np.empty(n_steps + 1)
     times[0] = 0.0
@@ -469,7 +468,7 @@ def _expansion_flow(
             states[i], mats[i], t_local[i] = x, m, t
         stepped = np.array([states[i] for i in live_idx]) if live_idx.size else np.empty((0, dim))
         inside = (
-            np.all((stepped >= lo) & (stepped <= hi), axis=1)
+            np.asarray(box.contains(stepped), dtype=bool)
             if live_idx.size
             else np.empty(0, dtype=bool)
         )

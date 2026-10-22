@@ -33,6 +33,14 @@ from .._common import reject_system
 
 __all__: list[str] = []
 
+
+def positive_seed_count(value: Any) -> int:
+    """Validate a Monte Carlo sample count before constructing the basin march."""
+    if isinstance(value, bool) or not isinstance(value, (int, np.integer)) or value < 1:
+        raise InvalidParameterError("n_seeds must be a positive integer.")
+    return int(value)
+
+
 #: Half-width given to a pinned axis in the runnable line the flat-box error
 #: hands back.  A number, not a guess at the dynamics: the point of the line is
 #: that it *runs*, and the caller then widens it to whatever their system needs.

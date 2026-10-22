@@ -23,36 +23,30 @@ System                                  Viewer
 ======================================  ====================================================
 ODE ``dim in {2, 3}`` (non-forced)      3-D / 2-D reveal comet of the state itself
                                         (animated).
-ODE ``dim >= 4`` **with a projection**  3-D reveal comet of the editorial 3-component
-                                        ``projection``; a ``projection2`` yields a SECOND
+ODE ``dim >= 4``                       Labelled first-three-coordinate projection, or
+                                        the editorial ``projection``; a ``projection2`` yields a SECOND
                                         viewer (``render_html(rec, second=True)``) so the
                                         page shows two faces of a high-dim flow.
 ODE with a ``viewer`` editorial block   Honoured verbatim — ``components`` (a 2-/3-index
   (Group B "weird" systems)             projection of the honest attractor), ``wrap``
                                         (wrap listed coords mod 2π for a torus flow),
                                         ``ic`` / ``final_time`` / ``method`` overrides, or
-                                        ``mode: "static"`` / ``"drop"`` to defer to a
-                                        curated static figure.
+                                        a curated time trace or polar-coordinate view.
+                                        ``mode: "drop"`` explicitly disables a viewer.
 DDE (``dim == 1``)                      2-D **delay embedding** :math:`x(t)` vs
                                         :math:`x(t-\tau)`, animated as a comet.
-Map (effective ``dim == 3``)            **STATIC, orbitable** 3-D point cloud — the whole
-                                        iterate cloud as ``THREE.Points``, rotatable with
-                                        ``OrbitControls`` but **not animated** (a map is a
-                                        set of iterates, not a swept trajectory).  The
-                                        folded-towel / generalized-Hénon sheets read far
-                                        better orbitable in 3-D than as a fixed PNG.
-Map (``dim`` 1 or 2)                     **None** — a static scatter / bifurcation diagram
-                                        reads better (see :mod:`figures`).
-SDE / field / spatial                   **None** — static sample path / field image.
+Map                                     Ordered discrete-point reveal of one orbit;
+                                        scalar maps show successive-iterate pairs.
+SDE                                     Seeded sample path over recorded time.
+Field / spatial                         Dedicated field-movie generator.
 ======================================  ====================================================
 
-A map viewer carries **no** ``metadata.animation`` block, so the shared loader draws
-its point cloud statically and lets ``OrbitControls`` auto-rotate / respond to the
-mouse — there is deliberately no comet reveal for a map.
+A map viewer carries an animation block but uses points, never interpolated lines.
+Pooled independent map ensembles are used only by the separate static figure.
 
 Smoothness: **arc-length resampling**, not a uniform-in-time stride
 ------------------------------------------------------------------
-Every flow / DDE viewer curve is integrated at the fine step ``FINE_PILOT_DT``
+Geometric flow / DDE viewer curves are integrated at the fine step ``FINE_PILOT_DT``
 (0.001 for ODEs), the transient dropped, projected to the drawn 2-/3-D view, and
 then **resampled to be equally spaced in arc length** (:func:`_smooth`)
 — constant chord length everywhere along the curve.  This replaced a
@@ -99,7 +93,6 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import html
-import inspect
 import json
 import os
 import pathlib
@@ -124,7 +117,7 @@ CACHE_DIR = ROOT / ".cache" / "docs-threejs"
 LOADER_URI = "_static/tsdyn-threejs-loader.js"
 
 #: Bump when the emitted HTML or payload shaping materially changes (cache buster).
-VIEWER_VERSION = "10"
+VIEWER_VERSION = "11"
 
 #: CDN three.js build (pinned) — matches docs/visualization/threejs-export.md.
 _THREE_VERSION = "0.160.0"
@@ -238,23 +231,12 @@ def _is_field(entry) -> bool:
 
 
 def eligible(entry, *, second: bool = False) -> bool:
-    """Whether ``entry`` gets an interactive viewer (else it keeps its static PNG).
+    """Select non-field model viewers, with an optional second explicit projection.
 
-    - A ``viewer`` editorial block with ``mode`` ``"static"`` / ``"drop"`` → never
-      (the system is drawn as a curated static figure instead).
-    - **ODE ``dim in {2, 3}``** (no growing-phase ``components`` override) →
-      animate the state directly.
-    - **ODE ``dim >= 4``** → animate **only** when an editorial 3-component
-      ``projection`` (or ``projection2`` for the ``second`` view) is available.
-    - **DDE (1-D)** → animate the delay embedding.
-    - **Map (effective ``dim == 3``)** → a **static, orbitable** 3-D point cloud
-      (the whole iterate cloud as ``THREE.Points``; not animated).  A 1-/2-D map,
-      an SDE, or a spatial field keeps its static PNG (a scatter / sample path /
-      field image reads better).
-
-    ``TSD_DOCS_FIGURES=0`` disables every viewer.  A stiff ``_default_method`` no
-    longer blocks a flow: the viewer marches it with the adaptive ``rk45`` kernel
-    for the thumbnail (still the shipped engine).
+    A new model needs no curated entry to receive a labelled view. Scalar paths
+    use time, scalar maps use successive pairs, and larger states default to the
+    first three coordinates. Fields use their dedicated movie pipeline.
+    ``TSD_DOCS_FIGURES=0`` and explicit ``mode='drop'`` disable generation.
     """
     if _figures_disabled():
         return False
@@ -265,7 +247,7 @@ def eligible(entry, *, second: bool = False) -> bool:
         return _projection(entry, second=second) is not None
 
     cfg = _viewer_cfg(entry)
-    if cfg.get("mode") in ("static", "drop"):
+    if cfg.get("mode") == "drop":
         return False
     opts = figures.FIG_OVERRIDES.get(entry.name, {})
     if opts.get("skip"):
@@ -278,21 +260,15 @@ def eligible(entry, *, second: bool = False) -> bool:
         if second:
             # A second viewer exists only when a projection2 was supplied.
             return proj is not None
-        # Primary viewer: 2-/3-D states animate directly; 4-D+ need a projection.
-        if entry.dim in (2, 3):
-            return True
-        return proj is not None
+        # A new high-dimensional model needs no handwritten projection wiring:
+        # the labelled first three coordinates are an explicit default view.
+        return isinstance(entry.dim, int) and entry.dim >= 1
     if entry.family == "dde":
-        return not second and entry.dim == 1
+        return not second and isinstance(entry.dim, int) and entry.dim >= 1
     if entry.family == "map":
-        # A 3-D map gets a STATIC (non-animated) orbitable point cloud; there is no
-        # second view for a map, and a bifurcation-diagram map stays static.
-        if second:
-            return False
-        if figures.MAP_OVERRIDES.get(entry.name, {}).get("bifurcation"):
-            return False
-        return entry.dim == 3
-    # sde / anything else → static
+        return not second and isinstance(entry.dim, int) and entry.dim >= 1
+    if entry.family == "sde":
+        return not second and isinstance(entry.dim, int) and entry.dim >= 1
     return False
 
 
@@ -498,37 +474,90 @@ def _dde_delay_embedding(entry) -> np.ndarray | None:
     return _smooth(np.ascontiguousarray(emb, dtype=float))
 
 
+@figures._quiet_numerics
 def _map_cloud(entry) -> np.ndarray | None:
-    """Iterate a 3-D map into a drawable ``(n, 3)`` point cloud, or ``None``.
+    """Return one ordered map orbit, never pooled independent ensemble samples.
 
-    Reuses :func:`figures._map_cloud` verbatim — the same curated ``steps`` / ``burn``
-    / ``ic`` / view the static PNG uses (``MAP_OVERRIDES``: FoldedTowel iterates
-    40 000 points after a 500-step burn), so the interactive point cloud is the same
-    honest attractor the reader would have seen in the PNG, only orbitable.  A map
-    viewer is a *static* scatter (no comet), so no sagitta ``dt`` is involved — a map
-    is a set of iterates, not a swept curve.
+    Scalar maps use successive pairs ``(x[n], x[n+1])``. Higher-dimensional maps
+    reveal the first three state coordinates as discrete points, without joining
+    them into a fictitious continuous curve. No resampling changes iterate order.
     """
     mcfg = figures.MAP_OVERRIDES.get(entry.name, {})
-    try:
-        cloud = figures._map_cloud(entry, mcfg)
-    except (RuntimeError, ValueError):
-        return None
-    cloud = np.asarray(cloud, dtype=float)
-    if cloud.ndim != 2 or cloud.shape[1] < 3 or len(cloud) < 8:
-        return None
-    if not np.all(np.isfinite(cloud)) or np.max(np.abs(cloud)) > 1e7:
-        return None
-    return cloud[:, :3]
+    model = entry.cls()
+    for seed in range(_IC_RETRIES):
+        try:
+            kwargs = {"steps": 8_000, "seed": seed}
+            if mcfg.get("ic") is not None:
+                kwargs["ic"] = mcfg["ic"]
+            cloud = np.asarray(model.run(**kwargs).y, dtype=float)
+        except (RuntimeError, ValueError):
+            continue
+        if len(cloud) < 8 or not np.all(np.isfinite(cloud)) or np.max(np.abs(cloud)) > 1e7:
+            continue
+        cloud = cloud[100:]
+        for index in mcfg.get("wrap", ()):
+            cloud[:, int(index)] %= 2 * np.pi
+        if cloud.shape[1] == 1:
+            return np.column_stack((cloud[:-1, 0], cloud[1:, 0]))
+        return cloud[:, :3]
+    return None
+
+
+def _uses_time_series(entry) -> bool:
+    """Choose a readable time trace for scalar, noisy or curated signal views."""
+    return (
+        entry.family == "sde"
+        or entry.dim == 1
+        and entry.family == "ode"
+        or _viewer_cfg(entry).get("static_kind") == "timeseries"
+        or figures.FIG_OVERRIDES.get(entry.name, {}).get("kind") == "timeseries"
+    )
+
+
+def _curated_cloud(entry, *, second: bool) -> np.ndarray:
+    """Preserve curated integration settings while animating the actual samples."""
+    opts = dict(figures.FIG_OVERRIDES.get(entry.name, {}))
+    cfg = _viewer_cfg(entry)
+    for source, target in (
+        ("final_time", "final_time"),
+        ("dt", "dt"),
+        ("ic", "ic"),
+        ("transient", "transient_frac"),
+        ("method", "engine_method"),
+    ):
+        if cfg.get(source) is not None:
+            opts[target] = cfg[source]
+    if entry.family == "sde":
+        time, values = figures._sde_sample_path(entry, opts)
+    else:
+        time, values = figures._ode_trajectory(entry, opts)
+    if _uses_time_series(entry):
+        component = int((cfg.get("components") or [0])[0])
+        return np.column_stack((time, values[:, component]))
+    if cfg.get("static_kind") == "polar":
+        radius, angle = values[:, 0], values[:, 1]
+        return _smooth(np.column_stack((radius * np.cos(angle), radius * np.sin(angle))))
+    view = _select_components(
+        entry, figures._wrap_components(values, cfg.get("wrap")), second=second
+    )
+    return _smooth(view)
 
 
 def _cloud_for(entry, *, second: bool) -> np.ndarray | None:
     """Acquire the drawable cloud for ``entry`` (per family), or ``None``."""
     if entry.family == "ode":
+        if _viewer_cfg(entry).get("mode") == "static" or _uses_time_series(entry):
+            return _curated_cloud(entry, second=second)
         return _ode_cloud(entry, second=second)
     if entry.family == "dde":
+        if entry.dim > 1:
+            trajectory = entry.cls().run(final_time=_DDE_FINAL_TIME, dt=_DDE_FINE_DT, seed=0)
+            return _smooth(trajectory.y[:, :3])
         return _dde_delay_embedding(entry)
     if entry.family == "map":
         return _map_cloud(entry)
+    if entry.family == "sde":
+        return _curated_cloud(entry, second=second)
     return None
 
 
@@ -553,13 +582,28 @@ def _axis_labels(entry, n: int, comps: tuple[int, ...] | None) -> list[str]:
     return [name(int(c)) for c in idx[:n]]
 
 
-def _build_payload(entry, *, second: bool) -> dict | None:
-    """Integrate ``entry`` and lower an attractor to a three.js payload.
+def view_description(entry, *, second: bool = False) -> str:
+    """Describe what is actually drawn, including the playback interpretation."""
+    if entry.family == "map":
+        view = (
+            "successive-iterate return map" if entry.dim == 1 else "single-orbit state projection"
+        )
+        return f"{view}; points appear in iteration order, without interpolated motion"
+    if entry.family == "sde":
+        return "one seeded sample path; playback follows recorded time, not a distribution"
+    if _uses_time_series(entry):
+        return "selected state component over time; playback follows recorded sample order"
+    if _viewer_cfg(entry).get("static_kind") == "polar":
+        return (
+            "Cartesian position (r cos θ, r sin θ); playback follows arc length, not physical speed"
+        )
+    if entry.family == "dde" and entry.dim == 1:
+        return "delay embedding (x(t), x(t − τ)); playback follows arc length, not physical speed"
+    return "labelled state projection; playback follows arc length, not physical speed"
 
-    A **flow / DDE** lowers to an *animated* reveal-comet line (a swept trajectory);
-    a **3-D map** lowers to a *static* orbitable ``THREE.Points`` cloud (a set of
-    iterates, not a curve — no comet, no animation block).
-    """
+
+def _build_payload(entry, *, second: bool) -> dict | None:
+    """Lower a labelled orbit, sample path or ordered iterate reveal to three.js."""
     from tsdynamics.viz.spec import Axis, Layer, PlotKind, PlotSpec
 
     is_map = getattr(entry, "family", None) == "map"
@@ -569,6 +613,8 @@ def _build_payload(entry, *, second: bool) -> dict | None:
     except Exception:  # noqa: BLE001 — soft-fail to the static figure
         return None
     if cloud is None or cloud.ndim != 2 or len(cloud) < 8:
+        return None
+    if not np.all(np.isfinite(cloud)):
         return None
 
     ndim = min(3, cloud.shape[1])
@@ -585,10 +631,8 @@ def _build_payload(entry, *, second: bool) -> dict | None:
     color = np.linspace(0.0, 1.0, len(pts))
 
     spec_kind = PlotKind.PHASE_PORTRAIT_3D if ndim == 3 else PlotKind.PHASE_PORTRAIT_2D
-    # A map is a static scatter — a ``SCATTER`` mark lowers to a ``"points"`` geometry
-    # (never a swept line), which the loader draws statically and lets OrbitControls
-    # orbit (only 3-D maps are eligible, so ndim == 3 here).  A flow / DDE is a swept
-    # ``LINE3D`` / ``LINE`` the loader reveals as a comet.
+    # A map is discrete: SCATTER lowers to points that appear in true iterate
+    # order. A continuous path uses LINE/LINE3D, never the other way around.
     if is_map:  # noqa: SIM108 — clearer as a block than a nested ternary
         mark_kind = PlotKind.SCATTER
     else:
@@ -600,11 +644,20 @@ def _build_payload(entry, *, second: bool) -> dict | None:
     label_dim = entry.dim if isinstance(getattr(entry, "dim", None), int) else cloud.shape[1]
     comps = _selected_comps(entry, label_dim, second=second)
     labels = _axis_labels(entry, ndim, comps)
+    if _uses_time_series(entry):
+        component = int((_viewer_cfg(entry).get("components") or [0])[0])
+        labels = ["t", _axis_labels(entry, 1, (component,))[0]]
+    elif entry.family == "map" and entry.dim == 1:
+        name = _axis_labels(entry, 1, (0,))[0]
+        labels = [f"{name}[n]", f"{name}[n+1]"]
+    elif entry.family == "dde" and entry.dim == 1:
+        name = _axis_labels(entry, 1, (0,))[0]
+        labels = [f"{name}(t)", f"{name}(t − τ)"]
+    elif _viewer_cfg(entry).get("static_kind") == "polar":
+        labels = ["r cos θ", "r sin θ"]
     data = {"x": pts[:, 0], "y": pts[:, 1]}
-    # A flow / DDE comet carries a per-vertex ``c`` channel (the loader inks it teal
-    # for the trail); a **static map** cloud is drawn by the loader's ``buildObject``,
-    # which would render a per-vertex ``c`` as a rainbow — omit it so the flat brand
-    # teal (``material.color``) wins and the cloud reads as one thin teal swarm.
+    # Keep map points flat teal so their appearance cannot suggest a scalar
+    # measurement. A path carries its normalized progression as a color channel.
     if not is_map:
         data["c"] = color
     axes = {"x": Axis(label=labels[0]), "y": Axis(label=labels[1])}
@@ -615,7 +668,7 @@ def _build_payload(entry, *, second: bool) -> dict | None:
     spec = PlotSpec(
         kind=spec_kind,
         ndim=ndim,
-        aspect="equal",
+        aspect="auto" if _uses_time_series(entry) else "equal",
         title=entry.name,
         layers=[Layer(mark_kind, data)],
         **axes,
@@ -624,7 +677,7 @@ def _build_payload(entry, *, second: bool) -> dict | None:
         spec.recolor(_TEAL)
 
     if is_map:
-        # Static, orbitable point cloud.  The loader draws a ``points`` geometry with
+        # Ordered, orbitable point cloud. The loader draws a ``points`` geometry with
         # world-unit ``sizeAttenuation``, so the marker size must scale with the
         # cloud's extent (a fixed size would swamp the thin folded-towel sheet or
         # vanish on the wide generalized-Hénon cube).  ~0.5% of the bounds diagonal
@@ -632,11 +685,11 @@ def _build_payload(entry, *, second: bool) -> dict | None:
         span = float(np.linalg.norm(pts.max(axis=0) - pts.min(axis=0))) or 1.0
         with contextlib.suppress(Exception):
             spec.style(markersize=round(_MAP_POINT_FRAC * span, 5))
-    else:
-        # Flows / DDEs animate a reveal comet; a map stays a static, orbitable cloud.
-        spec.animate(duration=_DURATION_S, loop=True)
-        spec.trail(("steps", _TRAIL_SAMPLES))
-        spec.head(True, size=8.0, color="#8C85F2")
+    # Map points appear in true iterate order; they are never joined or spatially
+    # resampled. Other paths use a comet, with their sampling convention stated.
+    spec.animate(duration=_DURATION_S, loop=True)
+    spec.trail(None if is_map or _uses_time_series(entry) else ("steps", _TRAIL_SAMPLES))
+    spec.head(True, size=8.0, color="#8C85F2")
     try:
         # The exporter owns the vertex cap and the float rounding now (arc length
         # for a curve, a seeded uniform draw for a map cloud), so this generator
@@ -653,9 +706,24 @@ def _build_payload(entry, *, second: bool) -> dict | None:
     except Exception:  # noqa: BLE001 — renderer unavailable / declined
         return None
 
-    if not is_map:
-        payload = _ensure_head_color(payload)
-    return payload
+    metadata = payload.setdefault("metadata", {})
+    if len(labels) == 3 and "camera" in metadata:
+        # A view along x=y collapses the Lorenz wings into one narrow loop.
+        # Use the familiar scientific-plot azimuth, retaining the fitted distance.
+        camera = metadata["camera"]
+        target = np.asarray(camera["target"], dtype=float)
+        radius = np.linalg.norm(np.asarray(camera["position"]) - target)
+        elev, azim = np.deg2rad([25.0, -60.0])
+        direction = [np.cos(elev) * np.cos(azim), np.cos(elev) * np.sin(azim), np.sin(elev)]
+        camera["position"] = (target + radius * np.asarray(direction)).tolist()
+    metadata["documentation_view"] = {
+        "description": view_description(entry, second=second),
+        "sampling": "iteration"
+        if is_map
+        else ("time" if _uses_time_series(entry) else "arc_length"),
+        "coordinates": labels,
+    }
+    return _ensure_head_color(payload)
 
 
 def _selected_comps(entry, dim: int, *, second: bool) -> tuple[int, ...] | None:
@@ -683,8 +751,8 @@ def _ensure_head_color(payload: dict) -> dict:
 # HTML wrapping + caching
 # ---------------------------------------------------------------------------
 def cache_key(entry, *, second: bool) -> str:
-    """Content hash: class source + editorial viewer config + this module's knobs."""
-    cls_src = inspect.getsource(entry.cls)
+    """Hash model/numerical/render semantics, viewer configuration and budgets."""
+    cls_src = figures._model_and_render_fingerprint(entry)
     opts = repr(sorted(figures.FIG_OVERRIDES.get(entry.name, {}).items()))
     # A map viewer's cloud comes from ``figures._map_cloud`` (steps / burn / ic /
     # view), so its MAP_OVERRIDES must feed the hash too, else a curated-map tweak
@@ -731,8 +799,8 @@ def _html(entry, payload: dict, *, second: bool) -> str:
     """Wrap ``payload`` in a self-contained viewer document for an ``<iframe>``."""
     payload_json = json.dumps(payload, separators=(",", ":"))
     png = f"../figures/systems/{entry.name}.png"
-    alt = html.escape(f"{entry.name} attractor")
-    title = html.escape(f"{entry.name} — interactive attractor")
+    alt = html.escape(f"{entry.name} simulated trajectory")
+    title = html.escape(f"{entry.name} — interactive simulation")
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -773,7 +841,7 @@ def _html(entry, payload: dict, *, second: bool) -> str:
   }}
   try {{
     const {{ renderThreejsPayload }} = await import("../../_static/tsdyn-threejs-loader.js");
-    renderThreejsPayload(viewer, payload, {{ background: "{_BG}" }});
+    renderThreejsPayload(viewer, payload, {{ background: "{_BG}", axes: true }});
   }} catch (err) {{
     degrade(err);
   }}

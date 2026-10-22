@@ -25,6 +25,7 @@ import os
 import platform
 import subprocess
 import sys
+import textwrap
 import time
 import warnings
 import zlib
@@ -106,11 +107,17 @@ def fingerprint(entry: Any) -> str:
     paths += sorted((package / "_utils").rglob("*.py"))
     paths += [package / "derived/tangent.py", package / "derived/_variational.py"]
     paths += sorted((package / "systems").glob("_*.py"))
+    model_modules = {}
     for cls in entry.cls.__mro__:
-        if cls.__module__.startswith("tsdynamics.systems"):
+        if (
+            cls is not object
+            and cls.__module__ != "abc"
+            and not cls.__module__.startswith("tsdynamics.families")
+        ):
             filename = inspect.getsourcefile(cls)
             if filename is not None:
                 paths.append(Path(filename))
+                model_modules[Path(filename)] = cls.__module__
     # Native QR/integration changes alter the numerical evidence just as much
     # as a Python estimator change; a Python-only key would silently retain old
     # results across an engine repair.
@@ -126,6 +133,8 @@ def fingerprint(entry: Any) -> str:
             return "protocol/diagnostics.py"
         if path.is_relative_to(package):
             return "package/" + path.relative_to(package).as_posix()
+        if path in model_modules:
+            return "model/" + model_modules[path].replace(".", "/") + ".py"
         return "native/" + path.relative_to(ROOT / "crates").as_posix()
 
     paths = sorted(set(paths), key=label)
@@ -142,7 +151,7 @@ def fingerprint(entry: Any) -> str:
 @lru_cache(maxsize=512)
 def _class_digest(cls: type) -> bytes:
     """Include inherited catalogue equations, not just a child's override body."""
-    return _python_semantics(inspect.getsource(cls))
+    return _python_semantics(textwrap.dedent(inspect.getsource(cls)))
 
 
 class _NumericalSource(ast.NodeTransformer):
