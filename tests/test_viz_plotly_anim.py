@@ -292,6 +292,38 @@ def test_html_waits_for_slow_plotly_updates_instead_of_queueing_requests(plotly_
     assert result == [2, 2, 4, [90]]
 
 
+def test_html_restart_repaints_a_paused_movie_without_resuming_it(plotly_clock_probe):
+    result = plotly_clock_probe("""
+      const v=mount();await v.frame(0);await v.frame(5000);v.play.onclick();
+      v.restart.onclick();const immediate=v.heads();await v.frame(90000);
+      const paused=[v.heads(),v.play.attributes['aria-label']];
+      v.play.onclick();await v.frame(100000);await v.frame(105000);
+      console.log(JSON.stringify([immediate,paused,v.heads()]));
+    """)
+    assert result == [[0], [[0], "Play animation"], [50]]
+
+
+def test_html_restart_waits_for_inflight_draws_and_preserves_pause(plotly_clock_probe):
+    result = plotly_clock_probe("""
+      const v=mount({delayed:true});await v.frame(0);await v.settle();await v.frame(5000);
+      v.play.onclick();const before=v.calls();v.restart.onclick();await v.frame(6000);
+      const queued=v.calls();await v.settle();await v.frame(7000);await v.settle();
+      console.log(JSON.stringify([before,queued,v.calls(),v.heads(),v.play.attributes['aria-label']]));
+    """)
+    assert result == [2, 2, 4, [0], "Play animation"]
+
+
+def test_html_restart_of_a_completed_movie_waits_for_play_before_replaying(plotly_clock_probe):
+    result = plotly_clock_probe("""
+      const v=mount({duration:1});await v.frame(0);await v.frame(1000);
+      v.restart.onclick();const reset=[v.heads(),v.play.attributes['aria-label']];
+      await v.frame(5000);const held=v.heads();v.play.onclick();
+      await v.frame(6000);await v.frame(6500);
+      console.log(JSON.stringify([reset,held,v.heads()]));
+    """)
+    assert result == [[[0], "Play animation"], [0], [50]]
+
+
 def test_plotly_animation_preserves_styles_static_layers_and_axis_presentation():
     pytest.importorskip("plotly")
     line = ts.viz.draw(

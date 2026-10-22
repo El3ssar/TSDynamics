@@ -7,6 +7,50 @@ import pytest
 
 import tsdynamics as ts
 from tsdynamics.errors import InvalidInputError, InvalidParameterError
+from tsdynamics.viz.spec import PlotKind
+
+
+@pytest.mark.parametrize("transform", [None, "phase_portrait"])
+@pytest.mark.parametrize("color_by", [None, "time"])
+@pytest.mark.parametrize("components", [["x", "y"], ["x", "y", "z"]])
+def test_selecting_or_coloring_section_crossings_never_joins_them(transform, color_by, components):
+    from tsdynamics.derived.poincare import PoincareSection
+
+    time = np.array([1.0, 2.0, 4.0])
+    states = np.array([[1.0, 2.0, 27.0], [3.0, -1.0, 27.0], [-2.0, 4.0, 27.0]])
+    model = ts.systems.Lorenz()
+    section = PoincareSection(
+        time, states, system=model, meta={"plot_kind": "poincare_section", "plane": (2, 27.0)}
+    )
+    selectors = () if transform is None else (transform,)
+    plot = ts.plot(section, *selectors, components=components, color_by=color_by)
+    assert plot.layers[0].kind is PlotKind.SCATTER
+    assert plot.x.label == "x" and plot.y.label == "y"
+    np.testing.assert_array_equal(plot.layers[0].data["x"], states[:, 0])
+    np.testing.assert_array_equal(plot.layers[0].data["y"], states[:, 1])
+    if len(components) == 3:
+        np.testing.assert_array_equal(plot.layers[0].data["z"], states[:, 2])
+    if color_by:
+        np.testing.assert_array_equal(plot.layers[0].data["c"], time)
+
+    # Identical samples from an ordinary flow keep their connected-line default.
+    orbit = ts.Trajectory(time, states, system=model)
+    ordinary = ts.plot(orbit, *selectors, components=components, color_by=color_by)
+    assert ordinary.layers[0].kind in (PlotKind.LINE, PlotKind.LINE3D)
+    mapped = ts.plot(
+        ts.Trajectory(time, states[:, :2], system=ts.systems.Henon()),
+        *selectors,
+        components=["x", "y"],
+        color_by=color_by,
+    )
+    assert mapped.layers[0].kind is PlotKind.SCATTER
+    connected = ts.plot(
+        section,
+        "phase_portrait",
+        components=components,
+        primitive="line3d" if len(components) == 3 else "line",
+    )
+    assert connected.layers[0].kind in (PlotKind.LINE, PlotKind.LINE3D)
 
 
 @pytest.mark.parametrize("component", [1, "y"])

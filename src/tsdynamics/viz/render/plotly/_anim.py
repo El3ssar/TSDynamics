@@ -219,7 +219,11 @@ _REALTIME_JS = """
     if (dead) { return; }
     if (gd.isConnected === false) { stop(); cleanup(); return; }
     schedule();
-    if (userPaused || dragging || document.hidden) { lastTime = null; return; }
+    if (userPaused || dragging || document.hidden) {
+      lastTime = null;
+      if (reset && !busy && !dragging && !document.hidden) { paint(0, false); }
+      return;
+    }
     if (lastTime === null) { lastTime = now; }
     var delta = Math.max(0, now - lastTime); lastTime = now;
     var legDuration = direction > 0 ? DURATION : REVERSE_DURATION;
@@ -229,11 +233,12 @@ _REALTIME_JS = """
   }
   function restart() {
     generation++; direction = 1; position = 0; lastTime = null; reset = true;
-    if (dead) { dead = false; userPaused = false; }
+    if (dead) { dead = false; }
+    if (!busy) { paint(0, false); }
     showPlayState(); schedule();
   }
   playBtn.onclick = function() {
-    if (dead) { restart(); return; }
+    if (dead) { userPaused = false; restart(); return; }
     userPaused = !userPaused; lastTime = null; showPlayState();
   };
   restartBtn.onclick = restart;

@@ -2038,3 +2038,14 @@ def test_comet_loops_and_replays_a_finished_explicit_duration(comet_clock_probe)
       looping.handle.stop(); finished.handle.stop();
     """)
     assert values == [25, 100, 25]
+
+
+def test_comet_restart_repaints_a_paused_movie_without_resuming(comet_clock_probe) -> None:
+    values = comet_clock_probe("""
+      const view=mount();view.frame(0);view.frame(5000);view.play.onclick();
+      view.restart.onclick();const reset=[view.head(),view.play.attributes['aria-label']];
+      view.frame(90000);const held=view.head();view.play.onclick();
+      view.frame(100000);view.frame(105000);
+      console.log(JSON.stringify([reset,held,view.head()]));view.handle.stop();
+    """)
+    assert values == [[0, "Play animation"], 0, 50]

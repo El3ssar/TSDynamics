@@ -86,7 +86,7 @@ def _public_fluent_methods() -> set[str]:
     """Public ``PlotSpec`` methods that return a ``PlotSpec`` — i.e. the tweaks."""
     out: set[str] = set()
     for name, attr in vars(PlotSpec).items():
-        if name.startswith("_") or not callable(attr):
+        if name.startswith("_") or name == "copy" or not callable(attr):
             continue
         try:
             ret = inspect.signature(attr).return_annotation
@@ -789,7 +789,7 @@ def test_every_mutating_plot_method_drops_the_figure_cache() -> None:
     """
     derived = set()
     for name, attr in vars(PlotSpec).items():
-        if name.startswith("_") or not callable(attr):
+        if name.startswith("_") or name == "copy" or not callable(attr):
             continue
         try:
             ret = inspect.signature(attr).return_annotation
@@ -808,6 +808,48 @@ def test_every_mutating_plot_method_drops_the_figure_cache() -> None:
         spec._figure_cache = ("sentinel-figure", ["sentinel-axes"])  # type: ignore[assignment]
         _MUTATOR_CALLS[name](spec)
         assert spec._figure_cache is None, f"{name}() left a stale figure cached"
+
+
+def test_copy_is_an_independent_nested_variant_and_never_traverses_cached_figures():
+    class UncopyableFigure:
+        def __deepcopy__(self, memo):
+            raise AssertionError("a plot copy must exclude figures before traversal")
+
+    source = (_panel("a") | _panel("b")) / _panel("c")
+    source.theme("dark").animate(n_frames=3).trail(4).text(0.5, 0.5, "original")
+    source.meta["nested"] = {"values": [1, 2]}
+    cache = (UncopyableFigure(), [])
+    for node in (source, source.panels[0], source.panels[0].panels[0]):
+        node._figure_cache = cache
+        node._figure_handed_out = node._handout_warned = True
+
+    for copied in (source.copy(), ts.plot(source)):
+        assert copied is not source and copied.to_dict() == source.to_dict()
+        for node in (copied, copied.panels[0], copied.panels[0].panels[0]):
+            assert node._figure_cache is None
+            assert node._figure_handed_out is node._handout_warned is False
+        leaf = copied.panels[0].panels[0]
+        original = source.panels[0].panels[0]
+        assert not np.shares_memory(leaf.layers[0].data["y"], original.layers[0].data["y"])
+        leaf.layers[0].data["y"][0] = 99
+        leaf.style(color="crimson")
+        copied.meta["nested"]["values"][0] = 99
+        copied.animation.spin = -1
+        assert original.layers[0].data["y"][0] == 0
+        assert "color" not in original.layers[0].style
+        assert source.meta["nested"]["values"] == [1, 2]
+        assert source.animation.spin == 0
+    assert source._figure_cache is source.panels[0]._figure_cache is cache
+
+
+@pytest.mark.parametrize("spin", [True, complex(1, 1), np.nan, np.inf, "fast"])
+@pytest.mark.parametrize("composite", [False, True])
+def test_refused_camera_spin_never_changes_angles_or_enables_animation(spin, composite):
+    source = _composite(2, three_d=True) if composite else _panel(three_d=True)
+    before = source.to_dict()
+    with pytest.raises(InvalidParameterError, match="camera\\(spin="):
+        source.camera(elev=20, azim=30, spin=spin)
+    assert source.to_dict() == before
 
 
 def test_mutating_after_handing_out_the_figure_warns_once() -> None:

@@ -1218,9 +1218,13 @@ def _camera_angle(field: str, value: Any) -> float:
         if field == "spin"
         else "an angle in degrees"
     )
+    if isinstance(value, bool | np.bool_) or np.iscomplexobj(value):
+        raise InvalidParameterError(
+            f"camera({field}={value!r}) needs {means}, not a boolean or complex value."
+        )
     try:
         number = float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         raise InvalidParameterError(
             f"camera({field}={value!r}) is not a number: {field} is {means}."
         ) from None
@@ -1242,29 +1246,32 @@ def _only_given(**kwargs: Any) -> dict[str, Any]:
 def _trail_pair(length: Any) -> tuple[str, float]:
     """Read :meth:`Plot.trail`'s ``length=`` into a ``(unit, value)`` pair.
 
-    The argument names a **unit** as well as a number, because the two readings
-    of "a trail of 4" differ by whatever ``dt`` happens to be.  A bare number
-    therefore has no honest reading, and guessing one silently is the defect this
-    refuses: before v6 ``trail(length=3.0)`` raised the raw
-    ``TypeError: cannot unpack non-iterable float object`` — matplotlib's
-    unpacking, leaking out of the library, naming neither the argument nor a
-    remedy.
+    A bare integer counts stored samples. Physical time always names its unit
+    explicitly, so ``trail(150)`` has the same sample count at every ``dt``.
+    Bare floating-point lengths remain ambiguous and are refused.
 
     Raises
     ------
     InvalidParameterError
-        If ``length`` is not a ``(unit, value)`` pair (the unit word itself is
+        If ``length`` is neither an integer nor a ``(unit, value)`` pair (the unit word itself is
         checked by :meth:`Animation.validate`, so both doors give one message).
     """
     from tsdynamics.errors import InvalidParameterError
 
     remedy = (
-        "It takes a (unit, value) pair, because 4 samples and 4 time units are "
-        "different tails:\n"
+        "Use an integer sample count or name the unit explicitly:\n"
+        "    .trail(150)                   # 150 samples of the stored series\n"
         "    .trail(length=('time', 4))     # 4 units of the system's own time\n"
         "    .trail(length=('steps', 4))    # 4 samples of the stored series\n"
         "    .trail(length=None)            # persistent — the curve never erases"
     )
+    if isinstance(length, int | np.integer) and not isinstance(length, bool | np.bool_):
+        try:
+            return "steps", float(length)
+        except OverflowError:
+            raise InvalidParameterError(
+                f"trail(length={length!r}) is too large. {remedy}"
+            ) from None
     if isinstance(length, str) or not isinstance(length, Sequence) or len(length) != 2:
         raise InvalidParameterError(f"trail(length={length!r}) is not a length. {remedy}")
     unit, value = length
@@ -1353,7 +1360,8 @@ class Animation:
         Head marker symbol (backend-neutral, e.g. ``"o"``).  Default ``"o"``.
     spin : float, optional
         Camera revolutions over the whole animation for a 3-D spec (the azimuth
-        sweeps ``spin`` full turns).  ``0`` holds the camera still.  Default ``0``.
+        sweeps ``spin`` full turns). Negative values reverse the rotation;
+        ``0`` holds the camera still. Default ``0``.
     clock : bool, optional
         Draw a live time readout that updates each frame.  Default ``False``.
     clock_format : str, optional
@@ -1478,7 +1486,7 @@ class Animation:
                 f"The symbols that work: {', '.join(repr(s) for s in sorted(_HEAD_SYMBOLS))}"
             )
 
-        def _positive(door: str, value: Any, *, floor: float, unit: str) -> None:
+        def _positive(door: str, value: Any, *, floor: float | None, unit: str) -> None:
             if value is None:
                 return
             # A raw ``float("2s")`` used to escape as ValueError: could not
@@ -1494,10 +1502,11 @@ class Animation:
                     f"{door.format(repr(value))} is {unit}, so it needs a number — got "
                     f"{type(value).__name__}. Pass it as a plain number, in {unit.split(' of ')[-1]}."
                 )
-            if not math.isfinite(float(value)) or float(value) < floor:
+            if not math.isfinite(float(value)) or (floor is not None and float(value) < floor):
+                requirement = "finite" if floor is None else f"finite and at least {floor:g}"
                 raise InvalidParameterError(
                     f"{door.format(repr(value))} cannot describe a playable movie: it is {unit}, "
-                    f"so it must be finite and at least {floor:g}."
+                    f"so it must be {requirement}."
                 )
 
         _positive("animate(fps={})", self.fps, floor=1e-6, unit="frames per second")
@@ -1507,7 +1516,7 @@ class Animation:
             raise InvalidParameterError("animate(n_frames=...) needs a whole number of frames.")
         _positive("head(size={})", self.head_size, floor=0.0, unit="a marker size in points")
         _positive("trail(length=(unit, {}))", self.trail_length, floor=0.0, unit="a tail length")
-        _positive("camera(spin={})", self.spin, floor=0.0, unit="full turns over the movie")
+        _positive("camera(spin={})", self.spin, floor=None, unit="full turns over the movie")
         _positive("trail(backdrop_alpha={})", self.backdrop_alpha, floor=0.0, unit="an opacity")
         if not 0.0 <= float(self.backdrop_alpha) <= 1.0:
             raise InvalidParameterError(
@@ -1882,13 +1891,13 @@ class Plot:
         p.ax.axvline(3.0, ls="--")           # expert: raw matplotlib Axes
         p.save("f.png")                      # ...and the library still works
 
-    A :class:`Plot` carries everything a renderer needs and nothing it does not:
-    the semantic :attr:`kind`, the drawable :attr:`layers`, the typed axes,
-    and presentation metadata.  It holds **no** rendering state and imports
-    **no** plotting library.
+    A :class:`Plot` carries the plot kind, data layers, axes and presentation
+    settings. It imports no plotting library until rendering is requested.
+    Rendered figures are cached privately; :meth:`copy` creates an independent
+    description with a fresh rendering cache.
 
     .. versionchanged:: 6.0
-        Renamed from ``Plot``.  The class is unchanged — ``Plot`` remains
+        Renamed from ``PlotSpec``. The class is unchanged — ``PlotSpec`` remains
         bound in this module as an alias so existing annotations and
         ``isinstance`` checks keep working — but the name a user sees, types and
         reads in a repr is ``Plot``.
@@ -2087,6 +2096,34 @@ class Plot:
         self._figure_handed_out = False
         self._handout_warned = False
         self._check_composite_invariant()
+
+    def copy(self) -> Self:
+        """Return an independent plot, ready to style or animate as a variant.
+
+        Data arrays, nested panels, annotations and configuration are deep-copied.
+        Rendered figures and their hand edits are excluded before copying begins;
+        the new plot renders afresh, and this plot keeps its existing figure::
+
+            movie = portrait.copy().animate(duration=6).trail(150)
+            paper = portrait.copy().theme("publication")
+        """
+        from copy import deepcopy
+
+        return deepcopy(self)
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> Self:
+        """Copy plot configuration without traversing backend figures or caches."""
+        from copy import deepcopy
+
+        fresh = type(self).__new__(type(self))
+        memo[id(self)] = fresh
+        runtime = {"_figure_cache", "_figure_handed_out", "_handout_warned"}
+        for name, value in vars(self).items():
+            if name not in runtime:
+                setattr(fresh, name, deepcopy(value, memo))
+        fresh._figure_cache = None
+        fresh._figure_handed_out = fresh._handout_warned = False
+        return fresh
 
     # -- the matplotlib escape hatch ---------------------------------------
 
@@ -3140,15 +3177,9 @@ class Plot:
 
     # -- animation tweaks (mutate + return self; also turn animation on) ----
 
-    def _ensure_animation(self) -> Animation:
-        """Return this spec's :class:`Animation`, creating a default if absent."""
-        if self.animation is None:
-            self.animation = Animation()
-        return self.animation
-
     def _update_animation(self, **changes: Any) -> None:
         """Remember explicit figure overrides without mutating child directives."""
-        self.animation = self._ensure_animation().updated(**changes)
+        self.animation = (self.animation or Animation()).updated(**changes)
         if self.is_composite and changes:
             keys = set(self.meta.get("_animation_overrides", ()))
             self.meta["_animation_overrides"] = sorted(keys | changes.keys())
@@ -3201,7 +3232,7 @@ class Plot:
     @figure_scoped
     def trail(
         self,
-        length: tuple[Literal["time", "steps"], float] | None = _UNSET,
+        length: int | tuple[Literal["time", "steps"], float] | None = _UNSET,
         *,
         fade: bool | None = None,
         backdrop: bool | None = None,
@@ -3211,8 +3242,9 @@ class Plot:
 
         Parameters
         ----------
-        length : ``("time", t)`` or ``("steps", n)`` or ``None``, optional
-            The tail length — in physical ``"time"`` units or sample ``"steps"``,
+        length : int or ``("time", t)`` or ``("steps", n)`` or ``None``, optional
+            An integer counts stored samples: ``trail(150)`` equals
+            ``trail(("steps", 150))``. A pair names physical ``"time"`` units or sample ``"steps"``,
             or ``None`` for a **persistent** trail (the curve never erases).
             Omitting the argument leaves the current trail unchanged.
         fade : bool, optional
@@ -3287,7 +3319,7 @@ class Plot:
     # own camera) and forward; ``spin`` is the figure's animation timeline and
     # must not become one desynchronised per-panel Animation.
     @_mutates
-    @panel_scoped(figure_only=("spin",))
+    @panel_scoped_custom
     def camera(
         self,
         *,
@@ -3306,7 +3338,9 @@ class Plot:
         elev, azim : float, optional
             Fixed elevation / azimuth in degrees.
         spin : float, optional
-            Camera revolutions over the whole animation (0 holds it still).
+            Signed camera revolutions over the whole animation: negative reverses
+            rotation, positive rotates forward, and zero holds the camera still.
+            Matplotlib renders camera spin; web backends warn when it is unsupported.
 
         Returns
         -------
@@ -3321,10 +3355,12 @@ class Plot:
         if azim is not None:
             camera["azim"] = _camera_angle("azim", azim)
         turns = None if spin is None else _camera_angle("spin", spin)
-        if elev is not None or azim is not None:
-            self.meta["camera"] = camera
         if turns is not None:
             self._update_animation(spin=turns)
+        if elev is not None or azim is not None:
+            self.meta["camera"] = camera
+            for panel in self.panels:
+                panel.camera(elev=elev, azim=azim)
         return self
 
     @_mutates
@@ -4329,7 +4365,7 @@ class Plot:
 #: ``ts.viz.PlotSpec`` answers with the new spelling.
 PlotSpec = Plot
 
-#: The curated tab surface of a :class:`Plot` (contract §6.3 — 34 names).
+#: The curated tab surface of a :class:`Plot` (42 names, including ``copy``).
 #: Everything omitted stays readable and callable; it just stops shouting.
 _PLOT_PUBLIC: tuple[str, ...] = (
     # draw it
@@ -4340,6 +4376,7 @@ _PLOT_PUBLIC: tuple[str, ...] = (
     "ax",
     "axes",
     # compose
+    "copy",
     "add",
     "panels",
     "layers",

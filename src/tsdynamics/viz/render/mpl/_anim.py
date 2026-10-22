@@ -1247,6 +1247,9 @@ def _fade_comet_driver(
         ]
     head.set_visible(anim.head)
     style = style or {}
+    # Legend handles are captured before the first frame is drawn. Seed their
+    # real colour now rather than letting an empty collection advertise C0.
+    lc.set_color([(*base, style.get("alpha", 1.0))])
     if "linestyle" in style:
         lc.set_linestyle(style["linestyle"])
     if "zorder" in style:
@@ -1516,9 +1519,10 @@ def _apply_static_labels(ax: Any, spec: PlotSpec, *, three_d: bool) -> None:
         # default whatever the figure facecolor is.  The still renderer themes
         # them; the animator did not, so a dark 3-D movie had **grey panes**
         # where its own ``.png`` had dark navy ones.
-        from ._threed import _apply_3d_panes
+        from ._threed import _apply_3d_axes, _apply_3d_panes
 
         _apply_3d_panes(ax, theme, spec)
+        _apply_3d_axes(ax, spec, theme)
     if not three_d and spec.aspect == "equal":
         ax.set_aspect("equal", adjustable="box")
     if spec._axes_hidden():
@@ -1539,9 +1543,23 @@ def _base_azim(spec: PlotSpec) -> float:
 
 def _make_clock(ax: Any, spec: PlotSpec, *, three_d: bool) -> Any:
     """Create the per-frame time-readout text artist (top-left, axes coords)."""
+    theme = _resolve_theme(spec)
+    style: dict[str, Any] = {}
+    if theme.foreground is not None:
+        style["color"] = theme.foreground
+    if theme.font_family is not None:
+        style["fontfamily"] = theme.font_family
+    if theme.font_size is not None:
+        style["fontsize"] = theme.font_size
+    style["bbox"] = {
+        "facecolor": theme.background or ax.get_facecolor(),
+        "edgecolor": "none",
+        "alpha": 0.8,
+        "pad": 2,
+    }
     if three_d:
-        return ax.text2D(0.02, 0.95, "", transform=ax.transAxes)
-    return ax.text(0.02, 0.95, "", transform=ax.transAxes)
+        return ax.text2D(0.02, 0.95, "", transform=ax.transAxes, **style)
+    return ax.text(0.02, 0.95, "", transform=ax.transAxes, **style)
 
 
 # ---------------------------------------------------------------------------

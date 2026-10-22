@@ -40,6 +40,9 @@ In a notebook, put `figure` on the last line to display it. In a script, call
 `figure.show()`. Save a still with `figure.save("lorenz.svg")` or
 `figure.save("lorenz.png")`.
 
+The minimum is `ts.plot(trajectory)`. Add `.animate()` to turn the same view
+into a movie; the settings below are optional refinements.
+
 </div>
 <figure markdown="1">
 ![A Lorenz trajectory forms two lobes in a labelled three-dimensional phase portrait](../assets/figures/viz/first-plot.svg){ loading=lazy }
@@ -110,6 +113,47 @@ a time series, or play a spatial field frame by frame.
 
 </div>
 </div>
+
+## Choose a picture by the question
+
+The [scientific figure recipes](recipes.md) pair copyable code with its actual
+output. Start with a task, then change the data or a few settings.
+
+<div class="tsd-recipe-nav" markdown="1">
+
+- [**Plot recorded data** — arrays, timestamps and named variables](recipes.md#arrays-and-timestamps)
+- [**Compare experiments** — overlays, separate axes and independent styles](recipes.md#compare-runs)
+- [**Connect the evidence** — state space, time series and analysis results](recipes.md#analysis-results-in-context)
+- [**Show an ensemble** — readable bands for many trajectories](recipes.md#an-ensemble-fan)
+- [**Read a vector field** — speeds, nullclines and trajectories](recipes.md#equations-and-trajectories)
+- [**Compare spatial fields** — snapshots on one color scale](recipes.md#spatial-fields)
+
+</div>
+
+## Make the same figure move
+
+```python
+movie = (portrait | trace).theme("dark").size(9, 4)
+movie.animate(duration=12, fps=24).trail(("time", 4), fade=True)
+```
+
+Both views follow the same recorded trajectory. `duration` controls playback
+length; `dt` in the simulation controls how often states were recorded. Making
+the movie slower reuses those samples without running the simulation again.
+
+<figure class="tsd-showcase">
+<video controls playsinline preload="none" aria-label="A Lorenz orbit and its time series advance together over twelve seconds" poster="../assets/figures/viz/animation-linked-poster.png">
+<source src="../assets/figures/viz/animation-linked.mp4" type="video/mp4">
+<a href="../assets/figures/viz/animation-linked.mp4">Download the linked-view movie</a>.
+</video>
+<figcaption>One orbit, two synchronized views. The animation studio shows the
+code and movies for trails, camera rotation, overlays, nested layouts, maps and
+evolving spatial fields.</figcaption>
+</figure>
+
+Visit the [animation studio](animation.md) to compare the controls visually.
+Save a movie with `movie.save("lorenz.mp4")` after installing FFmpeg, or
+`movie.save("lorenz.gif")` for a short loop using Pillow.
 
 ## Polish once, export when ready
 

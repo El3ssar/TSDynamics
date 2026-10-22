@@ -1,30 +1,177 @@
 ---
 title: Animation
-description: Turn a plot into a controlled, labelled movie, link multiple views, and export real MP4 or GIF output.
+description: Nine real movies show orbit reveals, trails, signed camera spin, overlays, linked and nested layouts, map iterations, field snapshots, and reverse playback.
 ---
 
 <span class="ts-kicker">Visualization · Animation</span>
 
-# Let the motion explain the picture
+# Make the motion explain the picture
 
-<div class="tsd-page-intro" markdown="1">
+<div class="tsd-page-intro tsd-animation-intro" markdown="1">
+<div markdown="1">
 
-A still shows where an orbit goes. A movie shows how it gets there. Animate the
-same plot, choose a short trail or a persistent reveal, and keep the playback
-long enough to follow. Simulation time and playback time are separate choices.
+Make a plot. Add `.animate()`. Save the same object as a movie. Start with the
+short example below, then change one thing at a time: what stays visible,
+where the camera looks, or how related views sit together.
+
+Every movie on this page comes from its runnable example. Press play when
+you want motion; the players have native controls and never autoplay.
 
 </div>
 
-<figure class="tsd-showcase">
-<video controls playsinline preload="none" aria-label="Lorenz orbit in state space linked to its x time series" poster="../../assets/figures/viz/animation-linked-poster.png">
-<source src="../../assets/figures/viz/animation-linked.mp4" type="video/mp4">
-Your browser cannot play this video. <a href="../../assets/figures/viz/animation-linked.mp4">Download the linked-view MP4</a>.
+<figure class="tsd-demo-card">
+<video width="960" height="600" controls playsinline preload="none" aria-label="A Lorenz orbit gradually draws itself in three-dimensional state space" poster="../../assets/figures/viz/animation-reveal-poster.png">
+<source src="../../assets/figures/viz/animation-reveal.mp4" type="video/mp4">
+<a href="../../assets/figures/viz/animation-reveal.mp4">Download the orbit reveal</a>.
 </video>
-<figcaption>One Lorenz orbit, shown in state space and over time. Press play to
-follow the moving state in both panels; playback starts only when you choose.</figcaption>
+<figcaption>The recorded path builds up and stays visible. Ten seconds of playback
+show thirty simulation time units; the labels describe state coordinates.</figcaption>
+</figure>
+</div>
+
+<nav class="tsd-recipe-nav" aria-label="Animation recipes">
+<a href="#your-first-movie">First movie</a>
+<a href="#leave-a-trail">Trails</a>
+<a href="#move-the-camera">Camera</a>
+<a href="#overlay-two-orbits">Overlays</a>
+<a href="#link-the-views">Linked views</a>
+<a href="#nest-the-layout">Layouts</a>
+<a href="#show-map-iterations">Maps</a>
+<a href="#play-a-spatial-field">Fields</a>
+<a href="#play-forward-and-back">Ping-pong</a>
+<a href="#all-the-controls">All controls</a>
+</nav>
+
+## Your first movie
+
+Install the optional drawing backend with `pip install "tsdynamics[viz]"`.
+For MP4, install FFmpeg on your path; on macOS, `brew install ffmpeg`.
+
+<!-- tsd-example: animation-reveal -->
+```python
+import tsdynamics as ts
+
+trajectory = ts.systems.Lorenz(ic=[1, 1, 1]).run(final_time=30, dt=0.01)
+movie = ts.plot(trajectory, color="#2CC5AE").theme("dark")
+movie.animate(duration=10, fps=24)
+```
+
+
+
+```python
+# skip-doctest — writes a movie using the external FFmpeg executable
+movie.save("lorenz.mp4", size=(960, 600), dpi=120)
+```
+
+The output grid (`dt=0.01`) controls the recorded data. Playback duration and
+frame rate control how those samples are shown. More movie frames do not make
+the simulation more accurate.
+
+## Leave a trail
+
+Keep the whole path with `.trail(None)`, or keep the most recent samples with
+`.trail(300)`. A fading trail makes recent motion stand out. Use `.copy()` when
+you want independent versions of the same plot.
+
+<!-- tsd-example: animation-trails -->
+```python
+import tsdynamics as ts
+
+trajectory = ts.systems.Lorenz(ic=[1, 1, 1]).run(final_time=30, dt=0.01)
+base = ts.plot(trajectory, components=["x", "z"], color="#2CC5AE").theme("dark")
+persistent = base.copy().relabel(title="Keep the path").trail(None)
+window = base.copy().relabel(title="Last 300 samples").trail(300, backdrop=False)
+fading = base.copy().relabel(title="Fade those 300").trail(300, fade=True, backdrop=False)
+movie = (persistent | window | fading).font(family="sans-serif", size=10)
+movie.animate(duration=12, fps=24)
+```
+
+<figure class="tsd-showcase tsd-demo-card">
+<video width="1104" height="432" controls playsinline preload="none" aria-label="The same Lorenz orbit with a persistent path, a moving window, and a fading window" poster="../../assets/figures/viz/animation-trails-poster.png">
+<source src="../../assets/figures/viz/animation-trails.mp4" type="video/mp4">
+<a href="../../assets/figures/viz/animation-trails.mp4">Download the trail comparison</a>.
+</video>
+<figcaption>Same samples, same playback position. Left keeps the past; middle and
+right keep 300 samples, about three simulation time units on this grid. Their
+full-path backdrops are hidden so you can see exactly what the tail retains.</figcaption>
 </figure>
 
-## Build a linked view
+To specify a physical duration instead, use `.trail(("time", 3))` on uniformly
+sampled data. `.trail(("steps", 300))` is the explicit spelling of `.trail(300)`.
+By default, a short trail has a faint full-path backdrop; tune it with
+`.trail(backdrop=True, backdrop_alpha=0.10)`. Turn it off for a reveal that should
+not show the ending early.
+
+## Move the camera
+
+`.camera(elev=..., azim=...)` sets a 3-D viewing angle in degrees. Add `spin` to
+turn the camera over one forward pass: negative turns reverse the direction,
+zero holds the view still, and positive turns move it the other way.
+
+<!-- tsd-example: animation-camera -->
+```python
+import tsdynamics as ts
+
+trajectory = ts.systems.Lorenz(ic=[1, 1, 1]).run(final_time=30, dt=0.01)
+base = ts.plot(trajectory, color="#2CC5AE").theme("dark").style(axes=False)
+base.trail(250, fade=True, backdrop_alpha=0.12).head(size=7, color="#E8912D")
+reverse = base.copy().relabel(title="spin = -0.25").camera(elev=24, azim=-60, spin=-0.25)
+fixed = base.copy().relabel(title="spin = 0").camera(elev=24, azim=-60, spin=0)
+forward = base.copy().relabel(title="spin = +0.25").camera(elev=24, azim=-60, spin=0.25)
+movie = (reverse | fixed | forward).font(family="sans-serif", size=10)
+movie.animate(duration=12, fps=24)
+```
+
+<figure class="tsd-showcase tsd-demo-card">
+<video width="1152" height="480" controls playsinline preload="none" aria-label="The same three-dimensional orbit with a reverse quarter-turn, fixed camera, and forward quarter-turn" poster="../../assets/figures/viz/animation-camera-poster.png">
+<source src="../../assets/figures/viz/animation-camera.mp4" type="video/mp4">
+<a href="../../assets/figures/viz/animation-camera.mp4">Download the camera comparison</a>.
+</video>
+<figcaption>Each moving camera turns 90 degrees over twelve seconds. The middle
+camera stays fixed. Axes are hidden here to isolate the viewing effect; use the
+labelled first movie when coordinate scales matter.</figcaption>
+</figure>
+
+Set the individual panels' cameras before composing them. A later
+`movie.camera(spin=0.25)` applies that spin to the whole figure. Camera motion
+changes the view, not the trajectory.
+
+## Overlay two orbits
+
+Use `+` when the coordinates and units match. Here two nearby Lorenz starts
+share one state-space panel, with distinct colours and a visible legend.
+
+<!-- tsd-example: animation-overlay -->
+```python
+import tsdynamics as ts
+
+model = ts.systems.Lorenz()
+a = model.run(final_time=30, dt=0.01, ic=[1, 1, 1])
+b = model.run(final_time=30, dt=0.01, ic=[1.005, 1, 1])
+first = ts.plot(a, components=["x", "z"], labels=["x₀ = 1.000"], color="#2CC5AE")
+second = ts.plot(b, components=["x", "z"], labels=["x₀ = 1.005"], color="#E8912D")
+movie = (first + second).theme("dark").font(family="sans-serif")
+movie.animate(duration=10, fps=24).trail(250, fade=True, backdrop_alpha=0.10)
+movie.head(size=7, symbol="s").clock("t = {t:.1f}")
+```
+
+<figure class="tsd-showcase tsd-demo-card">
+<video width="960" height="560" controls playsinline preload="none" aria-label="Two nearby Lorenz initial states evolve together on one labelled phase plane" poster="../../assets/figures/viz/animation-overlay-poster.png">
+<source src="../../assets/figures/viz/animation-overlay.mp4" type="video/mp4">
+<a href="../../assets/figures/viz/animation-overlay.mp4">Download the orbit overlay</a>.
+</video>
+<figcaption>Both runs use the same physical time grid. This shows the separation
+of these two trajectories over this window; the movie alone does not estimate a
+Lyapunov exponent.</figcaption>
+</figure>
+
+Use `|` or `/` when axes represent different quantities. A spectrum and a phase
+portrait belong in separate panels, even if their colours match.
+
+## Link the views
+
+A row is just `portrait | trace`. Animate the composed figure once; both panels
+advance along the same recorded trajectory.
 
 <!-- tsd-example: animation-linked -->
 ```python
@@ -38,151 +185,216 @@ movie = (portrait | trace).theme("dark").font(family="sans-serif").size(9, 4)
 movie.animate(duration=12, fps=24).trail(("time", 4), fade=True)
 ```
 
-Twelve seconds of playback reveal thirty time units of simulation. `fps=24` sets
-the encoded frame rate; `duration=12` sets playback length. The four-time-unit
-trail follows the trajectory's sampling grid, independently of the playback
-speed. Both panels use the same recorded trajectory and advance together.
+<figure class="tsd-showcase tsd-demo-card">
+<video width="1080" height="480" controls playsinline preload="none" aria-label="One Lorenz orbit linked to its x time series" poster="../../assets/figures/viz/animation-linked-poster.png">
+<source src="../../assets/figures/viz/animation-linked.mp4" type="video/mp4">
+<a href="../../assets/figures/viz/animation-linked.mp4">Download the linked views</a>.
+</video>
+<figcaption>The point in state space and the revealed time trace represent the
+same sample. Both retain a four-time-unit fading trail.</figcaption>
+</figure>
 
-## Save a movie
+Inputs with different lengths follow their own relative progress over the same
+playback window. That is not a guarantee of equal physical times: use the same
+trajectory or a common time grid when that relationship matters.
 
-MP4 needs the optional Matplotlib renderer (`pip install "tsdynamics[viz]"`) and
-an FFmpeg executable on your path. For example, install FFmpeg with
-`brew install ffmpeg` on macOS or your operating system's package manager.
+## Nest the layout
 
+Put a row above a timeline with `(front | side) / trace`. The bottom panel spans
+the full width; each panel keeps its own axes.
+
+<!-- tsd-example: animation-nested -->
 ```python
-# skip-doctest — writes a video and requires an external FFmpeg executable
-movie.save("lorenz-linked.mp4", dpi=120)
+import tsdynamics as ts
+
+trajectory = ts.systems.Lorenz(ic=[1, 1, 1]).run(final_time=30, dt=0.01)
+front = ts.plot(trajectory, components=["x", "z"], title="Front: x, z", color="#2CC5AE")
+side = ts.plot(trajectory, components=["y", "z"], title="Side: y, z", color="#E8912D")
+trace = ts.plot(trajectory, "time_series", components="x", title="One shared timeline", color="#2CC5AE")
+movie = ((front | side) / trace).theme("dark").font(family="sans-serif")
+movie.animate(duration=12, fps=24).trail(300, fade=True, backdrop_alpha=0.10)
 ```
 
-For a short loop where a video player is inconvenient, save a GIF instead:
+<figure class="tsd-showcase tsd-demo-card">
+<video width="1080" height="720" controls playsinline preload="none" aria-label="Two Lorenz projections above a full-width synchronized time trace" poster="../../assets/figures/viz/animation-nested-poster.png">
+<source src="../../assets/figures/viz/animation-nested.mp4" type="video/mp4">
+<a href="../../assets/figures/viz/animation-nested.mp4">Download the nested movie</a>.
+</video>
+<figcaption>Two projections of one state, above its time history. Parentheses
+make the layout explicit. This is a genuine three-panel movie.</figcaption>
+</figure>
 
+Tweaks on the figure can apply to all panels. Select a child for a local change:
+`movie[0][1]` is the upper-right projection; `movie[1]` is the lower trace.
+See [composition](composition.md) for grids and shared axes.
+
+## Show map iterations
+
+A map gives ordered iterates, not a continuously traversed curve. Draw them as
+points and keep the iteration label explicit.
+
+<!-- tsd-example: animation-map -->
 ```python
-# skip-doctest — writes an encoded animation with the optional drawing backend
-movie.save("lorenz-linked.gif", dpi=85)
+import tsdynamics as ts
+
+iterates = ts.systems.Henon(ic=[0, 0]).run(steps=600)
+movie = ts.plot(iterates, "phase_portrait", components=["x", "y"], primitive="points", color="#2CC5AE")
+movie.theme("dark").font(family="sans-serif").style(markersize=2)
+movie.animate(n_frames=240, fps=24).trail(None).head(False)
+movie.clock("n = {t:.0f} · frame {i}")
 ```
 
-MP4 usually gives a smaller, smoother artifact; GIF uses Pillow and works
-without FFmpeg. Use a solid `.background(...)` or a theme for either format.
-GIF has limited transparency and colour depth, so a transparent still's look
-will not necessarily survive animation encoding.
+<figure class="tsd-showcase tsd-demo-card">
+<video width="960" height="600" controls playsinline preload="none" aria-label="The Henon map reveals its points in their actual iteration order" poster="../../assets/figures/viz/animation-map-poster.png">
+<source src="../../assets/figures/viz/animation-map.mp4" type="video/mp4">
+<a href="../../assets/figures/viz/animation-map.mp4">Download the ordered map reveal</a>.
+</video>
+<figcaption>Points appear in the order the map visits them. They are not joined
+by invented continuous segments. The clock distinguishes the stored iteration
+index from the output frame. Here 240 frames at 24 fps give ten seconds.</figcaption>
+</figure>
 
-## Shape the reveal
+For maps, use sample-count trails such as `.trail(100)`. The movie may reveal
+several stored iterates per output frame; its frame rate is not a dynamical
+integration step.
 
+## Play a spatial field
+
+A field movie replaces the whole spatial state each frame. Select the field by
+name, then animate the same plot; the trajectory carries its grid metadata.
+
+<!-- tsd-example: animation-field -->
 ```python
-orbit = ts.plot(trajectory, components=["x", "y", "z"])
-orbit.theme("dark").recolor("#2CC5AE").style(lw=0.8)
-orbit.animate(duration=8, fps=30)
-orbit.trail(("time", 4), fade=True)
-orbit.head(size=8, color="#E8912D")
-orbit.camera(elev=22, azim=-60)
+import tsdynamics as ts
+
+model = ts.systems.GrayScott(N=48, F=0.06, k=0.062, seed=0)
+trajectory = model.run(final_time=6000, dt=25)
+movie = ts.plot(trajectory, "spatial_field", components="v", cmap="magma")
+movie.theme("dark").font(family="sans-serif").relabel(title="Gray–Scott activator v")
+movie.animate(duration=10, fps=24).clock("t = {t:.0f}")
 ```
 
-- `.trail(("time", 4))` keeps the last four time units.
-- `.trail(("steps", 200))` keeps a fixed number of samples.
-- `.trail(None)` reveals the whole path and leaves it visible.
-- `.head(show=False)` removes the moving marker.
+<figure class="tsd-showcase tsd-demo-card">
+<video width="960" height="600" controls playsinline preload="none" aria-label="The Gray Scott activator evolves from a seeded patch into a spatial pattern" poster="../../assets/figures/viz/animation-field-poster.png">
+<source src="../../assets/figures/viz/animation-field.mp4" type="video/mp4">
+<a href="../../assets/figures/viz/animation-field.mp4">Download the field movie</a>.
+</video>
+<figcaption>Real snapshots of the activator on a periodic 48 × 48 grid, from a
+seeded initial patch. The stored snapshots are 25 simulation time units apart;
+this recipe plays the 6000-unit window over ten seconds.</figcaption>
+</figure>
 
-A trail measured in time requires a uniformly sampled trajectory. For map data,
-use a trail in steps: map iterations have no continuous integration time.
+A one-dimensional field uses a changing profile line instead of a heatmap.
+Keep a fixed colour range when comparing field frames. Trails, moving heads and
+camera spin describe orbit reveals; they do not turn a heatmap into a moving
+particle. Pattern formation depends on the model, parameters, grid and time
+window, so this example states all four.
 
+## Play forward and back
+
+`pingpong=True` adds a reverse pass. This is reverse **playback** of recorded
+samples; it does not solve the dynamics backward.
+
+<!-- tsd-example: animation-pingpong -->
 ```python
-orbit.camera(spin=0.5)       # half a camera revolution over the movie
-orbit.clock(fmt="t = {t:.1f}")
+import tsdynamics as ts
+
+trajectory = ts.systems.Lorenz(ic=[1, 1, 1]).run(final_time=12, dt=0.02)
+movie = ts.plot(trajectory, components=["x", "z"], color="#2CC5AE")
+movie.theme("dark").font(family="sans-serif")
+movie.animate(duration=5, fps=24, pingpong=True, loop=False)
+movie.trail(100, fade=True, backdrop=False).head(color="#E8912D", size=8)
+movie.clock("t = {t:.1f}")
 ```
 
-Camera spin and the physical-time clock are Matplotlib features. Keep axis
-labels and a clock when units matter. An unlabeled, floating attractor can be a
-useful illustration, but it does not communicate its coordinate scale.
+<figure class="tsd-showcase tsd-demo-card">
+<video width="960" height="560" controls playsinline preload="none" aria-label="A Lorenz path plays forward and then back while its time readout reverses" poster="../../assets/figures/viz/animation-pingpong-poster.png">
+<source src="../../assets/figures/viz/animation-pingpong.mp4" type="video/mp4">
+<a href="../../assets/figures/viz/animation-pingpong.mp4">Download the ping-pong movie</a>.
+</video>
+<figcaption>A five-second forward pass plus a return pass, without repeated
+endpoints: 238 frames at 24 fps, about 9.92 seconds in total. Watch the time
+readout change direction.</figcaption>
+</figure>
 
-## A presentation-ready recipe
+MP4 stores that one sequence. The video player's repeat setting controls whether
+it starts again; `.animate(loop=False)` controls repeat behavior in animation
+players that support it. GIF playback timing is quantized, so an arbitrary
+requested frame rate may be approximated.
 
-Use a quiet background, one accent for the orbit and a contrasting moving
-marker. Let the camera move slowly enough that the state remains the subject.
+## All the controls
+
+Start with the recipes above, then adjust the same `movie` object. Fluent calls
+mutate and return the plot; `movie.copy()` gives an independent version.
+
+<div class="tsd-control-table" markdown="1">
+
+| Control | Meaning | Visible example |
+|---|---|---|
+| `.animate(duration=10, fps=24)` | Forward-pass playback seconds and encoded frames per second | Every recipe |
+| `.animate(n_frames=240, fps=24)` | Exact forward frame count; overrides `duration` | [Map iterations](#show-map-iterations) |
+| `.animate(loop=False)` | Repetition in players that support it; MP4 repetition belongs to its player | [Forward and back](#play-forward-and-back) |
+| `.animate(pingpong=True)` | Append a reverse pass without repeating its endpoints | [Forward and back](#play-forward-and-back) |
+| `.animate(mode="reveal")` | Progressively show recorded orbit samples; the default | [First movie](#your-first-movie) |
+| `.animate(mode="frames")` | Play a stored spatial-field stack; detected automatically for field data | [Spatial field](#play-a-spatial-field) |
+| `.trail(None)` | Keep the whole revealed path | [First movie](#your-first-movie), [maps](#show-map-iterations) |
+| `.trail(300)` or `.trail(("steps", 300))` | Keep 300 stored samples | [Trail comparison](#leave-a-trail) |
+| `.trail(("time", 4))` | Keep four physical time units on a uniform time grid | [Linked views](#link-the-views) |
+| `.trail(fade=True)` | Fade older tail segments | [Trail comparison](#leave-a-trail) |
+| `.trail(backdrop=False)` | Hide the faint full-path context | [Trail comparison](#leave-a-trail) |
+| `.trail(backdrop_alpha=0.10)` | Set the full-path context opacity | [Overlay](#overlay-two-orbits) |
+| `.head(False)` | Hide the current-state marker | [Maps](#show-map-iterations) |
+| `.head(size=8, color="#E8912D", symbol="o")` | Set marker size, colour and shape | Amber circles in [ping-pong](#play-forward-and-back); square heads in the [overlay](#overlay-two-orbits) |
+| `.camera(elev=24, azim=-60)` | Fixed 3-D angles in degrees | [Camera comparison](#move-the-camera) |
+| `.camera(spin=-0.25)` / `0` / `0.25` | Reverse / fixed / forward quarter-turn per forward pass | [Camera comparison](#move-the-camera) |
+| `.clock("t = {t:.1f}")` | Live time or iteration readout; `.clock(False)` hides it | [Overlay](#overlay-two-orbits), [maps](#show-map-iterations) |
+| `.clock("frame {i}: t = {t:.1f}")` | Include the playback-frame index | [Map iterations](#show-map-iterations) |
+
+</div>
+
+A shorter recording can repeat sample positions to fill an explicit frame count.
+A smoother recording needs a finer output grid, not just a larger movie frame
+count. For ping-pong, `duration` and `n_frames` describe the forward pass; the
+return leg adds `max(n_frames - 2, 0)` frames.
+
+### Customize the figure, then export it
+
+Themes, axes, annotations and layout remain ordinary plotting controls. Add
+`.style(linewidth=0.9)`, `.font(family="sans-serif", size=11)`, `.background(...)`,
+`.limits(...)`, `.gridlines(...)` or `.camera(...)` to the plot you already made.
+The camera comparison uses `.style(axes=False)` deliberately; keep axes visible
+for figures whose units or scales matter.
 
 ```python
-presentation = ts.plot(trajectory, components=["x", "y", "z"])
-presentation.theme("dark").font(family="sans-serif", size=11).size(10, 6)
-presentation.recolor("#2CC5AE").style(linewidth=0.9)
-presentation.animate(duration=12, fps=30)
-presentation.trail(("time", 5), fade=True, backdrop=True, backdrop_alpha=0.10)
-presentation.head(size=7, color="#E8912D")
-presentation.camera(elev=24, azim=-65, spin=0.15)
-presentation.clock("t = {t:.1f}")
+# A separate presentation variant: the earlier movie keeps its settings.
+presentation = movie.copy().theme("publication").font(family="sans-serif", size=11)
+presentation.head(size=7, color="#D64562", symbol="s")
 ```
 
 ```python
-# skip-doctest — writes an MP4 using FFmpeg
-presentation.save("lorenz-talk.mp4", size=(1600, 960), dpi=160)
+# skip-doctest — exports files with optional drawing tools
+presentation.save("talk.mp4", size=(1600, 960), dpi=160)
+presentation.save("talk.gif", size=(800, 480), dpi=100)
 ```
 
-`.size(10, 6)` sets the figure size in inches. The `size=` on `.save()` sets
-the exported pixel dimensions; `dpi=` determines the conversion between physical
-size and pixels. Check the result at the size your audience will actually see.
-For a reveal that keeps the geometry secret until the state reaches it, use
-`.trail(("time", 5), backdrop=False)`. For a growing drawing that never erases,
-use `.trail(None)`.
+`size=` on `.save()` is in pixels. `.size(width, height)` on a plot is in inches;
+`dpi=` determines their conversion. MP4 needs FFmpeg. GIF uses Pillow and needs
+no FFmpeg, but usually produces a larger file with fewer colours. Choose a solid
+background for either movie format.
 
-### Playback and appearance controls
+### Choose the output deliberately
 
-| Control | What it changes |
+| Output | Animation support |
 |---|---|
-| `.animate(duration=12, fps=30)` | Playback length and frame rate; reuses the recorded samples |
-| `.animate(n_frames=360, fps=30)` | An explicit frame count; takes precedence over `duration` |
-| `.animate(loop=False)` | Repeat behavior in players that support the setting |
-| `.animate(pingpong=True)` | Forward then reverse playback; the return leg runs backward in simulation time |
-| `.trail(("steps", 150), fade=True)` | A fading window of 150 recorded samples |
-| `.trail(backdrop=False)` | Hide the faint full path without changing the trail length |
-| `.head(size=7, color="#E8912D", symbol="o")` | The current-state marker |
-| `.camera(elev=24, azim=-65, spin=0.15)` | View angles in degrees and camera revolutions over the movie |
-| `.clock("frame {i}: t = {t:.1f}")` | A labelled clock; `{i}` is the encoded frame index |
+| Matplotlib → MP4 / GIF | All recipes here, including fading trails, signed spin, clocks, overlays, nested layouts and field stacks |
+| Plotly → HTML | Supported single-panel reveals; animated composites and spatial-field movies are refused rather than saved as partial output |
+| three.js → HTML / geometry | Supported single-panel line/point reveals; no fading tails, camera spin, clock text or arbitrary marker shapes |
+| PNG / SVG / PDF | A still of the final animation frame |
+| JSON | Serializable plot data and animation settings; no encoded video |
 
-More output frames can make playback last longer, but do not add simulation
-accuracy: when necessary, samples repeat. Integrate with a finer output grid
-when the path itself needs more detail. With `pingpong=True`, `duration` and
-`n_frames` describe the forward pass; the return pass adds playback time without
-repeating the two endpoints. A six-second forward pass therefore produces
-almost twelve seconds of forward-and-reverse footage. MP4 stores one playback sequence;
-whether it repeats is controlled by the video player. GIF timing is quantized
-by the format, so an arbitrary requested frame rate may be approximated.
-
-These settings describe the Matplotlib movie path. The
-[backend guide](backends.md#capability-negotiation-visualizationdegraded) explains
-which options an interactive export can honor and how unsupported effects are
-reported.
-
-## Play a spatial field frame by frame
-
-A field movie is different from an orbit reveal: each frame is the entire
-spatial state at one instant. The model's field metadata chooses a 1-D profile
-or 2-D heatmap automatically.
-
-```python
-field = ts.systems.GrayScott(N=24)
-trajectory_field = field.run(final_time=1200, dt=20)
-field_movie = ts.plot(trajectory_field, "spatial_field").animate(duration=6, fps=10)
-field_movie.theme("dark")
-```
-
-This smaller grid is a quick starting point. Pattern formation depends on the
-parameters, initial field and time window; extend the simulation to see slower
-structures develop. The generator records genuine spatial snapshots rather
-than manufacturing frames from a static image.
-
-## Share an interactive reveal
-
-```python
-# skip-doctest — requires the interactive extra and writes an HTML artifact
-orbit.save("lorenz.html")
-```
-
-With `pip install "tsdynamics[interactive]"`, the HTML export lets readers
-inspect supported single-panel views in their browser. The three.js export is
-another option for line, point and surface geometry; see
-[backends and export](backends.md). Browser playback and encoded video are
-different renderers, so check the relevant capability warning before depending
-on a particular effect.
-
-Matplotlib renders nested layouts and composite movies. Plotly declines
-animated composites and spatial-field movies; use MP4 or GIF for those figures.
-The embedded MP4 above has native playback controls and never autoplays, so it
-also remains still for readers who prefer reduced motion.
+Use the [backend guide](backends.md) for exact fallback and export rules.
+For a supported single-panel interactive view, `movie.save("orbit.html")` uses
+the interactive extra. An animated composite belongs in MP4 or GIF. These
+examples use native video controls, `preload="none"`, and no autoplay, so motion
+starts only when the reader requests it. Use the player's fullscreen control
+when comparing small panels.

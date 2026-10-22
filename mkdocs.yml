@@ -190,12 +190,13 @@ nav:
       - systems/index.md
   - Visualization:
       - visualization/index.md
-      - "The gallery": visualization/gallery.md
-      - "Plotting & kinds": visualization/plotting.md
-      - "Conventions": visualization/conventions.md
-      - "Styling & themes": visualization/styling.md
-      - "Animation": visualization/animation.md
-      - "Composition": visualization/composition.md
+      - "Scientific figure recipes": visualization/recipes.md
+      - "Layouts & overlays": visualization/composition.md
+      - "Colors, labels & themes": visualization/styling.md
+      - "Animation studio": visualization/animation.md
+      - "Complete plot gallery": visualization/gallery.md
+      - "Inputs & plot types": visualization/plotting.md
+      - "Scientific conventions": visualization/conventions.md
       - "Space-filling curves": visualization/hilbert.md
       - "Backends & export": visualization/backends.md
   - Tutorials:

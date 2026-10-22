@@ -14,8 +14,12 @@ shape; a quantitative figure also needs its coordinates, units and sampling
 conditions. Check the exported artifact at the size where readers will use it.
 
 This page is the house style, so your figures can match it. The mechanics for
-*applying* any of this — `.recolor`, `.style`, `.theme`, `.grid` — live in
+*applying* any of this — `.recolor`, `.style`, `.theme`, `.gridlines` — live in
 [styling & themes](styling.md); here we cover *what* to choose and *why*.
+
+The [scientific recipes](recipes.md) apply these choices in complete, editable
+figures. Their settings are visible beside each picture so that a reader can
+reproduce the sampling, projection, time window and color range.
 
 ## The one rule: colour encodes meaning
 
@@ -93,7 +97,9 @@ see [themes](styling.md#themes).
 
 ## One figure, one concept
 
-A figure should make exactly one point. The catalogue holds to this strictly:
+A figure should answer a clear question. Several coordinated panels can answer
+it together: geometry beside time, a result beside its convergence evidence, or
+the same field at two times. Give each panel one readable job:
 
 - **An orbit's shape** → a clean phase portrait, optionally with `.style(axes=False)`
   for an illustrative thumbnail. Keep labels for a quantitative comparison.
@@ -103,7 +109,7 @@ A figure should make exactly one point. The catalogue holds to this strictly:
 - **A spatiotemporal field** → a [spacetime](plotting.md#spacetime-image) image
   with a colorbar, not a tangle of 20 overlaid line plots.
 
-When a figure wants to say two things, make it two figures (or two panels). The
+When quantities need different coordinates or units, give them separate panels. The
 `ts.plot(..., layout="grid" | "row" | "stack")` composer exists precisely so
 that "several related views" is *panels*, not clutter.
 
@@ -134,6 +140,22 @@ spec_b = ts.plot(ks, final_time=200.0, dt=0.5, ic=None)
 spec_a.colorize(clim=(-12.0, 15.0))
 spec_b.colorize(clim=(-12.0, 15.0))
 ```
+
+## State what the picture can establish
+
+| Picture | State alongside it |
+|---|---|
+| A trajectory projection | Selected components, initial condition, retained time window and sampling interval |
+| A power spectrum | Sampling units, estimator and record or segment length; broadband appearance alone does not prove chaos |
+| An ensemble fan | Number of members, source of variation, percentile bounds and common time grid; a percentile band is not a mean confidence interval |
+| A Lyapunov or dimension estimate | Finite observation window, numerical settings and convergence or scaling evidence |
+| A planar field of a higher-dimensional model | Which coordinates vary and where the remaining coordinates are frozen |
+| Two field snapshots | Same scalar, same color limits, grid resolution and snapshot times |
+
+A projected curve can cross itself without the full state revisiting the same
+point. A frozen two-dimensional slice need not be an invariant plane. A smooth
+looking trace need not resolve fast dynamics. Labels and captions should preserve
+these distinctions instead of assigning a stronger conclusion to the picture.
 
 ## Transparency and output format
 

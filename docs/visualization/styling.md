@@ -1,6 +1,6 @@
 ---
 title: Styling and themes
-description: The visualization styling and theme system — the canonical per-layer style vocabulary, alias/validation choke point, every fluent tweak, the four built-in themes, the global default, and the per-backend honoring contract.
+description: Customize scientific figures with readable labels, deliberate colors, guides, legends, themes and independent panel settings.
 ---
 
 <span class="ts-kicker">Visualization · Styling & themes</span>
@@ -55,12 +55,74 @@ identical. Features such as line dashes and font controls have backend-specific
 support. The capability warning names an unsupported option rather than
 silently promising it was rendered. See [backends and export](backends.md).
 
+## Start with the change you want
+
+| I want to change… | Use |
+|---|---|
+| The whole figure's look | `.theme("publication")` or `.theme("dark")` |
+| One curve's color or line weight | `.style(color="…", linewidth=…, layer=0)` |
+| The colors across curves | `.palette(["#11857A", "#574FCF"])` |
+| A scalar's colormap, range or colorbar | `.colorize(cmap="viridis", clim=(lo, hi), colorbar={"label": "…"})` |
+| Labels and visible ranges | `.relabel(x="Time (s)", y="Voltage (mV)").limits(x=(0, 10))` |
+| The legend's position | `.colorize(legend="upper right")` |
+| One panel in a composite | `figure[0]` or nested `figure[0][1]`, then the same methods |
+| An independent variant | `.copy()`, then edit the copy |
+
+For complete figures with these changes already in place, start with the
+[scientific recipes](recipes.md). The reference below lists the full vocabulary.
+
+### Make a variant without changing the original
+
+Fluent methods change the plot you call them on. Assignment alone gives a second
+name to the same plot; `.copy()` gives you independent data, panels and settings.
+
+```python
+original = ts.plot(trajectory, components=["x", "z"], title="Reference view")
+original.theme("publication").font(family="sans-serif")
+zoom = original.copy().limits(x=(0, 18), y=(15, 45))
+zoom.relabel(title="Detail").style(color="#11857A", linewidth=0.8)
+comparison = (original | zoom).size(10, 4)
+```
+
+Copy a composite too when you want to change its panels independently. Copies
+start without rendered backend objects, so each variant renders its own settings.
+
+### Labels, guides and legends that explain the data
+
+The axis label says *what* is measured; a guide identifies a meaningful value or
+interval. These annotations use the panel's own data coordinates.
+
+```python
+trace = ts.plot(trajectory, "time_series", components="x", color="#11857A")
+trace.relabel(x="Time", y="x", title="Retained observation window")
+trace.hline(0, color="#6b7280", linestyle="dashed", linewidth=0.7)
+trace.span(10, 20, color="#574FCF", alpha=0.12, label="inspection window")
+trace.colorize(legend="upper right").gridlines(axis="y", alpha=0.2)
+```
+
+Set `labels=["reference", "perturbed"]` when plotting multiple subjects. For
+one subject with multiple channels, the legend keeps each channel's name. Use
+`.colorize(legend=False)` when labels would repeat information already on the axes.
+
+### A scalar color needs its own meaning
+
+`color=` selects a categorical ink color. `color_by=` maps a scalar per sample;
+its colorbar should name that scalar, including units when available.
+
+```python
+colored = ts.plot(trajectory, components=["x", "y"], color_by=lambda tr: tr["z"])
+colored.colorize(cmap="viridis", clim=(0, 50), colorbar={"label": "z", "location": "right"})
+```
+
+Use the same `clim` for panels that compare the same scalar. Use a linear color
+scale for additive differences and a positive log scale for ratios across orders
+of magnitude; zero and negative values cannot be shown on a log color scale.
+
 ## The style vocabulary
 
-`STYLE_KEYS` is the **closed, reviewed** per-layer vocabulary. Each entry is a
-`StyleKey` carrying its canonical name, the accepted aliases, the backends that
-genuinely honor it, a value validator, and a one-line doc — so there is no
-guesswork about what a key accepts or where it lands.
+Pass these options directly to `ts.plot(...)` or to a plot's `.style(...)`
+method. Short aliases work too. A backend that cannot draw an option warns;
+the support column helps you choose an output that preserves your presentation.
 
 | Canonical | Aliases | Honored by | Meaning |
 | --- | --- | --- | --- |
@@ -89,13 +151,14 @@ names and backend support directly:
 ['matplotlib', 'plotly']
 ```
 
+<details markdown="1">
+<summary>Short spellings, validation and typo messages</summary>
+
 ### Aliases
 
-Every key accepts the friendly short spellings shown above, and a handful of
-*values* are canonicalised too — the matplotlib short line styles
-(`-`, `--`, `:`, `-.`) and single-character markers (`o`, `s`, `^`, `D`, `+`,
-`x`, `*`). Everything is rewritten to canonical form before storage, so the spec
-only ever holds canonical keys and the renderers never have to guess:
+Every key accepts the short spellings shown above. Short line styles
+(`-`, `--`, `:`, `-.`) and marker symbols (`o`, `s`, `^`, `D`, `+`, `x`, `*`)
+work too. Short and long spellings produce the same style:
 
 ```pycon
 >>> from tsdynamics.viz import normalize_style
@@ -105,7 +168,7 @@ only ever holds canonical keys and the renderers never have to guess:
 
 (`marker` carries no *key-name* aliases — `STYLE_KEYS["marker"].aliases == ()` —
 because its alternate spellings are the *value* aliases `o s ^ D + x *`,
-canonicalised by the validator rather than the key-name index.)
+accepted as values rather than alternate keyword names.)
 
 ### Validation
 
@@ -157,10 +220,10 @@ offending key(s) and listing the vocabulary. There is no more "I set
 "unknown style key(s) dropped: 'colour'; known keys are alpha, cmap, color, fill, fillalpha, linestyle, linewidth, marker, markersize, zorder"
 ```
 
-`normalize_style` is the **single choke point** every style dict passes through —
-both the `.style(...)` tweak (when a user sets keys) and each renderer (before it
-translates canonical keys to backend kwargs) — so this guarantee holds
-everywhere.
+The same validation applies when creating a plot and when editing it with
+`.style(...)`, so these options mean the same thing at both doors.
+
+</details>
 
 ---
 
@@ -199,7 +262,7 @@ Each keyword defaults to "leave unchanged", so a tweak only touches what you nam
 ### `.style(**keys, layer=None, axes=None)` {#style}
 
 Merge style keys into one layer or every layer. `**keys` go through
-`normalize_style` (aliases canonicalised, values validated, unknown keys warned).
+the same validation as the options passed when creating a plot.
 
 ```python
 spec = ts.plot(ts.systems.Rossler(ic=[0.1, 0.1, 0.1]))
@@ -232,8 +295,9 @@ ts.plot(
 ).recolor("crimson", "royalblue")
 ```
 
-`.recolor("teal")` is exactly `.style(color="teal")` on layer 0; `recolor` earns
-its place when a composite has several layers you want coloured in one call.
+`.recolor("teal")` colors every layer teal. Use `layer=0` to select one layer;
+multiple colors cycle through the layers in order. On a composite, tweaks recurse
+through its panels; select `figure[i]` for a panel-specific change.
 
 ### `.theme(name | Theme, /, **overrides)` {#theme}
 
@@ -268,7 +332,7 @@ from future global-default changes. You can always read the effective theme back
 `spec.resolved_theme` is the **read** half of the pattern (`.theme(...)` *sets*,
 `resolved_theme` *reads*, `spec._theme` is the raw private field).
 
-### `.palette`, `.grid`, `.font`, `.background`, `.size` {#palette-grid-font-background-size}
+### `.palette`, `.gridlines`, `.font`, `.background`, `.size` {#palette-grid-font-background-size}
 
 Conveniences that each touch one facet of the theme (or, for `.size`, the figure
 geometry). All are theme overrides layered on the resolved theme, so they compose
@@ -300,7 +364,7 @@ Notes:
   ('#ff0000',)
   ```
 
-- **`.grid`** toggles gridlines on `"x"` / `"y"` / `"both"` (default `"both"`);
+- **`.gridlines`** toggles gridlines on `"x"` / `"y"` / `"both"` (default `"both"`);
   passing `color=` / `alpha=` also sets the theme's `grid_color` / `grid_alpha`
   so the styling is shared across the figure.
 - **`.size`** is deliberately **not** a theme field — `figsize` / `dpi` are figure
@@ -539,6 +603,9 @@ For styling shared with three.js, prefer `color` /
 
 ---
 
+<details markdown="1">
+<summary>Older versions, strict warning handling and style introspection</summary>
+
 ## Upgrading from v3 — breaking changes
 
 The v5 redesign makes the style vocabulary a **closed, validated set**. Calls that
@@ -678,7 +745,7 @@ The whole styling surface is discoverable from `tsdynamics.viz`:
 | Entry point | What it gives |
 | --- | --- |
 | `ts.viz.STYLE_KEYS` | the canonical vocabulary — `name → StyleKey` (each with `aliases`, `honored_by`, `validate`, `doc`) |
-| `ts.viz.normalize_style` | the alias / validation / unknown-key choke point |
+| `ts.viz.normalize_style` | normalize short names and validate style values |
 | `ts.viz.themes.names()` | sorted names of all registered themes |
 | `ts.viz.themes.get()` / `ts.viz.themes.use()` | read / write the active global default |
 | `ts.viz.themes.register()` | add a named theme |
@@ -697,12 +764,14 @@ The whole styling surface is discoverable from `tsdynamics.viz`:
 library — so reach the styling API through the `ts.viz` namespace (it resolves and
 caches on first access).
 
+</details>
+
 ---
 
 ## See also
 
-- [Visualization overview](index.md) — the `Plot` IR, the front door
-  `ts.plot` grammar, and the renderer catalogue these styles apply to
+- [Scientific recipes](recipes.md) — complete figures to copy and customize
+- [Visualization overview](index.md) — the plotting workflow and available renderers
 - [Animation](animation.md) — the animation modifiers
   (`.animate`/`.trail`/`.head`/`.camera`/`.clock`) that chain with these tweaks,
   and the honoring gaps for the web exporter

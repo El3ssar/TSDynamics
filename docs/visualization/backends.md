@@ -1,23 +1,35 @@
 ---
 title: Backends and export
-description: The four rendering backends — matplotlib (the universal default), plotly (interactive HTML), three.js (a BufferGeometry web payload with a live orbitable viewer) and json (lossless serialization) — plus backend selection, capability negotiation, the VisualizationDegraded warning, and saving / rendering / exporting a Plot by file extension.
+description: Save a paper figure, a presentation movie, an interactive web page or a reusable plot file, with clear guidance on supported features.
 ---
 
 <span class="ts-kicker">Visualization</span>
 
 # Backends & export
 
-A [`Plot`](../reference/top-level.md) is a *semantic* description of a figure
-— a kind, some layers of array data, typed axes, a theme. It holds no drawing
-state and imports no plotting library. **Rendering** is the separate step that
-turns that description into a concrete artifact: a matplotlib figure, an
-interactive plotly page, a three.js web payload, or a serialized JSON document.
+Choose the file your audience needs. The extension usually selects the renderer
+for you; the same plot keeps its data, labels, colors and layout.
 
-The same spec drives all four. Because the spec is the single source of truth,
-supported fluent tweaks — `rescale(x="log")`, `theme("dark")`, `.recolor(...)` —
-travel with it. Renderers have different capabilities and output; unsupported
-features are reported by a capability warning. You pick the backend by name,
-or let the file extension pick it for you.
+| You want | Save with | Install once |
+|---|---|---|
+| A crisp figure for a paper | `.save("figure.svg")` or `.save("figure.pdf")` | `pip install "tsdynamics[viz]"` |
+| An image for a slide or report | `.save("figure.png", dpi=180)` | The `viz` extra |
+| A movie of an orbit, field or nested layout | `.animate(duration=10).save("movie.mp4")` | The `viz` extra and FFmpeg |
+| A short animated loop | `.animate(duration=6).save("movie.gif")` | The `viz` extra; Pillow writes the GIF |
+| A web figure with zoom and hover | `.save("figure.html")` | `pip install "tsdynamics[interactive]"` |
+| A rotatable WebGL orbit | `.save("orbit.html", backend="threejs")` | No plotting extra |
+| A plot you can load and restyle later | `.save("figure.json")` | No plotting extra |
+
+For paper figures and composed movies, Matplotlib supports the full workflow.
+For HTML, check the supported features below: Plotly supports flat static
+layouts and selected single-panel animations; Threejs supports line, point and
+surface geometry on linear axes. Unsupported choices produce a warning or a
+clear export error. The [animation studio](animation.md) shows actual movie
+recipes and explains playback settings.
+
+A [`Plot`](../reference/top-level.md) stores a description of your figure.
+Rendering creates the image, movie or interactive result. You can explicitly
+choose a renderer when you need its native figure object:
 
 ```python
 import tsdynamics as ts
@@ -25,7 +37,7 @@ import tsdynamics as ts
 spec = ts.plot(ts.systems.Lorenz(),
                components=["x", "y", "z"], final_time=50.0, dt=0.01, ic=[1.0, 1.0, 1.0])
 
-spec.render("threejs")         # → a three.js BufferGeometry-ready dict
+spec.render("threejs").payload # → a three.js BufferGeometry-ready dict
 spec.to_json()                 # → the lossless, re-loadable payload as text
 ```
 
@@ -33,7 +45,7 @@ spec.to_json()                 # → the lossless, re-loadable payload as text
 # skip-doctest — .save() writes files and needs the optional viz backends
 spec.show()                    # draw with the default backend (matplotlib)
 spec.save("lorenz.png")        # → matplotlib (raster / vector image)
-spec.save("lorenz.html")       # → plotly (a self-contained interactive page)
+spec.save("lorenz.html")       # → plotly (an interactive page; loads JS from a CDN)
 spec.save("lorenz.json")       # → json (a lossless, re-loadable payload)
 ```
 
@@ -77,13 +89,14 @@ spec.save("lorenz.pdf")             # a vector figure for a paper
 plotly produces an **interactive** figure — pan, zoom, hover, and orbit a 3-D
 attractor with the mouse. It draws the 2-D and 3-D kinds and tiles flat static
 composites (a `make_subplots` grid, each panel on its own `xy` / `scene` cell), and
-it serializes to a **self-contained HTML page** with `.save("*.html")` — the
-zero-extra-dependency way to ship a live figure into docs, a dashboard, or a
-paper-as-web-page.
+it writes an HTML page with `.save("*.html")`. By default the page loads Plotly's
+JavaScript from a CDN and needs a network connection when opened. Use
+`.save("figure.html", include_plotlyjs=True)` to inline that JavaScript for
+offline viewing. Both forms work without a Python kernel in the reader's browser.
 
 ```python
 fig = spec.render("plotly")         # a plotly.graph_objs.Figure
-spec.save("lorenz.html")            # one self-contained interactive page
+spec.save("lorenz.html")            # interactive page; uses the CDN by default
 ```
 
 Plotly declines nested composites, deferred *animation kinds*, animated
@@ -142,8 +155,8 @@ bare-`to_dict()` documents alike.
 The `threejs` backend lowers a spec to a **three.js BufferGeometry-ready** JSON
 payload — a plain dict of flat float / int lists a browser front-end turns into
 an orbitable WebGL scene with no Python kernel in the loop — and, via
-`save(".html", backend="threejs")`, wraps it in one **self-contained page** that
-opens from `file://`. It is the natural format for putting a 3-D attractor
+`save(".html", backend="threejs")`, wraps it in one HTML page that
+opens from `file://` and loads three.js from a CDN. It is a format for putting a 3-D attractor
 *inside someone else's web page*. Covered in full [below](#threejs-export).
 
 ---
@@ -238,11 +251,11 @@ name one — the fast path for "just write me the figure".
 | Extension | Backend | Produces |
 | --- | --- | --- |
 | `.png` `.pdf` `.svg` `.jpg` | matplotlib | a raster / vector image |
-| `.html` | plotly | a self-contained interactive page |
+| `.html` | plotly | an interactive page; CDN JavaScript by default |
 | `.json` | json | the lossless, re-loadable payload |
 | `.mp4` `.gif` (animated spec) | matplotlib | a movie (ffmpeg / pillow) |
 | `.html` (animated spec) | plotly | a real-time, rotatable-while-playing page |
-| `.html` with `backend="threejs"` | three.js | a self-contained WebGL viewer page |
+| `.html` with `backend="threejs"` | three.js | a WebGL viewer page; three.js comes from a CDN |
 | `.json` with `backend="threejs"` | three.js | the BufferGeometry payload (**not** the spec IR) |
 
 !!! warning "`.json` means two different documents"
@@ -278,7 +291,7 @@ papers-as-web-pages).
 
 ### One file you can email: `save(".html", backend="threejs")`
 
-The headline surface. It writes **one self-contained HTML document** — the
+It writes **one HTML document** — the
 geometry payload and the reference loader are both inlined — so it opens by
 double-clicking, from a `file://` path, from inside a zip, or pasted into a CMS.
 No web server, no sibling `.json`, no `fetch`.
@@ -295,8 +308,10 @@ spec.save("lorenz.html", backend="threejs")     # 32k vertices, ~1.3 MB
 The one external reference is the **pinned three.js build**, declared through an
 ES module import map (three.js is ~600 KB of library that is not ours to vendor).
 When that CDN is unreachable — or WebGL is off, or JavaScript is disabled — the
-page falls back to an inlined **poster PNG** rendered through the matplotlib
-backend, so the reader always sees the attractor.
+page can fall back to an inlined **poster PNG**. Creating that fallback requires
+Matplotlib at export time (`pip install "tsdynamics[viz]"`) and `poster=True`.
+The interactive export still works without Matplotlib; its fallback image is
+omitted when the renderer is unavailable or cannot draw the plot.
 
 Knobs (all on `render` / `save`):
 
@@ -305,7 +320,7 @@ Knobs (all on `render` / `save`):
 | `max_points` | `40000` | Vertex ceiling per geometry; `None` exports everything |
 | `decimals` | `4` | Float rounding in the position / `c` buffers |
 | `assets` | `"inline"` | `"inline"` embeds the loader; `"link"` imports it from `loader_url` |
-| `poster` | `True` | Inline a matplotlib PNG as the no-WebGL / no-JS fallback |
+| `poster` | `True` | Request a fallback PNG; requires a successful Matplotlib render |
 | `axes` | `True` | Draw the labelled scale frame (box, ticks, axis names) |
 | `background` | theme | Scene + page background colour |
 
@@ -356,8 +371,8 @@ up front either.
 
 **3. Nothing.** There is no build step, no bundler, and no `npm install`. The one
 thing the page fetches from the network is the pinned three.js build from a CDN;
-if that is blocked, the reader sees the inlined poster PNG instead of a blank
-frame (see below).
+if that is blocked, the reader sees the poster PNG when one was generated at
+export time (see below).
 
 If you would rather mount the viewer into your own `<div>` — a React component, a
 dashboard panel — export the payload instead of the page and call the loader
@@ -389,11 +404,12 @@ trade, not a micro-optimisation, so make it deliberately (see the next section).
 
 #### The fallback, for readers who cannot run it
 
-Every emitted page carries a matplotlib-rendered **poster PNG**, inlined as a
-`data:` URI, and reveals it when anything in the WebGL chain fails — an
+With Matplotlib available and `poster=True`, a successful fallback render adds
+a **poster PNG** as a `data:` URI. The page reveals it when the WebGL chain fails — an
 unreachable CDN, WebGL disabled, an old browser. A reader with JavaScript off
 entirely gets the same image through `<noscript>`. Both paths are the same
-picture, so the page degrades to a static figure rather than to a blank rectangle.
+picture. Check the exported file when a static fallback is important: a missing
+Matplotlib installation or a failed poster render leaves no fallback image.
 
 This is why every `import` in the page is *dynamic*: a static `import` of an
 unreachable module aborts the whole script before any `try`/`catch` can run, and

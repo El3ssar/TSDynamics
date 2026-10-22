@@ -187,12 +187,12 @@ def test_the_accidental_imports_stop_resolving(name):
 # 2. The records — what each one lists, and that the rest still works
 # ---------------------------------------------------------------------------
 
-#: ``dir(p)`` — 41 names (39 + the two *restored* fields).  Exact and sorted:
+#: ``dir(p)`` — 42 names (including the independent-variant ``copy`` method). Exact and sorted:
 #: this is the listing the contract fixes, so a builder who produces a different
 #: one has failed.  Nothing was hidden here; the overwhelm was never on ``Plot``.
 _PLOT_SURFACE = [
     "add", "animate", "animation", "ax", "axes", "background", "camera", "clock",
-    "colorize", "fig", "font", "from_dict", "gridlines", "head", "hline",
+    "colorize", "copy", "fig", "font", "from_dict", "gridlines", "head", "hline",
     "is_animated", "is_composite", "kind", "layers", "layout", "limits", "meta",
     "palette", "panels", "recolor", "relabel", "render", "rescale", "save",
     "show", "size", "span", "style", "text", "theme", "ticks", "title",
@@ -200,10 +200,11 @@ _PLOT_SURFACE = [
 ]  # fmt: skip
 
 
-def test_a_plot_lists_forty_one_names_including_the_two_restored_ones(plot):
+def test_a_plot_lists_forty_two_names_including_copy_and_the_restored_fields(plot):
     """``layout`` and ``animation`` are read by *executed* documentation lines."""
     assert _public(plot) == _PLOT_SURFACE
     assert "layout" in _PLOT_SURFACE and "animation" in _PLOT_SURFACE
+    assert "copy" in _PLOT_SURFACE
 
 
 def test_the_restored_fields_are_the_ones_documentation_reads(traj):

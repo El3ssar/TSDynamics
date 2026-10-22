@@ -1699,6 +1699,13 @@ and **the warning you catch** (`VisualizationDegraded`, promoted in v6 round 9:
 `ts.viz.render`, which is why `docs/visualization/styling.md` was reduced to
 comparing `w[0].category.__name__` to a *string*).
 
+**Plot variants:** `p.copy()` deep-copies numerical data and configuration,
+including nested panels, before a caller styles or animates the variant. It
+excludes cached backend figures and hand edits *before traversal*; copying a
+rendered plot never deep-copies Matplotlib objects. `ts.plot(p)` and composition
+operators reuse the same copying path. `copy` is a non-mutating factory, not a
+fluent tweak; the public Plot listing has 42 names, with no new top-level verb.
+
 Everything else is **demoted, never removed** — the IR nouns, `to_json` /
 `from_json` / `to_dict_envelope` / `from_dict_envelope` / `SCHEMA_VERSION`,
 `STYLE_KEYS` / `Theme` / `THEMES` / `get_theme` / `set_theme` / `register_theme`
@@ -2302,12 +2309,21 @@ Nothing else in the library learns a new name when one is added.
   a backend that cannot animate draws the final frame. Built via
   `ts.plot(subject, animate=True | dict | Animation)` / `ts.viz.plot(..., animate=...)`,
   then tuned with the chainable spec methods `.animate(fps/duration/loop/pingpong)`
-  / `.trail(length=("time"|"steps", v) | None, fade)` / `.head(show/size/color/symbol)`
+  / `.trail(length=int | ("time"|"steps", v) | None, fade)` / `.head(show/size/color/symbol)`
   / `.camera(elev/azim/spin)` / `.clock(fmt)` (all mutate-and-return-self, composing
   with the static `.relabel`/`.rescale`/`.limits`/`.style(…)`/… tweaks — including
   `.style(axes=False)`, which records `meta["axes_visible"]=False` and every
   renderer honors it: mpl `ax.set_axis_off()`, plotly axis/scene `visible=False`,
-  for a clean "attractor floating in space" still or animation). There are **two
+  for a clean "attractor floating in space" still or animation).
+  `.trail(150)` is exactly `.trail(("steps", 150))`: an integer counts stored
+  samples; physical time remains explicit as `("time", t)`. Bare floats and
+  booleans are refused. Camera `spin` accepts finite signed turns: negative
+  reverses direction, zero holds the requested angle, positive rotates forward.
+  Spin remains Matplotlib-only; web backends report the unsupported request.
+  Browser Restart paints frame zero while preserving paused/playing state; Play
+  after a completed movie starts it again. Plotly waits for any pending redraw
+  before painting a paused reset, rather than queueing concurrent updates.
+  There are **two
   frame models** (`Animation.mode`). **`reveal`** (the default): the layer keeps
   its full static data and each frame shows a comet — head at the current sample,
   tail reaching back `trail_length` (`None` ⇒ persistent); the frame math lives on
