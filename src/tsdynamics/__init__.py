@@ -190,7 +190,7 @@ from .families import (
 )
 
 # Single source of truth for the package version; rewritten by python-semantic-release.
-__version__ = "6.1.0"
+__version__ = "6.1.1"
 
 #: The curated top level.  **Sorted, one name per line** — the same mechanical
 #: policy every public package in this library follows, because a list grouped by
